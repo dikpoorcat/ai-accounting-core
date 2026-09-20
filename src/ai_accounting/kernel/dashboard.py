@@ -633,61 +633,6 @@ class _Snapshot:
         )
         return [row[0] for row in rows]
 
-    def effects(self):
-        """Aggregate preceding effects in SQLite; only this month's events remain detailed."""
-        source, parameters = self.journal.sql()
-        states = [item["calculation_id"] for item in self.selected_states["state_results"]]
-        sql = (
-            "WITH events AS (SELECT j.period,j.id,j.number,j.basis_calculation_id calculation_id,"
-            "j.reverses_id,CASE WHEN j.reverses_id IS NULL THEN 1 ELSE -1 END sign,0 opening "
-            f"FROM ({source}) j UNION ALL SELECT p.posting_period,NULL,0,c.id,NULL,1,"
-            "coalesce(json_extract(c.outcome,'$.opening'),0) FROM json_each(?) ids "
-            "JOIN calculation c ON c.id=ids.value JOIN calculation_publication p "
-            "ON p.calculation_id=c.id), effects AS (SELECT e.*,"
-            "json_extract(b.value,'$.category') category,json_extract(b.value,'$.key') balance_key,"
-            "json_extract(b.value,'$.amount') amount FROM events e "
-            "JOIN calculation c ON c.id=e.calculation_id,json_each(c.outcome,'$.balances') b) "
-        )
-        parameters.append(json.dumps(states))
-        preceding = self.connection.execute(
-            sql + "SELECT category,balance_key,sum(sign*amount) amount FROM effects "
-            "WHERE period<? OR opening GROUP BY category,balance_key",
-            [*parameters, self.month],
-        )
-        for row in preceding:
-            yield (
-                {"category": row["category"], "key": row["balance_key"], "amount": row["amount"]},
-                self.month - 1,
-                None,
-                1,
-            )
-        current = self.connection.execute(
-            sql + "SELECT * FROM effects WHERE period=? AND NOT opening "
-            "ORDER BY number,calculation_id",
-            [*parameters, self.month],
-        ).fetchall()
-        self.reads.metadata({row["calculation_id"] for row in current})
-        for item in current:
-            row = {
-                "id": item["id"],
-                "number": item["number"],
-                "calculation_id": item["calculation_id"],
-                "period": item["period"],
-                "reverses_id": item["reverses_id"],
-                "sign": item["sign"],
-                "basis": self.calculation(item["calculation_id"]),
-            }
-            yield (
-                {
-                    "category": item["category"],
-                    "key": item["balance_key"],
-                    "amount": item["amount"],
-                },
-                item["period"],
-                row,
-                item["sign"],
-            )
-
     def voucher_relations(self, calc, sign):
         """Read exact obligation identities from the calculation's dependency graph."""
         cache_key = (calc["id"], sign)
@@ -1527,16 +1472,17 @@ class Dashboard:
         if snapshot:
             snapshot.attach_recorded_times()
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
             else None,
             "read_semantics": {
                 "knowledge": "current_knowledge",
-                "accounting": "frozen_close"
-                if snapshot and snapshot.close
-                else "current_published",
+                "accounting": "as_posted",
+                "business_basis": (
+                    "frozen_adoption" if snapshot and snapshot.close else "current_known"
+                ),
                 "display": "frozen_with_current_supplements"
                 if snapshot and snapshot.close
                 else "current",
@@ -1587,7 +1533,7 @@ class Dashboard:
                 reads.connection, period, as_of=as_of, summary=True
             )
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "projection": "dashboard_period_preparation_result",
                 "read_context": context,
                 "period": period,
@@ -2211,7 +2157,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", data, filters)
             )
-            response["schema_version"] = 1
+            response["schema_version"] = 2
             return response
 
     def quarterly_report(
@@ -2326,7 +2272,16 @@ def _brief_checks(prepared):
 
 def _position(snap):
     balances = snap.accounts
-    # Financial classifications are exact fact references, independent of a report profile.
+    source_issues = []
+    known = KNOWN_POSITION_ACCOUNTS
+    detailed_accounts = set(RECLASS) | (set(balances) - known)
+    rows = [
+        {"account": account, "amount": value}
+        for account, value in balances.items()
+        if account not in detailed_accounts
+    ]
+    projected = defaultdict(int)
+    settlements = snap.queries.settlement_summary(snap.connection, snap.period)
     classification_ids = {
         row[0]
         for row in snap.connection.execute(
@@ -2346,14 +2301,21 @@ def _position(snap):
             (snap.month,),
         )
     )
-    classifications, ambiguous_classifications, source_issues = {}, set(), []
-    for ident in sorted(classification_ids):
-        fact = snap.fact(ident)
-        if fact["kind"] == "report_classification":
-            data = fact["data"]
+    needs_line_resolution = bool(classification_ids) or any(
+        obligation.get("account") in RECLASS
+        and (
+            obligation.get("counterparty_id") is None
+            or obligation.get("remaining_fen") is None
+        )
+        for obligation in settlements["obligations"]
+    )
+    if needs_line_resolution:
+        classifications, ambiguous = {}, set()
+        for ident in sorted(classification_ids):
+            data = snap.fact(ident)["data"]
             key = data["voucher_version_id"]
             if key in classifications:
-                ambiguous_classifications.add(key)
+                ambiguous.add(key)
                 source_issues.append(
                     {
                         "field": "report_classification",
@@ -2364,58 +2326,87 @@ def _position(snap):
             classifications[key] = {
                 item["line_no"]: item["counterparty_id"] for item in data["counterparties"]
             }
-    for key in ambiguous_classifications:
-        classifications[key] = {}
-    known = KNOWN_POSITION_ACCOUNTS
-    detailed_accounts = set(RECLASS) | (set(balances) - known)
-    rows = [
-        {"account": account, "amount": value}
-        for account, value in balances.items()
-        if account not in detailed_accounts
-    ]
-    for event in snap.journal.select(accounts=detailed_accounts):
-        resolution = snap.query_relations(event["basis"])
-        for line in event["lines"]:
-            if line["account"] not in detailed_accounts:
-                continue
-            row = {
-                **line,
-                "amount": line["debit"] - line["credit"],
-                "version_id": event["id"],
-                "reverses_id": event["reverses_id"],
-            }
-            if line["account"] in RECLASS:
-                party = report_party_splits(
-                    row,
-                    resolution,
-                    explicit_party_id=classifications.get(
-                        event["reverses_id"] or event["id"], {}
-                    ).get(line["line_no"]),
-                )
-                row["party_splits"] = party["splits"]
-                source_issues.extend(party["issues"])
-            rows.append(row)
-    for calculation in snap.openings:
-        members = calculation["outcome"]["values"].get("members")
-        if members is None:
-            members = [calculation["outcome"]]
-        for member in members:
-            for line in member.get("opening_lines", ()):
+        for key in ambiguous:
+            classifications[key] = {}
+        rows = [
+            {"account": account, "amount": value}
+            for account, value in balances.items()
+            if account not in detailed_accounts
+        ]
+        for event in snap.journal.select(accounts=detailed_accounts):
+            resolution = snap.query_relations(event["basis"])
+            for line in event["lines"]:
                 if line["account"] not in detailed_accounts:
                     continue
-                parties = {
-                    item.get("counterparty_id")
-                    for item in member.get("values", {}).get("obligations", ())
-                    if item["account"] == line["account"]
+                row = {
+                    **line,
+                    "amount": line["debit"] - line["credit"],
+                    "version_id": event["id"],
+                    "reverses_id": event["reverses_id"],
                 }
-                party = next(iter(parties)) if len(parties) == 1 else None
-                rows.append(
-                    {
-                        **line,
-                        "amount": line["debit"] - line["credit"],
-                        "party_key": ("party", party) if party else None,
+                if line["account"] in RECLASS:
+                    party = report_party_splits(
+                        row,
+                        resolution,
+                        explicit_party_id=classifications.get(
+                            event["reverses_id"] or event["id"], {}
+                        ).get(line["line_no"]),
+                    )
+                    row["party_splits"] = party["splits"]
+                    source_issues.extend(party["issues"])
+                rows.append(row)
+        for calculation in snap.openings:
+            members = calculation["outcome"]["values"].get("members")
+            if members is None:
+                members = [calculation["outcome"]]
+            for member in members:
+                for line in member.get("opening_lines", ()):
+                    if line["account"] not in detailed_accounts:
+                        continue
+                    parties = {
+                        item.get("counterparty_id")
+                        for item in member.get("values", {}).get("obligations", ())
+                        if item["account"] == line["account"]
                     }
-                )
+                    party = next(iter(parties)) if len(parties) == 1 else None
+                    rows.append(
+                        {
+                            **line,
+                            "amount": line["debit"] - line["credit"],
+                            "party_key": ("party", party) if party else None,
+                        }
+                    )
+    else:
+        for obligation in settlements["obligations"]:
+            account = obligation.get("account")
+            if account not in RECLASS:
+                continue
+            remaining = obligation.get("remaining_fen")
+            category = obligation.get("category")
+            amount = (
+                remaining
+                if category == "receivable" and type(remaining) is int
+                else -remaining
+                if category == "payable" and type(remaining) is int
+                else None
+            )
+            if type(amount) is int:
+                projected[account] += amount
+            rows.append(
+                {
+                    "account": account,
+                    "amount": amount,
+                    "party_key": (
+                        ("party", obligation["counterparty_id"])
+                        if obligation.get("counterparty_id")
+                        else None
+                    ),
+                }
+            )
+        for account in detailed_accounts:
+            residual = balances[account] - projected[account]
+            if residual:
+                rows.append({"account": account, "amount": residual})
     position = classify_financial_position(rows)
     if snap.opening_selection["unestablished_state_selections"]:
         source_issues.append(
@@ -4369,7 +4360,7 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
         "cash_ending_year_to_date_fen": "累计现金余额勾稽",
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "close_state": details.get("close_state", "closed" if exportable else "open"),
         "readiness_state": "ready" if ready else "blocked",
         "carry_forward": {

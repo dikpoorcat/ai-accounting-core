@@ -24,7 +24,10 @@ def test_foreground_sql_counts_do_not_grow_with_accounting_history(tmp_path):
         lambda n: benchmark.foreground_probe(engine, small["proof"], f"small:{n}"),
         repetitions=2,
     )
-    large = benchmark.seed_to(engine, 2000, existing=100)
+    # Compare the same first-publication state. A previously populated probe
+    # month already has its empty settlement seal, and legitimately saves writes.
+    engine = benchmark.make_engine(tmp_path / "large-history.sqlite")
+    large = benchmark.seed_to(engine, 2000)
     large_metrics, _ = benchmark.measure(
         engine,
         lambda n: benchmark.foreground_probe(engine, large["proof"], f"large:{n}"),

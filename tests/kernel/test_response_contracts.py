@@ -95,9 +95,9 @@ def test_contract_mismatch_is_a_program_error(samples, mutation):
     elif mutation == "extra":
         value["private-company-file"] = "secret"
     elif mutation == "version":
-        value["schema_version"] = 3
+        value["schema_version"] = 2
     elif mutation == "float_version":
-        value["schema_version"] = 2.0
+        value["schema_version"] = 3.0
     elif mutation == "bool_count":
         value["data"]["account_count"] = True
     else:
@@ -126,7 +126,7 @@ def test_service_and_http_fail_closed_for_bad_reads(resident, monkeypatch):
     service, _, capability, http, _ = resident
     headers, token = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "合成错误响应公司")["id"]
-    bad = {"schema_version": 2, "data": {"private-company-file": "secret"}}
+    bad = {"schema_version": 3, "data": {"private-company-file": "secret"}}
     monkeypatch.setattr(Dashboard, "funds", lambda *args, **kwargs: bad)
     with pytest.raises(KernelError, match="读取结果") as failure:
         service.dispatch("dashboard_funds", {"company_id": company}, session_token=token)

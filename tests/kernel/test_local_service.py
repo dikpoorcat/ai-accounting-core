@@ -214,7 +214,8 @@ def test_generated_command_schemas_validate_typed_facts_and_exclude_journals(ser
     from jsonschema import Draft202012Validator, ValidationError
 
     app, company = service
-    schemas = app.dispatch("schema", {})["command_schemas"]
+    discovery = app.dispatch("schema", {})
+    schemas = discovery["command_schemas"]
     for schema in schemas.values():
         Draft202012Validator.check_schema(schema)
     fact = records(app.engine(company))[0]
@@ -227,6 +228,29 @@ def test_generated_command_schemas_validate_typed_facts_and_exclude_journals(ser
         Draft202012Validator(schemas["save_fact"]).validate(request | {"lines": []})
     assert "source" not in schemas["backup"]["properties"]
     assert "request_id" in schemas["rebuild"]["required"]
+    for command in (
+        "preview",
+        "confirm",
+        "prepare_asset_activation_batch",
+        "confirm_asset_activation_batch",
+        "prepare_asset_consumption_month",
+        "confirm_asset_consumption_month",
+    ):
+        assert "posting_period" in schemas[command]["properties"]
+        assert "correction_period" not in schemas[command]["properties"]
+    publication = discovery["publication_contract"]
+    assert publication["preview_item_fields"] == ["source_period", "posting_period", "mode"]
+    assert publication["withdraw_preview_fields"] == [
+        "source_period",
+        "posting_period",
+        "mode",
+    ]
+    assert "previous_publication_id" in publication["fields"]
+    close = discovery["period_close_contract"]
+    assert close["format"] == "ai-accounting-kernel/2/period-close"
+    assert {"publication_id", "calculation_id", "role"} <= set(close["adopted_result_fields"])
+    assert "calculations" not in close["required_fields"]
+    assert "facts" not in close["required_fields"]
 
 
 def test_explicit_recording_correction_retains_actual_fact_history_and_voucher_number(service):

@@ -1,6 +1,6 @@
 {
   "employees": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",
@@ -15,12 +15,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "frozen_close",
+      "accounting": "as_posted",
       "display": "frozen_with_current_supplements",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "frozen_adoption"
     },
     "data": {
       "employees": {
@@ -57,7 +58,7 @@
               {
                 "event_type": "state_result_selection",
                 "status": "unestablished",
-                "reason": "manifest_state_adoption_not_proven",
+                "reason": "state_selection_unavailable",
                 "subject_id": "legacy-wage",
                 "posting_period": "2024-01",
                 "selection_source": "close_manifest",
@@ -118,7 +119,7 @@
                 {
                   "event_type": "state_result_selection",
                   "status": "unestablished",
-                  "reason": "manifest_state_adoption_not_proven",
+                  "reason": "state_selection_unavailable",
                   "subject_id": "legacy-wage",
                   "posting_period": "2024-01",
                   "selection_source": "close_manifest",
@@ -332,7 +333,7 @@
     }
   },
   "assets": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",
@@ -347,12 +348,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "frozen_close",
+      "accounting": "as_posted",
       "display": "frozen_with_current_supplements",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "frozen_adoption"
     },
     "data": {
       "fixed_asset_cost_fen": "1000",
@@ -411,7 +413,7 @@
               {
                 "event_type": "state_result_selection",
                 "status": "unestablished",
-                "reason": "manifest_state_adoption_not_proven",
+                "reason": "state_selection_unavailable",
                 "subject_id": "legacy-asset",
                 "posting_period": "2024-01",
                 "selection_source": "close_manifest",
@@ -484,7 +486,7 @@
                 {
                   "event_type": "state_result_selection",
                   "status": "unestablished",
-                  "reason": "manifest_state_adoption_not_proven",
+                  "reason": "state_selection_unavailable",
                   "subject_id": "legacy-asset",
                   "posting_period": "2024-01",
                   "selection_source": "close_manifest",

@@ -58,7 +58,12 @@ def assert_current_formats(app, company_id):
 def business_contract(value):
     """Exclude file-task activity when comparing a backup and its restored source."""
     assert value["read_semantics"]["knowledge"] == "current_knowledge"
+    assert value["read_semantics"]["accounting"] == "as_posted"
+    assert value["read_semantics"]["business_basis"] == "current_known"
     assert value["review"]["status"] == "current"
+    assert value["closure"]["state"] == "open"
+    assert value["current_business_result"] is not None
+    assert value["frozen_adoption"] is None
     obligations = value["settlements"]["obligations"]
     assert len(obligations) == 1
     assert type(obligations[0]["source_amount_fen"]) is int
@@ -66,7 +71,16 @@ def business_contract(value):
     assert obligations[0]["settlement_status"] == "open"
     return {
         key: value[key]
-        for key in ("identity", "period", "as_of", "selected_accounting", "settlements")
+        for key in (
+            "identity",
+            "period",
+            "as_of",
+            "closure",
+            "as_posted",
+            "current_business_result",
+            "frozen_adoption",
+            "settlements",
+        )
     }
 
 
@@ -279,16 +293,72 @@ def main():
                 str(request),
             ],
             cwd=package,
-            check=True,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            response = None
+        if result.returncode:
+            diagnostic = {"command": command, "returncode": result.returncode}
+            if isinstance(response, dict):
+                diagnostic["response"] = {
+                    key: response[key]
+                    for key in ("status", "code", "message")
+                    if key in response
+                }
+            else:
+                stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+                if stderr_lines:
+                    diagnostic["stderr"] = stderr_lines[-1][:500]
+            raise RuntimeError(
+                "Packaged CLI call failed: " + json.dumps(diagnostic, ensure_ascii=False)
+            )
+        if response is None:
+            raise RuntimeError(
+                "Packaged CLI returned invalid JSON: "
+                + json.dumps({"command": command, "returncode": result.returncode})
+            )
+        assert not isinstance(response, dict) or response.get("status") not in {
+            "rejected",
+            "needs_information",
+        }, response
+        return response
+
+    def call_rejected(command, payload, *, code, root=data_root):
+        nonlocal calls
+        if root not in _SERVICES:
+            start_resident(root)
+        calls += 1
+        request = inputs / f"{calls:02d}-{command}-rejected.json"
+        request.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-X",
+                "utf8",
+                "-m",
+                "ai_accounting.kernel.cli",
+                "--root",
+                str(root),
+                "call",
+                command,
+                "--input",
+                str(request),
+            ],
+            cwd=package,
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
         )
         response = json.loads(result.stdout)
-        assert not isinstance(response, dict) or response.get("status") not in {
-            "rejected",
-            "needs_information",
-        }, response
+        assert result.returncode == 1 and response["status"] == "rejected", response
+        assert response["code"] == code, response
         return response
 
     def wait_for_backup(company_id, queued, *, root=data_root):
@@ -322,6 +392,22 @@ def main():
     schema = call("schema", {})
     assert {"expense", "cash_payment", "cash_funding", "labor"} <= schema["facts"].keys()
     assert {"business_status", "period_readiness"} <= schema["command_schemas"].keys()
+    for command in (
+        "preview",
+        "confirm",
+        "prepare_asset_activation_batch",
+        "confirm_asset_activation_batch",
+        "prepare_asset_consumption_month",
+        "confirm_asset_consumption_month",
+    ):
+        fields = schema["command_schemas"][command]["properties"]
+        assert "posting_period" in fields and "correction_period" not in fields
+    assert schema["publication_contract"]["preview_item_fields"] == [
+        "source_period",
+        "posting_period",
+        "mode",
+    ]
+    assert schema["period_close_contract"]["format"] == "ai-accounting-kernel/2/period-close"
     company = call(
         "create_company", {"taxpayer_id": "91310000123456789A", "name": "运行包合成验证企业"}
     )
@@ -419,23 +505,109 @@ def main():
         {
             "company_id": close_company_id,
             "content_base64": base64.b64encode(
-                b"Explicit synthetic no-business close confirmation"
+                b"Explicit synthetic close and correction confirmation"
             ).decode("ascii"),
             "media_type": "text/plain",
-            "name": "合成无业务关账确认",
+            "name": "合成关账与更正确认",
             "request_id": "package-close-evidence",
         },
     )["digest"]
+    close_subject = "closed-expense"
+    close_fact = {
+        "company_id": close_company_id,
+        "kind": "expense",
+        "subject_id": close_subject,
+        "data": {
+            "period": close_period,
+            "amount_fen": 1000,
+            "counterparty_id": "closed-supplier",
+            "expense_class": "administration",
+            "creditor_kind": "supplier",
+        },
+        "evidence": [close_proof],
+        "expected_revision": 0,
+        "request_id": "package-close-fact",
+    }
+    call("save_fact", close_fact)
+    close_publication_preview = call(
+        "preview", {"company_id": close_company_id, "subjects": [close_subject]}
+    )
+    close_route = close_publication_preview["results"][0]
+    assert (close_route["source_period"], close_route["posting_period"], close_route["mode"]) == (
+        close_period,
+        close_period,
+        "initial",
+    )
+    call(
+        "confirm",
+        {
+            "company_id": close_company_id,
+            "subjects": [close_subject],
+            "preview_digest": close_publication_preview["digest"],
+            "epochs": close_publication_preview["epochs"],
+            "request_id": "package-close-publish",
+        },
+    )
+    material_location = "confirmed-facts"
+    material_excerpt = "Explicit synthetic close and correction confirmation"
+    material_source_id = "closed-expense-source"
+    material_source = call(
+        "receive_material",
+        {
+            "company_id": close_company_id,
+            "subject_id": material_source_id,
+            "data": {
+                "period": close_period,
+                "evidence_digest": close_proof,
+                "category": "transactions",
+                "purpose": "supporting",
+                "supporting_purpose": "合成运行包类型化事实确认记录，不是额外业务行",
+                "specification": {
+                    "format": "text",
+                    "passages": [
+                        {
+                            "location": material_location,
+                            "page": 1,
+                            "excerpt": material_excerpt,
+                        }
+                    ],
+                    "all_pages_reviewed": True,
+                },
+            },
+            "evidence": [close_proof],
+            "expected_revision": 0,
+            "request_id": "package-close-material-source",
+        },
+    )
+    call(
+        "resolve_material",
+        {
+            "company_id": close_company_id,
+            "subject_id": "closed-expense-resolution",
+            "data": {
+                "period": close_period,
+                "source_id": material_source["subject_id"],
+                "source_fact_id": material_source["fact_id"],
+                "location": material_location,
+                "treatment": "supporting",
+                "reason": "确认记录仅证明已保存的类型化事实，不代表额外业务行",
+            },
+            "evidence": [close_proof],
+            "expected_revision": 0,
+            "request_id": "package-close-material-resolution",
+        },
+    )
     for category in MATERIAL_CATEGORIES:
+        has_expense_material = category == "transactions"
         call(
             "inventory",
             {
                 "company_id": close_company_id,
                 "period": close_period,
                 "category": category,
-                "evidence": [],
-                "expected": 0,
-                "no_business": True,
+                "evidence": [close_proof] if has_expense_material else [],
+                "expected": 1 if has_expense_material else 0,
+                "no_business": not has_expense_material,
                 "confirmation_evidence": close_proof,
                 "request_id": f"package-close-inventory-{category}",
             },
@@ -489,6 +661,118 @@ def main():
         )
         == frozen_close
     )
+    call(
+        "amend_fact",
+        {
+            **close_fact,
+            "data": {**close_fact["data"], "amount_fen": 1500},
+            "expected_revision": 1,
+            "recording_error_confirmed": True,
+            "request_id": "package-closed-correction-fact",
+        },
+    )
+    call_rejected(
+        "preview",
+        {"company_id": close_company_id, "subjects": [close_subject]},
+        code="posting_period_required",
+    )
+    correction_posting_period = "2026-09"
+    correction_preview = call(
+        "preview",
+        {
+            "company_id": close_company_id,
+            "subjects": [close_subject],
+            "posting_period": correction_posting_period,
+        },
+    )
+    correction_route = correction_preview["results"][0]
+    assert (
+        correction_route["source_period"],
+        correction_route["posting_period"],
+        correction_route["mode"],
+    ) == (close_period, correction_posting_period, "closed_correction")
+    call(
+        "confirm",
+        {
+            "company_id": close_company_id,
+            "subjects": [close_subject],
+            "posting_period": correction_posting_period,
+            "preview_digest": correction_preview["digest"],
+            "epochs": correction_preview["epochs"],
+            "request_id": "package-closed-correction-publish",
+        },
+    )
+    assert (
+        call("closed_report", {"company_id": close_company_id, "period": close_period})
+        == frozen_close
+    )
+    frozen_overview = call("overview", {"company_id": close_company_id, "period": close_period})
+    correction_overview = call(
+        "overview", {"company_id": close_company_id, "period": correction_posting_period}
+    )
+    frozen_net = {
+        row["account"]: row["debit"] - row["credit"] for row in frozen_overview["accounts"]
+    }
+    correction_net = {
+        row["account"]: row["debit"] - row["credit"]
+        for row in correction_overview["accounts"]
+    }
+    assert frozen_net == {"2202": -1000, "5602": 1000}
+    assert correction_net == {"2202": -500, "5602": 500}
+    corrected_queued = call(
+        "backup",
+        {
+            "company_id": close_company_id,
+            "directory": str(validation / "corrected-backups"),
+            "request_id": "package-corrected-backup",
+        },
+    )
+    corrected_backup = wait_for_backup(close_company_id, corrected_queued)
+    corrected_restored_root = validation / "corrected-restored"
+    corrected_restored = call(
+        "restore_company",
+        {
+            "archive": corrected_backup["path"],
+            "taxpayer_id": close_company["taxpayer_id"],
+            "name": "运行包合成更正恢复企业",
+        },
+        root=corrected_restored_root,
+    )
+    assert corrected_restored["id"] == close_company_id
+    assert corrected_restored["database_id"] == close_company["database_id"]
+    assert (
+        call(
+            "closed_report",
+            {"company_id": close_company_id, "period": close_period},
+            root=corrected_restored_root,
+        )
+        == frozen_close
+    )
+    restored_frozen_overview = call(
+        "overview",
+        {"company_id": close_company_id, "period": close_period},
+        root=corrected_restored_root,
+    )
+    restored_correction_overview = call(
+        "overview",
+        {"company_id": close_company_id, "period": correction_posting_period},
+        root=corrected_restored_root,
+    )
+    assert restored_frozen_overview == frozen_overview
+    assert restored_correction_overview == correction_overview
+    assert {
+        row["account"]: row["debit"] - row["credit"]
+        for row in restored_frozen_overview["accounts"]
+    } == frozen_net
+    assert {
+        row["account"]: row["debit"] - row["credit"]
+        for row in restored_correction_overview["accounts"]
+    } == correction_net
+    assert call(
+        "verify_integrity",
+        {"company_id": close_company_id},
+        root=corrected_restored_root,
+    )["status"] == "verified"
 
     for launcher in (
         [str(package / "finance-local.cmd")],
@@ -672,7 +956,7 @@ def main():
             wire_dashboard = json.loads(response.read())
             assert response.status == 200, (action, wire_dashboard)
             assert wire_dashboard["schema_version"] == (
-                1 if action in {"quarterly-report", "business-status"} else 2
+                2 if action in {"context", "quarterly-report", "business-status"} else 3
             )
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id
@@ -719,6 +1003,9 @@ def main():
                 "backup_verified_and_restored": True,
                 "background_backup_without_manual_run": True,
                 "native_approved_close_backup_restored_and_frozen": True,
+                "closed_period_correction_uses_posting_period": True,
+                "closed_snapshot_unchanged_after_correction": True,
+                "corrected_backup_verified_and_restored": True,
                 "relative_imports_only": True,
                 "http_page_and_authenticated_api": True,
                 "dashboard_five_routes_and_legacy_entries": True,

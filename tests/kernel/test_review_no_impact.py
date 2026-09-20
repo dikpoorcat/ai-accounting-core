@@ -55,9 +55,9 @@ def test_closed_review_needs_no_reversal_but_later_real_change_reverses_original
 
     save(engine, "source", "test_source", 50, revision=2, request="source-changed")
     with pytest.raises(KernelError) as failure:
-        publish(engine, ["source"], request="missing-correction-period")
-    assert failure.value.code == "closed_correction_required"
-    publish(engine, ["source"], request="closed-change", correction_period="2026-02")
+        publish(engine, ["source"], request="missing-posting-period")
+    assert failure.value.code == "posting_period_required"
+    publish(engine, ["source"], request="closed-change", posting_period="2026-02")
     with engine.store.connection(read_only=True) as connection:
         vouchers = connection.execute(
             "SELECT total,reverses_id FROM voucher_version ORDER BY rowid"

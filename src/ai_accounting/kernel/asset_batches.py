@@ -317,7 +317,7 @@ class AssetBatches:
         return FactVersion(ident, subject_id, revision + 1, fact, evidence)
 
     def _prepare(
-        self, mode, subject_id, period, members, evidence, expected_revision, correction_period
+        self, mode, subject_id, period, members, evidence, expected_revision, posting_period
     ):
         month = YearMonth(period)
         with self.store.connection(read_only=True) as connection:
@@ -618,9 +618,20 @@ class AssetBatches:
                     "SELECT 1 FROM fact_revision WHERE id=?", (v.id,)
                 ).fetchone()
             }
-            snapshot = (epochs, facts, selections, pending, closed, previous, book)
+            from .publication import heads
+
+            snapshot = (
+                epochs,
+                facts,
+                selections,
+                pending,
+                closed,
+                previous,
+                book,
+                heads(connection, facts),
+            )
             public, prepared = _AssetPreparation(self.engine, snapshot, outcomes)._prepare(
-                list(facts), correction_period
+                [subject_id], posting_period
             )
             public["fact_changes"] = [
                 {
@@ -645,7 +656,7 @@ class AssetBatches:
         *,
         evidence: tuple[str, ...],
         expected_revision: int,
-        correction_period: str | None = None,
+        posting_period: str | None = None,
     ):
         return {
             "status": "preview",
@@ -656,7 +667,7 @@ class AssetBatches:
                 members,
                 evidence,
                 expected_revision,
-                correction_period,
+                posting_period,
             )[0],
         }
 
@@ -666,12 +677,12 @@ class AssetBatches:
         *,
         evidence: tuple[str, ...],
         expected_revision: int,
-        correction_period: str | None = None,
+        posting_period: str | None = None,
     ):
         return {
             "status": "preview",
             **self._prepare(
-                "consumption", "", period, None, evidence, expected_revision, correction_period
+                "consumption", "", period, None, evidence, expected_revision, posting_period
             )[0],
         }
 
@@ -683,7 +694,7 @@ class AssetBatches:
         members,
         evidence,
         expected_revision,
-        correction_period,
+        posting_period,
         preview_digest,
         epochs,
         request_id,
@@ -697,7 +708,7 @@ class AssetBatches:
                 members,
                 evidence,
                 expected_revision,
-                correction_period,
+                posting_period,
                 preview_digest,
                 epochs,
             ]
@@ -706,7 +717,7 @@ class AssetBatches:
         if cached is not None:
             return cached
         public, prepared, changes, removed = self._prepare(
-            mode, subject_id, period, members, evidence, expected_revision, correction_period
+            mode, subject_id, period, members, evidence, expected_revision, posting_period
         )
         if public["digest"] != preview_digest or public["epochs"] != epochs:
             raise KernelError("preview_expired", "资产批次与已审阅预览不同")
@@ -719,12 +730,15 @@ class AssetBatches:
                 if item.compatibility_issue:
                     raise compatibility(item.calculation_id, "asset_comparison_unavailable")
             verify_prepared_sources(
-                self.engine, connection, prepared,
+                self.engine,
+                connection,
+                prepared,
                 new_fact_ids={version.id for version in changes.values()},
             )
             projection_check = prepare_projection_check(
-                connection, prepared, correction_period=correction_period
+                connection, prepared, posting_period=posting_period
             )
+            self.engine._check_publication_projections(connection, prepared)
             for version in sorted(changes.values(), key=lambda v: v.subject_id):
                 self.store.write_fact(
                     connection, version, digest(version.fact.model_dump(mode="json"))
@@ -804,10 +818,11 @@ class AssetBatches:
                         }
                     )
                 else:
-                    results.append(self.engine._publish(connection, item, correction_period))
-            verify_publication(
-                self.engine, connection, [item.calculation_id for item in prepared]
+                    results.append(self.engine._publish(connection, item, posting_period))
+            self.engine._sync_publication_projections(
+                connection, [item.version.subject_id for item in prepared]
             )
+            verify_publication(self.engine, connection, [item.calculation_id for item in prepared])
             verify_projection_change(connection, projection_check)
             return {"status": "published", "results": results, "digest": preview_digest}
 
@@ -832,7 +847,7 @@ class AssetBatches:
         preview_digest: str,
         epochs: dict,
         request_id: str,
-        correction_period: str | None = None,
+        posting_period: str | None = None,
     ):
         return self._confirm(
             "activation",
@@ -841,7 +856,7 @@ class AssetBatches:
             members,
             evidence,
             expected_revision,
-            correction_period,
+            posting_period,
             preview_digest,
             epochs,
             request_id,
@@ -856,7 +871,7 @@ class AssetBatches:
         preview_digest: str,
         epochs: dict,
         request_id: str,
-        correction_period: str | None = None,
+        posting_period: str | None = None,
     ):
         return self._confirm(
             "consumption",
@@ -865,7 +880,7 @@ class AssetBatches:
             None,
             evidence,
             expected_revision,
-            correction_period,
+            posting_period,
             preview_digest,
             epochs,
             request_id,

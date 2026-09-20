@@ -111,13 +111,19 @@ def test_range_freezes_zero_formation_reports_once_and_leaves_august_open(book, 
     for item, prepared in zip(result["results"], preview["manifests"], strict=True):
         frozen = periods.closed_report(item["period"])
         assert frozen["previous_close_digest"] == previous
-        assert frozen["password_confirmation"] == calls[0]
+        assert frozen["approval"] == calls[0]
         assert digest(frozen).hex() == item["digest"]
-        for field in ("facts", "calculations", "inventories", "readiness", "trial_balance"):
+        for field in (
+            "adopted_results",
+            "opening_calculation_id",
+            "inventories",
+            "readiness",
+            "trial_balance",
+        ):
             assert frozen[field] == prepared[field]
         previous = item["digest"]
-    assert preview["manifests"][0]["facts"]
-    with pytest.raises(KernelError, match="尚未关账"):
+    assert preview["manifests"][0]["adopted_results"]
+    with pytest.raises(KernelError, match="精确的关账冻结"):
         periods.closed_report("2026-08")
     after = snapshot(engine)
     assert after["epochs"] == {
@@ -360,9 +366,7 @@ def test_range_freezes_same_business_and_reports_as_sequential_close(request, tm
     with engine.store.connection(read_only=True) as source, sqlite3.connect(path) as destination:
         source.backup(destination)
     reference = Periods(
-        Engine(
-            Store(path, engine.store.bundle, engine.store.company_id, engine.store.database_id)
-        )
+        Engine(Store(path, engine.store.bundle, engine.store.company_id, engine.store.database_id))
     )
     for month in ("2026-01", "2026-02", "2026-03"):
         preview = reference.preview_close(month, owner_confirmation=proof)
@@ -378,10 +382,14 @@ def test_range_freezes_same_business_and_reports_as_sequential_close(request, tm
     for month in ("2026-01", "2026-02", "2026-03"):
         one, batch = reference.closed_report(month), periods.closed_report(month)
         assert batch["vouchers"]
-        assert {key: value for key, value in one.items() if key != "previous_close_digest"} == {
+        assert {
+            key: value
+            for key, value in one.items()
+            if key not in {"previous_close_digest", "read_version"}
+        } == {
             key: value
             for key, value in batch.items()
-            if key not in {"previous_close_digest", "close_range"}
+            if key not in {"previous_close_digest", "close_range", "read_version"}
         }
     final = reports.preview_export(2026, 1)
     single_final = Reports(reference.engine).preview_export(2026, 1)

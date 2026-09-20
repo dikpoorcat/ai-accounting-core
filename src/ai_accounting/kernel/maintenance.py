@@ -28,6 +28,7 @@ class Maintenance:
         from .integrity import verify_integrity
         from .projections import repair_projections
         from .read_indexes import repair_read_indexes
+        from .settlement_projection import repair_settlement_projection
         from .versions import verify_schema
 
         def operation(connection):
@@ -43,6 +44,10 @@ class Maintenance:
                 if target == "projections"
                 else repair_read_indexes(connection, bundle=self.store.bundle, fault=fault)
             )
+            if target == "projections":
+                settlements = repair_settlement_projection(self.engine, connection)
+                result["changed"] = result["changed"] or settlements["changed"]
+                result["settlements"] = settlements
             self.engine.fault("repair_applied", connection)
             coverage = verify_integrity(
                 self.engine,

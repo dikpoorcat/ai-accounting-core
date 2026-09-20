@@ -25,8 +25,12 @@ def _add(totals, key, values):
         previous[index] = checked(previous[index] + checked(value))
 
 
-def expected_projections(connection, *, through_period=None):
-    """Build exact effective amounts; voucher and calculation heads differ."""
+def expected_projections(connection, *, through_period=None, verified_calculations=None):
+    """Build amounts using optional source checks from this same transaction.
+
+    Reusing decoded immutable input does not reuse any derived expected rows.
+    Voucher and calculation heads still select their own effective amounts.
+    """
     accounts, cashflows, balances, openings = {}, {}, {}, {}
     restriction = " WHERE v.period<=?" if through_period is not None else ""
     parameters = (through_period,) if through_period is not None else ()
@@ -39,13 +43,25 @@ def expected_projections(connection, *, through_period=None):
         _add(accounts, (row["period"], row["account"]), (row["debit"], row["credit"]))
         if row["cashflow"] is not None:
             _add(cashflows, (row["period"], row["cashflow"]), (row["debit"] - row["credit"],))
-    for row in connection.execute(
-        "SELECT c.period,c.outcome FROM calculation_current h "
-        "JOIN calculation c ON c.id=h.calculation_id "
-        "JOIN calculation_seal s ON s.calculation_id=c.id "
-        "JOIN calculation_publication p ON p.calculation_id=c.id"
-    ):
-        outcome = json.loads(row["outcome"])
+    selected = list(
+        connection.execute(
+            "SELECT c.id,c.period FROM calculation_current h "
+            "JOIN calculation c ON c.id=h.calculation_id "
+            "JOIN calculation_seal s ON s.calculation_id=c.id "
+            "JOIN calculation_publication p ON p.calculation_id=c.id"
+        )
+    )
+    verified_calculations = verified_calculations or {}
+    outcomes = {ident: row["decoded"] for ident, row in verified_calculations.items()}
+    missing = {row["id"] for row in selected} - outcomes.keys()
+    if missing:
+        for row in connection.execute(
+            "SELECT c.id,c.outcome FROM json_each(?) ids JOIN calculation c ON c.id=ids.value",
+            (canonical(sorted(missing)),),
+        ):
+            outcomes[row["id"]] = json.loads(row["outcome"])
+    for row in selected:
+        outcome = outcomes[row["id"]]
         for effect in outcome["balances"]:
             _add(balances, (effect["category"], effect["key"]), (effect["amount"],))
         if through_period is None or row["period"] <= through_period:
@@ -62,8 +78,10 @@ def expected_projections(connection, *, through_period=None):
     }
 
 
-def compare_projections(connection, *, through_period=None):
-    expected = expected_projections(connection, through_period=through_period)
+def compare_projections(connection, *, through_period=None, verified_calculations=None):
+    expected = expected_projections(
+        connection, through_period=through_period, verified_calculations=verified_calculations
+    )
     differences = []
     for table, columns in TABLE_COLUMNS.items():
         restriction = (
@@ -88,8 +106,12 @@ def compare_projections(connection, *, through_period=None):
     return {"changed": bool(differences), "differences": differences, "expected": expected}
 
 
-def require_projections(connection, *, through_period=None):
-    compared = compare_projections(connection, through_period=through_period)
+def require_projections(connection, *, through_period=None, verified_calculations=None):
+    from .period_balances import require_period_balances
+
+    compared = compare_projections(
+        connection, through_period=through_period, verified_calculations=verified_calculations
+    )
     if compared["changed"]:
         raise KernelError(
             "content_integrity_failed",
@@ -99,14 +121,17 @@ def require_projections(connection, *, through_period=None):
             reason="projection_mismatch",
             differences=compared["differences"],
         )
+    require_period_balances(connection, verified_calculations=verified_calculations)
     return {"tables": len(TABLE_COLUMNS)}
 
 
-def repair_projections(connection, *, fault=None):
+def repair_projections(connection, *, fault=None, verified_calculations=None):
     """Restore only fixed projection tables, after the caller verifies sources."""
     if not connection.in_transaction:
         raise ValueError("projection repair requires the caller's write transaction")
-    compared = compare_projections(connection)
+    from .period_balances import repair_period_balances
+
+    compared = compare_projections(connection, verified_calculations=verified_calculations)
     if compared["changed"]:
         for table in TABLE_COLUMNS:
             connection.execute(f"DELETE FROM {table}")
@@ -120,8 +145,15 @@ def repair_projections(connection, *, fault=None):
             )
         if fault:
             fault("projection_rebuilt", connection)
-        require_projections(connection)
-    return {"changed": compared["changed"], "differences": compared["differences"]}
+    periods = repair_period_balances(
+        connection, fault=fault, verified_calculations=verified_calculations
+    )
+    require_projections(connection, verified_calculations=verified_calculations)
+    return {
+        "changed": compared["changed"] or periods["changed"],
+        "differences": compared["differences"],
+        "period_balances": periods,
+    }
 
 
 def _subject_contributions(connection, subjects):
@@ -181,7 +213,7 @@ def _selected_projection_rows(connection, keys):
     return result
 
 
-def prepare_projection_check(connection, prepared, *, correction_period=None):
+def prepare_projection_check(connection, prepared, *, posting_period=None):
     """Capture exact affected keys before publication, within the write lock.
 
     This proves the transaction's changes, not the pre-existing whole ledger.
@@ -193,8 +225,8 @@ def prepare_projection_check(connection, prepared, *, correction_period=None):
     subjects = {item.version.subject_id for item in prepared}
     before = _subject_contributions(connection, subjects)
     keys = {table: set(values) for table, values in before.items()}
-    if correction_period is not None:
-        posting = YearMonth(correction_period).ordinal
+    if posting_period is not None:
+        posting = YearMonth(posting_period).ordinal
         # A correction to zero still publishes the old voucher's reversal.
         # Its accounts/cashflow do not occur in the new (empty) outcome.
         for table in ("monthly_account", "monthly_cashflow"):
@@ -212,9 +244,13 @@ def prepare_projection_check(connection, prepared, *, correction_period=None):
         outcome = item.outcome
         if outcome is None:
             continue
+        if item.publication:
+            actual_posting = item.publication["posting_period"]
+            for table in ("monthly_account", "monthly_cashflow"):
+                keys[table].update((actual_posting, key[1]) for key in before[table])
         periods = {*previous_periods, item.version.fact.period.ordinal}
-        if correction_period is not None:
-            periods.add(YearMonth(correction_period).ordinal)
+        if posting_period is not None:
+            periods.add(YearMonth(posting_period).ordinal)
         for line in outcome["lines"]:
             keys["monthly_account"].update((period, line["account"]) for period in periods)
             if line.get("cashflow") is not None:

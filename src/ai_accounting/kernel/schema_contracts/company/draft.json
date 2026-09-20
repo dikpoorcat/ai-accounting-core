@@ -117,6 +117,46 @@
     },
     {
       "type": "index",
+      "name": "period_balance_key",
+      "sql": "CREATE INDEX period_balance_key ON period_balance(category,balance_key,posting_period)"
+    },
+    {
+      "type": "index",
+      "name": "period_balance_period",
+      "sql": "CREATE INDEX period_balance_period ON period_balance(posting_period,category)"
+    },
+    {
+      "type": "index",
+      "name": "publication_posting",
+      "sql": "CREATE INDEX publication_posting ON calculation_publication(posting_period,subject_id,id)"
+    },
+    {
+      "type": "index",
+      "name": "publication_root",
+      "sql": "CREATE UNIQUE INDEX publication_root ON calculation_publication(subject_id)\n WHERE previous_publication_id IS NULL"
+    },
+    {
+      "type": "index",
+      "name": "publication_subject",
+      "sql": "CREATE INDEX publication_subject ON calculation_publication(subject_id,posting_period,id)"
+    },
+    {
+      "type": "index",
+      "name": "settlement_change_category",
+      "sql": "CREATE INDEX settlement_change_category ON settlement_change(category,posting_period,obligation_key)"
+    },
+    {
+      "type": "index",
+      "name": "settlement_change_period",
+      "sql": "CREATE INDEX settlement_change_period ON settlement_change(posting_period,obligation_key)"
+    },
+    {
+      "type": "index",
+      "name": "settlement_change_source",
+      "sql": "CREATE INDEX settlement_change_source ON settlement_change(source_subject_id,posting_period)"
+    },
+    {
+      "type": "index",
       "name": "subject_kind",
       "sql": "CREATE INDEX subject_kind ON subject(kind,id)"
     },
@@ -173,7 +213,7 @@
     {
       "type": "table",
       "name": "calculation_publication",
-      "sql": "CREATE TABLE calculation_publication(calculation_id TEXT PRIMARY KEY REFERENCES calculation,\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n voucher_id TEXT REFERENCES voucher) STRICT"
+      "sql": "CREATE TABLE calculation_publication(id TEXT PRIMARY KEY,sequence INTEGER NOT NULL UNIQUE CHECK(sequence>0),\n subject_id TEXT NOT NULL REFERENCES subject,\n previous_publication_id TEXT UNIQUE REFERENCES calculation_publication(id),\n calculation_id TEXT UNIQUE REFERENCES calculation,\n mode TEXT NOT NULL CHECK(mode IN('initial','open_replace','closed_correction','review_no_impact','withdrawn')),\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n baseline_calculation_id TEXT REFERENCES calculation,voucher_id TEXT REFERENCES voucher,\n CHECK((mode='withdrawn' AND calculation_id IS NULL AND voucher_id IS NULL)\n OR(mode<>'withdrawn' AND calculation_id IS NOT NULL))) STRICT"
     },
     {
       "type": "table",
@@ -1032,6 +1072,16 @@
     },
     {
       "type": "table",
+      "name": "period_balance",
+      "sql": "CREATE TABLE period_balance(publication_id TEXT NOT NULL REFERENCES calculation_publication(id),\n posting_period INTEGER NOT NULL,category TEXT NOT NULL,balance_key TEXT NOT NULL,\n component TEXT NOT NULL CHECK(component IN('opening','activity')),amount INTEGER NOT NULL,\n calculation_id TEXT NOT NULL REFERENCES calculation,source_digest BLOB NOT NULL CHECK(length(source_digest)=32),\n baseline_calculation_id TEXT REFERENCES calculation,baseline_digest BLOB,\n CHECK((baseline_calculation_id IS NULL AND baseline_digest IS NULL) OR\n (baseline_calculation_id IS NOT NULL AND length(baseline_digest)=32)),\n PRIMARY KEY(publication_id,category,balance_key,component)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "period_balance_seal",
+      "sql": "CREATE TABLE period_balance_seal(posting_period INTEGER NOT NULL,category TEXT NOT NULL,\n row_count INTEGER NOT NULL CHECK(row_count>=0),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(posting_period,category)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "period_close",
       "sql": "CREATE TABLE period_close(period INTEGER PRIMARY KEY CHECK(period BETWEEN 0 AND 119987),\n manifest TEXT NOT NULL CHECK(json_valid(manifest)),digest BLOB NOT NULL\n CHECK(length(digest)=32)) STRICT"
     },
@@ -1074,6 +1124,16 @@
       "type": "table",
       "name": "security_close_batch_receipt",
       "sql": "CREATE TABLE security_close_batch_receipt(\n        batch_id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,\n        company_id TEXT NOT NULL, database_id TEXT NOT NULL,\n        from_period INTEGER NOT NULL CHECK(from_period BETWEEN 0 AND 119987),\n        through_period INTEGER NOT NULL CHECK(through_period BETWEEN from_period AND 119987),\n        preview_digest BLOB NOT NULL CHECK(length(preview_digest)=32),\n        target_digest BLOB NOT NULL CHECK(length(target_digest)=32),\n        consumed_at INTEGER NOT NULL\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "settlement_change",
+      "sql": "CREATE TABLE settlement_change(publication_id TEXT NOT NULL REFERENCES calculation_publication(id),\n item_no INTEGER NOT NULL,posting_period INTEGER NOT NULL,obligation_key TEXT,source_subject_id TEXT,\n category TEXT CHECK(category IN('receivable','payable') OR category IS NULL),\n account TEXT,counterparty_id TEXT,component TEXT,\n change_kind TEXT NOT NULL CHECK(change_kind IN('source','payment','other')),\n amount INTEGER,state TEXT NOT NULL CHECK(state IN('resolved','unresolved')),\n source_calculation_id TEXT REFERENCES calculation,source_digest BLOB,\n CHECK(source_digest IS NULL OR length(source_digest)=32),\n CHECK(state<>'resolved' OR amount IS NOT NULL),PRIMARY KEY(publication_id,item_no)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "settlement_projection_seal",
+      "sql": "CREATE TABLE settlement_projection_seal(posting_period INTEGER PRIMARY KEY,\n row_count INTEGER NOT NULL CHECK(row_count>=0),digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT"
     },
     {
       "type": "table",
@@ -3547,6 +3607,11 @@
     },
     {
       "type": "trigger",
+      "name": "publication_chain",
+      "sql": "CREATE TRIGGER publication_chain BEFORE INSERT ON calculation_publication BEGIN\n SELECT CASE WHEN NEW.previous_publication_id IS NOT NULL AND NOT EXISTS(\n SELECT 1 FROM calculation_publication WHERE id=NEW.previous_publication_id\n AND subject_id=NEW.subject_id) THEN RAISE(ABORT,'publication predecessor mismatch') END;\n SELECT CASE WHEN NEW.calculation_id IS NOT NULL AND NOT EXISTS(\n SELECT 1 FROM calculation WHERE id=NEW.calculation_id AND subject_id=NEW.subject_id)\n THEN RAISE(ABORT,'publication calculation mismatch') END;\nEND"
+    },
+    {
+      "type": "trigger",
       "name": "read_index_source_owner",
       "sql": "CREATE TRIGGER read_index_source_owner BEFORE INSERT ON read_index_source\n WHEN (NEW.source_kind='close' AND NOT EXISTS(\n SELECT 1 FROM period_close WHERE period=CAST(NEW.source_id AS INTEGER)\n AND CAST(period AS TEXT)=NEW.source_id))\n OR (NEW.source_kind='job' AND NOT EXISTS(SELECT 1 FROM jobs WHERE id=NEW.source_id\n AND kind IN ('payment_export','tax_import','report_export')))\n OR (NEW.source_kind='audit' AND NOT EXISTS(SELECT 1 FROM audit\n WHERE id=CAST(NEW.source_id AS INTEGER) AND CAST(id AS TEXT)=NEW.source_id AND action IN\n ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee')))\n BEGIN SELECT RAISE(ABORT,'read index source ownership mismatch'); END"
     },
@@ -4366,5 +4431,5 @@
       "sql": "CREATE TRIGGER security_close_batch_receipt_no_update\n        BEFORE UPDATE ON security_close_batch_receipt\n        BEGIN SELECT RAISE(ABORT,'immutable close batch receipt'); END"
     }
   ],
-  "sha256": "ac38b56bfd5f722c86777c3db73280a8633b99a453e4f192214624ba5c9a655c"
+  "sha256": "6c444ecb834b186e3d539a2a63f3ff6007be95226ba851d51849d53b87575c07"
 }

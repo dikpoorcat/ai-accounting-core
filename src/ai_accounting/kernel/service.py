@@ -29,13 +29,20 @@ OPERATING_PROTOCOL = {
     "evidence_first": "先核对已提供资料及既有事实；正式确认事实必须引用实际采用的不可变证据。",
     "typed_facts": "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。",
     "missing_information": "根据fact_issues核对可复用来源后再补充，不把错误码直接变成负责人追问。",
-    "publication": "保存事实与发布结果分开；预览后用同一摘要和相关版本确认，重试沿用同一请求键。",
+    "publication": (
+        "保存事实与发布结果分开；预览逐项核对source_period、posting_period和mode，"
+        "再用同一摘要和相关版本确认，重试沿用同一请求键。"
+    ),
     "asset_batches": (
         "资产启用通过prepare_asset_activation_batch/confirm_asset_activation_batch按确认批次处理；"
         "折旧摊销通过prepare_asset_consumption_month/confirm_asset_consumption_month由内核确定完整月度成员。"
         "不得直接登记或发布单卡启用、单卡折旧摊销，也不得提交自由科目、分录或月度成员排除清单。"
     ),
-    "correction": "录入错误用amend_fact并明确依据；新实际行为用新身份；已闭期会计更正指定开放期。",
+    "correction": (
+        "录入错误用amend_fact并明确依据；新实际行为用新身份；开放所属月按所属月入账，"
+        "所属月已关账的迟到业务或冻结结果更正必须用posting_period指定开放入账月。"
+        "自动重算的开放依赖保留各自原入账月；显式业务与posting_period冲突时拒绝。"
+    ),
     "management": "管理说明、归集资料可后补，不把管理缺项当核算门禁，不以月末冒充实际日期。",
     "dashboard_management": (
         "看板名称、人员入离职资料与用途通过save_display_profile按明确来源追加管理版本；"
@@ -197,6 +204,7 @@ class LocalService:
 
     def _dispatch(self, command, payload, *, authority=None):
         if command == "schema":
+            from .close_contract import ADOPTION_ROLES, CLOSE_FORMAT, CLOSE_FORMAT_VERSION
             from .response_contracts import response_schemas
             from .security.native import NativeRequest
 
@@ -206,6 +214,103 @@ class LocalService:
                     name: model.json_schema() for name, model in self.command_models.items()
                 },
                 "response_schemas": response_schemas(),
+                "publication_contract": {
+                    "immutable": True,
+                    "chain": "one_unforked_chain_per_subject",
+                    "preview_item_fields": ["source_period", "posting_period", "mode"],
+                    "withdraw_preview_fields": [
+                        "source_period",
+                        "posting_period",
+                        "mode",
+                    ],
+                    "fields": [
+                        "id",
+                        "sequence",
+                        "subject_id",
+                        "previous_publication_id",
+                        "calculation_id",
+                        "mode",
+                        "posting_period",
+                        "baseline_calculation_id",
+                        "voucher_id",
+                    ],
+                    "modes": [
+                        "initial",
+                        "open_replace",
+                        "closed_correction",
+                        "review_no_impact",
+                        "withdrawn",
+                    ],
+                    "posting_period_parameter": (
+                        "开放所属月按所属月入账；所属月已关账的迟到业务和冻结结果更正"
+                        "必须明确指定开放入账月；自动重算的开放依赖保留原入账月，"
+                        "显式业务与指定月冲突时拒绝；无影响复核不能移动入账月。"
+                    ),
+                },
+                "period_close_contract": {
+                    "format": CLOSE_FORMAT,
+                    "format_version": CLOSE_FORMAT_VERSION,
+                    "immutable": True,
+                    "required_fields": [
+                        "format",
+                        "format_version",
+                        "period",
+                        "company_id",
+                        "database_id",
+                        "previous_close_period",
+                        "previous_close_digest",
+                        "publication_sequence",
+                        "adopted_results",
+                        "vouchers",
+                        "opening_calculation_id",
+                        "asset_batch_adoptions",
+                        "asset_card_adoptions",
+                        "inventories",
+                        "owner_confirmation",
+                        "readiness",
+                        "management_snapshot",
+                        "material_coverage",
+                        "trial_balance",
+                        "report_classification",
+                        "read_version",
+                        "approval",
+                    ],
+                    "optional_fields": ["close_range"],
+                    "close_range_fields": ["from_period", "through_period", "preview_digest"],
+                    "close_range_constraints": (
+                        "仅范围关账记录包含此字段；范围必须覆盖当前关账月，"
+                        "preview_digest 为 64 位小写十六进制摘要。"
+                    ),
+                    "adopted_result_fields": [
+                        "publication_id",
+                        "calculation_id",
+                        "result_digest",
+                        "subject_id",
+                        "fact_id",
+                        "source_period",
+                        "posting_period",
+                        "role",
+                    ],
+                    "adoption_roles": sorted(ADOPTION_ROLES),
+                    "voucher_fields": [
+                        "id",
+                        "voucher_id",
+                        "calculation_id",
+                        "total",
+                        "number",
+                        "adopted_calculation_id",
+                        "result_digest",
+                        "reverses_id",
+                    ],
+                    "read_version_fields": [
+                        "accounting",
+                        "material",
+                        "management",
+                        "read_repair_revision",
+                    ],
+                    "authority": "direct_adoptions_and_exact_voucher_versions",
+                    "dependency_semantics": "transitive_basis_follows_immutable_dependencies",
+                },
                 "database_formats": {
                     kind: self.bundle.database_format(kind) for kind in ("catalog", "company")
                 },

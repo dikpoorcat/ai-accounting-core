@@ -41,14 +41,14 @@ def book(tmp_path):
             request_id=f"save-{next(counter)}",
         )
 
-    def publish(*subjects, correction_period=None):
-        preview = engine.preview(list(subjects), correction_period=correction_period)
+    def publish(*subjects, posting_period=None):
+        preview = engine.preview(list(subjects), posting_period=posting_period)
         return engine.confirm(
             list(subjects),
             preview_digest=preview["digest"],
             epochs=preview["epochs"],
             request_id=f"publish-{next(counter)}",
-            correction_period=correction_period,
+            posting_period=posting_period,
         )
 
     def close(period):
@@ -383,7 +383,7 @@ def test_closed_correction_uses_original_classification_in_next_quarter(book):
         },
         revision=1,
     )
-    publish("cost", correction_period="2026-04")
+    publish("cost", posting_period="2026-04")
     with engine.store.connection(read_only=True) as connection:
         version = connection.execute(
             "SELECT v.id FROM voucher_current a JOIN voucher_version v ON v.id=a.version_id "

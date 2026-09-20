@@ -102,14 +102,14 @@ class Company:
         )
         return result
 
-    def publish(self, *subjects, correction_period=None):
-        preview = self.engine.preview(list(subjects), correction_period=correction_period)
+    def publish(self, *subjects, posting_period=None):
+        preview = self.engine.preview(list(subjects), posting_period=posting_period)
         result = self.engine.confirm(
             list(subjects),
             preview_digest=preview["digest"],
             epochs=preview["epochs"],
             request_id=self.request(),
-            correction_period=correction_period,
+            posting_period=posting_period,
         )
         return preview, {item["subject_id"]: item for item in result["results"]}
 
@@ -280,11 +280,11 @@ def test_sqlite_closed_source_correction_keeps_history_and_reuses_open_compensat
     before_count = company.count("calculation")
     with pytest.raises(KernelError) as missing_period:
         company.publish("actual")
-    assert missing_period.value.code == "closed_correction_required"
+    assert missing_period.value.code == "posting_period_required"
     assert company.count("calculation") == before_count
     assert company.current("january") == original
 
-    _, first_correction = company.publish("actual", correction_period="2026-03")
+    _, first_correction = company.publish("actual", posting_period="2026-03")
     assert company.engine.ledger("2026-01") == original_ledger
     march = company.engine.ledger("2026-03")
     assert len(march) == 2
@@ -320,7 +320,7 @@ def test_sqlite_correction_after_compensation_is_closed_targets_latest_frozen_re
     company.publish("january", "february")
     january_frozen = company.close("2026-01")
     company.save(actual(), "actual")
-    company.publish("actual", correction_period="2026-03")
+    company.publish("actual", posting_period="2026-03")
     company.save(actual(employee=110_000, employer=220_000), "actual", revision=1)
     company.publish("actual")
     company.close("2026-02")
@@ -329,7 +329,7 @@ def test_sqlite_correction_after_compensation_is_closed_targets_latest_frozen_re
     latest_replacement = next(row for row in march_ledger if row["reverses_id"] is None)
 
     company.save(actual(employee=120_000, employer=240_000), "actual", revision=2)
-    company.publish("actual", correction_period="2026-04")
+    company.publish("actual", posting_period="2026-04")
     april = company.engine.ledger("2026-04")
     assert len(april) == 4  # The current January replacement and February are both now closed.
     assert any(row["reverses_id"] == latest_replacement["id"] for row in april)

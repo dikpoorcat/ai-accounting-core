@@ -181,7 +181,8 @@ def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatc
     assert page_content["frozen"]["content_validity"]["status"] == "frozen"
     assert page_content["supplements"][0]["id"] == supplement["id"]
     assert page_content["supplements"][0]["content_validity"]["status"] == "stale"
-    assert page["read_semantics"]["accounting"] == "frozen_close"
+    assert page["read_semantics"]["accounting"] == "as_posted"
+    assert page["read_semantics"]["business_basis"] == "frozen_adoption"
     assert page["read_semantics"]["knowledge"] == "current_knowledge"
     preparation = page["data"]["period_preparation"]
     assert preparation["closure"]["state"] == "exact_close"

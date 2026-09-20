@@ -85,7 +85,7 @@ async function run(config) {
     const response = await (await pending).json();
     await ready(item);
     assert.equal(await page.getByLabel("切换公司", { exact: true }).inputValue(), company);
-    assert.equal(response.schema_version, item.key === "reports" ? 1 : 2);
+    assert.equal(response.schema_version, item.key === "reports" ? 2 : 3);
     return response;
   }
   async function screenshot(name, top = true) {

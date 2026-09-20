@@ -437,7 +437,7 @@ def test_worker_write_during_response_keeps_all_file_reads_on_one_snapshot(
     assert next(item for item in jobs if item["job_id"] == "job-2")["status"] == "running"
 
 
-def test_unestablished_frozen_sources_stay_visible_as_employee_and_asset(layered_book, tmp_path):
+def test_old_close_manifest_without_direct_adoptions_is_rejected(layered_book, tmp_path):
     engine = _copy_book(layered_book, tmp_path)
     subjects = {
         "opening",
@@ -468,33 +468,6 @@ def test_unestablished_frozen_sources_stay_visible_as_employee_and_asset(layered
                 hashlib.sha256(manifest.encode()).digest(),
             ),
         )
-        sync_close(connection, YearMonth("2024-01").ordinal)
-        connection.commit()
-    queries = BusinessQueries(engine)
-    for subject in ("legacy-wage", "legacy-asset"):
-        status = queries.business_status(subject, "2024-01")
-        assert status["selected_accounting"]["through_period"]["unestablished_state_selections"]
-        assert any(
-            target["selection_status"] == "unestablished" for target in status["trace_targets"]
-        )
-    employee_data = Dashboard(engine).employees("2024-01")["data"]
-    asset_data = Dashboard(engine).assets("2024-01")["data"]
-    employee_page = employee_data["collections"]["employees"]
-    employee_items = employee_data["employees"]["items"]
-    asset_page = asset_data["collections"]["assets"]
-    assert employee_page["items"] == []
-    assert any(item["employee_id"] == "legacy-employee" for item in employee_items)
-    assert any(item["asset_id"] == "legacy-asset" for item in asset_page["items"])
-    assert employee_data["employees"]["unestablished_count"] == 1
-    assert asset_data["unestablished_count"] == asset_data["fixed"]["unestablished_count"] == 1
-    employee = employee_items[0]
-    asset = asset_page["items"][0]
-    assert employee["employee_id"] == "legacy-employee"
-    assert employee["selection_status"] == asset["selection_status"] == "unestablished"
-    assert employee["net_salary_fen"] is None
-    assert asset["cost_fen"] is None and asset_data["card_cost_fen"] is None
-    assert asset_data["fixed"]["active_cost_fen"] is None
-    assert asset_data["reconciled"] is None
-    for item in (employee, asset):
-        assert item["candidate_selections"]
-        assert item["trace_targets"][0]["selection_status"] == "unestablished"
+        with pytest.raises(KernelError) as failure:
+            sync_close(connection, YearMonth("2024-01").ordinal)
+        assert failure.value.code == "content_integrity_failed"

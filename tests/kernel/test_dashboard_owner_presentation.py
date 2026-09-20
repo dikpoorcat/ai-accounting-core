@@ -176,7 +176,7 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     company.close("2026-01")
     original = voucher(company.engine, "2026-01", "january")
     company.save(payroll(accounting_gross_salary_fen=1100000), "january", revision=1)
-    company.publish("january", correction_period="2026-02")
+    company.publish("january", posting_period="2026-02")
     rows = Dashboard(company.engine).brief("2026-02")["data"]["vouchers"]
     reversal = next(
         row for row in rows if row["reverses_version_id"] == original["voucher_version_id"]

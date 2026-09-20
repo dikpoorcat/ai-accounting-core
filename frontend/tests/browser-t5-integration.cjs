@@ -30,9 +30,9 @@ async function run(config) {
       await page.goto(url(path, company, period, extra));
       const data = await (await response).json();
       await page.getByRole("heading", { name: heading, exact: true }).waitFor();
-      await page.getByRole("heading", { name: /所选月末核算/ }).first().waitFor();
+      await page.getByRole("heading", { name: /所选月末账面结果/ }).first().waitFor();
       await page.getByText("当前后续事项", { exact: true }).first().waitFor();
-      assert.equal(data.schema_version, action === "quarterly-report" ? 1 : 2);
+      assert.equal(data.schema_version, action === "quarterly-report" ? 2 : 3);
       assert.equal(await page.getByLabel("切换公司").inputValue(), company);
       return data;
     }

@@ -7,24 +7,27 @@ The real selector, slot SQL, relation resolver and shared reducer are exercised.
 
 import json
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 
 import pytest
 from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import expense, payment, prepare_payment
 
 from ai_accounting.kernel.business_queries import BusinessQueries
+from ai_accounting.kernel.settlement_projection import repair_settlement_projection
 
 domain_book = domain_book_fixture
 
 
-@pytest.fixture
-def mismatched_frozen_payment(domain_book):
+@contextmanager
+def mismatched_payment_copy(domain_book, damaged_period="2026-01"):
     engine, save, publish, *_ = domain_book
     prepare_payment(domain_book)
     save("expense", "expense-b", expense())
     publish("expense-b")
     forty = payment() | {
+        "period": damaged_period,
+        "actual_date": damaged_period + "-10",
         "amount_fen": 40,
         "allocations": [payment()["allocations"][0] | {"amount_fen": 40}],
     }
@@ -85,9 +88,19 @@ def mismatched_frozen_payment(domain_book):
             "WHERE calculation_id=? AND upstream_id=?",
             (source_b, damaged_id, source_a),
         )
+        # This synthetic shadow bypasses the real publication hook. Rebuild the
+        # derived projection explicitly so both detail and summary exercise the
+        # same intentionally damaged immutable-source snapshot.
+        repair_settlement_projection(engine, connection)
         connection.commit()
         connection.execute("BEGIN")
         yield BusinessQueries(engine), connection, identifiers, original_key
+
+
+@pytest.fixture
+def mismatched_frozen_payment(domain_book):
+    with mismatched_payment_copy(domain_book) as result:
+        yield result
 
 
 def test_declared_and_frozen_sources_share_unresolved_slot_pagination(mismatched_frozen_payment):
@@ -203,3 +216,51 @@ def test_unresolved_source_mismatch_propagates_unknown_without_reassigning_payme
     assert unrelated["status"] == "not_established" and unrelated["issues"] == []
     assert unrelated["business_count"] == unrelated["movement_count"] == 0
     assert unrelated["line_relation_count"] == 0
+
+
+def test_future_mismatched_key_advances_only_current_affected_subjects(domain_book):
+    with mismatched_payment_copy(domain_book, damaged_period="2026-02") as selected:
+        queries, connection, _identifiers, original_key = selected
+        historical_a = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"expense"}
+        )
+        assert historical_a["cutoff_period"] == "2026-01"
+        assert historical_a["status"] == "established"
+        assert historical_a["movement_count"] == 1
+        assert historical_a["obligations"][0]["key"] == original_key
+        assert historical_a["obligations"][0]["paid_fen"] == 20
+        assert historical_a["obligations"][0]["remaining_fen"] == 80
+
+        current_a = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"expense"}, current=True
+        )
+        assert current_a["cutoff_period"] == "2026-02"
+        assert current_a["status"] == "partially_established"
+        assert current_a["movement_count"] == 2
+        assert current_a["obligations"][0]["paid_fen"] is None
+        assert current_a["obligations"][0]["remaining_fen"] is None
+
+        historical_b = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"expense-b"}
+        )
+        assert historical_b["cutoff_period"] == "2026-01"
+        assert historical_b["status"] == "established"
+        assert historical_b["movement_count"] == 0
+        assert historical_b["obligations"][0]["paid_fen"] == 0
+        assert historical_b["obligations"][0]["remaining_fen"] == 100
+
+        current_b = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"expense-b"}, current=True
+        )
+        assert current_b["cutoff_period"] == "2026-02"
+        assert current_b["status"] == "partially_established"
+        assert current_b["movement_count"] == 1
+        assert current_b["obligations"][0]["paid_fen"] == 0
+        assert current_b["obligations"][0]["remaining_fen"] == 100
+
+        unrelated = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"unrelated-c"}, current=True
+        )
+        assert unrelated["cutoff_period"] == "2026-01"
+        assert unrelated["status"] == "not_established"
+        assert unrelated["movement_count"] == 0

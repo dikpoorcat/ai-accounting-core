@@ -410,7 +410,7 @@ def test_real_service_two_companies_one_native_password_partial_progress_and_rep
                 == 0
             )
             for row in connection.execute("SELECT manifest FROM period_close"):
-                proof = json.loads(row[0])["password_confirmation"]
+                proof = json.loads(row[0])["approval"]
                 assert (
                     proof["batch_id"] == request_id
                     and proof["company_id"] == companies[index]["id"]

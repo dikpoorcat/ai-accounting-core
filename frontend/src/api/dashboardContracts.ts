@@ -33,7 +33,7 @@ export interface PeriodPreparation {
   as_of: string;
   as_of_semantics: "current_knowledge";
   projection: "dashboard_period_preparation";
-  closure: { state: "exact_close" | "sealed_by_later_close" | "open"; sealing_boundary?: string; digest?: string; sealing_digest?: string };
+  closure: { state: "exact_close" | "covered_by_later_close" | "open"; sealing_boundary?: string; digest?: string; sealing_digest?: string };
   frozen_readiness: null | { status: string; source?: string; reason?: string; readiness?: { status: "recorded" | "not_recorded" }; inventories?: { status: "recorded" | "not_recorded" }; material_coverage?: { status: "recorded" | "not_recorded" }; previous_close_digest?: { status: "recorded" | "not_recorded" } };
   readiness: null | { period?: string; order_failure?: unknown; issues?: BusinessIssue[] };
   current_followups: {
@@ -56,6 +56,26 @@ export interface DashboardReadContext {
   as_of: string;
 }
 
+export interface DashboardReadSemantics {
+  knowledge: "current_knowledge";
+  accounting: "as_posted";
+  business_basis: "current_known" | "frozen_adoption";
+  display: "current" | "frozen_with_current_supplements";
+  system_time_replay: false;
+  recorded_at: "system_recording_time";
+  recording_period: "business_recording_period";
+  recorded_later: "business_recording_period_after_selected_period";
+}
+
+export interface PublicationAdoption {
+  close_period: string;
+  publication_id: string;
+  calculation_id: string;
+  result_digest: string;
+  role: string;
+  selection_proof: Record<string, unknown>;
+}
+
 export function businessStateLabel(status: string | null | undefined) {
   const labels: Record<string, string> = {
     ready: "准备就绪", completed: "已完成", not_applicable: "不适用", unestablished: "尚不能确认", not_established: "尚不能确认",
@@ -76,8 +96,8 @@ export interface DashboardPageQuery {
 }
 
 const versions: Record<string, number> = {
-  context: 2, brief: 2, funds: 2, employees: 2, assets: 2,
-  "quarterly-report": 1, "business-status": 1, "period-preparation": 1,
+  context: 2, brief: 3, funds: 3, employees: 3, assets: 3,
+  "quarterly-report": 2, "business-status": 2, "period-preparation": 2,
 };
 const primaryCollections: Record<string, string> = {
   brief: "vouchers", funds: "movements", employees: "employees", assets: "assets",
@@ -96,7 +116,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function validPreparation(value: unknown): boolean {
   if (!record(value) || value.projection !== "dashboard_period_preparation" || typeof value.period !== "string" || !record(value.closure)) return false;
-  if (!["exact_close", "sealed_by_later_close", "open"].includes(String(value.closure.state))) return false;
+  if (!["exact_close", "covered_by_later_close", "open"].includes(String(value.closure.state))) return false;
   const current = value.current_followups;
   return record(current) && current.affects_frozen_readiness === false
     && ["materials", "accounting", "close_requirements", "settlements", "external", "file_jobs"].every(key => record(current[key]))
@@ -146,6 +166,19 @@ function validSettlementPage(value: unknown): boolean {
     && validCollection({ items: (value as Record<string, unknown>).movements, page: (value as Record<string, unknown>).movements_page });
 }
 
+function validBusinessAccounting(value: Record<string, unknown>): boolean {
+  const closure = value.closure, asPosted = value.as_posted;
+  if (!record(closure) || !["exact_close", "covered_by_later_close", "open"].includes(String(closure.state))) return false;
+  if (!record(asPosted) || typeof asPosted.cutoff_period !== "string" || typeof asPosted.status !== "string"
+    || !Array.isArray(asPosted.voucher_events) || !Array.isArray(asPosted.state_results)
+    || !Array.isArray(asPosted.unestablished_state_selections)) return false;
+  if (!(value.current_business_result === null || record(value.current_business_result))) return false;
+  const frozen = value.frozen_adoption;
+  return frozen === null || record(frozen)
+    && ["close_period", "publication_id", "calculation_id", "result_digest", "role"].every(key => typeof frozen[key] === "string")
+    && record(frozen.selection_proof);
+}
+
 export function validDashboardContract(path: string, payload: unknown): boolean {
   const url = new URL(path, "http://dashboard.invalid");
   const endpoint = url.pathname.split("/").at(-1) ?? "";
@@ -179,6 +212,7 @@ export function validDashboardContract(path: string, payload: unknown): boolean 
   if (!(endpoint in primaryCollections) && endpoint !== "business-status") return true;
   if (payload.data === null) return true;
   if (!record(payload.data) || !record(payload.data.collections)) return false;
+  if (endpoint === "business-status" && !validBusinessAccounting(payload.data)) return false;
   if (endpoint in primaryCollections) {
     if (endpoint !== "brief" && payload.projection !== undefined) return false;
     if (deferred ? payload.data.period_preparation !== null : !validPreparation(payload.data.period_preparation)) return false;

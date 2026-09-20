@@ -9,7 +9,7 @@ from __future__ import annotations
 from .contracts import KernelError
 from .dashboard_reads import page_keys
 from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
-from .types import YearMonth, canonical
+from .types import YearMonth, canonical, checked
 
 FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 SECTIONS = {"accounts", "movements", "statements", "investment_products", "investment_events"}
@@ -79,8 +79,6 @@ class FundsRead:
         self.bank_match_calculations = {}
 
     def events(self, *, current=False, accounts=None):
-        from .read_indexes import verify_close_references
-
         accounts = {"1001", "1002", "1012", "1101"} if accounts is None else accounts
         cache_key = current, tuple(sorted(accounts))
         if cache_key in self.event_queries:
@@ -93,7 +91,7 @@ class FundsRead:
             "AND r.reference_type='voucher' AND r.close_period=j.close_period",
             parameters,
         ).fetchall()
-        verify_close_references(self.connection, references)
+        self.snap.reads.verify_close_references(references)
         source = (
             "WITH journal AS (" + query + "), events AS ("
             "SELECT j.period,j.id event_id,j.number,j.basis_calculation_id calculation_id,"
@@ -166,17 +164,26 @@ class FundsRead:
         )
 
     def account_summary(self):
-        source, parameters = self.events()
-        for row in self.connection.execute(
-            source
-            + "SELECT category,balance_key,sum(CASE WHEN period<? OR opening THEN sign*amount "
-            "ELSE 0 END) opening_fen FROM effects WHERE category IN ('bank','cash','platform') "
-            "GROUP BY category,balance_key",
-            [*parameters, self.snap.month],
+        from .period_balances import balance_movements, balance_totals
+
+        categories = {"bank", "cash", "platform"}
+        projected_closing = {}
+        for row in balance_totals(
+            self.connection, self.snap.month, reads=self.snap.reads
         ):
-            self.base_account(row["category"], row["balance_key"])["opening_fen"] = row[
-                "opening_fen"
-            ]
+            if row["category"] in categories:
+                self.base_account(row["category"], row["key"])
+                projected_closing[row["category"], row["key"]] = row["amount"]
+        current_activity = {}
+        for row in balance_movements(
+            self.connection, self.snap.month, reads=self.snap.reads
+        ):
+            if row["category"] in categories:
+                current_activity[row["category"], row["key"]] = row["amount"]
+        for key, amount in projected_closing.items():
+            self.base_account(*key)["opening_fen"] = checked(
+                amount - current_activity.get(key, 0)
+            )
         source, parameters = self.movements()
         for row in self.connection.execute(
             "SELECT category,balance_key,sum(max(signed_amount,0)) inflow_fen,"
@@ -232,9 +239,7 @@ class FundsRead:
             item["fallback_code"] = f"账户 {index}"
             item["net_change_fen"] = item["inflow_fen"] - item["outflow_fen"]
             item["closing_fen"] = (
-                item["opening_fen"] + item["net_change_fen"]
-                if item["opening_fen"] is not None
-                else None
+                projected_closing.get(key, 0) if item["opening_fen"] is not None else None
             )
             item["negative_balance"] = item["closing_fen"] is not None and item["closing_fen"] < 0
             item["statement"] = {
@@ -379,8 +384,6 @@ class FundsRead:
             or selected["posting_period"] != self.snap.period
         ):
             return None, "unestablished", "对账结果在所选关账中的独立采用尚不能证明。"
-        manifest = self.snap.closes.get(YearMonth(selected["posting_period"]).ordinal)
-        members = set(manifest.get("calculations", ())) if manifest else set()
         sources = [item for item in parents if item["kind"] == "bank_statement"]
         if len(sources) != 1:
             return (
@@ -389,8 +392,6 @@ class FundsRead:
                 "对账采用的精确流水计算来源尚不能唯一确认。",
             )
         source = sources[0]
-        if result["id"] not in members or source["id"] not in members:
-            return None, "unestablished", "对账与流水来源未能在同一次关账采用记录中共同证明。"
         if (
             source["subject_id"] != statement["subject_id"]
             or source["fact_id"] != statement["revision_id"]
@@ -422,10 +423,6 @@ class FundsRead:
         ):
             return set()
         month = YearMonth(selected["posting_period"])
-        manifest = self.snap.closes.get(month.ordinal)
-        members = set(manifest.get("calculations", ())) if manifest else set()
-        if result["id"] not in members:
-            return set()
         reconciliation = self.snap.reads.connection.execute(
             "SELECT c.fact_id,f.subject_id,f.period fact_period,r.statement_id,"
             "r.bank_account_id,json_extract(c.outcome,'$.values.statement_id') "
@@ -463,7 +460,6 @@ class FundsRead:
         ]
         if (
             statement_fact is None
-            or statement["id"] not in members
             or statement["posting_period"] != result["period"]
             or statement["period"] != result["period"]
             or statement_fact["fact_id"] != statement["fact_id"]
@@ -494,7 +490,6 @@ class FundsRead:
         ]
         if (
             opening_fact is not None
-            and opening["id"] in members
             and opening["posting_period"] == result["period"]
             and opening["period"] == result["period"]
             and opening_fact["fact_id"] == opening["fact_id"]
@@ -511,73 +506,6 @@ class FundsRead:
         ):
             proven.add(opening["id"])
         return proven
-
-    def _historical_bank_issue_sources(self, candidate_ids):
-        roots = {
-            ident: item
-            for ident, item in self.states.items()
-            if item["kind"] == "bank_reconciliation" and item["period"] != self.snap.period
-        }
-        if not roots or not candidate_ids:
-            return set()
-        parents_by_root = {ident: [] for ident in roots}
-        for row in self.snap.reads.connection.execute(
-            "SELECT d.calculation_id,d.upstream_id FROM json_each(?) ids "
-            "JOIN dependency_calculation d ON d.calculation_id=ids.value "
-            "JOIN calculation c ON c.id=d.upstream_id "
-            "WHERE c.kind IN ('bank_statement','bank_opening') "
-            "ORDER BY d.calculation_id,d.upstream_id",
-            (canonical(sorted(roots)),),
-        ):
-            parents_by_root[row["calculation_id"]].append(row["upstream_id"])
-        relevant = {
-            ident: parent_ids
-            for ident, parent_ids in parents_by_root.items()
-            if candidate_ids.intersection(parent_ids)
-        }
-        if not relevant:
-            return set()
-        metadata = self.snap.reads.metadata(
-            {parent for parent_ids in relevant.values() for parent in parent_ids}
-        )
-        proven = set()
-        for ident, parent_ids in relevant.items():
-            proven.update(
-                self._closed_bank_issue_sources(
-                    roots[ident], [metadata[parent] for parent in parent_ids]
-                )
-            )
-        return proven & candidate_ids
-
-    def _resolve_bank_source_issues(self, current_proofs):
-        candidate_ids = {
-            candidate["calculation_id"]
-            for issue in self.issues
-            if issue.get("reason") == "manifest_state_adoption_not_proven"
-            for candidate in issue.get("candidates", ())
-            if candidate.get("kind") in {"bank_opening", "bank_statement"}
-        }
-        proven = set(current_proofs) | self._historical_bank_issue_sources(candidate_ids)
-        if not proven:
-            return
-        retained = []
-        for issue in self.issues:
-            candidates = issue.get("candidates", ())
-            bank_candidates = [
-                item
-                for item in candidates
-                if item.get("kind") in {"bank_opening", "bank_statement"}
-            ]
-            resolved = {item["calculation_id"] for item in bank_candidates} & proven
-            if (
-                issue.get("reason") == "manifest_state_adoption_not_proven"
-                and bank_candidates
-                and len(bank_candidates) == len(candidates)
-                and len(resolved) == 1
-            ):
-                continue
-            retained.append(issue)
-        self.issues = retained
 
     def bank_summary(self):
         statement_ids = self.snap.fact_ids_of_kind("bank_statement", period=self.snap.period)
@@ -658,7 +586,6 @@ class FundsRead:
                 for ident, identifiers in parent_ids.items()
             }
         provided, confirmed_accounts, headers = set(), set(), []
-        proven_bank_sources = set()
         self.bank_source_checks = {}
         for statement in statements:
             ident = statement["bank_account_id"]
@@ -710,10 +637,8 @@ class FundsRead:
                 and (not self.snap.close or source is not None and source_error is None)
             )
             if self.snap.close and valid:
-                proven_bank_sources.update(
-                    self._closed_bank_issue_sources(
-                        result, parents_by_result[result["id"]]
-                    )
+                self._closed_bank_issue_sources(
+                    result, parents_by_result[result["id"]]
                 )
             review = bool(
                 not confirmed
@@ -802,7 +727,6 @@ class FundsRead:
                     if item["closing_fen"] is not None
                     else None,
                 }
-        self._resolve_bank_source_issues(proven_bank_sources)
         self.bank_parameters = [canonical(headers)]
         self.bank_source = (
             "SELECT printf('%s:%012d',json_extract(h.value,'$.subject_id'),e.item_no) page_key,"

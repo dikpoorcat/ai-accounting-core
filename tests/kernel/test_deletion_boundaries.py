@@ -36,14 +36,14 @@ def book(tmp_path):
             return engine.amend_fact(kind, subject, data, recording_error_confirmed=True, **args)
         return engine.save_fact(kind, subject, data, **args)
 
-    def publish(*subjects, correction_period=None):
-        plan = engine.preview(list(subjects), correction_period=correction_period)
+    def publish(*subjects, posting_period=None):
+        plan = engine.preview(list(subjects), posting_period=posting_period)
         return engine.confirm(
             list(subjects),
             preview_digest=plan["digest"],
             epochs=plan["epochs"],
             request_id=f"publish-{next(counter)}",
-            correction_period=correction_period,
+            posting_period=posting_period,
         )
 
     def close(period):
@@ -150,7 +150,7 @@ def test_closed_original_cannot_be_deleted_after_open_compensation_and_fact_peri
     close("2026-01")
     frozen = Periods(engine).closed_report("2026-01")
     save("expense", "expense", expense(amount=200), revision=1)
-    publish("expense", correction_period="2026-02")
+    publish("expense", posting_period="2026-02")
     save("expense", "expense", expense(period="2026-03", amount=200), revision=2, amend=True)
     with pytest.raises(KernelError) as failure:
         engine.preview_delete("expense", recording_error_evidence=proof)

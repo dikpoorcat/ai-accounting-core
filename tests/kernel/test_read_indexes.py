@@ -228,17 +228,38 @@ def test_guards_local_hits_and_explicit_omission_detection(engine):
 
 
 def test_fixed_close_leaf_validation_does_not_return_full_manifest(engine):
-    manifest = {
-        "calculations": ["root"],
-        "readiness": {"financial_reports": {"facts": ["fact"]}},
-        "management_snapshot": {"payees": [{"id": "payee"}]},
-        "unrelated": "x" * 10000,
+    from test_integrity_content import damage
+
+    saved = save(engine)
+    _, published = publish(engine)
+    profile = Display(engine).save_display_profile(
+        {
+            "kind": "business",
+            "entity_id": "charge",
+            "note": "x" * 10000,
+            "source": "合成的大段管理说明",
+        },
+        expected_revision=0,
+        request_id="large-management-note",
+    )
+    manifest = close(engine)
+    assert manifest["management_snapshot"]["profiles"][0]["id"] == profile["id"]
+    manifest["readiness"] = {
+        "financial_reports": {
+            "facts": [saved["fact_id"]],
+            "calculations": [published["results"][0]["calculation_id"]],
+        }
     }
+    damage(
+        engine,
+        "period_close",
+        "UPDATE period_close SET manifest=?,digest=?",
+        (canonical(manifest), digest(manifest)),
+    )
+    damage(engine, "close_reference", "DELETE FROM close_reference")
+    damage(engine, "read_index_source", "DELETE FROM read_index_source WHERE source_kind='close'")
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
-        connection.execute(
-            "INSERT INTO period_close VALUES(?,?,?)", (MONTH, canonical(manifest), digest(manifest))
-        )
         sync_close(connection, MONTH)
         refs = connection.execute(
             "SELECT * FROM close_reference WHERE path=?", (CLOSE_REPORT_FACTS,)

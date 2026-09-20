@@ -157,8 +157,8 @@ def test_closed_month_keeps_frozen_proof_when_deductions_are_later_confirmed(tmp
     instance.save(bounded(**dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)), "january", revision=1)
     with pytest.raises(KernelError) as error:
         instance.publish("january")
-    assert error.value.code == "closed_correction_required"
-    instance.publish("january", correction_period="2026-02")
+    assert error.value.code == "posting_period_required"
+    instance.publish("january", posting_period="2026-02")
     from ai_accounting.kernel.periods import Periods
 
     assert Periods(instance.engine).closed_report("2026-01") == frozen

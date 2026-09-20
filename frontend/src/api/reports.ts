@@ -62,7 +62,7 @@ export interface ReportCheck {
 
 export interface QuarterlyReport {
   period_preparations: PeriodPreparation[];
-  schema_version: 1;
+  schema_version: 2;
   status: ReportStatus;
   status_label: string;
   headline: string;
@@ -134,7 +134,7 @@ export async function fetchQuarterlyReport(
     `/api/dashboard/quarterly-report?${query}`,
     { signal },
   );
-  if (report.schema_version !== 1) {
+  if (report.schema_version !== 2) {
     throw new DashboardApiError(
       502,
       "REPORT_SCHEMA_MISMATCH",

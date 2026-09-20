@@ -4,6 +4,7 @@ import pytest
 from test_reports import book as book  # noqa: F401
 from test_reports import close_quarter, scenario
 
+from ai_accounting.kernel.close_contract import CLOSE_FORMAT, CLOSE_FORMAT_VERSION
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close
@@ -55,17 +56,52 @@ def save_profile(book, subject, period, start):
 
 
 def insert_closes(engine, rows):
-    """Synthetic immutable manifests isolate source timing from close writes."""
+    """Complete contract envelopes isolate reference cutoffs and deliberate gaps."""
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
+        previous = connection.execute(
+            "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
+        ).fetchone()
+        proof = connection.execute("SELECT digest FROM evidence LIMIT 1").fetchone()[0].hex()
         for period, facts in rows:
-            manifest = {"readiness": {"financial_reports": {"facts": facts}}}
+            manifest = {
+                "format": CLOSE_FORMAT,
+                "format_version": CLOSE_FORMAT_VERSION,
+                "period": period,
+                "company_id": engine.store.company_id,
+                "database_id": engine.store.database_id,
+                "previous_close_period": str(YearMonth.from_ordinal(previous[0]))
+                if previous
+                else None,
+                "previous_close_digest": previous[1].hex() if previous else None,
+                "publication_sequence": 0,
+                "adopted_results": [],
+                "vouchers": [],
+                "opening_calculation_id": None,
+                "asset_batch_adoptions": [],
+                "asset_card_adoptions": [],
+                "inventories": {},
+                "owner_confirmation": proof,
+                "readiness": {"financial_reports": {"facts": facts, "calculations": []}},
+                "management_snapshot": {},
+                "material_coverage": {"fact_ids": []},
+                "trial_balance": [],
+                "report_classification": {},
+                "read_version": {
+                    "accounting": 0,
+                    "material": 0,
+                    "management": 0,
+                    "read_repair_revision": 0,
+                },
+                "approval": None,
+            }
             month = YearMonth(period).ordinal
             connection.execute(
                 "INSERT INTO period_close VALUES(?,?,?)",
                 (month, canonical(manifest), digest(manifest)),
             )
             sync_close(connection, month)
+            previous = (month, digest(manifest))
         connection.commit()
 
 

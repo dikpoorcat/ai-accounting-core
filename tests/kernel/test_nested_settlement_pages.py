@@ -54,14 +54,14 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
             },
         )
     publish(*[f"paid-{index}" for index in range(7)])
-    summary_modes = []
-    original = BusinessQueries.settlements
+    summary_calls = []
+    original = BusinessQueries.settlement_summary
 
     def watched(self, *args, **kwargs):
-        summary_modes.append(kwargs.get("summary", False))
+        summary_calls.append(True)
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(BusinessQueries, "settlements", watched)
+    monkeypatch.setattr(BusinessQueries, "settlement_summary", watched)
     dashboard = Dashboard(engine)
     response = dashboard.employees("2026-01", limit=2)
     source = response["data"]["employees"]["items"][0]["payroll_sources"][0]
@@ -86,7 +86,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     assert first_page["page"]["total_count"] == 6
     assert first_page["page"]["returned_count"] == len(first_page["items"]) == 2
     assert {item["posting_period"] for item in first_page["items"]} == {"2026-01"}
-    assert summary_modes and all(summary_modes)
+    assert summary_calls
     seen = {item["id"] for item in first_page["items"]}
     cursor = first_page["page"]["next_cursor"]
     assert cursor

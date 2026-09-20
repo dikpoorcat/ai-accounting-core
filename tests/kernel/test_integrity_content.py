@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import ClassVar
 
 import pytest
@@ -18,9 +19,9 @@ from ai_accounting.kernel.integrity import (
     verify_sources,
 )
 from ai_accounting.kernel.projections import compare_projections, repair_projections
-from ai_accounting.kernel.read_indexes import repair_read_indexes, sync_close
+from ai_accounting.kernel.read_indexes import repair_read_indexes
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import PositiveFen, YearMonth, canonical, digest
+from ai_accounting.kernel.types import PositiveFen, canonical, digest
 
 
 def damage(engine, table, sql, parameters=(), *, foreign_keys=True):
@@ -47,6 +48,37 @@ def verify(engine, **options):
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         return verify_integrity(engine, connection, **options)
+
+
+def test_full_verification_reuses_only_its_own_verified_decoded_sources(engine, monkeypatch):
+    save(engine)
+    publish(engine)
+    save(engine, amount=150, revision=1, request="replace")
+    publish(engine, request="replace-publish")
+    decoded = []
+    original = json.loads
+
+    def counted(value, *args, **kwargs):
+        result = original(value, *args, **kwargs)
+        if isinstance(result, dict) and {"lines", "values", "balances"} <= result.keys():
+            decoded.append(result)
+        return result
+
+    monkeypatch.setattr(json, "loads", counted)
+    result = verify(engine)
+    assert result["status"] == "verified"
+    assert len(decoded) == result["counts"]["calculations"] == 2
+    decoded.clear()
+    # A second request rechecks the immutable inputs; nothing survives the
+    # snapshot, and projection comparison still detects altered derived rows.
+    assert verify(engine)["status"] == "verified"
+    assert len(decoded) == 2
+    with engine.store.connection() as connection:
+        connection.execute("UPDATE monthly_account SET debit=debit+1 WHERE debit>0")
+        connection.commit()
+    with pytest.raises(KernelError) as failure:
+        verify(engine)
+    assert failure.value.details["component"] in {"projections", "period_balance"}
 
 
 @pytest.mark.parametrize("kind", ["total", "account", "cashflow", "order", "outcome", "fact"])
@@ -97,7 +129,7 @@ def test_review_reuses_old_voucher_then_closed_correction_reverses_it(engine):
     publish(engine, request="publish-review")
     assert verify(engine)["counts"]["vouchers"] == 1
     save(engine, amount=150, revision=2, request="change")
-    publish(engine, request="correction", correction_period="2026-02")
+    publish(engine, request="correction", posting_period="2026-02")
     assert verify(engine)["counts"]["vouchers"] == 3
     damage(
         engine,
@@ -215,7 +247,7 @@ def opening_engine(tmp_path):
 
 
 def frozen_opening(engine, *, selected=True, amount=100):
-    saved = engine.save_fact(
+    engine.save_fact(
         "test_opening",
         "opening",
         {"period": "2026-01", "amount": 100},
@@ -223,30 +255,23 @@ def frozen_opening(engine, *, selected=True, amount=100):
         expected_revision=0,
         request_id="opening",
     )
-    _, result = publish(engine, ["opening"])
-    cid = result["results"][0]["calculation_id"]
-    period = "2026-01" if selected else "2026-02"
-    manifest = {
-        "period": period,
-        "company_id": engine.store.company_id,
-        "database_id": engine.store.database_id,
-        "previous_close_digest": None,
-        "vouchers": [],
-        "calculations": [cid] if selected else [],
-        "facts": [saved["fact_id"]] if selected else [],
-        "trial_balance": [
+    publish(engine, ["opening"])
+    manifest = close(engine)
+    if not selected:
+        manifest["adopted_results"] = []
+        manifest["opening_calculation_id"] = None
+    if amount != 100:
+        manifest["trial_balance"] = [
             {"account": "1002", "debit": amount, "credit": 0},
             {"account": "4001", "debit": 0, "credit": amount},
-        ],
-    }
-    with engine.store.connection() as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        month = YearMonth(period).ordinal
-        connection.execute(
-            "INSERT INTO period_close VALUES(?,?,?)", (month, canonical(manifest), digest(manifest))
+        ]
+    if not selected or amount != 100:
+        damage(
+            engine,
+            "period_close",
+            "UPDATE period_close SET manifest=?,digest=?",
+            (canonical(manifest), digest(manifest)),
         )
-        sync_close(connection, month)
-        connection.commit()
 
 
 def test_independent_opening_and_balances_do_not_create_current_activity(tmp_path):
@@ -269,14 +294,12 @@ def test_explicit_opening_with_wrong_frozen_amount_is_damage_not_limited(tmp_pat
     assert failure.value.details["reason"] == "trial_balance_source_mismatch"
 
 
-def test_old_missing_opening_adoption_reports_limited_without_guessing(tmp_path):
+def test_missing_opening_adoption_is_rejected_without_guessing(tmp_path):
     engine = opening_engine(tmp_path)
     frozen_opening(engine, selected=False)
-    report = verify(engine)
-    assert report["status"] == "limited"
-    assert report["limitations"] == [
-        {"code": "historical_opening_adoption_unestablished", "period": "2026-02"}
-    ]
+    with pytest.raises(KernelError) as failure:
+        verify(engine)
+    assert failure.value.details["reason"] == "direct_adoption_set_mismatch"
 
 
 def test_missing_empty_read_is_detected_from_saved_calculation_identity(engine):

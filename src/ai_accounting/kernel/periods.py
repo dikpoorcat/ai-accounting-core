@@ -212,9 +212,7 @@ class Periods:
             failure = checked["order_failure"]
             raise KernelError(failure["code"], failure["message"], **failure["details"])
         if checked["issues"]:
-            raise KernelError(
-                "period_not_ready", "关账条件尚未满足", fact_issues=checked["issues"]
-            )
+            raise KernelError("period_not_ready", "关账条件尚未满足", fact_issues=checked["issues"])
         previous_close = checked["previous_close"]
         inventories = checked["materials"]["inventories"]
         material_coverage = checked["materials"]["coverage"]
@@ -222,60 +220,71 @@ class Periods:
         vouchers = [
             dict(r)
             for r in connection.execute(
-                "SELECT v.id,v.voucher_id,v.calculation_id,v.total,s.number FROM voucher_current c "
+                "SELECT v.id,v.voucher_id,v.calculation_id,v.total,s.number,v.reverses_id,"
+                "r.subject_id FROM voucher_current c "
                 "JOIN voucher_version v ON v.id=c.version_id JOIN voucher s ON s.id=v.voucher_id "
+                "JOIN calculation r ON r.id=v.calculation_id "
                 "WHERE v.period=? ORDER BY s.number",
                 (month,),
             )
         ]
-        lineage = """WITH RECURSIVE roots(id) AS (
-          SELECT c.id FROM calculation c JOIN calculation_current a ON a.calculation_id=c.id
- WHERE c.period=?
-          UNION SELECT v.calculation_id FROM voucher_version v JOIN voucher_current a ON
- a.version_id=v.id WHERE v.period=?
-          UNION SELECT c.id FROM calculation c JOIN calculation_current a ON a.calculation_id=c.id
- JOIN calculation_publication p ON p.calculation_id=c.id WHERE p.posting_period=?
- AND c.kind IN('asset_activation_batch','asset_consumption_month')
-        ), lineage(id) AS (SELECT id FROM roots UNION
-          SELECT d.upstream_id FROM dependency_calculation d JOIN lineage l ON
- l.id=d.calculation_id)
-        """
-        calculations = {
-            r[0]
-            for r in connection.execute(
-                lineage + "SELECT id FROM lineage", (month, month, month)
-            )
-        }
-        facts = {
-            r[0]
-            for r in connection.execute(
-                lineage + "SELECT DISTINCT d.fact_id FROM dependency_fact d "
-                "JOIN lineage l ON l.id=d.calculation_id",
-                (month, month, month),
-            )
-        }
         from .asset_batches import frozen_members
+        from .close_contract import CLOSE_FORMAT, CLOSE_FORMAT_VERSION, require_close_contract
+        from .read_state import repair_revision
 
+        adopted_results = []
         asset_adoptions = []
         for row in connection.execute(
-            "SELECT DISTINCT c.id,c.outcome FROM calculation c WHERE "
-            "c.kind IN('asset_activation_batch','asset_consumption_month') AND ("
-            "EXISTS(SELECT 1 FROM calculation_current a JOIN calculation_publication p "
-            "ON p.calculation_id=a.calculation_id WHERE a.calculation_id=c.id "
-            "AND p.posting_period=?) "
-            "OR EXISTS(SELECT 1 FROM voucher_current a JOIN voucher_version v ON v.id=a.version_id "
-            "WHERE v.calculation_id=c.id AND v.period=?)) ORDER BY c.id",
-            (month, month),
+            "SELECT c.*,p.id publication_id,p.posting_period FROM calculation_current h "
+            "JOIN calculation c ON c.id=h.calculation_id "
+            "JOIN calculation_publication p ON p.calculation_id=c.id "
+            "WHERE p.posting_period=? ORDER BY c.subject_id",
+            (month,),
         ):
-            frozen_members(connection, row["id"])
-            asset_adoptions.append(
+            outcome = json.loads(row["outcome"])
+            role = (
+                "asset_batch_owner"
+                if row["kind"] in {"asset_activation_batch", "asset_consumption_month"}
+                else "opening_basis"
+                if outcome["opening"]
+                else "journal_basis"
+                if outcome["lines"]
+                else "state_only"
+            )
+            adopted_results.append(
                 {
-                    "owner_calculation_id": row["id"],
-                    "membership_digest": json.loads(row["outcome"])["values"][
-                        "membership_digest"
-                    ],
+                    "publication_id": row["publication_id"],
+                    "calculation_id": row["id"],
+                    "result_digest": row["digest"].hex(),
+                    "subject_id": row["subject_id"],
+                    "fact_id": row["fact_id"],
+                    "source_period": str(YearMonth.from_ordinal(row["period"])),
+                    "posting_period": period,
+                    "role": role,
                 }
             )
+            if role == "asset_batch_owner":
+                frozen_members(connection, row["id"])
+                asset_adoptions.append(
+                    {
+                        "owner_calculation_id": row["id"],
+                        "membership_digest": outcome["values"]["membership_digest"],
+                    }
+                )
+        by_subject = {item["subject_id"]: item for item in adopted_results}
+        for voucher in vouchers:
+            adopted = by_subject.get(voucher.pop("subject_id"))
+            if adopted is None:
+                raise KernelError(
+                    "content_integrity_failed",
+                    "凭证缺少本期直接采用的核算依据",
+                    component="close",
+                    reason="voucher_adoption_missing",
+                )
+            voucher["adopted_calculation_id"] = adopted["calculation_id"]
+            voucher["result_digest"] = adopted["result_digest"]
+        calculations = {item["calculation_id"] for item in adopted_results}
+        calculations.update(row["calculation_id"] for row in vouchers)
         from .asset_card_adoption import build_asset_card_adoptions
         from .query_reads import QueryReads
 
@@ -283,7 +292,8 @@ class Periods:
             QueryReads(self.engine, connection),
             close_period=month,
             calculation_ids=calculations,
-            voucher_calculation_ids={row["calculation_id"] for row in vouchers},
+            voucher_calculation_ids={row["adopted_calculation_id"] for row in vouchers}
+            | {row["calculation_id"] for row in vouchers},
         )
         trial_balance = [
             dict(r)
@@ -295,16 +305,36 @@ class Periods:
                 (month, month),
             )
         ]
-        return {
+        manifest = {
+            "format": CLOSE_FORMAT,
+            "format_version": CLOSE_FORMAT_VERSION,
             "period": period,
             "company_id": self.store.company_id,
+            "previous_close_period": str(YearMonth.from_ordinal(previous_close["period"]))
+            if previous_close
+            else None,
             "previous_close_digest": previous_close["digest"].hex() if previous_close else None,
             "database_id": self.store.database_id,
             "vouchers": vouchers,
-            "calculations": sorted(calculations),
+            "adopted_results": adopted_results,
+            "publication_sequence": connection.execute(
+                "SELECT coalesce(max(sequence),0) FROM calculation_publication"
+            ).fetchone()[0],
+            "opening_calculation_id": next(
+                (
+                    item["calculation_id"]
+                    for item in adopted_results
+                    if item["role"] == "opening_basis"
+                ),
+                None,
+            ),
+            "read_version": {
+                **self.store.epochs(connection),
+                "read_repair_revision": repair_revision(connection),
+            },
+            "approval": None,
             "asset_batch_adoptions": asset_adoptions,
             "asset_card_adoptions": asset_card_adoptions,
-            "facts": sorted(facts),
             "inventories": {key: row["id"] for key, row in sorted(inventories.items())},
             "owner_confirmation": owner_confirmation,
             "readiness": readiness,
@@ -323,6 +353,8 @@ class Periods:
                 "5": "income_and_expenses",
             },
         }
+
+        return require_close_contract(manifest)
 
     def check_readiness(self, connection, period: str, previous_close=_CURRENT_CLOSE):
         """Collect the exact close checks without requiring owner authorization."""
@@ -485,9 +517,7 @@ class Periods:
                 "pending_subject_id": pending[0] if pending else None,
             },
             "close_requirements": {
-                "status": "needs_information"
-                if readiness_issues or snapshot_issues
-                else "ready",
+                "status": "needs_information" if readiness_issues or snapshot_issues else "ready",
                 "issues": [*readiness_issues, *snapshot_issues],
                 "readiness": readiness,
             },
@@ -537,7 +567,7 @@ class Periods:
             ):
                 raise KernelError("preview_expired", "关账预览已变化")
             if self.authorize_close:
-                manifest["password_confirmation"] = self.authorize_close(
+                manifest["approval"] = self.authorize_close(
                     connection, period, preview_digest, epochs
                 )
             connection.execute(
@@ -585,11 +615,23 @@ class Periods:
     def closed_report(self, period: str):
         with self.store.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT manifest FROM period_close WHERE period=?", (YearMonth(period).ordinal,)
+                "SELECT manifest,digest FROM period_close WHERE period=?",
+                (YearMonth(period).ordinal,),
             ).fetchone()
             if not row:
-                raise KernelError("not_closed", "月份尚未关账")
-            return json.loads(row[0])
+                raise KernelError("frozen_snapshot_unavailable", "该月份没有精确的关账冻结记录")
+            from .close_contract import require_close_contract
+
+            manifest = require_close_contract(json.loads(row[0]))
+            if digest(manifest) != row[1]:
+                raise KernelError(
+                    "content_integrity_failed",
+                    "关账冻结内容摘要不匹配",
+                    component="close",
+                    record_id=period,
+                    reason="manifest_digest_mismatch",
+                )
+            return manifest
 
     def _range_snapshot(self, connection, from_period, through_period, owner_confirmation):
         first, last = YearMonth(from_period), YearMonth(through_period)
@@ -724,7 +766,7 @@ class Periods:
             for prepared in preview["manifests"]:
                 manifest = {**prepared, "previous_close_digest": previous_digest}
                 if authorization is not None:
-                    manifest["password_confirmation"] = authorization
+                    manifest["approval"] = authorization
                 manifest["close_range"] = {
                     "from_period": first,
                     "through_period": last,

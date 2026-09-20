@@ -417,8 +417,10 @@ class Display:
             )
             if row["period"] == month:
                 close_digest = row["digest"].hex()
-            calculations.update(manifest.get("calculations", ()))
-            fact_ids.update(manifest.get("facts", ()))
+            from .close_contract import direct_calculation_ids
+
+            calculations.update(direct_calculation_ids(manifest))
+            fact_ids.update(item["fact_id"] for item in manifest["adopted_results"])
             vouchers.update(item["id"] for item in manifest.get("vouchers", ()))
         calculations.update(
             row[0]
@@ -448,6 +450,15 @@ class Display:
             )
         ]
         calculations.update(row["calculation_id"] for row in voucher_rows)
+        calculations = {
+            row[0]
+            for row in connection.execute(
+                "WITH RECURSIVE lineage(id) AS (SELECT value FROM json_each(?) UNION "
+                "SELECT d.upstream_id FROM dependency_calculation d JOIN lineage l "
+                "ON l.id=d.calculation_id) SELECT id FROM lineage",
+                (canonical(sorted(calculations)),),
+            )
+        }
         asset_members = []
         if "asset_consumption_month" in registry.models:
             from .asset_batches import frozen_members

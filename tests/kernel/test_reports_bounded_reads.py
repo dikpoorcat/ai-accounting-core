@@ -352,7 +352,7 @@ def test_unproven_opening_contract_does_not_fall_back_to_current_zero(opening_bo
                 "state_results": [],
                 "unestablished_state_selections": [
                     {
-                        "reason": "manifest_state_adoption_not_proven",
+                        "reason": "state_selection_unavailable",
                         "candidates": [candidate],
                     }
                 ],

@@ -414,8 +414,8 @@ def test_closed_capitalized_labor_changes_only_through_open_compensation(tmp_pat
     )
     with pytest.raises(KernelError) as error:
         company.publish("labor-cost")
-    assert error.value.code == "closed_correction_required"
-    company.publish("labor-cost", correction_period="2026-02")
+    assert error.value.code == "posting_period_required"
+    company.publish("labor-cost", posting_period="2026-02")
     assert company.engine.ledger("2026-01") == ledger
     assert Periods(company.engine).closed_report("2026-01") == frozen
     assert len(company.engine.ledger("2026-02")) == 2

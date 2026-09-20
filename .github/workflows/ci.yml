@@ -52,7 +52,7 @@ jobs:
           npm test
           npm run build:release
       - name: Lint active code
-        run: uv run ruff check src/ai_accounting/kernel src/ai_accounting/payroll tests/kernel tests/pure scripts/export_kernel_schema_contracts.py scripts/package_local_kernel.py scripts/verify_local_package.py scripts/benchmark-local-kernel.py
+        run: uv run ruff check src/ai_accounting/kernel src/ai_accounting/payroll tests/kernel tests/pure scripts/export_kernel_schema_contracts.py scripts/package_local_kernel.py scripts/verify_local_package.py scripts/benchmark-local-kernel.py scripts/benchmark_stage3_history.py
       - name: Run default tests without database services or special collection flags
         run: uv run pytest
       - name: Build and verify the independent runtime

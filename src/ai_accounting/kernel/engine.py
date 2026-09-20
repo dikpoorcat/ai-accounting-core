@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from pydantic import ValidationError
 
@@ -42,6 +42,8 @@ class Prepared:
     accounting: dict | None
     impact: str
     compatibility_issue: dict | None = None
+    publication: dict | None = None
+    explicit: bool = True
 
 
 class Engine:
@@ -429,15 +431,21 @@ class Engine:
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
             previous = {
-                sid: row[0] if (row := connection.execute(
-                    "SELECT calculation_id FROM calculation_current WHERE subject_id=?", (sid,)
-                ).fetchone()) else None
+                sid: row[0]
+                if (
+                    row := connection.execute(
+                        "SELECT calculation_id FROM calculation_current WHERE subject_id=?", (sid,)
+                    ).fetchone()
+                )
+                else None
                 for sid in facts
             }
             accounting = AccountingBook(self.store.registry)
             accounting.facts.update((v.id, v) for v in facts.values())
             accounting.facts.update(
-                (v.id, v) for rows in selections.values() for v in rows
+                (v.id, v)
+                for rows in selections.values()
+                for v in rows
                 if isinstance(v, FactVersion)
             )
             comparison_ids = {cid for cid in previous.values() if cid is not None}
@@ -445,22 +453,30 @@ class Engine:
                 if version.fact.kind in self.store.registry.accounting_consumers:
                     selector = self.store.registry.accounting_consumers[version.fact.kind]
                     required = (
-                        selector(version) if selector is not None
+                        selector(version)
+                        if selector is not None
                         else version.fact.reads_for(version.subject_id)
                     )
                     comparison_ids.update(
-                        calc.id for read in required
-                        if read.source == "calculation" for calc in selections[read]
+                        calc.id
+                        for read in required
+                        if read.source == "calculation"
+                        for calc in selections[read]
                     )
             accounting.load(self.store, connection, comparison_ids)
+            from .publication import heads
+
+            publications = heads(connection, facts)
             connection.commit()
-        return epochs, facts, selections, pending, closed, previous, accounting
+        return epochs, facts, selections, pending, closed, previous, accounting, publications
 
     def _evaluate(self, version, context):
         return asdict(self.store.registry.evaluators[version.fact.kind](version, context))
 
-    def _prepare(self, subjects, correction_period=None):
-        epochs, facts, selections, pending, closed, previous, accounting = self._snapshot(subjects)
+    def _prepare(self, subjects, posting_period=None):
+        (epochs, facts, selections, pending, closed, previous, accounting, publications) = (
+            self._snapshot(subjects)
+        )
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
         dependencies = {sid: set() for sid in facts}
@@ -519,10 +535,18 @@ class Engine:
             context = Context(selected, accounting=accounting.signature)
             if dependencies[sid] & blocked:
                 error = compatibility(previous[sid], "upstream_comparison_unavailable")
-                prepared.append(Prepared(
-                    version, None, None, context, previous[sid], None,
-                    "compatibility_required", error.response(),
-                ))
+                prepared.append(
+                    Prepared(
+                        version,
+                        None,
+                        None,
+                        context,
+                        previous[sid],
+                        None,
+                        "compatibility_required",
+                        error.response(),
+                    )
+                )
                 blocked.add(sid)
                 continue
             try:
@@ -530,10 +554,18 @@ class Engine:
             except KernelError as exc:
                 if exc.code != "accounting_compatibility_required":
                     raise
-                prepared.append(Prepared(
-                    version, None, None, context, previous[sid], None,
-                    "compatibility_required", exc.response(),
-                ))
+                prepared.append(
+                    Prepared(
+                        version,
+                        None,
+                        None,
+                        context,
+                        previous[sid],
+                        None,
+                        "compatibility_required",
+                        exc.response(),
+                    )
+                )
                 blocked.add(sid)
                 continue
             trace = context.trace()
@@ -560,7 +592,9 @@ class Engine:
             try:
                 old_signature = accounting.signature(previous[sid]) if previous[sid] else None
                 accounting.add(
-                    overlays[sid], version, outcome,
+                    overlays[sid],
+                    version,
+                    outcome,
                     (
                         value.id
                         for read, values in trace.selections
@@ -576,20 +610,66 @@ class Engine:
                 )
                 signature = accounting.signature(calc_id)
                 impact = (
-                    "initial" if old_signature is None else
-                    "review_no_impact" if old_signature == signature else "accounting_changed"
+                    "initial"
+                    if old_signature is None
+                    else "review_no_impact"
+                    if old_signature == signature
+                    else "accounting_changed"
                 )
             except KernelError as exc:
                 if exc.code != "accounting_compatibility_required":
                     raise
                 impact, issue = "compatibility_required", exc.response()
                 blocked.add(sid)
-            prepared.append(Prepared(
-                version, calc_id, outcome, context, previous[sid], signature, impact, issue,
-            ))
-        posting = YearMonth(correction_period) if correction_period is not None else None
-        if posting and posting.ordinal <= max(closed, default=-1):
-            raise KernelError("closed_period", "冲正必须发布到开放期间")
+            prepared.append(
+                Prepared(
+                    version,
+                    calc_id,
+                    outcome,
+                    context,
+                    previous[sid],
+                    signature,
+                    impact,
+                    issue,
+                )
+            )
+        from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
+        from .publication import route
+
+        requested = set(subjects)
+        has_changes = any(
+            item.impact not in {"review_no_impact", "compatibility_required"}
+            and item.version.fact.kind not in MEMBER_KINDS
+            for item in prepared
+        )
+        decisions = {}
+        for item in prepared:
+            if item.version.fact.kind in MEMBER_KINDS or item.compatibility_issue:
+                continue
+            sid = item.version.subject_id
+            decisions[sid] = route(
+                item.version.fact.period.ordinal,
+                publications.get(sid),
+                max(closed, default=-1),
+                posting_period,
+                no_impact=item.impact == "review_no_impact",
+                explicit=sid in requested
+                and (item.impact != "review_no_impact" or not has_changes),
+            )
+        for item in prepared:
+            if item.version.fact.kind not in OWNER_KINDS or item.outcome is None:
+                continue
+            for member in item.outcome["values"]["members"]:
+                decisions[member["member_subject_id"]] = decisions[item.version.subject_id]
+        prepared = [
+            replace(
+                item,
+                publication=decisions.get(item.version.subject_id),
+                explicit=item.version.subject_id in requested
+                and (item.impact != "review_no_impact" or not has_changes),
+            )
+            for item in prepared
+        ]
         checked = checked_lanes(
             self.store.registry,
             ((item.version, item.context.trace()) for item in prepared),
@@ -597,23 +677,41 @@ class Engine:
         public = {
             "subjects": sorted(facts),
             "epochs": epochs,
-            "correction_period": correction_period,
+            "posting_period": posting_period,
             "results": [
                 {
                     "subject_id": p.version.subject_id,
                     "calculation_id": p.calculation_id,
                     "kind": p.version.fact.kind,
                     "period": str(p.version.fact.period),
+                    **(
+                        {
+                            "source_period": str(p.version.fact.period),
+                            "posting_period": str(
+                                YearMonth.from_ordinal(p.publication["posting_period"])
+                            ),
+                            "mode": p.publication["mode"],
+                        }
+                        if p.publication
+                        else {}
+                    ),
                     "fact_id": p.version.id,
                     "previous_calculation_id": p.previous_calculation_id,
                     "accounting": p.accounting,
                     "impact": p.impact,
-                    **({
-                        "result_digest": digest(p.outcome).hex(),
-                        **p.outcome,
-                    } if p.outcome is not None else {}),
-                    **({"compatibility_issue": p.compatibility_issue}
-                       if p.compatibility_issue else {}),
+                    **(
+                        {
+                            "result_digest": digest(p.outcome).hex(),
+                            **p.outcome,
+                        }
+                        if p.outcome is not None
+                        else {}
+                    ),
+                    **(
+                        {"compatibility_issue": p.compatibility_issue}
+                        if p.compatibility_issue
+                        else {}
+                    ),
                 }
                 for p in prepared
             ],
@@ -626,8 +724,8 @@ class Engine:
         ).hex()
         return public, prepared
 
-    def preview(self, subjects: list[str], *, correction_period: str | None = None):
-        return {"status": "preview", **self._prepare(subjects, correction_period)[0]}
+    def preview(self, subjects: list[str], *, posting_period: str | None = None):
+        return {"status": "preview", **self._prepare(subjects, posting_period)[0]}
 
     def confirm(
         self,
@@ -636,15 +734,13 @@ class Engine:
         preview_digest: str,
         epochs: dict,
         request_id: str,
-        correction_period: str | None = None,
+        posting_period: str | None = None,
     ):
-        request_hash = digest(
-            ["publish", sorted(subjects), preview_digest, epochs, correction_period]
-        )
+        request_hash = digest(["publish", sorted(subjects), preview_digest, epochs, posting_period])
         cached = self._cached(request_id, request_hash)
         if cached is not None:
             return cached
-        public, prepared = self._prepare(subjects, correction_period)
+        public, prepared = self._prepare(subjects, posting_period)
         if public["digest"] != preview_digest or public["epochs"]["accounting"] != epochs.get(
             "accounting"
         ):
@@ -657,17 +753,22 @@ class Engine:
                 if item.compatibility_issue is not None:
                     raise compatibility(
                         item.compatibility_issue.get("calculation_id")
-                        or item.previous_calculation_id or item.calculation_id,
+                        or item.previous_calculation_id
+                        or item.calculation_id,
                         item.compatibility_issue.get("reason", "comparison_unavailable"),
                     )
             from .integrity import verify_prepared_sources, verify_publication
             from .projections import prepare_projection_check, verify_projection_change
 
             verify_prepared_sources(self, connection, prepared)
+            self._check_publication_projections(connection, prepared)
             projection_check = prepare_projection_check(
-                connection, prepared, correction_period=correction_period
+                connection, prepared, posting_period=posting_period
             )
-            results = [self._publish(connection, item, correction_period) for item in prepared]
+            results = [self._publish(connection, item, posting_period) for item in prepared]
+            self._sync_publication_projections(
+                connection, [item.version.subject_id for item in prepared]
+            )
             verify_publication(self, connection, [item.calculation_id for item in prepared])
             verify_projection_change(connection, projection_check)
             return {"status": "published", "results": results, "digest": preview_digest}
@@ -735,7 +836,9 @@ class Engine:
             [(cid, upstream) for upstream in sorted(calc_ids) if upstream != cid],
         )
 
-    def _publish(self, connection, prepared, correction_period):
+    def _publish(self, connection, prepared, posting_period):
+        from .publication import append, head, route
+
         version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
         old = connection.execute(
             "SELECT c.* FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
@@ -745,14 +848,22 @@ class Engine:
         old_outcome = json.loads(old["outcome"]) if old else None
         if (old["id"] if old else None) != prepared.previous_calculation_id:
             raise KernelError("preview_expired", "当前发布版本与已审阅预览不一致")
-        old_publication = (
-            connection.execute(
-                "SELECT * FROM calculation_publication WHERE calculation_id=?", (old["id"],)
-            ).fetchone()
-            if old
-            else None
-        )
+        previous = head(connection, version.subject_id)
+        old_publication = previous if old else None
         no_impact = prepared.impact == "review_no_impact"
+        closed = connection.execute("SELECT coalesce(max(period),-1) FROM period_close").fetchone()[
+            0
+        ]
+        decision = route(
+            version.fact.period.ordinal,
+            previous,
+            closed,
+            posting_period,
+            no_impact=no_impact,
+            explicit=prepared.explicit,
+        )
+        if decision != prepared.publication:
+            raise KernelError("preview_expired", "实际入账期间或发布关系已变化")
         if outcome.get("opening") and old is None:
             if (
                 connection.execute("SELECT 1 FROM voucher LIMIT 1").fetchone()
@@ -777,21 +888,8 @@ class Engine:
                     "closed_opening_immutable",
                     "已关账期初状态保持冻结，差异须在开放期通过类型化更正处理",
                 )
-        posting = version.fact.period.ordinal
+        posting = decision["posting_period"]
         voucher_key = old_publication["voucher_id"] if old_publication else None
-        if (
-            old_publication
-            and connection.execute(
-                "SELECT 1 FROM period_close WHERE period>=?", (posting,)
-            ).fetchone()
-        ):
-            posting = old_publication["posting_period"]
-        if not no_impact and not outcome["lines"] and connection.execute(
-            "SELECT 1 FROM period_close WHERE period>=?", (posting,)
-        ).fetchone():
-            if correction_period is None:
-                raise KernelError("closed_correction_required", "已关账结果须指定开放期冲正")
-            posting = YearMonth(correction_period).ordinal
         is_new = not connection.execute(
             "SELECT 1 FROM calculation_seal WHERE calculation_id=?", (cid,)
         ).fetchone()
@@ -808,6 +906,37 @@ class Engine:
                 ).fetchone()
                 voucher_number = number[0] if number else None
         elif old is None or old["id"] != cid:
+            if (
+                decision["mode"] == "open_replace"
+                and old_publication
+                and posting != old_publication["posting_period"]
+            ):
+                # A legitimate source-month correction moves the whole open
+                # tranche, including the already-created baseline reversal.
+                reversals = connection.execute(
+                    "SELECT v.* FROM voucher_current h JOIN voucher_version v ON v.id=h.version_id "
+                    "JOIN calculation c ON c.id=v.calculation_id WHERE c.subject_id=? "
+                    "AND v.period=? AND v.reverses_id IS NOT NULL",
+                    (version.subject_id, old_publication["posting_period"]),
+                ).fetchall()
+                for reversal in reversals:
+                    lines = [
+                        dict(row)
+                        for row in connection.execute(
+                            "SELECT account,debit,credit,cashflow FROM voucher_line "
+                            "WHERE version_id=? ORDER BY line_no",
+                            (reversal["id"],),
+                        )
+                    ]
+                    self._journal_projection(connection, reversal["period"], lines, -1)
+                    self._journal(
+                        connection,
+                        reversal["voucher_id"],
+                        cid,
+                        posting,
+                        lines,
+                        reverses_id=reversal["reverses_id"],
+                    )
             header = (
                 connection.execute(
                     "SELECT v.*,s.number FROM voucher_version v JOIN "
@@ -824,11 +953,6 @@ class Engine:
                     "SELECT 1 FROM period_close WHERE period>=?", (header["period"],)
                 ).fetchone()
                 if is_closed:
-                    if correction_period is None:
-                        raise KernelError(
-                            "closed_correction_required", "已关账结果须指定开放期冲正"
-                        )
-                    posting = YearMonth(correction_period).ordinal
                     voucher_key = cid + ":replacement" if outcome["lines"] else None
                     original = [
                         dict(r)
@@ -874,19 +998,11 @@ class Engine:
                             (header["voucher_id"],),
                         )
             elif outcome["lines"]:
-                if connection.execute(
-                    "SELECT 1 FROM period_close WHERE period>=?", (posting,)
-                ).fetchone():
-                    if correction_period is None:
-                        raise KernelError(
-                            "closed_correction_required", "已关账结果须指定开放期冲正"
-                        )
-                    posting, voucher_key = (
-                        YearMonth(correction_period).ordinal,
-                        cid + ":replacement",
-                    )
+                if decision["mode"] == "closed_correction":
+                    voucher_key = cid + ":replacement"
                 voucher_key = voucher_key or (
-                    cid + ":replacement" if old_publication
+                    cid + ":replacement"
+                    if old_publication
                     and old_publication["posting_period"] != version.fact.period.ordinal
                     else "v:" + version.subject_id
                 )
@@ -905,11 +1021,55 @@ class Engine:
         if is_new:
             if voucher_key:
                 self._reserve_voucher(connection, voucher_key)
-            connection.execute(
-                "INSERT INTO calculation_publication VALUES(?,?,?)", (cid, posting, voucher_key)
-            )
+            append(connection, version.subject_id, cid, decision, voucher_key)
             connection.execute("INSERT INTO calculation_seal VALUES(?)", (cid,))
-        return self._finish_prepared(connection, prepared, voucher_number)
+        result = self._finish_prepared(connection, prepared, voucher_number)
+        result.update(
+            source_period=str(version.fact.period),
+            posting_period=str(YearMonth.from_ordinal(posting)),
+            mode=decision["mode"],
+        )
+        return result
+
+    def _sync_publication_projections(self, connection, subjects):
+        from .period_balances import sync_period_balances
+        from .settlement_projection import sync_settlement_publications
+
+        periods = sync_period_balances(connection, subjects)
+        publications = [
+            r[0]
+            for r in connection.execute(
+                "SELECT id FROM calculation_publication WHERE subject_id IN "
+                "(SELECT value FROM json_each(?))",
+                (canonical(sorted(subjects)),),
+            )
+        ]
+        sync_settlement_publications(self, connection, publications, periods)
+
+    def _check_publication_projections(self, connection, prepared=(), *, subjects=()):
+        from .period_balances import verify_selected_balances
+        from .settlement_projection import verify_settlement_periods
+
+        subjects = {*subjects, *(item.version.subject_id for item in prepared)}
+        periods = {
+            r[0]
+            for r in connection.execute(
+                "SELECT DISTINCT posting_period FROM calculation_publication "
+                "WHERE subject_id IN (SELECT value FROM json_each(?))",
+                (canonical(sorted(subjects)),),
+            )
+        }
+        periods.update(item.publication["posting_period"] for item in prepared if item.publication)
+        verify_selected_balances(connection, 0, periods=periods)
+        existing = {
+            r[0]
+            for r in connection.execute(
+                "SELECT DISTINCT posting_period FROM calculation_publication "
+                "WHERE posting_period IN (SELECT value FROM json_each(?))",
+                (canonical(sorted(periods)),),
+            )
+        }
+        verify_settlement_periods(connection, existing)
 
     def _finish_prepared(self, connection, prepared, voucher_number=None):
         version, cid = prepared.version, prepared.calculation_id
@@ -1263,10 +1423,13 @@ class Engine:
                 ).fetchone()
                 anchor_id = correction[0] if correction else basis["id"]
                 groups = [(anchor_id, "current")]
-                if anchor_id != version["id"] and connection.execute(
-                    "SELECT 1 FROM voucher_version WHERE reverses_id=? LIMIT 1",
-                    (version["id"],),
-                ).fetchone():
+                if (
+                    anchor_id != version["id"]
+                    and connection.execute(
+                        "SELECT 1 FROM voucher_version WHERE reverses_id=? LIMIT 1",
+                        (version["id"],),
+                    ).fetchone()
+                ):
                     groups.append((version["id"], "next"))
                 for group_id, relation in groups:
                     anchor_number = connection.execute(
@@ -1285,27 +1448,34 @@ class Engine:
                         if item["id"] == version["id"]:
                             continue
                         role = (
-                            "original" if item["id"] == group_id
-                            else "reversal" if item["reverses_id"] else "replacement"
+                            "original"
+                            if item["id"] == group_id
+                            else "reversal"
+                            if item["reverses_id"]
+                            else "replacement"
                         )
                         period = str(YearMonth.from_ordinal(item["period"]))
                         role_label = {
-                            "original": "原凭证", "reversal": "冲正凭证", "replacement": "替换凭证"
+                            "original": "原凭证",
+                            "reversal": "冲正凭证",
+                            "replacement": "替换凭证",
                         }[role]
                         group_label = "本次更正" if relation == "current" else "后续更正"
-                        related.append({
-                            "id": item["id"],
-                            "number": item["number"],
-                            "period": period,
-                            "role": role,
-                            "correction_of_voucher_id": group_id,
-                            "correction_of_number": anchor_number,
-                            "correction_group": relation,
-                            "label": (
-                                f"{role_label} {item['number']} · {period}"
-                                f"（原凭证 {anchor_number} 的{group_label}）"
-                            ),
-                        })
+                        related.append(
+                            {
+                                "id": item["id"],
+                                "number": item["number"],
+                                "period": period,
+                                "role": role,
+                                "correction_of_voucher_id": group_id,
+                                "correction_of_number": anchor_number,
+                                "correction_group": relation,
+                                "label": (
+                                    f"{role_label} {item['number']} · {period}"
+                                    f"（原凭证 {anchor_number} 的{group_label}）"
+                                ),
+                            }
+                        )
             if not calculation_id:
                 raise ValueError("需要计算或凭证版本")
             row = connection.execute(
@@ -1444,9 +1614,12 @@ class Engine:
             "AND p.posting_period<=(SELECT max(period) FROM period_close) LIMIT 1",
             (subject_id,),
         ).fetchone()
-        if closed or connection.execute(
-            "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
-        ).fetchone():
+        if (
+            closed
+            or connection.execute(
+                "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
+            ).fetchone()
+        ):
             raise KernelError("closed_period", "已关账业务只能通过关联冲正更正")
         consumers = {
             item[0]
@@ -1513,18 +1686,24 @@ class Engine:
             )
         epochs = self.store.epochs(connection)
         checked = ("accounting", "management", "material")
+        from .publication import head
+
+        publication = head(connection, subject_id)
         plan = {
             "subject_id": subject_id,
             "kind": fact.fact.kind,
             "fact_id": fact.id,
             "calculation_id": calculation.id if calculation else None,
+            "source_period": str(fact.fact.period),
+            "posting_period": str(YearMonth.from_ordinal(publication["posting_period"]))
+            if publication
+            else str(fact.fact.period),
+            "mode": "withdrawn",
             "epochs": epochs,
             "checked_lanes": list(checked),
             "recording_error_evidence": recording_error_evidence,
         }
-        plan["digest"] = digest(
-            {**plan, "epochs": {lane: epochs[lane] for lane in checked}}
-        ).hex()
+        plan["digest"] = digest({**plan, "epochs": {lane: epochs[lane] for lane in checked}}).hex()
         return plan
 
     def preview_delete(self, subject_id: str, *, recording_error_evidence: str | None = None):
@@ -1559,6 +1738,10 @@ class Engine:
                 raise KernelError("preview_expired", "撤去业务预览已变化")
             calc = locked["calculation_id"]
             if calc:
+                from .integrity import verify_publication
+
+                verify_publication(self, connection, [calc])
+                self._check_publication_projections(connection, subjects=[subject_id])
                 for header in connection.execute(
                     "SELECT v.* FROM voucher_current a JOIN voucher_version v "
                     "ON v.id=a.version_id WHERE v.calculation_id=? OR v.voucher_id IN "
@@ -1591,6 +1774,22 @@ class Engine:
                 )
                 if removed.rowcount != 1:
                     raise KernelError("preview_expired", "当前核算版本与已审阅预览不一致")
+                from .publication import append, head
+
+                previous = head(connection, subject_id)
+                append(
+                    connection,
+                    subject_id,
+                    None,
+                    {
+                        "previous_publication_id": previous["id"],
+                        "mode": "withdrawn",
+                        "posting_period": previous["posting_period"],
+                        "baseline_calculation_id": previous["baseline_calculation_id"],
+                    },
+                    None,
+                )
+                self._sync_publication_projections(connection, [subject_id])
             connection.execute(
                 "INSERT INTO disposition(subject_id,cause_id,action,calculation_id,explanation) "
                 "VALUES(?,?,'withdrawn',?,'撤去无有效下游的开放期误记业务')",
@@ -1608,6 +1807,9 @@ class Engine:
                 "subject_id": subject_id,
                 "retained_calculation_id": calc,
                 "recording_error_evidence": recording_error_evidence,
+                "source_period": locked["source_period"],
+                "posting_period": locked["posting_period"],
+                "mode": "withdrawn",
             }
 
         lanes = {self.store.registry.models[preview["kind"]].lane}

@@ -138,14 +138,14 @@ def save_entry(
     )
 
 
-def publish(engine, subjects=("entry",), *, request="publish", correction_period=None):
-    preview = engine.preview(list(subjects), correction_period=correction_period)
+def publish(engine, subjects=("entry",), *, request="publish", posting_period=None):
+    preview = engine.preview(list(subjects), posting_period=posting_period)
     result = engine.confirm(
         list(subjects),
         preview_digest=preview["digest"],
         epochs=preview["epochs"],
         request_id=request,
-        correction_period=correction_period,
+        posting_period=posting_period,
     )
     return preview, result
 
@@ -441,10 +441,10 @@ def test_multiple_closed_corrections_preserve_snapshots_through_zero_results(aud
     publish(engine)
     january = close(audit, "2026-01")
     save_entry(audit, amount=0, revision=1)
-    publish(engine, request="zero-in-february", correction_period="2026-02")
+    publish(engine, request="zero-in-february", posting_period="2026-02")
     february = close(audit, "2026-02")
     save_entry(audit, amount=80, revision=2)
-    _, initial_march = publish(engine, request="restore-in-march", correction_period="2026-03")
+    _, initial_march = publish(engine, request="restore-in-march", posting_period="2026-03")
     save_entry(audit, amount=0, revision=3)
     publish(engine, request="zero-again")
     save_entry(audit, amount=50, revision=4)
@@ -552,7 +552,7 @@ def test_net_zero_cashflow_is_absent_but_equal_debit_credit_turnover_is_preserve
     publish(engine)
     close(audit, "2026-01")
     save_entry(audit, revision=1, expense="selling")
-    publish(engine, request="same-amount-reclassified", correction_period="2026-02")
+    publish(engine, request="same-amount-reclassified", posting_period="2026-02")
     before = projections(engine)
     february = YearMonth("2026-02").ordinal
     assert [row for row in before["monthly_cashflow"] if row[0] == february] == []

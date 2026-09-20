@@ -200,8 +200,8 @@ def test_closed_accrual_correction_uses_open_compensation(company):
     company.save(accrual(gross_fee_fen=300_000), "labor", revision=1)
     with pytest.raises(KernelError) as error:
         company.publish("labor")
-    assert error.value.code == "closed_correction_required"
-    company.publish("labor", correction_period="2026-02")
+    assert error.value.code == "posting_period_required"
+    company.publish("labor", posting_period="2026-02")
     assert company.engine.ledger("2026-01") == january
     assert Periods(company.engine).closed_report("2026-01") == frozen
     february = company.engine.ledger("2026-02")

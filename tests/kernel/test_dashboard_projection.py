@@ -170,7 +170,7 @@ def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
     closed = close(engine)
     before = Dashboard(engine).brief("2026-01")["data"]
     save(engine, amount=125, revision=1, request="correct")
-    publish(engine, request="correct-post", correction_period="2026-02")
+    publish(engine, request="correct-post", posting_period="2026-02")
     dashboard = Dashboard(engine)
     january = dashboard.brief("2026-01")["data"]
     february = dashboard.brief("2026-02")["data"]
@@ -410,7 +410,7 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
     correction_options = {
         "evidence": evidence,
         "expected_revision": 1,
-        "correction_period": "2026-02",
+        "posting_period": "2026-02",
     }
     preview = batches.prepare_activation_batch(
         "activation-batch", "2026-01", members, **correction_options

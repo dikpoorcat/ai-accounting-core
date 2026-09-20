@@ -6,7 +6,7 @@
 > 名称对应：`finance_record_event`→`save_fact`／`save_facts` + `preview` + `confirm`，
 > `finance_get_event_schema`→`schema`，`finance_amend_event`→`amend_fact`，
 > `finance_delete_event`→`preview_delete` + `delete`，
-> `finance_reverse_event`→`preview`／`confirm` 指定开放期 `correction_period` 生成关联冲正。
+> `finance_reverse_event`→`preview`／`confirm` 指定开放的 `posting_period` 生成关联冲正。
 > `finance_register_labor_service_person`、`finance_end_labor_service_person` 在当前内核**没有对应入口**，
 > 不存在与 `Employee` 分离的独立劳务人员登记及结束命令；
 > `finance_confirm_labor_external_declaration` 也没有劳务专用入口，外部完成改由通用 `external_completion` 事实表达。

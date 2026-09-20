@@ -61,7 +61,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
         { id: "synthetic-confirmed", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "12345", signed_amount_fen: "12345", party: "测试来源", memo: "测试流水", state: "matched", source_check: check },
         { id: "synthetic-unknown", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "100", signed_amount_fen: "100", party: "另一来源", memo: "另一流水", state: "needs_review", source_check: { ...check, state: "unestablished", message: "该来源的历史采用尚不能确认。", proof_method: null } },
       ];
-      data.fact_issues = [{ reason: "independent_adoption_not_proven", candidates: [{ calculation_id: "preserved-candidate" }] }];
+      data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [{ calculation_id: "preserved-candidate" }] }];
       const html = await render("Funds", "&funds_view=bank"), text = visible(html);
       assert.match(text, /本月实际收款/);
       assert.match(text, /本月实际付款/);
@@ -70,7 +70,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
       assert.match(text, /另一来源.*需复核/s);
       assert.doesNotMatch(text, /查看账户来源引用与证明|查看流水来源引用与证明|流水已由封存对账精确采用为来源/);
       assert.match(text, /核对说明.*该来源的历史采用尚不能确认/s);
-      assert.match(text, /尚不能证明独立封存采用/);
+      assert.match(text, /历史资金依据需要核对/);
       assert.doesNotMatch(text, /相关金额暂无法完整确定|exact-statement|exact-manifest|reconciliation_dependency/);
       for (const id of ["exact-statement", "exact-reconciliation", "exact-manifest"]) assert.doesNotMatch(html, new RegExp(id));
       assert.match(html, /preserved-candidate/);

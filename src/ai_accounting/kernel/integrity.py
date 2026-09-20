@@ -1,7 +1,7 @@
 """Read-only accounting content checks against saved, never recalculated, sources.
 
 Reference directories are checked last: their corruption cannot hide a source.
-Known historical adoption gaps are coverage limitations, not a claim of damage.
+Missing historical adoption evidence is corruption under the single close contract.
 """
 
 from __future__ import annotations
@@ -102,6 +102,8 @@ def _outcome(row):
 def _rows(connection, table, key, identifiers):
     if identifiers is None:
         return list(connection.execute(f"SELECT * FROM {table}"))
+    if not identifiers:
+        return []
     return list(
         connection.execute(
             f"SELECT t.* FROM {table} t JOIN json_each(?) ids ON t.{key}=ids.value",
@@ -127,7 +129,13 @@ def _source_set(connection, calculation_ids):
             "WHERE v.voucher_id=p.voucher_id UNION "
             "SELECT original.calculation_id FROM lineage ids JOIN voucher_version v "
             "ON v.calculation_id=ids.id JOIN voucher_version original "
-            "ON original.id=v.reverses_id) SELECT id FROM lineage",
+            "ON original.id=v.reverses_id UNION "
+            "SELECT old.calculation_id FROM lineage ids JOIN calculation_publication p "
+            "ON p.calculation_id=ids.id JOIN calculation_publication old "
+            "ON old.id=p.previous_publication_id WHERE old.calculation_id IS NOT NULL UNION "
+            "SELECT p.baseline_calculation_id FROM lineage ids JOIN calculation_publication p "
+            "ON p.calculation_id=ids.id WHERE p.baseline_calculation_id IS NOT NULL) "
+            "SELECT id FROM lineage",
             (canonical(sorted(set(calculation_ids))),),
         )
     }
@@ -198,7 +206,9 @@ def _check_facts(engine, connection, identifiers):
     return facts, evidence_ids
 
 
-def _check_evidence(connection, evidence_ids):
+def _check_evidence(connection, evidence_ids, *, verified=None):
+    if evidence_ids is not None and not evidence_ids:
+        return 0
     count = 0
     query = "SELECT digest,content FROM evidence"
     parameters = ()
@@ -211,6 +221,8 @@ def _check_evidence(connection, evidence_ids):
     for row in connection.execute(query, parameters):
         if hashlib.sha256(row["content"]).digest() != row["digest"]:
             _invalid("evidence", row["digest"].hex(), "evidence_digest_mismatch")
+        if verified is not None:
+            verified.add(bytes(row["digest"]))
         count += 1
     if evidence_ids is not None and count != len(evidence_ids):
         _invalid("evidence", "*", "evidence_missing")
@@ -248,7 +260,10 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
     facts, evidence_ids = _check_facts(
         engine, connection, fact_ids if identifiers is not None else None
     )
-    evidence_count = _check_evidence(connection, evidence_ids if identifiers is not None else None)
+    verified_evidence = set()
+    evidence_count = _check_evidence(
+        connection, evidence_ids if identifiers is not None else None, verified=verified_evidence
+    )
     seals = {
         row[0]
         for row in connection.execute(
@@ -265,7 +280,13 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             "calculation_id",
             identifiers,
         )
+        if row["calculation_id"] is not None
     }
+    from .publication import verify_publication_chain
+
+    verify_publication_chain(
+        connection, subject_ids={row["subject_id"] for row in calculations.values()}
+    )
     tables = {
         row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")
     }
@@ -417,6 +438,19 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             not in represented
         ):
             _invalid("calculation", ident, "publication_lines_unrepresented")
+    for ident, item in publications.items():
+        if item["mode"] != "review_no_impact":
+            continue
+        previous = connection.execute(
+            "SELECT calculation_id FROM calculation_publication WHERE id=?",
+            (item["previous_publication_id"],),
+        ).fetchone()[0]
+        before, after = calculations[previous]["decoded"], calculations[ident]["decoded"]
+        if any(
+            before[field] != after[field]
+            for field in ("lines", "balances", "opening", "opening_lines")
+        ):
+            _invalid("publication", ident, "no_impact_accounting_mismatch")
     for ident, calculation in calculations.items():
         if calculation["kind"] in {"asset_activation_batch", "asset_consumption_month"}:
             from .asset_batches import frozen_members
@@ -433,6 +467,7 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
         "dependency_facts": dependency_facts,
         "vouchers": vouchers,
         "evidence_count": evidence_count,
+        "verified_evidence": verified_evidence,
     }
 
 
@@ -465,52 +500,15 @@ def _merge(left, right):
 
 
 def _opening_basis(source, manifest, period):
-    """Establish selection before comparing any closing trial-balance amounts."""
-    calculations, publications = source["calculations"], source["publications"]
-    possible = {
-        ident
-        for ident, row in calculations.items()
-        if row["decoded"].get("opening")
-        and ident in publications
-        and row["period"] <= period
-        and publications[ident]["posting_period"] <= period
-    }
-    if not possible:
-        return {}, None
-    members = set(manifest["calculations"])
-    upstreams = {parent for ident in members for parent in source["dependencies"][ident]}
-    independent = {
-        ident
-        for ident in members - upstreams
-        if ident in publications
-        and calculations[ident]["period"] == period
-        and publications[ident]["posting_period"] == period
-    }
-    chosen = possible & independent
-    # An opening package is also explicitly adopted by an independently rooted
-    # detail from that package. This mirrors the existing historical read proof.
-    for ident in possible & members:
-        row = calculations[ident]
-        if row["kind"] != "opening_package" or row["period"] != period:
-            continue
-        anchors = [
-            anchor
-            for anchor in independent
-            if source["dependencies"][anchor] == {ident}
-            and source["facts"][calculations[anchor]["fact_id"]]["data"].get("package_id")
-            == row["subject_id"]
-        ]
-        if anchors:
-            chosen.add(ident)
-    if len(chosen) != 1:
-        return None, {
-            "code": "historical_opening_adoption_unestablished",
-            "period": str(YearMonth.from_ordinal(period)),
-        }
-    ident = next(iter(chosen))
-    row = calculations[ident]
+    """Read the explicitly adopted independent opening; never infer from totals."""
+    ident = manifest["opening_calculation_id"]
+    if ident is None:
+        return {}
+    row = source["calculations"].get(ident)
+    if row is None or not row["decoded"].get("opening"):
+        _invalid("close", period, "opening_adoption_mismatch")
     if row["kind"] == "opening_package":
-        from .opening_adoption import _package_contract
+        from .opening_adoption import _DETAIL_KINDS, _detail_shape, _package_contract
 
         package = {
             **row,
@@ -522,9 +520,28 @@ def _opening_basis(source, manifest, period):
             key: {**value, "period": str(YearMonth.from_ordinal(value["period"]))}
             for key, value in source["facts"].items()
         }
-        if _package_contract(package, facts, source["dependency_facts"][ident]) is None:
+        contract = _package_contract(package, facts, source["dependency_facts"][ident])
+        if contract is None:
             _invalid("close", period, "opening_package_content_mismatch")
-    return _totals(row["decoded"].get("opening_lines", []), "calculation", ident), None
+        declarations, _ = contract
+        adopted_details = {
+            item["subject_id"]: source["calculations"][item["calculation_id"]]
+            for item in manifest["adopted_results"]
+            if source["calculations"][item["calculation_id"]]["kind"] in _DETAIL_KINDS
+        }
+        if set(adopted_details) != set(declarations):
+            _invalid("close", period, "opening_member_adoption_mismatch")
+        for subject, member in declarations.items():
+            detail = adopted_details[subject]
+            if (
+                detail["fact_id"] != member["fact_id"]
+                or detail["kind"] != member["kind"]
+                or not _detail_shape(detail["decoded"])
+                or detail["decoded"]["values"] != member["values"]
+                or source["dependencies"][detail["id"]] != {ident}
+            ):
+                _invalid("close", period, "opening_member_adoption_mismatch")
+    return _totals(row["decoded"].get("opening_lines", []), "calculation", ident)
 
 
 class _FrozenAdoptionReads:
@@ -669,147 +686,244 @@ def _check_audit_sources(connection):
 
 
 def _check_closes(engine, connection, source, *, through_period=None):
-    previous_digest, previous_trial = None, None
-    limitations = []
+    from .close_contract import direct_calculation_ids, require_close_contract
+
+    previous_digest, previous_trial, previous_period = None, None, None
+    previous_sequence = 0
+    maximum_sequence = connection.execute(
+        "SELECT coalesce(max(sequence),0) FROM calculation_publication"
+    ).fetchone()[0]
     count = 0
-    current_by_period = defaultdict(set)
     parameters = (through_period,) if through_period is not None else ()
-    restriction = " WHERE v.period<=?" if through_period is not None else ""
-    for row in connection.execute(
-        "SELECT h.version_id FROM voucher_current h "
-        "JOIN voucher_version v ON v.id=h.version_id" + restriction,
-        parameters,
-    ):
-        voucher = source["vouchers"].get(row["version_id"])
-        if voucher is None:
-            _invalid("heads", row["version_id"], "current_voucher_missing")
-        current_by_period[voucher["period"]].add(row["version_id"])
     restriction = " WHERE period<=?" if through_period is not None else ""
+    closes = []
     for row in connection.execute(
         "SELECT * FROM period_close" + restriction + " ORDER BY period", parameters
     ):
         period = row["period"]
         if hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]:
             _invalid("close", period, "manifest_digest_mismatch")
-        manifest = _object(row["manifest"], "close", period)
-        required = {
-            "period",
-            "company_id",
-            "database_id",
-            "vouchers",
-            "calculations",
-            "facts",
-            "trial_balance",
-            "previous_close_digest",
-        }
-        if not required <= manifest.keys() or any(
-            not isinstance(manifest[key], list)
-            for key in ("vouchers", "calculations", "facts", "trial_balance")
+        manifest = require_close_contract(_object(row["manifest"], "close", period))
+        closes.append((row, manifest))
+    if not closes:
+        return 0, []
+    inventory_ids = {ident for _, manifest in closes for ident in manifest["inventories"].values()}
+    inventories = {
+        item["id"]: item for item in _rows(connection, "material_revision", "id", inventory_ids)
+    }
+    evidence_ids = {bytes.fromhex(manifest["owner_confirmation"]) for _, manifest in closes} | {
+        bytes(item["evidence_digest"]) for item in inventories.values()
+    }
+    _check_evidence(connection, evidence_ids - source["verified_evidence"])
+    expected_adoptions_by_period, current_vouchers_by_period = defaultdict(set), defaultdict(set)
+    boundaries = canonical(
+        [[row["period"], manifest["publication_sequence"]] for row, manifest in closes]
+    )
+    for item in connection.execute(
+        "SELECT json_extract(b.value,'$[0]'),p.calculation_id FROM json_each(?) b "
+        "JOIN calculation_publication p ON p.posting_period=json_extract(b.value,'$[0]') "
+        "WHERE p.sequence<=json_extract(b.value,'$[1]') AND p.calculation_id IS NOT NULL "
+        "AND NOT EXISTS(SELECT 1 FROM calculation_publication later "
+        "WHERE later.previous_publication_id=p.id "
+        "AND later.sequence<=json_extract(b.value,'$[1]'))",
+        (boundaries,),
+    ):
+        expected_adoptions_by_period[item[0]].add(item[1])
+    for item in connection.execute(
+        "SELECT v.period,h.version_id FROM json_each(?) b "
+        "JOIN voucher_version v ON v.period=json_extract(b.value,'$[0]') "
+        "JOIN voucher_current h ON h.version_id=v.id",
+        (boundaries,),
+    ):
+        current_vouchers_by_period[item[0]].add(item[1])
+    for row, manifest in closes:
+        period = row["period"]
+        if (
+            (manifest["period"], manifest["company_id"], manifest["database_id"])
+            != (
+                str(YearMonth.from_ordinal(period)),
+                engine.store.company_id,
+                engine.store.database_id,
+            )
+            or manifest["previous_close_digest"] != previous_digest
+            or manifest["previous_close_period"] != previous_period
         ):
-            _invalid("close", period, "unsupported_manifest_shape")
-        if (manifest["period"], manifest["company_id"], manifest["database_id"]) != (
-            str(YearMonth.from_ordinal(period)),
-            engine.store.company_id,
-            engine.store.database_id,
-        ) or manifest["previous_close_digest"] != previous_digest:
             _invalid("close", period, "manifest_identity_or_chain_mismatch")
-        members = manifest["calculations"]
-        facts = manifest["facts"]
-        if (
-            any(not isinstance(item, str) for item in [*members, *facts])
-            or len(set(members)) != len(members)
-            or len(set(facts)) != len(facts)
-        ):
-            _invalid("close", period, "invalid_manifest_references")
-        if (
-            not set(members) <= source["calculations"].keys()
-            or not set(facts) <= source["facts"].keys()
-        ):
+        if not previous_sequence <= manifest["publication_sequence"] <= maximum_sequence:
+            _invalid("close", period, "publication_boundary_mismatch")
+        previous_sequence = manifest["publication_sequence"]
+        members = direct_calculation_ids(manifest)
+        if not members <= source["calculations"].keys():
             _invalid("close", period, "manifest_source_missing")
-        if any(not source["dependencies"][ident] <= set(members) for ident in members):
-            _invalid("close", period, "manifest_lineage_incomplete")
-        expected_facts = {fact for ident in members for fact in source["dependency_facts"][ident]}
-        if expected_facts != set(facts):
-            _invalid("close", period, "manifest_facts_mismatch")
+        adopted = {item["calculation_id"]: item for item in manifest["adopted_results"]}
+        for ident, declaration in adopted.items():
+            calculation = source["calculations"][ident]
+            publication = source["publications"].get(ident)
+            if publication is None or (
+                publication["id"],
+                calculation["subject_id"],
+                calculation["fact_id"],
+                calculation["digest"].hex(),
+                str(YearMonth.from_ordinal(calculation["period"])),
+                publication["posting_period"],
+            ) != (
+                declaration["publication_id"],
+                declaration["subject_id"],
+                declaration["fact_id"],
+                declaration["result_digest"],
+                declaration["source_period"],
+                period,
+            ):
+                _invalid("close", period, "direct_adoption_source_mismatch")
+            outcome = calculation["decoded"]
+            role = (
+                "asset_batch_owner"
+                if calculation["kind"] in {"asset_activation_batch", "asset_consumption_month"}
+                else "opening_basis"
+                if outcome["opening"]
+                else "journal_basis"
+                if outcome["lines"]
+                else "state_only"
+            )
+            if declaration["role"] != role:
+                _invalid("close", period, "direct_adoption_role_mismatch")
+        if set(adopted) != expected_adoptions_by_period[period]:
+            _invalid("close", period, "direct_adoption_set_mismatch")
         voucher_ids, voucher_lines = set(), []
         for reference in manifest["vouchers"]:
-            if (
-                not isinstance(reference, dict)
-                or not {"id", "voucher_id", "calculation_id", "total", "number"} <= reference.keys()
-            ):
-                _invalid("close", period, "invalid_manifest_voucher")
             voucher = source["vouchers"].get(reference["id"])
             if (
                 voucher is None
                 or voucher["period"] != period
-                or voucher["calculation_id"] not in members
-            ):
-                _invalid("close", period, "manifest_voucher_source_mismatch")
-            if (
-                any(
+                or any(
                     reference[key] != voucher[key]
-                    for key in ("id", "voucher_id", "calculation_id", "total", "number")
+                    for key in (
+                        "id",
+                        "voucher_id",
+                        "calculation_id",
+                        "total",
+                        "number",
+                        "reverses_id",
+                    )
                 )
-                or voucher["id"] in voucher_ids
             ):
                 _invalid("close", period, "manifest_voucher_content_mismatch")
+            basis = adopted.get(reference["adopted_calculation_id"])
+            owner = source["calculations"][voucher["calculation_id"]]
+            if (
+                basis is None
+                or basis["subject_id"] != owner["subject_id"]
+                or reference["result_digest"] != basis["result_digest"]
+            ):
+                _invalid("close", period, "voucher_adoption_mismatch")
+            basis_publication = source["publications"][basis["calculation_id"]]
+            if (
+                voucher["reverses_id"] is None
+                and basis_publication["voucher_id"] != voucher["voucher_id"]
+            ):
+                _invalid("close", period, "voucher_adoption_mismatch")
             voucher_ids.add(voucher["id"])
             voucher_lines.extend(voucher["lines"])
-        if voucher_ids != current_by_period[period]:
+        if voucher_ids != current_vouchers_by_period[period]:
             _invalid("close", period, "manifest_voucher_set_mismatch")
-        for adoption in manifest.get("asset_batch_adoptions", []):
-            if (
-                not isinstance(adoption, dict)
-                or adoption.get("owner_calculation_id") not in members
-            ):
+        batch_owners = {
+            ident for ident, item in adopted.items() if item["role"] == "asset_batch_owner"
+        }
+        declared_batches = set()
+        for adoption in manifest["asset_batch_adoptions"]:
+            if not isinstance(adoption, dict) or set(adoption) != {
+                "owner_calculation_id",
+                "membership_digest",
+            }:
                 _invalid("close", period, "asset_adoption_identity_mismatch")
-            owner = source["calculations"][adoption["owner_calculation_id"]]
-            if owner["kind"] not in {"asset_activation_batch", "asset_consumption_month"} or owner[
-                "decoded"
-            ]["values"].get("membership_digest") != adoption.get("membership_digest"):
+            ident = adoption["owner_calculation_id"]
+            if ident not in batch_owners or ident in declared_batches:
+                _invalid("close", period, "asset_adoption_identity_mismatch")
+            if (
+                source["calculations"][ident]["decoded"]["values"]["membership_digest"]
+                != adoption["membership_digest"]
+            ):
                 _invalid("close", period, "asset_adoption_digest_mismatch")
+            declared_batches.add(ident)
+        if batch_owners != declared_batches:
+            _invalid("close", period, "asset_adoption_set_mismatch")
         _check_snapshot_references(connection, source, manifest, period)
-        if "asset_card_adoptions" in manifest:
-            from .asset_card_adoption import prove_asset_card_adoptions
+        for references in manifest["readiness"].values():
+            if not isinstance(references, dict) or set(references) != {"facts", "calculations"}:
+                _invalid("close", period, "readiness_references_missing")
+            for field in ("facts", "calculations"):
+                if (
+                    not isinstance(references[field], list)
+                    or not set(references[field]) <= source[field].keys()
+                ):
+                    _invalid("close", period, "readiness_source_missing")
+        from .periods import MATERIAL_CATEGORIES
 
-            reads = _FrozenAdoptionReads(source)
-            metadata = reads.calculations(members)
-            voucher_roots = {source["vouchers"][ident]["calculation_id"] for ident in voucher_ids}
-            try:
-                prove_asset_card_adoptions(
-                    reads,
-                    close_period=period,
-                    manifest=manifest,
-                    metadata=metadata,
-                    independent_proofs={
-                        ident: {"basis": "manifest_voucher_root"} for ident in voucher_roots
-                    },
-                )
-            except KernelError:
-                _invalid("close", period, "asset_card_adoption_mismatch")
-        trial = _totals(manifest["trial_balance"], "close", period)
-        if len({line["account"] for line in manifest["trial_balance"]}) != len(
-            manifest["trial_balance"]
+        if set(manifest["inventories"]) != set(MATERIAL_CATEGORIES):
+            _invalid("close", period, "material_inventory_set_mismatch")
+        for category, inventory_id in manifest["inventories"].items():
+            inventory = inventories.get(inventory_id)
+            if inventory is None or (inventory["period"], inventory["category"]) != (
+                period,
+                category,
+            ):
+                _invalid("close", period, "material_inventory_source_mismatch")
+        coverage = manifest["material_coverage"]
+        saved_coverage = {
+            key: value
+            for key, value in coverage.items()
+            if key not in {"status", "coverage_digest"}
+        } | {"issues": []}
+        if (
+            coverage.get("status") != "complete"
+            or coverage.get("coverage_digest") != digest(saved_coverage).hex()
+            or not isinstance(coverage.get("fact_ids"), list)
+            or not set(coverage["fact_ids"]) <= source["facts"].keys()
         ):
-            _invalid("close", period, "duplicate_trial_account")
-        if sum_fen(values[0] for values in trial.values()) != sum_fen(
-            values[1] for values in trial.values()
+            _invalid("close", period, "material_coverage_mismatch")
+        from .asset_card_adoption import prove_asset_card_adoptions
+
+        reads = _FrozenAdoptionReads(source)
+        try:
+            prove_asset_card_adoptions(
+                reads,
+                close_period=period,
+                manifest=manifest,
+                metadata=reads.calculations(members),
+                independent_proofs={
+                    ident: {"basis": "manifest_voucher_root"}
+                    for ident in {reference["calculation_id"] for reference in manifest["vouchers"]}
+                    | {reference["adopted_calculation_id"] for reference in manifest["vouchers"]}
+                },
+            )
+        except KernelError:
+            _invalid("close", period, "asset_card_adoption_mismatch")
+        trial = _totals(manifest["trial_balance"], "close", period)
+        if len(trial) != len(manifest["trial_balance"]):
+            # Zero totals may be represented by a balanced but empty account only once.
+            if len({item["account"] for item in manifest["trial_balance"]}) != len(
+                manifest["trial_balance"]
+            ):
+                _invalid("close", period, "duplicate_trial_account")
+        if sum_fen(value[0] for value in trial.values()) != sum_fen(
+            value[1] for value in trial.values()
         ):
             _invalid("close", period, "unbalanced_trial_balance")
         if previous_trial is None:
-            baseline, limitation = _opening_basis(source, manifest, period)
-            if limitation:
-                limitations.append(limitation)
+            baseline = _opening_basis(source, manifest, period)
         else:
+            if manifest["opening_calculation_id"] is not None:
+                _invalid("close", period, "opening_after_first_close")
             baseline = previous_trial
-        if (
-            baseline is not None
-            and _merge(baseline, _totals(voucher_lines, "close", period)) != trial
-        ):
+        if _merge(baseline, _totals(voucher_lines, "close", period)) != trial:
             _invalid("close", period, "trial_balance_source_mismatch")
-        previous_digest, previous_trial = row["digest"].hex(), trial
+        previous_digest, previous_trial, previous_period = (
+            row["digest"].hex(),
+            trial,
+            manifest["period"],
+        )
         count += 1
-    return count, limitations
+    return count, []
 
 
 def _check_heads(connection):
@@ -835,7 +949,16 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
             )
         if not include_projections:
             ignored_tables.update(
-                ("monthly_account", "monthly_cashflow", "balance", "opening_account")
+                (
+                    "monthly_account",
+                    "monthly_cashflow",
+                    "balance",
+                    "opening_account",
+                    "period_balance",
+                    "settlement_change",
+                    "settlement_projection_seal",
+                    "period_balance_seal",
+                )
             )
         checks = [row[0] for row in connection.execute("PRAGMA integrity_check")]
         if any(
@@ -854,7 +977,12 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
         _check_job_sources(engine, connection, source)
         _check_audit_sources(connection)
         if include_projections:
-            require_projections(connection)
+            from .settlement_projection import require_settlement_projection
+
+            require_projections(connection, verified_calculations=source["calculations"])
+            require_settlement_projection(
+                engine, connection, verified_calculations=source["calculations"]
+            )
         if include_indexes:
             from .read_indexes import verify_read_indexes
 
@@ -863,10 +991,10 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
             ).fetchone():
                 verify_read_indexes(connection)
         return {
-            "status": "limited" if limitations else "verified",
+            "status": "verified",
             "coverage": {
                 "sources": "verified",
-                "historical_adoption": "limited" if limitations else "verified",
+                "historical_adoption": "verified",
                 "projections": "verified" if include_projections else "not_checked",
                 "read_indexes": "verified" if include_indexes else "not_checked",
             },
@@ -991,16 +1119,9 @@ def verify_close_integrity(engine, connection, period):
         if hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]:
             _invalid("close", row["period"], "manifest_digest_mismatch")
         manifest = _object(row["manifest"], "close", row["period"])
-        if not isinstance(manifest.get("calculations"), list) or not isinstance(
-            manifest.get("facts"), list
-        ):
-            _invalid("close", row["period"], "unsupported_manifest_shape")
-        if any(
-            not isinstance(ident, str) for ident in [*manifest["calculations"], *manifest["facts"]]
-        ):
-            _invalid("close", row["period"], "invalid_manifest_references")
-        ids.update(manifest["calculations"])
-        fact_ids.update(manifest["facts"])
+        from .close_contract import direct_calculation_ids
+
+        ids.update(direct_calculation_ids(manifest))
         for _, _, kind, ident, _ in _close_references(row):
             if kind == "fact":
                 fact_ids.add(ident)
@@ -1014,7 +1135,11 @@ def verify_close_integrity(engine, connection, period):
                 _invalid("close", row["period"], "invalid_owner_evidence")
     try:
         source = _check_sources(engine, connection, ids, extra_fact_ids=fact_ids)
-        _check_evidence(connection, evidence_ids)
+        _check_evidence(
+            connection,
+            evidence_ids - source["verified_evidence"],
+            verified=source["verified_evidence"],
+        )
         _, limitations = _check_closes(engine, connection, source, through_period=month)
     except KernelError:
         raise
@@ -1026,5 +1151,10 @@ def verify_close_integrity(engine, connection, period):
             record_id=str(period),
             reason="invalid_stored_content",
         ) from exc
-    require_projections(connection, through_period=month)
-    return {"status": "limited" if limitations else "verified", "limitations": limitations}
+    require_projections(
+        connection, through_period=month, verified_calculations=source["calculations"]
+    )
+    from .settlement_projection import require_settlement_projection
+
+    require_settlement_projection(engine, connection, verified_calculations=source["calculations"])
+    return {"status": "verified", "limitations": limitations}

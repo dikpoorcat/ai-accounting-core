@@ -62,7 +62,7 @@
     "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
   },
   "brief": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -77,12 +77,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "current_published",
+      "accounting": "as_posted",
       "display": "current",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "current_known"
     },
     "data": {
       "generated_at": "2026-09-12T11:57:17.842236+00:00",
@@ -1675,7 +1676,7 @@
     }
   },
   "funds": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -1690,12 +1691,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "current_published",
+      "accounting": "as_posted",
       "display": "current",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "current_known"
     },
     "data": {
       "opening_fen": "-800000",
@@ -2144,7 +2146,7 @@
     }
   },
   "employees": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -2159,12 +2161,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "current_published",
+      "accounting": "as_posted",
       "display": "current",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "current_known"
     },
     "data": {
       "employees": {
@@ -3032,7 +3035,7 @@
     }
   },
   "assets": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -3047,12 +3050,13 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "current_published",
+      "accounting": "as_posted",
       "display": "current",
       "system_time_replay": false,
       "recorded_at": "system_recording_time",
       "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "recorded_later": "business_recording_period_after_selected_period",
+      "business_basis": "current_known"
     },
     "data": {
       "fixed_asset_cost_fen": "0",
@@ -3807,7 +3811,7 @@
     }
   },
   "reports": {
-    "schema_version": 1,
+    "schema_version": 2,
     "close_state": "open",
     "readiness_state": "blocked",
     "carry_forward": {
@@ -5660,7 +5664,7 @@
     ]
   },
   "business-status": {
-    "schema_version": 1,
+    "schema_version": 2,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -5675,12 +5679,10 @@
     },
     "read_semantics": {
       "knowledge": "current_knowledge",
-      "accounting": "current_published",
-      "display": "current",
-      "system_time_replay": false,
-      "recorded_at": "system_recording_time",
-      "recording_period": "business_recording_period",
-      "recorded_later": "business_recording_period_after_selected_period"
+      "accounting": "as_posted",
+      "business_basis": "current_known",
+      "display": "frozen_with_current_supplements",
+      "as_of": "2026-11-30"
     },
     "data": {
       "identity": {
@@ -5712,138 +5714,6 @@
         "knowledge": "current_knowledge",
         "recorded_at": "2026-09-12T11:57:17.160Z"
       },
-      "current_publication": {
-        "status": "published",
-        "knowledge": "current_knowledge",
-        "calculation": {
-          "id": "c_1d02a4d44365bffe7cb9d67dc4c5602d3ccab415608761c8a87a341372f4e942",
-          "subject_id": "labor-cost",
-          "kind": "labor_project_cost",
-          "period": "2026-11",
-          "fact_id": "00d47fa41d8f457f989025baeae2ef11",
-          "program_version": "local-kernel-2:4597c7dd74f606e1378f1c29fd8cdc8fc923e14d788e068d9e6f680d63291423",
-          "posting_period": "2026-11",
-          "voucher_id": "v:labor-cost",
-          "result_digest": "ba99e85b346b255a5405a2dd5877cdb5c2300aa47cb35a3969a9946cbdd664f6",
-          "fact_data": {
-            "period": "2026-11",
-            "person_id": "designer",
-            "project_id": "ui-design",
-            "gross_fee_fen": "1600000",
-            "tax_treatment": "not_withheld_not_filed",
-            "capitalization_conditions_confirmed": true
-          },
-          "outcome": {
-            "balances": [
-              {
-                "amount": "1600000",
-                "category": "payable",
-                "key": "labor_project_cost:labor-cost:net"
-              },
-              {
-                "amount": "1600000",
-                "category": "asset",
-                "key": "project-cost:labor-cost"
-              }
-            ],
-            "explanation": [
-              {
-                "actual_payment": "separate_fact_required",
-                "external_filing": "not_recorded_by_this_accrual",
-                "gross_fee_fen": "1600000",
-                "recognition_period": "2026-11",
-                "step": "labor_accrual",
-                "tax_calculation": "not_performed",
-                "withholding_recorded_fen": "0"
-              }
-            ],
-            "lines": [
-              {
-                "account": "189901",
-                "cashflow": null,
-                "credit": "0",
-                "debit": "1600000"
-              },
-              {
-                "account": "224104",
-                "cashflow": null,
-                "credit": "1600000",
-                "debit": "0"
-              }
-            ],
-            "opening": false,
-            "opening_lines": [],
-            "values": {
-              "capital_account": "189901",
-              "capitalized_fen": "1600000",
-              "gross_fen": "1600000",
-              "net_fen": "1600000",
-              "obligations": [
-                {
-                  "account": "224104",
-                  "amount_fen": "1600000",
-                  "cashflow": "asset_acquisition",
-                  "category": "payable",
-                  "counterparty_id": "designer",
-                  "key": "labor_project_cost:labor-cost:net",
-                  "name": "net",
-                  "normal": "credit"
-                }
-              ],
-              "person_id": "designer",
-              "project_id": "ui-design",
-              "project_nature": "purchased_intangible",
-              "rule_versions": [],
-              "tax_assessed": false,
-              "tax_fen": "0",
-              "tax_review_required": true,
-              "theoretical_tax_fen": null,
-              "withholding_method": "not_withheld_not_filed"
-            }
-          }
-        },
-        "publication": {
-          "posting_period": "2026-11",
-          "voucher_id": "v:labor-cost",
-          "has_journal_lines": true
-        },
-        "voucher_versions": [
-          {
-            "event_type": "voucher",
-            "voucher_version_id": "v_584f889d1fcff9631e01b1f8d8010904a05c1f8d7e31b55523fd90e4aea49436",
-            "voucher_id": "v:labor-cost",
-            "voucher_number": 3,
-            "voucher_calculation_id": "c_1d02a4d44365bffe7cb9d67dc4c5602d3ccab415608761c8a87a341372f4e942",
-            "calculation_id": "c_1d02a4d44365bffe7cb9d67dc4c5602d3ccab415608761c8a87a341372f4e942",
-            "fact_id": "00d47fa41d8f457f989025baeae2ef11",
-            "kind": "labor_project_cost",
-            "calculation_period": "2026-11",
-            "posting_period": "2026-11",
-            "result_digest": "ba99e85b346b255a5405a2dd5877cdb5c2300aa47cb35a3969a9946cbdd664f6",
-            "role": "original",
-            "direction": 1,
-            "reverses_voucher_version_id": null,
-            "selection_source": "current_publication",
-            "lines": [
-              {
-                "line_no": 1,
-                "account": "189901",
-                "debit": "1600000",
-                "credit": "0",
-                "cashflow": null
-              },
-              {
-                "line_no": 2,
-                "account": "224104",
-                "debit": "0",
-                "credit": "1600000",
-                "cashflow": null
-              }
-            ]
-          }
-        ],
-        "current_voucher_version_id": "v_584f889d1fcff9631e01b1f8d8010904a05c1f8d7e31b55523fd90e4aea49436"
-      },
       "review": {
         "status": "current",
         "latest_matches_publication": true,
@@ -5851,18 +5721,22 @@
         "dispositions": [],
         "disposition_count": 1
       },
-      "selected_accounting": {
-        "cutoff_period": "2026-11",
-        "period_event_count": 1,
-        "through_period": {
-          "status": "established",
-          "voucher_event_count": 1,
-          "state_result_count": 0,
-          "unestablished_state_selection_count": 0,
-          "state_results": [],
-          "unestablished_state_selections": []
-        }
+      "closure": {
+        "state": "open"
       },
+      "as_posted": {
+        "cutoff_period": "2026-11",
+        "status": "established",
+        "voucher_events": [],
+        "state_results": [],
+        "unestablished_state_selections": []
+      },
+      "current_business_result": {
+        "status": "published",
+        "calculation_id": "c_1d02a4d44365bffe7cb9d67dc4c5602d3ccab415608761c8a87a341372f4e942",
+        "posting_period": "2026-11"
+      },
+      "frozen_adoption": null,
       "settlements": {
         "cutoff_period": "2026-11",
         "status": "established",
@@ -5933,9 +5807,10 @@
       ],
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "frozen_close_or_current_published_at_period_end",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "frozen_with_current_supplements",
-        "as_of": "external_deadlines_and_completion_only"
+        "as_of": "2026-11-30"
       },
       "projection": "summary",
       "trace_target_count": 1,

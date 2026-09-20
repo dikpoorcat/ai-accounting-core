@@ -68,7 +68,7 @@ export namespace DashboardContextContract {
 }
 
 export namespace DashboardFundsContract {
-  export type SchemaVersion = 2;
+  export type SchemaVersion = 3;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -80,7 +80,8 @@ export namespace DashboardFundsContract {
   export type EndDate = string;
   export type ClosedAt = string | null;
   export type Knowledge = "current_knowledge";
-  export type Accounting = "current_published" | "frozen_close";
+  export type Accounting = "as_posted";
+  export type BusinessBasis = "current_known" | "frozen_adoption";
   export type Display = "current" | "frozen_with_current_supplements";
   export type SystemTimeReplay = false;
   export type RecordedAt = "system_recording_time";
@@ -148,22 +149,14 @@ export namespace DashboardFundsContract {
   export type ReconciliationCalculationId = string | null;
   export type ReconciliationFactId = string | null;
   export type SelectionSource = string | null;
-  export type Basis1 = string;
-  export type ContractVersion = number;
+  export type SelectionProof = DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof | null;
+  export type Basis1 = "direct_adoption";
   export type ClosePeriod = string;
-  export type CloseDigest = string;
-  export type CalculationId = string;
-  export type FactId = string;
-  export type ResultDigest = string;
-  export type CalculationId1 = string;
-  export type FactId1 = string;
-  export type ResultDigest1 = string;
-  export type Anchors = SelectionAnchor[];
-  export type MemberFactIds = string[];
-  export type TrialBalanceBasis = string;
-  export type MembershipDigest = string;
-  export type AcceptanceCalculationId = string;
-  export type ResultDigest2 = string;
+  export type PublicationId = string;
+  export type Role = string;
+  export type Basis2 = "calculation_current";
+  export type Basis3 = "asset_batch_member";
+  export type OwnerCalculationId = string;
   export type ProofMethod = ("frozen_reconciliation_direct_statement" | "independent_statement_selection") | null;
   export type Version = number | null;
   export type StatementClosingFen = string;
@@ -182,7 +175,7 @@ export namespace DashboardFundsContract {
   export type AmountFen = string;
   export type SignedAmountFen = string;
   export type Reference = string;
-  export type CalculationId2 = string;
+  export type CalculationId = string;
   export type Type1 = string;
   export type Summary = string;
   export type DisplaySummary = string;
@@ -268,54 +261,14 @@ export namespace DashboardFundsContract {
   export type Items3 = BankStatementRow[];
   export type Items4 = InvestmentProduct[];
   export type Items5 = InvestmentEvent[];
-  export type EventType = "state_result_selection";
-  export type Status1 = "unestablished";
-  export type Reason = "manifest_state_adoption_not_proven";
-  export type SubjectId = string;
-  export type PostingPeriod = string;
-  export type SelectionSource1 = "close_manifest";
-  export type CalculationId3 = string;
-  export type FactId2 = string;
-  export type ResultDigest3 = string;
-  export type Kind = string;
-  export type HasJournalLines = boolean;
-  export type TraceOnly = true;
-  export type Candidates = SelectionCandidate[];
-  export type FactIssues = StateSelectionIssue[];
-  export type CompanyId = string;
-  export type DatabaseId = string;
-  export type Period1 = string;
-  export type AsOf = string;
-  export type AsOfSemantics = "current_knowledge";
-  export type Closure = OpenClosure | ExactClosure | LaterClosure;
-  export type State3 = "open";
-  export type State4 = "exact_close";
-  export type Digest = string;
-  export type State5 = "sealed_by_later_close";
-  export type SealingBoundary = string;
-  export type SealingDigest = string;
-  export type Knowledge1 = "current_knowledge";
-  export type FrozenReadiness = "exact_period_manifest_only";
-  export type CurrentFollowups = "never_changes_frozen_readiness";
-  export type Projection = "dashboard_period_preparation";
-  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
-  export type Status2 = "ready";
-  export type Source2 = "exact_period_manifest";
-  export type Status3 = "recorded" | "not_recorded";
-  export type Status4 = "unavailable";
-  export type Reason1 = "no_exact_period_manifest";
-  export type Period2 = string;
-  export type Code1 = "already_closed" | "earlier_period_open";
-  export type Message1 = string;
-  export type Period3 = string;
   export type Field1 = string;
-  export type Message2 = string;
-  export type Code2 = string;
+  export type Message1 = string;
+  export type Code1 = string;
   export type Location = string | null;
   export type Semantics = string;
   export type Domain = string;
-  export type SubjectId1 = string;
-  export type FactId3 = string;
+  export type SubjectId = string;
+  export type FactId = string;
   export type SourceId = string;
   export type GroupId = string;
   export type EmployeeId = string;
@@ -329,13 +282,13 @@ export namespace DashboardFundsContract {
   export type Detail = string;
   export type AmountField = string;
   export type AmountFields = string[];
-  export type Period4 = string;
+  export type Period1 = string;
   export type PeriodStart = string;
   export type PeriodEndExclusive = string;
   export type Pages = number;
   export type VoucherVersionId = string | null;
   export type VersionId = string | null;
-  export type CalculationId4 = string | null;
+  export type CalculationId1 = string | null;
   export type ObligationKey = string;
   export type AllocationIndex = number;
   export type SourceIndex = number;
@@ -347,28 +300,61 @@ export namespace DashboardFundsContract {
   export type ReusableSources = string[];
   export type ExpectedFen = string | null;
   export type ActualFen = string | null;
-  export type Reason2 = string;
-  export type Candidates1 = SelectionCandidate[];
-  export type CalculationId5 = string;
+  export type Reason = string;
+  export type CalculationId2 = string;
+  export type FactId1 = string;
+  export type ResultDigest = string;
+  export type Kind = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = SelectionCandidate[];
+  export type CalculationId3 = string;
   export type TraceTargets = CalculationTarget[];
   export type Statement = string;
   export type Column = string;
   export type Dimension = "bank" | "platform";
   export type ExpectedDirection = "inflow" | "outflow";
+  export type FactIssues = ReadinessIssue[];
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type Period2 = string;
+  export type AsOf = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State3 = "open";
+  export type State4 = "exact_close";
+  export type Digest = string;
+  export type State5 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge1 = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status1 = "ready";
+  export type Source2 = "exact_period_manifest";
+  export type Status2 = "recorded" | "not_recorded";
+  export type Status3 = "unavailable";
+  export type Reason1 = "no_exact_period_manifest";
+  export type Period3 = string;
+  export type Code2 = "already_closed" | "earlier_period_open";
+  export type Message2 = string;
+  export type Period4 = string;
   export type Issues = ReadinessIssue[];
   export type Knowledge2 = "current_knowledge";
   export type AffectsFrozenReadiness = false;
-  export type Status5 = "ready" | "needs_information";
+  export type Status4 = "ready" | "needs_information";
   export type Issues1 = ReadinessIssue[];
   export type InventoryCount = number;
   export type CoverageDigest = string;
-  export type Status6 = "ready" | "needs_information";
+  export type Status5 = "ready" | "needs_information";
   export type Issues2 = ReadinessIssue[];
   export type PendingSubjectId = string | null;
   export type UnpublishedCount = number;
-  export type Status7 = "ready" | "needs_information";
+  export type Status6 = "ready" | "needs_information";
   export type Issues3 = ReadinessIssue[];
-  export type Status8 = string;
+  export type Status7 = string;
   export type CutoffPeriod = string;
   export type CurrentCutoffPeriod = string;
   export type Issues4 = ReadinessIssue[];
@@ -380,7 +366,7 @@ export namespace DashboardFundsContract {
   export type PaidFen = string | null;
   export type OtherSettledFen = string | null;
   export type RemainingFen = string | null;
-  export type Status9 = "completed" | "followup_required" | "unestablished";
+  export type Status8 = "completed" | "followup_required" | "unestablished";
   export type ObligationCount1 = number;
   export type BasisIssueCount = number;
   export type ScopePeriod = string;
@@ -410,6 +396,7 @@ export namespace DashboardFundsContract {
   export interface ReadSemantics {
     knowledge: Knowledge;
     accounting: Accounting;
+    business_basis: BusinessBasis;
     display: Display;
     system_time_replay: SystemTimeReplay;
     recorded_at: RecordedAt;
@@ -510,32 +497,21 @@ export namespace DashboardFundsContract {
     reconciliation_calculation_id: ReconciliationCalculationId;
     reconciliation_fact_id: ReconciliationFactId;
     selection_source: SelectionSource;
-    selection_proof: SelectionProof | null;
+    selection_proof: SelectionProof;
     proof_method: ProofMethod;
   }
-  export interface SelectionProof {
+  export interface DirectAdoptionProof {
     basis: Basis1;
-    contract_version?: ContractVersion;
-    close_period?: ClosePeriod;
-    close_digest?: CloseDigest;
-    package?: ResultReference;
-    anchors?: Anchors;
-    member_fact_ids?: MemberFactIds;
-    trial_balance_basis?: TrialBalanceBasis;
-    membership_digest?: MembershipDigest;
-    acceptance_calculation_id?: AcceptanceCalculationId;
-    result_digest?: ResultDigest2;
+    close_period: ClosePeriod;
+    publication_id: PublicationId;
+    role: Role;
   }
-  export interface ResultReference {
-    calculation_id: CalculationId;
-    fact_id: FactId;
-    result_digest: ResultDigest;
+  export interface CalculationCurrentProof {
+    basis: Basis2;
   }
-  export interface SelectionAnchor {
-    calculation_id: CalculationId1;
-    fact_id: FactId1;
-    result_digest: ResultDigest1;
-    selection_proof: SelectionProof;
+  export interface AssetBatchMemberProof {
+    basis: Basis3;
+    owner_calculation_id: OwnerCalculationId;
   }
   export interface FundMovement {
     id: Id1;
@@ -548,7 +524,7 @@ export namespace DashboardFundsContract {
     amount_fen: AmountFen;
     signed_amount_fen: SignedAmountFen;
     reference: Reference;
-    calculation_id: CalculationId2;
+    calculation_id: CalculationId;
     type: Type1;
     summary: Summary;
     display_summary: DisplaySummary;
@@ -697,27 +673,75 @@ export namespace DashboardFundsContract {
     items: Items5;
     page: CollectionPage;
   }
-  export interface StateSelectionIssue {
-    event_type: EventType;
-    status: Status1;
-    reason: Reason;
-    subject_id: SubjectId;
-    posting_period: PostingPeriod;
-    selection_source: SelectionSource1;
-    candidates: Candidates;
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field1;
+    message: Message1;
+    code?: Code1;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    subject_id?: SubjectId;
+    fact_id?: FactId;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest1;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period1;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId;
+    version_id?: VersionId;
+    calculation_id?: CalculationId1;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
   }
   export interface SelectionCandidate {
-    calculation_id: CalculationId3;
-    fact_id: FactId2;
-    result_digest: ResultDigest3;
+    calculation_id: CalculationId2;
+    fact_id: FactId1;
+    result_digest: ResultDigest;
     kind: Kind;
     has_journal_lines: HasJournalLines;
     trace_only: TraceOnly;
   }
+  export interface CalculationTarget {
+    calculation_id: CalculationId3;
+  }
   export interface PeriodPreparation {
     company_id: CompanyId;
     database_id: DatabaseId;
-    period: Period1;
+    period: Period2;
     as_of: AsOf;
     as_of_semantics: AsOfSemantics;
     closure: Closure;
@@ -745,7 +769,7 @@ export namespace DashboardFundsContract {
     current_followups: CurrentFollowups;
   }
   export interface RecordedReadiness {
-    status: Status2;
+    status: Status1;
     source: Source2;
     readiness: RecordedStatus;
     inventories: RecordedStatus;
@@ -753,81 +777,24 @@ export namespace DashboardFundsContract {
     previous_close_digest: RecordedStatus;
   }
   export interface RecordedStatus {
-    status: Status3;
+    status: Status2;
   }
   export interface UnavailableReadiness {
-    status: Status4;
+    status: Status3;
     reason: Reason1;
   }
   export interface Readiness {
-    period: Period2;
+    period: Period3;
     order_failure: OrderFailure | null;
     issues: Issues;
   }
   export interface OrderFailure {
-    code: Code1;
-    message: Message1;
+    code: Code2;
+    message: Message2;
     details: OrderDetails;
   }
   export interface OrderDetails {
-    period?: Period3;
-  }
-  /**
-   * Fields emitted by material, accounting, report and close checkers.
-   *
-   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
-   * explicit contract change; monetary values cannot fall through an open map.
-   */
-  export interface ReadinessIssue {
-    field: Field1;
-    message: Message2;
-    code?: Code2;
-    location?: Location;
-    semantics?: Semantics;
-    domain?: Domain;
-    subject_id?: SubjectId1;
-    fact_id?: FactId3;
-    source_id?: SourceId;
-    group_id?: GroupId;
-    employee_id?: EmployeeId;
-    asset_id?: AssetId;
-    drawdown_id?: DrawdownId;
-    bank_account_id?: BankAccountId;
-    obligation_id?: ObligationId;
-    obligation_kind?: ObligationKind;
-    evidence_digest?: EvidenceDigest1;
-    member_location?: MemberLocation;
-    detail?: Detail;
-    amount_field?: AmountField;
-    amount_fields?: AmountFields;
     period?: Period4;
-    period_start?: PeriodStart;
-    period_end_exclusive?: PeriodEndExclusive;
-    pages?: Pages;
-    voucher_version_id?: VoucherVersionId;
-    version_id?: VersionId;
-    calculation_id?: CalculationId4;
-    obligation_key?: ObligationKey;
-    allocation_index?: AllocationIndex;
-    source_index?: SourceIndex;
-    row?: Row;
-    affected_lines?: AffectedLines;
-    line_no?: LineNo;
-    account?: Account;
-    allowed_precision?: AllowedPrecision;
-    reusable_sources?: ReusableSources;
-    expected_fen?: ExpectedFen;
-    actual_fen?: ActualFen;
-    reason?: Reason2;
-    candidates?: Candidates1;
-    trace_targets?: TraceTargets;
-    statement?: Statement;
-    column?: Column;
-    dimension?: Dimension;
-    expected_direction?: ExpectedDirection;
-  }
-  export interface CalculationTarget {
-    calculation_id: CalculationId5;
   }
   export interface CurrentFollowups1 {
     knowledge: Knowledge2;
@@ -840,23 +807,23 @@ export namespace DashboardFundsContract {
     file_jobs: FileJobFollowup;
   }
   export interface MaterialFollowup {
-    status: Status5;
+    status: Status4;
     issues: Issues1;
     inventory_count: InventoryCount;
     coverage_digest: CoverageDigest;
   }
   export interface AccountingFollowup {
-    status: Status6;
+    status: Status5;
     issues: Issues2;
     pending_subject_id: PendingSubjectId;
     unpublished_count: UnpublishedCount;
   }
   export interface CheckFollowup {
-    status: Status7;
+    status: Status6;
     issues: Issues3;
   }
   export interface SettlementFollowup {
-    status: Status8;
+    status: Status7;
     cutoff_period?: CutoffPeriod;
     current_cutoff_period?: CurrentCutoffPeriod;
     issues?: Issues4;
@@ -870,7 +837,7 @@ export namespace DashboardFundsContract {
     remaining_fen: RemainingFen;
   }
   export interface ExternalFollowup {
-    status: Status9;
+    status: Status8;
     obligation_count: ObligationCount1;
     completion_status_counts: CompletionStatusCounts;
     basis_issue_count: BasisIssueCount;

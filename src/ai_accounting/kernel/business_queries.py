@@ -278,6 +278,16 @@ class BusinessQueries:
                     periods=proof_periods,
                 )
             ]
+        adopted_by_period = {
+            close_period: {
+                item["calculation_id"]: item for item in manifest["adopted_results"]
+            }
+            for close_period, manifest in manifests
+        }
+        voucher_by_period = {
+            close_period: {item["id"]: item for item in manifest["vouchers"]}
+            for close_period, manifest in manifests
+        }
         events = []
         represented = set()
         # Even state-only reads require voucher root identity to avoid treating
@@ -309,6 +319,53 @@ class BusinessQueries:
         if include_vouchers:
             lines = reads.voucher_lines(row["id"] for row in selected_rows) if include_lines else {}
             for row in selected_rows:
+                calculation_id = row["basis_calculation_id"]
+                fact_id = row["basis_fact_id"]
+                kind = row["basis_kind"]
+                calculation_period = row["calculation_period"]
+                result_digest = row["result_digest"].hex()
+                if row["close_period"] is not None:
+                    frozen_voucher = voucher_by_period[row["close_period"]].get(row["id"])
+                    if frozen_voucher is None:
+                        raise KernelError(
+                            "content_integrity_failed",
+                            "关账凭证缺少直接采用依据",
+                            component="close",
+                            record_id=row["id"],
+                            reason="voucher_adoption_missing",
+                        )
+                    adopted_calculation_id = frozen_voucher["adopted_calculation_id"]
+                    adopted = adopted_by_period[row["close_period"]].get(
+                        adopted_calculation_id
+                    )
+                    calc = reads.metadata(
+                        {adopted_calculation_id}, state=False
+                    )[adopted_calculation_id]
+                    if adopted is None or any(
+                        (
+                            adopted["publication_id"] != calc["publication_id"],
+                            adopted["subject_id"] != calc["subject_id"],
+                            adopted["fact_id"] != calc["fact_id"],
+                            adopted["source_period"] != calc["period"],
+                            adopted["posting_period"] != calc["posting_period"],
+                            adopted["result_digest"] != calc["result_digest"],
+                            frozen_voucher["result_digest"] != calc["result_digest"],
+                        )
+                    ):
+                        raise KernelError(
+                            "content_integrity_failed",
+                            "关账凭证的直接采用依据不匹配",
+                            component="close",
+                            record_id=row["id"],
+                            reason="voucher_adoption_mismatch",
+                        )
+                    if row["reverses_id"] is None:
+                        calculation_id = adopted_calculation_id
+                        fact_id = calc["fact_id"]
+                        kind = calc["kind"]
+                        calculation_period = YearMonth(calc["period"]).ordinal
+                        result_digest = calc["result_digest"]
+                        represented.add(calculation_id)
                 role = (
                     "reversal"
                     if row["reverses_id"]
@@ -321,14 +378,14 @@ class BusinessQueries:
                         "voucher_id": row["voucher_id"],
                         "voucher_number": row["number"],
                         "voucher_calculation_id": row["voucher_calculation_id"],
-                        "calculation_id": row["basis_calculation_id"],
-                        "fact_id": row["basis_fact_id"],
-                        "kind": row["basis_kind"],
+                        "calculation_id": calculation_id,
+                        "fact_id": fact_id,
+                        "kind": kind,
                         "calculation_period": str(
-                            YearMonth.from_ordinal(row["calculation_period"])
+                            YearMonth.from_ordinal(calculation_period)
                         ),
                         "posting_period": str(YearMonth.from_ordinal(row["period"])),
-                        "result_digest": row["result_digest"].hex(),
+                        "result_digest": result_digest,
                         "role": role,
                         "direction": -1 if role == "reversal" else 1,
                         "reverses_voucher_version_id": row["reverses_id"],
@@ -336,121 +393,48 @@ class BusinessQueries:
                         **({"lines": lines[row["id"]]} if include_lines else {}),
                     }
                 )
-        all_members = {
-            ident
-            for month, manifest in manifests
-            if month not in reads.closed_accounting_contexts
-            for ident in manifest.get("calculations", ())
-        }
-        reads.prime_parents(all_members)
-        metadata = reads.metadata(all_members, state=False)
-        closed_candidates, frozen_root_proofs = {}, {}
+        metadata = {}
+        closed_states = []
         for close_period, manifest in manifests:
-            cached = reads.closed_accounting_contexts.get(close_period)
-            if cached is not None:
-                candidates, proofs = cached
-                for candidate_subject in candidates if subjects is None else subjects:
-                    identifiers = candidates.get(candidate_subject, set())
-                    if identifiers:
-                        closed_candidates[close_period, candidate_subject] = identifiers
-                        frozen_root_proofs.update(
-                            {
-                                (close_period, ident): proofs[ident]
-                                for ident in identifiers
-                                if ident in proofs
-                            }
-                        )
-                continue
-            manifest_ids = set(manifest.get("calculations", ()))
-            dependency_ids = {
-                parent
-                for ident in manifest_ids
-                for parent in reads.parents(ident)
-                if parent in manifest_ids
-            }
-            voucher_roots = {
-                reference["calculation_id"]
-                for reference in manifest.get("vouchers", ())
-                if isinstance(reference, dict) and reference.get("calculation_id")
-            }
-            independent_proofs = {}
-            for ident in manifest_ids:
-                row = metadata[ident]
-                if row["posting_period"] is None:
+            for adopted in manifest["adopted_results"]:
+                if adopted["role"] == "journal_basis":
                     continue
-                if YearMonth(row["posting_period"]).ordinal != close_period:
+                if subjects is not None and adopted["subject_id"] not in subjects:
                     continue
-                if ident in voucher_roots:
-                    independent_proofs[ident] = {"basis": "manifest_voucher_root"}
-                elif (
-                    ident not in dependency_ids and YearMonth(row["period"]).ordinal == close_period
+                ident = adopted["calculation_id"]
+                calc = reads.metadata({ident})[ident]
+                metadata[ident] = calc
+                if kinds is not None and calc["kind"] not in kinds:
+                    continue
+                if any(
+                    (
+                        adopted["publication_id"] != calc["publication_id"],
+                        adopted["subject_id"] != calc["subject_id"],
+                        adopted["fact_id"] != calc["fact_id"],
+                        adopted["source_period"] != calc["period"],
+                        adopted["posting_period"] != calc["posting_period"],
+                        adopted["result_digest"] != calc["result_digest"],
+                    )
                 ):
-                    independent_proofs[ident] = {"basis": "manifest_lineage_root"}
-            for adoption in manifest.get("asset_batch_adoptions", ()):
-                ident = adoption.get("owner_calculation_id")
-                if ident not in manifest_ids or ident not in metadata:
-                    continue
-                row = metadata[ident]
-                if row["kind"] not in {"asset_activation_batch", "asset_consumption_month"}:
-                    continue
-                from .asset_batches import frozen_members
-
-                frozen_members(connection, ident)
-                outcome = reads.calculations({ident})[ident]["outcome"]
-                membership_digest = outcome["values"]["membership_digest"]
-                if adoption.get("membership_digest") != membership_digest:
                     raise KernelError(
-                        "asset_batch_digest", "关账采用的资产汇总成员摘要不匹配"
+                        "content_integrity_failed",
+                        "关账直接采用的计算身份不匹配",
+                        component="close",
+                        record_id=ident,
+                        reason="direct_adoption_mismatch",
                     )
-                independent_proofs[ident] = {
-                    "basis": "manifest_asset_batch_adoption",
-                    "membership_digest": membership_digest,
-                }
-            from .asset_card_adoption import prove_asset_card_adoptions
-
-            independent_proofs.update(
-                prove_asset_card_adoptions(
-                    reads,
-                    close_period=close_period,
-                    manifest=manifest,
-                    metadata=metadata,
-                    independent_proofs=independent_proofs,
-                )
-            )
-            # Domain adoption receives the complete independently proven graph;
-            # page kind/subject filters must never remove its downstream proof.
-            if any(metadata[ident]["kind"] == "opening_package" for ident in manifest_ids):
-                from .opening_adoption import prove_opening_adoptions
-
-                independent_proofs.update(
-                    prove_opening_adoptions(
-                        connection,
-                        reads,
-                        close_period=close_period,
-                        manifest=manifest,
-                        metadata=metadata,
-                        independent_proofs=independent_proofs,
-                    )
-                )
-            by_subject = {}
-            for ident in manifest_ids:
-                row = metadata[ident]
-                if (
-                    row["posting_period"] is not None
-                    and YearMonth(row["posting_period"]).ordinal == close_period
-                ):
-                    by_subject.setdefault(row["subject_id"], set()).add(ident)
-            reads.closed_accounting_contexts[close_period] = (by_subject, independent_proofs)
-            for candidate_subject in by_subject if subjects is None else subjects:
-                identifiers = by_subject.get(candidate_subject, set())
-                if identifiers:
-                    closed_candidates[close_period, candidate_subject] = identifiers
-                    frozen_root_proofs.update(
-                        {
-                            (close_period, ident): independent_proofs[ident]
-                            for ident in identifiers
-                            if ident in independent_proofs
-                        }
+                if not calc["line_count"] and ident not in represented:
+                    closed_states.append(
+                        self._state_metadata(
+                            calc,
+                            "close_manifest",
+                            {
+                                "basis": "direct_adoption",
+                                "close_period": str(YearMonth.from_ordinal(close_period)),
+                                "publication_id": adopted["publication_id"],
+                                "role": adopted["role"],
+                            },
+                        )
                     )
         query = (
             "SELECT c.id,c.subject_id FROM calculation_current a "
@@ -468,13 +452,7 @@ class BusinessQueries:
             query += " AND c.subject_id IN (SELECT value FROM json_each(?))"
             parameters.append(json.dumps(sorted(subjects)))
         currents = list(connection.execute(query, parameters))
-        metadata.update(
-            reads.metadata(
-                {row["id"] for row in currents}
-                | {ident for candidates in closed_candidates.values() for ident in candidates}
-            )
-        )
-        current_subjects = {row["subject_id"] for row in currents}
+        metadata.update(reads.metadata({row["id"] for row in currents}))
         state_results = {}
         for row in currents:
             calc = metadata[row["id"]]
@@ -482,52 +460,9 @@ class BusinessQueries:
                 state_results[calc["id"]] = self._state_metadata(
                     calc, "current_publication", {"basis": "calculation_current"}
                 )
+        for state in closed_states:
+            state_results[state["calculation_id"]] = state
         unresolved_states = []
-        for (close_period, state_subject), identities in sorted(closed_candidates.items()):
-            if current_heads and state_subject in current_subjects:
-                continue
-            candidates = [
-                metadata[ident]
-                for ident in sorted(identities)
-                if metadata[ident]["kind"] not in NON_ACCOUNTING_CALCULATIONS
-            ]
-            proven = [
-                calc
-                for calc in candidates
-                if (close_period, calc["id"]) in frozen_root_proofs
-                and not calc["line_count"]
-                and calc["id"] not in represented
-            ]
-            if len(proven) != 1:
-                if any(
-                    not calc["line_count"] and calc["id"] not in represented for calc in candidates
-                ):
-                    unresolved_states.append(
-                        {
-                            "event_type": "state_result_selection",
-                            "status": "unestablished",
-                            "reason": "manifest_state_adoption_not_proven",
-                            "subject_id": state_subject,
-                            "posting_period": str(YearMonth.from_ordinal(close_period)),
-                            "selection_source": "close_manifest",
-                            "candidates": [
-                                {
-                                    "calculation_id": calc["id"],
-                                    "fact_id": calc["fact_id"],
-                                    "kind": calc["kind"],
-                                    "result_digest": calc["result_digest"],
-                                    "has_journal_lines": bool(calc["line_count"]),
-                                    "trace_only": True,
-                                }
-                                for calc in candidates
-                            ],
-                        }
-                    )
-                continue
-            calc = proven[0]
-            state_results[calc["id"]] = self._state_metadata(
-                calc, "close_manifest", frozen_root_proofs[close_period, calc["id"]]
-            )
         events.sort(
             key=lambda item: (
                 item["posting_period"],
@@ -755,14 +690,16 @@ class BusinessQueries:
             selected["cutoff_period"],
             include_lines=False,
         )
-        reads.prime_calculations(
-            {
-                item["calculation_id"]
-                for item in (
-                    *relation_selected["through_period"]["voucher_events"],
-                    *relation_selected["through_period"]["state_results"],
-                )
-            }
+        relation_ids = {
+            item["calculation_id"]
+            for item in (
+                *relation_selected["through_period"]["voucher_events"],
+                *relation_selected["through_period"]["state_results"],
+            )
+        }
+        reads.prime_calculations(relation_ids)
+        resolved_relations = reads.relations_many(
+            relation_ids, resolver=resolve_calculation_relations
         )
         selected_events = []
         for event in relation_selected["through_period"]["voucher_events"]:
@@ -798,7 +735,7 @@ class BusinessQueries:
                 item[0]["calculation_id"],
             ),
         ):
-            resolution = reads.relations(calculation, resolver=resolve_calculation_relations)
+            resolution = resolved_relations[calculation["id"]]
             declared = reads.declared_subjects(calculation)
             direction = event["direction"]
             event_related = (
@@ -1005,17 +942,30 @@ class BusinessQueries:
         }
 
     def settlement_summary(self, connection, period, *, current=False, subject_ids=None):
-        """Page summary: select relevant raw declarations before hydrating outcomes."""
-        return self.settlements(
+        """Read the normalized projection; detail hydration stays in settlements()."""
+        from .settlement_projection import settlement_summary
+
+        subjects = (
+            None
+            if subject_ids is None
+            else {subject_ids}
+            if isinstance(subject_ids, str)
+            else set(subject_ids)
+        )
+        return settlement_summary(
             connection,
             period,
             current=current,
-            subject_ids=subject_ids,
-            summary=True,
+            subject_ids=subjects,
+            reads=self._reads(connection),
         )
 
     def settlements(self, connection, period, *, subject_ids=None, current=False, summary=False):
         """Shared scoped reducer; source scope and relationship candidates are distinct."""
+        if summary:
+            return self.settlement_summary(
+                connection, period, current=current, subject_ids=subject_ids
+            )
         reads = self._reads(connection)
         subjects = (
             None
@@ -1583,6 +1533,137 @@ class BusinessQueries:
         selected = self._selected_accounting(
             connection, subject_id, period, include_lines=not summary
         )
+        exact_close = self._reads(connection).close_rows(
+            periods=[YearMonth(period).ordinal]
+        )
+        later_close = connection.execute(
+            "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
+            (YearMonth(period).ordinal,),
+        ).fetchone()
+        if later_close is not None:
+            later_close = self._reads(connection).close_rows(
+                periods=[later_close["period"]]
+            )[0]
+        if exact_close:
+            close_row = exact_close[0]
+            close_manifest = self._reads(connection).close_manifest(close_row)
+            closure = {
+                "state": "exact_close",
+                "close_period": period,
+                "digest": close_row["digest"].hex(),
+            }
+            frozen_entry = next(
+                (
+                    item
+                    for item in close_manifest["adopted_results"]
+                    if item["subject_id"] == subject_id
+                ),
+                None,
+            )
+            frozen_adoption = (
+                {
+                    "close_period": period,
+                    "publication_id": frozen_entry["publication_id"],
+                    "calculation_id": frozen_entry["calculation_id"],
+                    "result_digest": frozen_entry["result_digest"],
+                    "role": frozen_entry["role"],
+                    "selection_proof": {
+                        "basis": "direct_adoption",
+                        "close_period": period,
+                        "publication_id": frozen_entry["publication_id"],
+                        "role": frozen_entry["role"],
+                    },
+                }
+                if frozen_entry is not None
+                else None
+            )
+            if frozen_adoption is None or any(
+                item["asset_id"] == subject_id
+                for item in close_manifest["asset_card_adoptions"]
+            ):
+                direct_by_calculation = {
+                    item["calculation_id"]: item
+                    for item in close_manifest["adopted_results"]
+                }
+                card = next(
+                    (
+                        item
+                        for item in close_manifest["asset_card_adoptions"]
+                        if item["asset_id"] == subject_id
+                    ),
+                    None,
+                )
+                if card is not None:
+                    owner = direct_by_calculation.get(card["acceptance_calculation_id"])
+                    card_calc = self._reads(connection).metadata(
+                        {card["calculation_id"]}, state=False
+                    )[card["calculation_id"]]
+                    if (
+                        owner is None
+                        or card_calc["subject_id"] != subject_id
+                        or card_calc["result_digest"] != card["result_digest"]
+                        or owner["result_digest"] != card["acceptance_result_digest"]
+                    ):
+                        raise KernelError(
+                            "content_integrity_failed",
+                            "资产卡片的关账采用依据不匹配",
+                            component="close",
+                            record_id=card["calculation_id"],
+                            reason="asset_card_adoption_mismatch",
+                        )
+                    frozen_adoption = {
+                        "close_period": period,
+                        "publication_id": owner["publication_id"],
+                        "calculation_id": card["calculation_id"],
+                        "result_digest": card["result_digest"],
+                        "role": "asset_card_member",
+                        "selection_proof": {
+                            "basis": "asset_card_adoption",
+                            "owner_calculation_id": owner["calculation_id"],
+                            "owner_publication_id": owner["publication_id"],
+                        },
+                    }
+                else:
+                    for adoption in close_manifest["asset_batch_adoptions"]:
+                        owner = direct_by_calculation.get(adoption["owner_calculation_id"])
+                        if owner is None:
+                            continue
+                        member = next(
+                            (
+                                item
+                                for item in self._reads(connection).asset_members(
+                                    owner["calculation_id"]
+                                )
+                                if item["member_subject_id"] == subject_id
+                            ),
+                            None,
+                        )
+                        if member is None:
+                            continue
+                        frozen_adoption = {
+                            "close_period": period,
+                            "publication_id": owner["publication_id"],
+                            "calculation_id": member["member_calculation_id"],
+                            "result_digest": member["result_digest"],
+                            "role": "asset_batch_member",
+                            "selection_proof": {
+                                "basis": "asset_batch_member",
+                                "owner_calculation_id": owner["calculation_id"],
+                                "owner_publication_id": owner["publication_id"],
+                                "membership_digest": adoption["membership_digest"],
+                            },
+                        }
+                        break
+        elif later_close:
+            closure = {
+                "state": "covered_by_later_close",
+                "close_period": str(YearMonth.from_ordinal(later_close["period"])),
+                "digest": later_close["digest"].hex(),
+            }
+            frozen_adoption = None
+        else:
+            closure = {"state": "open"}
+            frozen_adoption = None
         asset_members = self._selected_asset_members(
             connection, period, kinds={subject["kind"]}, subjects={subject_id}
         )
@@ -1666,14 +1747,19 @@ class BusinessQueries:
             "period": period,
             "as_of": as_of,
             "latest_fact": latest,
-            "current_publication": current_publication,
+            "closure": closure,
+            "as_posted": {
+                "cutoff_period": selected["cutoff_period"],
+                **selected["through_period"],
+            },
+            "current_business_result": current_publication,
+            "frozen_adoption": frozen_adoption,
             "review": {
                 "status": review_status,
                 "latest_matches_publication": matches,
                 "pending_causes": pending,
                 "dispositions": dispositions,
             },
-            "selected_accounting": selected,
             "settlements": settlements,
             "external": external,
             "file_jobs": self._file_jobs(connection, subject_id, period, summary=summary),
@@ -1681,14 +1767,16 @@ class BusinessQueries:
             "trace_targets": trace_targets,
             "read_semantics": {
                 "knowledge": "current_knowledge",
-                "accounting": "frozen_close_or_current_published_at_period_end",
+                "accounting": "as_posted",
+                "business_basis": (
+                    "frozen_adoption" if frozen_adoption is not None else "current_known"
+                ),
                 "display": "frozen_with_current_supplements",
                 "as_of": "external_deadlines_and_completion_only",
             },
         }
         if summary:
             result["projection"] = "summary"
-            result["selected_accounting"] = self._selection_summary(selected)
             result["review"]["disposition_count"] = connection.execute(
                 "SELECT count(*) FROM disposition WHERE subject_id=?",
                 (subject_id,),
@@ -2025,16 +2113,16 @@ class BusinessQueries:
         """Compose readiness inside a caller-owned read snapshot."""
         period, as_of = str(YearMonth(period)), str(ActualDate(as_of or _today_china()))
         month = YearMonth(period).ordinal
-        exact = connection.execute(
-            "SELECT period,manifest,digest FROM period_close WHERE period=?", (month,)
-        ).fetchone()
+        reads = self._reads(connection)
+        exact_rows = reads.close_rows(periods=[month])
+        exact = exact_rows[0] if exact_rows else None
         later = connection.execute(
             "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
             (month,),
         ).fetchone()
         periods = Periods(self.engine)
         if exact:
-            manifest = json.loads(exact["manifest"])
+            manifest = reads.close_manifest(exact)
             closure = {"state": "exact_close", "digest": exact["digest"].hex()}
             frozen = {
                 "status": "ready",
@@ -2056,8 +2144,9 @@ class BusinessQueries:
             readiness = None
             current = periods.collect_current_readiness(connection, period)
         elif later:
+            later = reads.close_rows(periods=[later["period"]])[0]
             closure = {
-                "state": "sealed_by_later_close",
+                "state": "covered_by_later_close",
                 "sealing_boundary": str(YearMonth.from_ordinal(later["period"])),
                 "sealing_digest": later["digest"].hex(),
             }

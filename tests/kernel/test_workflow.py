@@ -498,7 +498,7 @@ def test_quarterly_basis_is_explicit_current_calculations_not_old_close_manifest
     company.save(
         payroll().model_copy(update={"accounting_gross_salary_fen": 1100000}), "january", 1
     )
-    company.publish("january", correction_period="2026-02")
+    company.publish("january", posting_period="2026-02")
     assert Periods(company.engine).closed_report("2026-01") == frozen
     assert company.current("completion", "external_completion").values["accepted_calculations"] == (
         basis["accepted_calculations"][0],
@@ -702,7 +702,7 @@ def test_quarter_review_excludes_monthly_submission_revisions_from_accounting_ba
     company.publish("quarter-completion")
     old_monthly = company.current("monthly-completion", "external_completion")
     company.save(payroll(), "january", revision=1)
-    company.publish("january", correction_period="2026-02")
+    company.publish("january", posting_period="2026-02")
     assert (
         company.current("monthly-completion", "external_completion").result_digest
         != old_monthly.result_digest

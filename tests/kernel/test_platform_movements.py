@@ -363,7 +363,7 @@ def test_closed_expense_and_actual_rows_stay_frozen_while_later_receipt_reduces_
     save("platform_expense_confirmation", "cost", cost(confirmed_amount_fen=1855001), revision=1)
     with pytest.raises(KernelError):
         publish("out")
-    publish("out", correction_period="2026-02")
+    publish("out", posting_period="2026-02")
     assert Periods(engine).closed_report("2026-01") == frozen
     assert calc(engine, "payment", "receipt").values["amount_fen"] == 10000
     with engine.store.connection(read_only=True) as conn:

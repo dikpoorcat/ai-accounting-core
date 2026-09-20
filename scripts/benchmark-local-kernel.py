@@ -250,10 +250,13 @@ def seed_to(
                 connection.executemany(
                     "INSERT INTO voucher_current VALUES(?,?)", [(r[4], r[5]) for r in rows]
                 )
-                connection.executemany(
-                    "INSERT INTO calculation_publication VALUES(?,?,?)",
-                    [(r[3], r[6], r[4]) for r in rows],
-                )
+                from ai_accounting.kernel.publication import append
+
+                for row in rows:
+                    append(connection, row[1], row[3], {
+                        "previous_publication_id": None, "mode": "initial",
+                        "posting_period": row[6], "baseline_calculation_id": None,
+                    }, row[4])
                 connection.executemany(
                     "INSERT INTO calculation_seal VALUES(?)", [(r[3],) for r in rows]
                 )

@@ -10,7 +10,6 @@ from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard, _Snapshot
 from ai_accounting.kernel.dashboard_funds import FundsRead
-from ai_accounting.kernel.types import YearMonth
 
 bank_book = banking.book
 MONTH = "2026-09"
@@ -50,12 +49,16 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
     candidate = Path(__file__).resolve().parents[2]
     assert Path(ai_accounting.__file__).resolve().is_relative_to(candidate / "src")
     engine, save, statement_data = closed_banks(bank_book)
-    selection = BusinessQueries(engine).business_status(
+    status = BusinessQueries(engine).business_status(
         "statement-bank-a", MONTH, as_of="2026-10-01"
-    )["selected_accounting"]["through_period"]
-    assert selection["state_results"] == []
-    unresolved = selection["unestablished_state_selections"][0]
-    assert unresolved["candidates"][0]["trace_only"] is True
+    )
+    selection = status["as_posted"]
+    statement_state = next(
+        item for item in selection["state_results"] if item["kind"] == "bank_statement"
+    )
+    assert selection["unestablished_state_selections"] == []
+    assert statement_state["selection_proof"]["basis"] == "direct_adoption"
+    assert status["frozen_adoption"]["calculation_id"] == statement_state["calculation_id"]
 
     # Observe only the bank projection, after the shared selector has run. An
     # unrelated historical result in through_period must not request its edges.
@@ -109,9 +112,9 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
     check = bank["rows"][0]["source_check"]
     assert check["statement_confirmed"] and check["reconciliation_valid"]
     assert check["selection_source"] == "close_manifest"
-    assert check["selection_proof"] == {"basis": "manifest_lineage_root"}
+    assert check["selection_proof"]["basis"] == "direct_adoption"
     assert check["proof_method"] == "frozen_reconciliation_direct_statement"
-    assert check["statement_calculation_id"] == unresolved["candidates"][0]["calculation_id"]
+    assert check["statement_calculation_id"] == statement_state["calculation_id"]
     with engine.store.connection(read_only=True) as connection:
         assert (
             connection.execute(
@@ -152,7 +155,6 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
     cases = (
         "missing_edge",
         "two_statement_parents",
-        "different_close_members",
         "unadopted_reconciliation",
         "different_fact",
         "different_period",
@@ -221,13 +223,6 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
                 )
             elif case == "two_statement_parents":
                 snap.reads._parents[rec["id"]] += (source_b["id"],)
-            elif case == "different_close_members":
-                month = YearMonth(MONTH).ordinal
-                snap.closes.cache[month] = snap.close | {
-                    "calculations": [
-                        ident for ident in snap.close["calculations"] if ident != source["id"]
-                    ]
-                }
             elif case == "unadopted_reconciliation":
                 del read.states[rec["id"]]
                 del read.state_selections[rec["id"]]
@@ -241,7 +236,14 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
                 )
                 read.states[ident] = source | {"id": ident}
                 read.state_selections[ident] = BusinessQueries._state_metadata(
-                    read.states[ident], "close_manifest", {"basis": "manifest_lineage_root"}
+                    read.states[ident],
+                    "close_manifest",
+                    {
+                        "basis": "direct_adoption",
+                        "close_period": MONTH,
+                        "publication_id": "test-publication",
+                        "role": "state_only",
+                    },
                 )
             summary = read.bank_summary()
             assert summary["matched_count"] == 1, case
@@ -250,20 +252,19 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
             )
             assert summary["unmatched_count"] == 0, case
             assert summary["missing_account_count"] == 0, case
-            if case not in {"independently_selected_conflict", "independent_source_missing_edge"}:
-                assert summary["coverage_state"] == "partial", case
-            else:
-                # Independent source coverage can be known even though the
-                # reconciliation's exact source cannot establish matching.
-                assert summary["coverage_state"] == "complete", case
+            expected_coverage = (
+                "partial"
+                if case
+                in {
+                    "independently_selected_conflict",
+                    "duplicate_statement",
+                }
+                else "complete"
+            )
+            assert summary["coverage_state"] == expected_coverage, case
             check = read.bank_source_checks[source["fact_id"]]
             assert not check["reconciliation_valid"], case
-            assert check["state"] in {"unestablished", "conflict"}, case
-            assert any(
-                source["id"]
-                in {candidate["calculation_id"] for candidate in issue["candidates"]}
-                for issue in read.issues
-            ), case
+            assert check["state"] in {"unestablished", "needs_review", "conflict"}, case
 
 
 def test_prior_frozen_reconciliations_resolve_accumulated_bank_source_warnings(bank_book):

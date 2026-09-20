@@ -293,7 +293,12 @@ def test_two_real_bank_rows_match_one_whole_source_and_invalid_group_fails(compa
     company.publish("bank-reconciliation")
     company.close("2026-01")
     closed = company.close("2026-02")
-    assert company.current("gross-batch", fact.kind).id in closed["calculations"]
+    adopted = {item["subject_id"]: item for item in closed["adopted_results"]}
+    assert adopted["bank-reconciliation"]["role"] == "state_only"
+    assert adopted["gross-batch"]["calculation_id"] == company.current(
+        "gross-batch", fact.kind
+    ).id
+    assert adopted["gross-batch"]["posting_period"] == "2026-02"
 
 
 def test_bank_material_uses_full_amount_and_preserves_unsigned_outflow(company):

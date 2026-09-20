@@ -70,31 +70,25 @@ def test_bank_control_does_not_gate_position_but_true_opening_still_does(
     assert dashboard.brief("2026-01")["data"]["position"] == position
     _close_without_current_business(engine, "2026-01", proof)
 
-    selected = BusinessQueries(engine).business_status(
+    bank_status = BusinessQueries(engine).business_status(
         "opening-bank-a", "2026-01", as_of="2026-02-01"
-    )["selected_accounting"]["through_period"]
-    assert selected["state_results"] == []
-    unresolved = selected["unestablished_state_selections"]
-    assert len(unresolved) == 1
-    assert unresolved[0]["reason"] == "manifest_state_adoption_not_proven"
-    assert {item["kind"] for item in unresolved[0]["candidates"]} == {"bank_opening"}
-    assert all(item["trace_only"] for item in unresolved[0]["candidates"])
+    )
+    selected = bank_status["as_posted"]
+    bank_opening = next(
+        item for item in selected["state_results"] if item["kind"] == "bank_opening"
+    )
+    assert selected["unestablished_state_selections"] == []
+    assert bank_opening["selection_proof"]["basis"] == "direct_adoption"
+    assert bank_status["frozen_adoption"]["calculation_id"] == bank_opening["calculation_id"]
 
     historical = dashboard.brief("2026-01")["data"]["position"]
-    if opening_kind == "opening_cash":
-        assert historical == position
-    else:
-        # A true opening-bank detail is also a no-entry/opening=False result,
-        # but losing its independent adoption must remain conservative. The
-        # published bank control uses that exact detail as a dependency.
-        opening = BusinessQueries(engine).business_status(
+    assert historical == position
+    if opening_kind == "opening_bank":
+        opening_status = BusinessQueries(engine).business_status(
             "real-opening", "2026-01", as_of="2026-02-01"
-        )["selected_accounting"]["through_period"]
-        assert opening["state_results"] == []
-        assert opening["unestablished_state_selections"]
-        assert historical["complete"] is False
-        assert historical["assets_fen"] is None
-        assert historical["liabilities_fen"] is None
-        assert historical["equation_valid"] is None
-        assert historical["other_assets_fen"] is None
-        assert any(item["field"] == "opening.selection" for item in historical["issues"])
+        )
+        opening = opening_status["as_posted"]
+        assert opening["unestablished_state_selections"] == []
+        assert opening_status["frozen_adoption"]["selection_proof"]["basis"] == (
+            "direct_adoption"
+        )

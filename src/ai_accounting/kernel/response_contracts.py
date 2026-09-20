@@ -51,6 +51,7 @@ def _boolean_literal(value):
 
 
 Version2 = Annotated[Literal[2], BeforeValidator(_integer_literal)]
+Version3 = Annotated[Literal[3], BeforeValidator(_integer_literal)]
 FalseValue = Annotated[Literal[False], BeforeValidator(_boolean_literal)]
 TrueValue = Annotated[Literal[True], BeforeValidator(_boolean_literal)]
 
@@ -101,7 +102,8 @@ class DashboardContextResponse(ResponseObject):
 
 class ReadSemantics(ResponseObject):
     knowledge: Literal["current_knowledge"]
-    accounting: Literal["current_published", "frozen_close"]
+    accounting: Literal["as_posted"]
+    business_basis: Literal["current_known", "frozen_adoption"]
     display: Literal["current", "frozen_with_current_supplements"]
     system_time_replay: FalseValue
     recorded_at: Literal["system_recording_time"]
@@ -134,44 +136,32 @@ class PartySource(ResponseObject):
     field_sources: NotRequired[FieldSources]
 
 
-class ResultReference(ResponseObject):
+class DirectAdoptionProof(ResponseObject):
+    basis: Literal["direct_adoption"]
+    close_period: Month
+    publication_id: str
+    role: str
+
+
+class CalculationCurrentProof(ResponseObject):
+    basis: Literal["calculation_current"]
+
+
+class AssetBatchMemberProof(ResponseObject):
+    basis: Literal["asset_batch_member"]
+    owner_calculation_id: str
+
+
+SelectionProof = DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof
+
+
+class SelectionCandidate(ResponseObject):
     calculation_id: str
     fact_id: str
     result_digest: str
-
-
-class SelectionAnchor(ResultReference):
-    selection_proof: SelectionProof
-
-
-class SelectionProof(ResponseObject):
-    basis: str
-    contract_version: NotRequired[int]
-    close_period: NotRequired[Month]
-    close_digest: NotRequired[str]
-    package: NotRequired[ResultReference]
-    anchors: NotRequired[list[SelectionAnchor]]
-    member_fact_ids: NotRequired[list[str]]
-    trial_balance_basis: NotRequired[str]
-    membership_digest: NotRequired[str]
-    acceptance_calculation_id: NotRequired[str]
-    result_digest: NotRequired[str]
-
-
-class SelectionCandidate(ResultReference):
     kind: str
     has_journal_lines: bool
     trace_only: TrueValue
-
-
-class StateSelectionIssue(ResponseObject):
-    event_type: Literal["state_result_selection"]
-    status: Literal["unestablished"]
-    reason: Literal["manifest_state_adoption_not_proven"]
-    subject_id: str
-    posting_period: Month
-    selection_source: Literal["close_manifest"]
-    candidates: list[SelectionCandidate]
 
 
 class ReadinessIssue(ResponseObject):
@@ -259,7 +249,7 @@ class ExactClosure(ResponseObject):
 
 
 class LaterClosure(ResponseObject):
-    state: Literal["sealed_by_later_close"]
+    state: Literal["covered_by_later_close"]
     sealing_boundary: Month
     sealing_digest: str
 
@@ -586,13 +576,13 @@ class FundsData(ResponseObject):
     investments: FundInvestments
     bank_statement: BankStatement
     collections: FundsCollections
-    fact_issues: list[StateSelectionIssue]
+    fact_issues: list[ReadinessIssue]
     period_preparation: PeriodPreparation | None
     movement_page: NotRequired[CollectionPage]
 
 
 class FundsDashboardResponse(ResponseObject):
-    schema_version: Version2
+    schema_version: Version3
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

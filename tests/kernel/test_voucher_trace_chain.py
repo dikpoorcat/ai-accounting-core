@@ -11,7 +11,7 @@ def test_two_closed_period_corrections_are_navigable_without_changing_selected_a
     publish(engine)
     close(engine)
     save(engine, amount=125, revision=1, request="amend-first")
-    publish(engine, request="publish-first", correction_period="2026-02")
+    publish(engine, request="publish-first", posting_period="2026-02")
 
     periods = Periods(engine)
     proof = evidence(engine)
@@ -34,7 +34,7 @@ def test_two_closed_period_corrections_are_navigable_without_changing_selected_a
         request_id="february-close",
     )
     save(engine, amount=150, revision=2, request="amend-second")
-    publish(engine, request="publish-second", correction_period="2026-03")
+    publish(engine, request="publish-second", posting_period="2026-03")
 
     versions = {
         row["number"]: row

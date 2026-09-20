@@ -292,7 +292,7 @@ async function loadFunds(periodKey: string) {
   requestError.value = "";
   try {
     const response = await fetchFundsDashboard(periodKey, controller.signal, filters);
-    if (response.schema_version !== 2) {
+    if (response.schema_version !== 3) {
       throw new Error("FUNDS_SCHEMA_MISMATCH");
     }
     const data = response.data;
@@ -779,13 +779,12 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="funds.fact_issues?.length" class="historical-source-issues" aria-label="历史独立采用说明">
-          <p role="status">{{ funds.fact_issues.length }} 组历史资金来源尚不能证明独立封存采用。具体金额与流水核对状态分别见对应区块；作为其他结果的来源，不等于已独立采用。</p>
-          <p class="muted">以下保留所选月末独立采用尚未证明的来源与候选，与当前跟进状态分别列示。</p>
+        <section v-if="funds.fact_issues?.length" class="historical-source-issues" aria-label="历史资金依据说明">
+          <p role="status">{{ funds.fact_issues.length }} 组历史资金依据需要核对。具体金额与流水核对状态分别见对应区块。</p>
+          <p class="muted">以下保留所选月末读取发现的问题，与当前跟进状态分别列示。</p>
           <details v-for="(issue, issueIndex) in funds.fact_issues" :key="issueIndex">
-            <summary>查看第 {{ issueIndex + 1 }} 组历史来源与精确候选</summary>
-            <p>候选只供核对，不作为已采用金额累计。</p>
-            <details><summary>未建立原因与原始来源标识</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
+            <summary>查看第 {{ issueIndex + 1 }} 组历史资金依据</summary>
+            <details><summary>问题与原始来源标识</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
           </details>
         </section>
         <section

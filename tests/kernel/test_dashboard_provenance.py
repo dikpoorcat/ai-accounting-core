@@ -83,7 +83,8 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert sources["tax_withholding_start_date"]["source_type"] == "fact"
     assert sources["tax_withholding_start_date"]["basis"] == "frozen"
     assert response["read_semantics"]["knowledge"] == "current_knowledge"
-    assert response["read_semantics"]["accounting"] == "frozen_close"
+    assert response["read_semantics"]["accounting"] == "as_posted"
+    assert response["read_semantics"]["business_basis"] == "frozen_adoption"
     brief = Dashboard(company.engine).brief("2026-01")["data"]
     voucher = brief["vouchers"][0]
     management = voucher["components"][0]["management"]

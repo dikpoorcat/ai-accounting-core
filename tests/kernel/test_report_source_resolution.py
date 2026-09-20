@@ -158,7 +158,7 @@ def test_closed_reversal_keeps_original_creditor_splits_and_frozen_report(book):
     _, save, publish, close = book
     # A supported correction of the creditor distribution changes no total asset cost.
     save("reimbursed_asset_batch", "batch", accepted((("alice", 70000), ("bob", 50000))), 1)
-    publish("batch", correction_period="2026-04")
+    publish("batch", posting_period="2026-04")
     payment(book, "bob-full", "bob", 50000, "2026-04")
     cit(save, publish, "2026-06")
     for month in ("2026-04", "2026-05", "2026-06"):

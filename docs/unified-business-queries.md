@@ -12,56 +12,26 @@
 `Workflow._query(connection, period, as_of=..., period_readiness=...)`。同一响应不跨连接
 拼接准备状态。
 
-`period` 是核算截止月份。`latest_fact` 和 `current_publication` 始终表示查询时当前知识，
-不按月份或 `as_of` 回放旧 current；两者自己的事实期间、核算期间和 `posting_period`
-分别保留。`as_of` 只用于中国自然日下的外部期限和完成可证明性，不改变凭证选择、
-清偿截止或当前头。
+`period` 是账面还原截止月份。`latest_fact` 与 `current_business_result` 表示查询时当前知识，
+不按月份或 `as_of` 回放旧 current；事实所属月、实际 `posting_period` 和正式发布时间分别
+保留。`as_of` 只用于中国自然日下的外部期限和完成可证明性，不改变账面事件、清偿截止或
+当前正式发布头。
 
-`selected_accounting.period_events` 只含 `posting_period` 等于所选月份的正式事件；
-`through_period` 含截至该月的有效凭证影响和无分录状态结果。已有当月 close manifest 时
-只取其精确冻结引用，否则取当前有效正式发布。无本月事件时保留空数组；截至期没有任何
-正式结果时才使用 `not_established`。
+`business_status` 固定分开三个核算口径：
 
-冲正事件保留冲正凭证自身版本，同时以 `reverses_voucher_version_id` 指向的原凭证计算
-作为反向核算依据；替换事件采用更正计算。无影响复核在开放期只出现一次凭证影响，
-凭证版本保持原精确版本而计算采用当前正式复核；闭期仍取 manifest 原计算，当前复核仅在
-`current_publication` 出现。可按当前发布或冻结采用证明选取的无分录结果进入 `state_results`，
-不标为未发布。
-依赖计算只作为来源追溯，不自行成为入账事件。
+- `as_posted` 按实际入账月还原截至所选月末的凭证事件和无凭证状态结果。
+- `current_business_result` 是当前正式发布链的有效结果；未发布事实和待重算状态不能替代它。
+- `frozen_adoption` 只在所选月有独立关账并明确采用该业务时返回，保存正式发布、计算摘要、
+  采用角色和证明；后续版本不能替换它。
 
-旧 manifest 的 `calculations` 可能同时包含无分录发布结果和其历史依赖，不能仅凭出现于清单
-就认作独立有效状态。若冻结材料不能唯一证明采用版本，查询保留候选和精确追溯目标，
-局部标记不可建立；这些候选不参与金额累计，也不用当前头补写历史结论。
+`closure` 区分 `exact_close`、`covered_by_later_close` 与 `open`。后续关账覆盖只说明连续边界，
+不能冒充本月独立批准，也不能生成 `frozen_adoption`。明确请求不存在的当月冻结内容时，
+服务返回 `frozen_snapshot_unavailable`。
 
-冻结采用证明按每份 manifest 分别建立，只读取其完整计算集合和不可变依赖：
-
-- 集合内未被其他计算依赖、且计算期间等于关账期间的图顶层计算，证明为
-  `manifest_lineage_root`。
-- manifest 精确凭证条目明确引用的计算，证明为 `manifest_voucher_root`；无分录更正
-  产生的冲正凭证也可保留这一采用证明。
-- 整批验收形成的逐张 `reimbursed_asset` 卡片本身无分录，但同时可能被启用计算引用。
-  新关账通过 `asset_card_adoptions` 冻结卡片计算、结果摘要及其唯一验收批次计算；关账前
-  必须核对卡片事实、批次成员、资产余额效果和直接依赖完全一致，否则拒绝关账。旧清单
-  没有该字段时，仅在同一冻结图内的验收批次已有独立凭证根，且上述不可变关系全部唯一
-  匹配时建立 `legacy_manifest_asset_card_adoption`；不改写旧清单，也不按金额相等推定。
-- 期初包可按 `manifest_opening_member_adoption`（合同版本 1）建立领域采用证明：先在
-  完整 manifest 图中独立证明一个 `opening.MODELS` 明细根，核对它的直接计算依赖、
-  精确成员事实及原样复制的结果值。明细必须符合 `calculate_detail` 的固定结果外形，
-  无普通分录、余额影响或其他额外输出；不能用包反证明细形成循环。
-  包的声明成员、冻结成员和依赖中的全部期初事实必须精确双射，按实际事实种类重计的
-  分类数量与两份 counts 相符，全部成员 opening_lines 拼接等于包 opening_lines。
-  首封存月份必须等于建账期且无更早封存或凭证；仅以该 manifest 的精确凭证版本借贷
-  总额加包 opening_lines，按科目核对冻结 trial_balance（纯零空行归一化）。金额一致
-  只是必要核验，不能替代身份锚点，不能据此证明交易方或余额关系，也不豁免原有完整性
-  与关系核对。证明保留 close digest、包及明细的精确计算／事实版本和 result_digest。
-  同一完整范围内的全部获证版本仍先收集再判唯一；多个获证包或同身份已采用明细冲突
-  保留未知。缺少上述条件的旧包仅保留追溯，任意承接依赖不自动获得此证明。
-- 即使只有一个候选，只要它被其他计算作为依赖引用且没有明确的根证明，也返回
-  `unestablished`、`reason=manifest_state_adoption_not_proven` 和精确追溯候选，不累计。
-
-可证明为根的正常无分录及期初状态仍正常采用。某结果同时是根和依赖时，旧 manifest
-可能没有足够信息证明根角色，查询保留局部未知；不借查询时 current、处置记录先后或候选
-数量反推历史采用，也不修改原 manifest。当前跟进仍独立采用当前正式头。
+冲正事件保留冲正凭证自身版本及其 `reverses_voucher_version_id`；闭期更正按正式发布链在
+指定开放入账月记录新旧结果差额。无影响复核保留原入账月和凭证拥有者，同时把新的采用
+计算保存为当前业务依据。无凭证结果只按正式发布或直接冻结采用进入 `state_results`；依赖
+计算仅用于来源追溯，不能因为出现在依赖图中就冒充直接采用。
 
 ## 独立状态
 
@@ -96,7 +66,7 @@
   `frozen_readiness={status:"ready",source:"exact_period_manifest",...}`，其中 `readiness`、
   `inventories`、`material_coverage`、`previous_close_digest` 每项均包装为
   `{status:"recorded",value}` 或 `{status:"not_recorded"}`；`readiness` 为 null。
-- `sealed_by_later_close`：
+- `covered_by_later_close`：
   `closure={state,sealing_boundary,sealing_digest}`，记录最早更晚闭期边界；当月没有
   manifest，因此 `frozen_readiness={status:"unavailable",reason:"no_exact_period_manifest"}`，
   `readiness` 为 null，不借后来 manifest 补造。

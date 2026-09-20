@@ -376,6 +376,26 @@
         "title": "AccountingFollowup",
         "type": "object"
       },
+      "AssetBatchMemberProof": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "const": "asset_batch_member",
+            "title": "Basis",
+            "type": "string"
+          },
+          "owner_calculation_id": {
+            "title": "Owner Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "owner_calculation_id"
+        ],
+        "title": "AssetBatchMemberProof",
+        "type": "object"
+      },
       "BankSourceCheck": {
         "additionalProperties": false,
         "properties": {
@@ -459,12 +479,19 @@
           "selection_proof": {
             "anyOf": [
               {
-                "$ref": "#/$defs/SelectionProof"
+                "$ref": "#/$defs/DirectAdoptionProof"
+              },
+              {
+                "$ref": "#/$defs/CalculationCurrentProof"
+              },
+              {
+                "$ref": "#/$defs/AssetBatchMemberProof"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Selection Proof"
           },
           "proof_method": {
             "anyOf": [
@@ -777,6 +804,21 @@
         "title": "BatchPaymentItem",
         "type": "object"
       },
+      "CalculationCurrentProof": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "const": "calculation_current",
+            "title": "Basis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis"
+        ],
+        "title": "CalculationCurrentProof",
+        "type": "object"
+      },
       "CalculationTarget": {
         "additionalProperties": false,
         "properties": {
@@ -1077,6 +1119,37 @@
           "closed_at"
         ],
         "title": "DashboardPeriod",
+        "type": "object"
+      },
+      "DirectAdoptionProof": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "const": "direct_adoption",
+            "title": "Basis",
+            "type": "string"
+          },
+          "close_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Close Period",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "close_period",
+          "publication_id",
+          "role"
+        ],
+        "title": "DirectAdoptionProof",
         "type": "object"
       },
       "ExactClosure": {
@@ -1774,7 +1847,7 @@
           },
           "fact_issues": {
             "items": {
-              "$ref": "#/$defs/StateSelectionIssue"
+              "$ref": "#/$defs/ReadinessIssue"
             },
             "title": "Fact Issues",
             "type": "array"
@@ -2022,7 +2095,7 @@
         "additionalProperties": false,
         "properties": {
           "state": {
-            "const": "sealed_by_later_close",
+            "const": "covered_by_later_close",
             "title": "State",
             "type": "string"
           },
@@ -2322,11 +2395,16 @@
             "type": "string"
           },
           "accounting": {
-            "enum": [
-              "current_published",
-              "frozen_close"
-            ],
+            "const": "as_posted",
             "title": "Accounting",
+            "type": "string"
+          },
+          "business_basis": {
+            "enum": [
+              "current_known",
+              "frozen_adoption"
+            ],
+            "title": "Business Basis",
             "type": "string"
           },
           "display": {
@@ -2361,6 +2439,7 @@
         "required": [
           "knowledge",
           "accounting",
+          "business_basis",
           "display",
           "system_time_replay",
           "recorded_at",
@@ -2822,58 +2901,6 @@
         "title": "RecordedStatus",
         "type": "object"
       },
-      "ResultReference": {
-        "additionalProperties": false,
-        "properties": {
-          "calculation_id": {
-            "title": "Calculation Id",
-            "type": "string"
-          },
-          "fact_id": {
-            "title": "Fact Id",
-            "type": "string"
-          },
-          "result_digest": {
-            "title": "Result Digest",
-            "type": "string"
-          }
-        },
-        "required": [
-          "calculation_id",
-          "fact_id",
-          "result_digest"
-        ],
-        "title": "ResultReference",
-        "type": "object"
-      },
-      "SelectionAnchor": {
-        "additionalProperties": false,
-        "properties": {
-          "calculation_id": {
-            "title": "Calculation Id",
-            "type": "string"
-          },
-          "fact_id": {
-            "title": "Fact Id",
-            "type": "string"
-          },
-          "result_digest": {
-            "title": "Result Digest",
-            "type": "string"
-          },
-          "selection_proof": {
-            "$ref": "#/$defs/SelectionProof"
-          }
-        },
-        "required": [
-          "calculation_id",
-          "fact_id",
-          "result_digest",
-          "selection_proof"
-        ],
-        "title": "SelectionAnchor",
-        "type": "object"
-      },
       "SelectionCandidate": {
         "additionalProperties": false,
         "properties": {
@@ -2912,66 +2939,6 @@
           "trace_only"
         ],
         "title": "SelectionCandidate",
-        "type": "object"
-      },
-      "SelectionProof": {
-        "additionalProperties": false,
-        "properties": {
-          "basis": {
-            "title": "Basis",
-            "type": "string"
-          },
-          "contract_version": {
-            "title": "Contract Version",
-            "type": "integer"
-          },
-          "close_period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Close Period",
-            "type": "string"
-          },
-          "close_digest": {
-            "title": "Close Digest",
-            "type": "string"
-          },
-          "package": {
-            "$ref": "#/$defs/ResultReference"
-          },
-          "anchors": {
-            "items": {
-              "$ref": "#/$defs/SelectionAnchor"
-            },
-            "title": "Anchors",
-            "type": "array"
-          },
-          "member_fact_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Member Fact Ids",
-            "type": "array"
-          },
-          "trial_balance_basis": {
-            "title": "Trial Balance Basis",
-            "type": "string"
-          },
-          "membership_digest": {
-            "title": "Membership Digest",
-            "type": "string"
-          },
-          "acceptance_calculation_id": {
-            "title": "Acceptance Calculation Id",
-            "type": "string"
-          },
-          "result_digest": {
-            "title": "Result Digest",
-            "type": "string"
-          }
-        },
-        "required": [
-          "basis"
-        ],
-        "title": "SelectionProof",
         "type": "object"
       },
       "SettlementFollowup": {
@@ -3181,58 +3148,6 @@
         "title": "SourceMetadata",
         "type": "object"
       },
-      "StateSelectionIssue": {
-        "additionalProperties": false,
-        "properties": {
-          "event_type": {
-            "const": "state_result_selection",
-            "title": "Event Type",
-            "type": "string"
-          },
-          "status": {
-            "const": "unestablished",
-            "title": "Status",
-            "type": "string"
-          },
-          "reason": {
-            "const": "manifest_state_adoption_not_proven",
-            "title": "Reason",
-            "type": "string"
-          },
-          "subject_id": {
-            "title": "Subject Id",
-            "type": "string"
-          },
-          "posting_period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Posting Period",
-            "type": "string"
-          },
-          "selection_source": {
-            "const": "close_manifest",
-            "title": "Selection Source",
-            "type": "string"
-          },
-          "candidates": {
-            "items": {
-              "$ref": "#/$defs/SelectionCandidate"
-            },
-            "title": "Candidates",
-            "type": "array"
-          }
-        },
-        "required": [
-          "event_type",
-          "status",
-          "reason",
-          "subject_id",
-          "posting_period",
-          "selection_source",
-          "candidates"
-        ],
-        "title": "StateSelectionIssue",
-        "type": "object"
-      },
       "UnavailableReadiness": {
         "additionalProperties": false,
         "properties": {
@@ -3287,7 +3202,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 2,
+        "const": 3,
         "title": "Schema Version",
         "type": "integer"
       },

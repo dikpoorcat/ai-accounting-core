@@ -41,6 +41,10 @@ def serve(root: Path):
 
         First discover finance_local_schema. Pass company_id for every company operation.
         save_fact confirms latest facts; preview/confirm publish their accounting effects.
+        Review each preview item's source_period, posting_period and mode. Supply
+        posting_period only when the published contract requires an explicit open month.
+        Automatically recalculated open dependencies keep their existing posting month;
+        an explicit root that conflicts with the requested month is rejected.
         Missing accounting facts are returned as structured needs_information.
         """
         try:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from .contracts import KernelError
 from .types import YearMonth, canonical
@@ -21,7 +22,10 @@ AUDIT_ACTIONS = (
     "save_display_profile",
     "payee",
 )
-CLOSE_CALCULATIONS = "calculations[*]"
+CLOSE_CALCULATIONS = "adopted_results[*].calculation_id"
+CLOSE_ADOPTION_FACTS = "adopted_results[*].fact_id"
+CLOSE_VOUCHER_BASES = "vouchers[*].adopted_calculation_id"
+CLOSE_MATERIAL_FACTS = "material_coverage.fact_ids[*]"
 CLOSE_ASSET_ADOPTIONS = "asset_batch_adoptions[*].owner_calculation_id"
 CLOSE_ASSET_CARD_ADOPTIONS = "asset_card_adoptions[*].calculation_id"
 CLOSE_ASSET_CARD_ACCEPTANCES = "asset_card_adoptions[*].acceptance_calculation_id"
@@ -34,6 +38,9 @@ CLOSE_MANAGEMENT = "management_snapshot.management[*].id"
 CLOSE_PAYEES = "management_snapshot.payees[*].id"
 _CLOSE_PATH_TYPES = {
     CLOSE_CALCULATIONS: "calculation",
+    CLOSE_ADOPTION_FACTS: "fact",
+    CLOSE_VOUCHER_BASES: "calculation",
+    CLOSE_MATERIAL_FACTS: "fact",
     CLOSE_ASSET_ADOPTIONS: "calculation",
     CLOSE_ASSET_CARD_ADOPTIONS: "calculation",
     CLOSE_ASSET_CARD_ACCEPTANCES: "calculation",
@@ -134,7 +141,9 @@ def _text(value):
 
 
 def _close_references(row):
-    manifest = _object(row["manifest"])
+    from .close_contract import require_close_contract
+
+    manifest = require_close_contract(_object(row["manifest"]))
     result = []
 
     def add(path, position, typ, ident, related=None):
@@ -143,8 +152,11 @@ def _close_references(row):
                 (path, str(position), typ, str(ident), related if _text(related) else None)
             )
 
-    for pos, ident in _items(manifest.get("calculations")):
-        add("calculations[*]", pos, "calculation", ident)
+    for pos, reference in _items(manifest["adopted_results"]):
+        add(CLOSE_CALCULATIONS, pos, "calculation", reference["calculation_id"])
+        add(CLOSE_ADOPTION_FACTS, pos, "fact", reference["fact_id"])
+    for pos, ident in _items(manifest["material_coverage"].get("fact_ids")):
+        add(CLOSE_MATERIAL_FACTS, pos, "fact", ident)
     for pos, reference in _items(manifest.get("asset_batch_adoptions")):
         if isinstance(reference, dict):
             add(CLOSE_ASSET_ADOPTIONS, pos, "calculation", reference.get("owner_calculation_id"))
@@ -167,11 +179,13 @@ def _close_references(row):
                 reference.get("calculation_id"),
             )
             # A malformed voucher ID does not erase an independently declared root.
-            add("vouchers[*].calculation_id", pos, "calculation", reference.get("calculation_id"))
-    readiness = manifest.get("readiness")
-    reports = readiness.get("financial_reports") if isinstance(readiness, dict) else None
-    for pos, ident in _items(reports.get("facts") if isinstance(reports, dict) else None):
-        add("readiness.financial_reports.facts[*]", pos, "fact", ident)
+            add(CLOSE_VOUCHER_CALCULATIONS, pos, "calculation", reference.get("calculation_id"))
+            add(CLOSE_VOUCHER_BASES, pos, "calculation", reference.get("adopted_calculation_id"))
+    for name, references in manifest["readiness"].items():
+        if isinstance(references, dict):
+            for field, typ in (("facts", "fact"), ("calculations", "calculation")):
+                for pos, ident in _items(references.get(field)):
+                    add(f"readiness.{name}.{field}[*]", pos, typ, ident)
     snapshot = manifest.get("management_snapshot")
     if isinstance(snapshot, dict):
         for field, typ in (
@@ -398,9 +412,15 @@ def verify_close_references(connection, references):
             )
         }
         path, position = item["path"], str(item["position"])
-        if path not in _CLOSE_PATH_TYPES or not position.isascii() or not position.isdecimal():
+        reference_type = _CLOSE_PATH_TYPES.get(path)
+        readiness_path = re.fullmatch(
+            r"readiness\.[a-z][a-z0-9_]*\.(facts|calculations)\[\*\]", path
+        )
+        if readiness_path:
+            reference_type = "fact" if readiness_path[1] == "facts" else "calculation"
+        if reference_type is None or not position.isascii() or not position.isdecimal():
             _invalid("close", item["close_period"], "invalid_reference_path")
-        if item["reference_type"] != _CLOSE_PATH_TYPES[path]:
+        if item["reference_type"] != reference_type:
             _invalid("close", item["close_period"], "invalid_reference_type")
         item["json_path"] = "$." + path.replace("[*]", f"[{int(position)}]")
         item["related_path"] = (
@@ -551,7 +571,8 @@ def repair_read_indexes(connection, *, bundle, fault=None):
     triggers = {}
     for name in names:
         row = connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?", (name,),
+            "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?",
+            (name,),
         ).fetchone()
         if row is None:
             _invalid("directory", name, "repair_trigger_missing")

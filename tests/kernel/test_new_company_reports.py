@@ -69,8 +69,8 @@ def test_empty_formation_opening_allows_new_company_report_and_freezes_its_sourc
     for ordinal in range(YearMonth(start).ordinal, end.ordinal + 1):
         _close_without_current_business(engine, str(YearMonth.from_ordinal(ordinal)), proof)
     manifest = Periods(engine).closed_report(start)
-    assert opening["calculation_id"] in manifest["calculations"]
-    assert opening["fact_id"] in manifest["facts"]
+    assert opening["calculation_id"] == manifest["opening_calculation_id"]
+    assert opening["fact_id"] in {item["fact_id"] for item in manifest["adopted_results"]}
     frozen = reports.preview_export(year, quarter)
     assert frozen["opening_source"] == opening
     assert all(check["passed"] for check in frozen["checks"])

@@ -105,7 +105,7 @@ def test_snapshot_lifetime_clears_all_memos_and_closes_read_only_connection(engi
             )
             reads.verify_close_references([voucher_reference(reads.connection)])
             assert reads._verified_close_references
-            assert reads._metadata and reads._lines and reads.closed_accounting_contexts
+            assert reads._metadata and reads._lines and reads._close_manifests
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 reads.connection.execute("DELETE FROM calculation_current")
             if fail:
@@ -281,7 +281,7 @@ def test_new_snapshot_rechecks_source_marker_for_previously_valid_tuple(engine):
             assert not reads._verified_close_references
 
 
-def test_verified_leaf_never_promotes_dependent_state_to_adopted(state_review_engine):
+def test_direct_state_adoption_is_independent_of_verified_reference_cache(state_review_engine):
     engine = state_review_engine
     proof = evidence(engine)
     engine.save_fact(
@@ -316,11 +316,10 @@ def test_verified_leaf_never_promotes_dependent_state_to_adopted(state_review_en
         for _ in range(2):
             result = queries._selected_accounting(reads.connection, "charge", "2026-01")
             selected = result["through_period"]
-            assert selected["status"] == "unestablished"
-            assert selected["state_results"] == []
-            candidates = selected["unestablished_state_selections"][0]["candidates"]
-            assert [item["calculation_id"] for item in candidates] == [ident]
-            assert candidates[0]["trace_only"] is True
+            assert selected["status"] == "established"
+            assert selected["unestablished_state_selections"] == []
+            assert [item["calculation_id"] for item in selected["state_results"]] == [ident]
+            assert selected["state_results"][0]["selection_proof"]["basis"] == "direct_adoption"
         current = queries._selected_accounting(
             reads.connection, "charge", "2026-01", current_heads=True
         )

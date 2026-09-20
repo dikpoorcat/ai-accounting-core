@@ -1,8 +1,8 @@
 """Exact batch loading and the shared page-summary boundaries."""
 
-import hashlib
 import json
 
+import pytest
 from test_business_queries import state_review_engine as state_review_engine_fixture
 from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import expense, payment, prepare_payment
@@ -11,10 +11,12 @@ from test_engine import engine as engine_fixture
 
 import ai_accounting.kernel.business_queries as business_query_module
 from ai_accounting.kernel.business_queries import BusinessQueries
+from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.query_reads import QueryReads, selected_voucher_sql
 from ai_accounting.kernel.query_semantics import resolve_calculation_relations
 from ai_accounting.kernel.read_indexes import close_rows, sync_close, sync_job
-from ai_accounting.kernel.types import YearMonth, canonical
+from ai_accounting.kernel.settlement_projection import _COLUMNS, _sealed
+from ai_accounting.kernel.types import YearMonth
 
 engine = engine_fixture
 domain_book = domain_book_fixture
@@ -71,6 +73,106 @@ def test_scoped_summary_includes_related_payments_and_keeps_month_amounts(domain
     assert summary["movement_count"] == len(full["movements"]) == 1
     assert item["source_events"] == []
     assert item["source_event_count"] == 1
+
+
+def test_settlement_summary_rejects_damaged_projection_and_repairs_explicitly(domain_book):
+    engine, _save, publish_businesses, *_ = domain_book
+    prepare_payment(domain_book)
+    publish_businesses("payment")
+    with engine.store.connection() as connection:
+        connection.execute(
+            "UPDATE settlement_change SET amount=amount+1 "
+            "WHERE rowid=(SELECT min(rowid) FROM settlement_change)"
+        )
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as damaged:
+            BusinessQueries(engine).settlement_summary(
+                connection, "2026-01", subject_ids={"expense"}
+            )
+    assert damaged.value.code == "content_integrity_failed"
+    assert engine.rebuild_projections(request_id="repair-settlement-projection")["changed"]
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        repaired = BusinessQueries(engine).settlement_summary(
+            connection, "2026-01", subject_ids={"expense"}
+        )
+    assert repaired["obligations"][0]["remaining_fen"] == 0
+
+
+def test_settlement_summary_requires_zero_row_period_seal(engine):
+    save(engine)
+    publish(engine)
+    with engine.store.connection() as connection:
+        connection.execute("DELETE FROM settlement_projection_seal")
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as damaged:
+            BusinessQueries(engine).settlement_summary(connection, "2026-01")
+    assert damaged.value.code == "content_integrity_failed"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "UPDATE calculation_publication SET mode='open_replace'",
+        "UPDATE calculation_publication SET posting_period=posting_period+1",
+    ),
+)
+def test_settlement_summary_rejects_damaged_publication_identity(engine, damage):
+    save(engine)
+    publish(engine)
+    with engine.store.connection() as connection:
+        trigger = connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='immutable_calculation_publication_UPDATE'"
+        ).fetchone()
+        connection.execute('DROP TRIGGER "' + trigger[0] + '"')
+        connection.execute(damage)
+        connection.execute(trigger[1])
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as damaged:
+            BusinessQueries(engine).settlement_summary(connection, "2026-01")
+    assert damaged.value.code == "content_integrity_failed"
+
+
+@pytest.mark.parametrize("source_amount", [None, 0], ids=["unknown", "zero"])
+def test_settlement_summary_preserves_unknown_and_zero_sources(domain_book, source_amount):
+    engine, _save, publish_businesses, *_ = domain_book
+    prepare_payment(domain_book)
+    publish_businesses("payment")
+    month = YearMonth("2026-01").ordinal
+    with engine.store.connection() as connection:
+        connection.execute(
+            "UPDATE settlement_change SET amount=?,state=? WHERE change_kind='source'",
+            (source_amount, "unresolved" if source_amount is None else "resolved"),
+        )
+        rows = [
+            tuple(row)
+            for row in connection.execute(
+                f"SELECT {','.join(_COLUMNS)} FROM settlement_change "
+                "ORDER BY posting_period,publication_id,item_no"
+            )
+        ]
+        count, checksum = _sealed(connection, rows, {month})[month]
+        connection.execute(
+            "UPDATE settlement_projection_seal SET row_count=?,digest=? "
+            "WHERE posting_period=?",
+            (count, checksum, month),
+        )
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        summary = BusinessQueries(engine).settlement_summary(
+            connection, "2026-01", subject_ids={"expense"}
+    )
+    obligation = summary["obligations"][0]
+    assert obligation["source_amount_fen"] == source_amount
+    expected_remaining = None if source_amount is None else -100
+    assert obligation["remaining_fen"] == expected_remaining
+    assert obligation["settlement_status"] == (
+        "unestablished" if source_amount is None else "over_settled"
+    )
 
 
 def test_unknown_source_amount_is_not_a_zero_or_settled_state(state_review_engine, monkeypatch):
@@ -281,7 +383,7 @@ def test_global_event_page_bounds_month_before_loading_old_manifests(engine):
     assert {item["subject_id"] for item in reads._metadata.values()} == {"february"}
 
 
-def test_one_response_reuses_complete_manifest_proof_across_subjects(engine, monkeypatch):
+def test_one_response_reuses_direct_manifest_across_subjects(engine, monkeypatch):
     for subject in ("first", "second"):
         save(engine, subject=subject, request=subject)
     publish(engine, ["first", "second"])
@@ -293,41 +395,30 @@ def test_one_response_reuses_complete_manifest_proof_across_subjects(engine, mon
         queries._selected_accounting(connection, "first", "2026-01", include_lines=False)
 
         def unexpected_second_graph_walk(_ident):
-            raise AssertionError("the complete manifest graph was already proven in this request")
+            raise AssertionError("direct adoption must not walk dependency ancestry")
 
         monkeypatch.setattr(reads, "parents", unexpected_second_graph_walk)
         second = queries._selected_accounting(connection, "second", "2026-01", include_lines=False)
     assert len(second["through_period"]["voucher_events"]) == 1
-    assert len(reads.closed_accounting_contexts) == 1
+    assert len(reads._close_manifests) == 1
 
 
-def test_repeated_later_dependency_manifests_do_not_expand_old_state_proof(engine):
+def test_old_transitive_close_manifest_is_rejected(engine):
     save(engine)
     _, published = publish(engine)
     close(engine)
     ident = published["results"][0]["calculation_id"]
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
-        for month in ("2026-02", "2026-03", "2026-04"):
-            raw = canonical({"period": month, "calculations": [ident], "vouchers": []})
-            connection.execute(
-                "INSERT INTO period_close(period,manifest,digest) VALUES(?,?,?)",
-                (
-                    YearMonth(month).ordinal,
-                    raw,
-                    hashlib.sha256(raw.encode()).digest(),
-                ),
-            )
-            sync_close(connection, YearMonth(month).ordinal)
-        connection.commit()
-    with engine.store.connection(read_only=True) as connection:
-        connection.execute("BEGIN")
-        reads = QueryReads(engine, connection)
-        selected = BusinessQueries(engine, reads=reads)._selected_accounting(
-            connection, "charge", "2026-04", include_lines=False
+        raw = json.dumps({"period": "2026-02", "calculations": [ident], "vouchers": []})
+        connection.execute(
+            "INSERT INTO period_close(period,manifest,digest) VALUES(?,?,zeroblob(32))",
+            (YearMonth("2026-02").ordinal, raw),
         )
-    assert len(selected["through_period"]["voucher_events"]) == 1
-    assert set(reads._close_manifests) == {YearMonth("2026-01").ordinal}
+        with pytest.raises(KernelError) as invalid:
+            sync_close(connection, YearMonth("2026-02").ordinal)
+        assert invalid.value.code == "content_integrity_failed"
+        connection.rollback()
 
 
 def test_source_history_publication_lookup_uses_page_subject_index(engine):
@@ -386,7 +477,7 @@ def test_scoped_voucher_candidates_use_identity_indexes_and_keep_cross_year_reve
     publish(engine, ["charge", "unrelated"])
     close(engine, "2025-12")
     save(engine, amount=150, revision=1, request="changed", period="2025-12")
-    publish(engine, request="correct-next-year", correction_period="2026-01")
+    publish(engine, request="correct-next-year", posting_period="2026-01")
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         source, parameters = selected_voucher_sql("2026-01", subject_ids={"charge"})

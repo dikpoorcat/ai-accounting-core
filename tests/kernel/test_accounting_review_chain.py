@@ -130,8 +130,8 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     """Read the existing closed chain through shared queries and real page adapters."""
     queries, dashboard = BusinessQueries(company.engine), Dashboard(company.engine)
     status = queries.business_status("january", "2026-01", as_of="2026-03-31")
-    assert status["current_publication"]["calculation"]["id"] == current["january"].id
-    events = status["selected_accounting"]["period_events"]
+    assert status["current_business_result"]["calculation"]["id"] == current["january"].id
+    events = status["as_posted"]["voucher_events"]
     assert len(events) == 1
     wage_voucher = next(item for item in original_vouchers.values() if item["kind"] == "payroll")
     assert events[0]["voucher_version_id"] == wage_voucher["id"]
@@ -205,10 +205,19 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     current_payment = [
         item
         for item in current_movements
-        if item["source_calculation_id"] == current["january"].id and item["direction"] > 0
+        if item["direction"] > 0
     ]
-    assert len(current_payment) == 1
-    assert current_payment[0]["signed_amount_fen"] == 100_000
+    if basis_current:
+        assert len(current_payment) == 1
+        assert current_payment[0]["signed_amount_fen"] == 100_000
+        assert current_payment[0]["source_calculation_id"] == source["calculation_id"]
+    else:
+        assert len(current_payment) == 2
+        assert len([item for item in current_movements if item["direction"] < 0]) == 1
+        assert {item["source_calculation_id"] for item in current_payment} == {
+            source["calculation_id"],
+            current["january"].id,
+        }
     historical_settlements = dashboard.business_status(
         "2026-01", "january", section="settlement_events", settlement_view="historical"
     )
@@ -227,10 +236,11 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     ]
     assert len(payments) == 1 and payments[0]["signed_amount_fen"] == -100_000
     for response in (brief_response, employee_response, funds_response):
-        assert response["read_semantics"]["accounting"] == "frozen_close"
+        assert response["read_semantics"]["accounting"] == "as_posted"
+        assert response["read_semantics"]["business_basis"] == "frozen_adoption"
         assert response["read_semantics"]["knowledge"] == "current_knowledge"
     return {
-        "accounting": status["selected_accounting"],
+        "accounting": status["as_posted"],
         "net": net,
         "employee_source": source["calculation_id"],
         "employee_movement": movement["settlement_calculation_id"],
@@ -332,13 +342,13 @@ def test_withholding_evidence_review_then_real_closed_correction(review_chain):
     pending = company.pending()
     with pytest.raises(KernelError) as failure:
         company.publish("actual-withholding")
-    assert failure.value.code == "closed_correction_required"
+    assert failure.value.code == "posting_period_required"
     assert company.count("calculation") == count
     assert current_chain(company) == before_failed_publish
     assert journal_snapshot(company) == original_journal
     assert company.pending() == pending
 
-    preview, confirmed = company.publish("actual-withholding", correction_period="2026-03")
+    preview, confirmed = company.publish("actual-withholding", posting_period="2026-03")
     results = {item["subject_id"]: item for item in preview["results"]}
     corrected = current_chain(company)
     for subject in ("january", "payment", "february"):

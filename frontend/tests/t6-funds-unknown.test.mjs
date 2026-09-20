@@ -8,7 +8,7 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-test("T6 funds keeps historical adoption warnings and exact candidates without the company-wide followup panel", async () => {
+test("T6 funds keeps historical source warnings without the company-wide followup panel", async () => {
   const fixtures = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"));
   const previousWindow = globalThis.window, previousFetch = globalThis.fetch;
   globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
@@ -36,7 +36,7 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
         data.accounts[0].closing_fen = null;
         data.accounts[0].negative_balance = false;
       }
-      data.fact_issues = [{ reason: "manifest_state_adoption_not_proven", candidates: [
+      data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [
         { calculation_id: "t6-frozen-candidate-a", amount_fen: "987654321" },
         { calculation_id: "t6-frozen-candidate-b", amount_fen: "987654321" },
       ] }];
@@ -45,7 +45,7 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
       await router.push("/funds?company_id=co&period=2026-11");
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app), visible = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "");
-      assert.match(visible, /1 组历史资金来源尚不能证明独立封存采用/);
+      assert.match(visible, /1 组历史资金依据需要核对/);
       assert.match(visible, /具体金额与流水核对状态分别见对应区块/);
       assert.match(visible, /与当前跟进状态分别列示/);
       assert.doesNotMatch(visible, /款项：已结清|所选月末核算后/);
@@ -58,7 +58,7 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
       }
       assert.doesNotMatch(visible, /9,876,543\.21/);
       assert.match(html, /t6-frozen-candidate-a/); assert.match(html, /t6-frozen-candidate-b/);
-      assert.match(html, /manifest_state_adoption_not_proven/);
+      assert.match(html, /source_digest_mismatch/);
     }
   } finally {
     await server.close();

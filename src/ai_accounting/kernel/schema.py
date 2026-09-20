@@ -102,9 +102,60 @@ CREATE INDEX voucher_calculation ON voucher_version(calculation_id);
 CREATE INDEX voucher_period ON voucher_version(period,voucher_id,id);
 CREATE TABLE voucher_current(voucher_id TEXT PRIMARY KEY REFERENCES voucher,
  version_id TEXT NOT NULL UNIQUE REFERENCES voucher_version) STRICT;
-CREATE TABLE calculation_publication(calculation_id TEXT PRIMARY KEY REFERENCES calculation,
+CREATE TABLE calculation_publication(id TEXT PRIMARY KEY,\
+sequence INTEGER NOT NULL UNIQUE CHECK(sequence>0),
+ subject_id TEXT NOT NULL REFERENCES subject,
+ previous_publication_id TEXT UNIQUE REFERENCES calculation_publication(id),
+ calculation_id TEXT UNIQUE REFERENCES calculation,
+ mode TEXT NOT NULL CHECK(mode IN('initial','open_replace','closed_correction',\
+'review_no_impact','withdrawn')),
  posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),
- voucher_id TEXT REFERENCES voucher) STRICT;
+ baseline_calculation_id TEXT REFERENCES calculation,voucher_id TEXT REFERENCES voucher,
+ CHECK((mode='withdrawn' AND calculation_id IS NULL AND voucher_id IS NULL)
+ OR(mode<>'withdrawn' AND calculation_id IS NOT NULL))) STRICT;
+CREATE UNIQUE INDEX publication_root ON calculation_publication(subject_id)
+ WHERE previous_publication_id IS NULL;
+CREATE INDEX publication_subject ON calculation_publication(subject_id,posting_period,id);
+CREATE INDEX publication_posting ON calculation_publication(posting_period,subject_id,id);
+CREATE TRIGGER publication_chain BEFORE INSERT ON calculation_publication BEGIN
+ SELECT CASE WHEN NEW.previous_publication_id IS NOT NULL AND NOT EXISTS(
+ SELECT 1 FROM calculation_publication WHERE id=NEW.previous_publication_id
+ AND subject_id=NEW.subject_id) THEN RAISE(ABORT,'publication predecessor mismatch') END;
+ SELECT CASE WHEN NEW.calculation_id IS NOT NULL AND NOT EXISTS(
+ SELECT 1 FROM calculation WHERE id=NEW.calculation_id AND subject_id=NEW.subject_id)
+ THEN RAISE(ABORT,'publication calculation mismatch') END;
+END;
+CREATE TABLE period_balance(publication_id TEXT NOT NULL REFERENCES calculation_publication(id),
+ posting_period INTEGER NOT NULL,category TEXT NOT NULL,balance_key TEXT NOT NULL,
+ component TEXT NOT NULL CHECK(component IN('opening','activity')),amount INTEGER NOT NULL,
+ calculation_id TEXT NOT NULL REFERENCES calculation,\
+source_digest BLOB NOT NULL CHECK(length(source_digest)=32),
+ baseline_calculation_id TEXT REFERENCES calculation,baseline_digest BLOB,
+ CHECK((baseline_calculation_id IS NULL AND baseline_digest IS NULL) OR
+ (baseline_calculation_id IS NOT NULL AND length(baseline_digest)=32)),
+ PRIMARY KEY(publication_id,category,balance_key,component)) STRICT;
+CREATE INDEX period_balance_key ON period_balance(category,balance_key,posting_period);
+CREATE INDEX period_balance_period ON period_balance(posting_period,category);
+CREATE TABLE period_balance_seal(posting_period INTEGER NOT NULL,category TEXT NOT NULL,
+ row_count INTEGER NOT NULL CHECK(row_count>=0),digest BLOB NOT NULL CHECK(length(digest)=32),
+ PRIMARY KEY(posting_period,category)) STRICT;
+CREATE TABLE settlement_change(publication_id TEXT NOT NULL REFERENCES calculation_publication(id),
+ item_no INTEGER NOT NULL,posting_period INTEGER NOT NULL,\
+obligation_key TEXT,source_subject_id TEXT,
+ category TEXT CHECK(category IN('receivable','payable') OR category IS NULL),
+ account TEXT,counterparty_id TEXT,component TEXT,
+ change_kind TEXT NOT NULL CHECK(change_kind IN('source','payment','other')),
+ amount INTEGER,state TEXT NOT NULL CHECK(state IN('resolved','unresolved')),
+ source_calculation_id TEXT REFERENCES calculation,source_digest BLOB,
+ CHECK(source_digest IS NULL OR length(source_digest)=32),
+ CHECK(state<>'resolved' OR amount IS NOT NULL),PRIMARY KEY(publication_id,item_no)) STRICT;
+CREATE INDEX settlement_change_period ON settlement_change(posting_period,obligation_key);
+CREATE INDEX settlement_change_source ON settlement_change(source_subject_id,posting_period);
+CREATE INDEX settlement_change_category ON settlement_change(category,\
+posting_period,obligation_key);
+CREATE TABLE settlement_projection_seal(posting_period INTEGER PRIMARY KEY,
+ row_count INTEGER NOT NULL CHECK(row_count>=0),\
+digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT;
 CREATE TABLE period_close(period INTEGER PRIMARY KEY CHECK(period BETWEEN 0 AND 119987),
  manifest TEXT NOT NULL CHECK(json_valid(manifest)),digest BLOB NOT NULL
  CHECK(length(digest)=32)) STRICT;

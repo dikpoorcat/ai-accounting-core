@@ -38,6 +38,7 @@ from .account_definitions import (
 )
 from .backup import _worker_lock
 from .contracts import Fact, KernelError, Read
+from .dashboard_reads import posted_account_totals
 from .query_semantics import (
     classify_financial_position,
     report_party_splits,
@@ -481,43 +482,39 @@ def _report_classifications(connection, reads, references, source_vouchers, end,
     }
 
 
-def _account_totals(connection, cutoff, source, opening_rows, unknown_opening_period=None):
-    """Frozen cumulative accounts plus the explicitly open monthly interval."""
+def _account_totals(
+    connection, cutoff, source, opening_rows, unknown_opening_period=None, *, reads=None
+):
+    """Use the shared posting-period account selector for every consumer."""
     boundary = connection.execute(
-        "SELECT period,json_extract(manifest,'$.trial_balance') AS totals "
-        "FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
+        "SELECT period FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
         (cutoff,),
     ).fetchone()
-    values = defaultdict(int)
-    start = -1
-    if boundary is not None and boundary["totals"] is not None:
-        start = boundary["period"]
-        for row in json.loads(boundary["totals"]):
-            values[row["account"]] += row["debit"] - row["credit"]
-    if start < 0 and unknown_opening_period is not None and unknown_opening_period <= cutoff:
+    if boundary is None and unknown_opening_period is not None and unknown_opening_period <= cutoff:
         return None
-    if source == "open":
-        for row in connection.execute(
-            "SELECT account,sum(debit-credit) amount FROM monthly_account "
-            "WHERE period>? AND period<=? GROUP BY account",
-            (start, cutoff),
-        ):
-            values[row["account"]] += row["amount"]
-    elif start < 0:
-        # Old incomplete manifests do not license current balances. The exact
-        # selected voucher rows are still sufficient for an accounting sum.
-        sql, parameters = _report_vouchers(cutoff, source)
-        for row in connection.execute(
-            "WITH selected AS (" + sql + ") SELECT l.account,sum(l.debit-l.credit) amount "
-            "FROM selected v JOIN voucher_line l ON l.version_id=v.id GROUP BY l.account",
-            parameters,
-        ):
-            values[row["account"]] += row["amount"]
-    if start < 0:
+    if boundary is None:
+        values = defaultdict(int)
+        if source == "open":
+            for row in connection.execute(
+                "SELECT account,sum(debit-credit) amount FROM monthly_account "
+                "WHERE period<=? GROUP BY account",
+                (cutoff,),
+            ):
+                values[row["account"]] += row["amount"]
+        else:
+            sql, parameters = _report_vouchers(cutoff, source)
+            for row in connection.execute(
+                "WITH selected AS (" + sql + ") "
+                "SELECT l.account,sum(l.debit-l.credit) amount FROM selected v "
+                "JOIN voucher_line l ON l.version_id=v.id GROUP BY l.account",
+                parameters,
+            ):
+                values[row["account"]] += row["amount"]
         for row in opening_rows:
             if row["period"] <= cutoff:
                 values[row["account"]] += row["amount"]
-    return dict(values)
+        return dict(values)
+    return posted_account_totals(connection, cutoff, source=source, reads=reads)
 
 
 class Reports:
@@ -699,7 +696,9 @@ class Reports:
                 problems.append(issue("bookkeeping_start", "报表期间早于明确建账月"))
             if source == "closed":
                 problems.extend(_closed_period_issues(closes, book_start, year_start, end))
-            unknown_accounts = set(_account_totals(connection, end.ordinal, source, ())) - (
+            unknown_accounts = set(
+                _account_totals(connection, end.ordinal, source, (), reads=reads)
+            ) - (
                 _POSITION_ACCOUNTS
             )
             historical_accounts = set(RECLASS) | unknown_accounts
@@ -895,7 +894,12 @@ class Reports:
             rows.extend(opening_rows)
             totals = {
                 cutoff: _account_totals(
-                    connection, cutoff, source, opening_rows, unknown_opening_period
+                    connection,
+                    cutoff,
+                    source,
+                    opening_rows,
+                    unknown_opening_period,
+                    reads=reads,
                 )
                 for cutoff in {year_start.ordinal - 1, start.ordinal - 1, end.ordinal}
             }

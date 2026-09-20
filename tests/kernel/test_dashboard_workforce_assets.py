@@ -434,7 +434,7 @@ def test_project_cost_account_candidates_keep_frozen_month_and_exact_correction(
         "project-labor",
         revision=1,
     )
-    company.publish("project-labor", correction_period="2026-02")
+    company.publish("project-labor", posting_period="2026-02")
     dashboard = Dashboard(company.engine)
     historical = dashboard.assets("2026-01")["data"]
     corrected = dashboard.assets("2026-02")["data"]

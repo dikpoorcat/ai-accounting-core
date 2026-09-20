@@ -36,7 +36,7 @@ def test_actual_repair_invalidates_pages_and_deferred_checks_but_noop_does_not(b
     assert result["changed"] is True and result["read_repair_revision"] == 1
     after = dashboard.funds("2026-03", preparation="deferred", limit=1)
     assert after["snapshot_version"] != before["snapshot_version"]
-    assert after["schema_version"] == 2
+    assert after["schema_version"] == 3
     with pytest.raises(KernelError) as error:
         dashboard.funds("2026-03", expected_version=before["snapshot_version"])
     assert error.value.code == "dashboard_snapshot_changed"
@@ -107,4 +107,4 @@ def test_report_export_repair_race_and_successful_idempotent_replay(book, tmp_pa
     result = reports.confirm_export(2026, 1, request_id="report", **kwargs)
     change_revision(engine)
     assert reports.confirm_export(2026, 1, request_id="report", **kwargs) == result
-    assert Maintenance(engine).verify_integrity()["status"] in {"verified", "limited"}
+    assert Maintenance(engine).verify_integrity()["status"] == "verified"

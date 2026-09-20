@@ -19,14 +19,14 @@
       "company": "合成合同测试公司",
       "companies": [
         {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
           "name": "合成合同测试公司",
           "taxpayer_id": "91310000123456789A",
           "status": "active"
         }
       ],
       "current_company": {
-        "company_id": "de074582c0db4246a54ad4a02bb00e48",
+        "company_id": "96beadef893741c2aab6545dedbf5bb8",
         "name": "合成合同测试公司",
         "taxpayer_id": "91310000123456789A",
         "status": "active"
@@ -35,19 +35,20 @@
       "quarters": [],
       "default_period": null,
       "default_quarter": null,
-      "generated_at": "2026-09-19T18:25:08.347780+00:00",
+      "generated_at": "2026-09-20T14:12:51.435629+00:00",
       "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
     }
   },
   "funds_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
+      "schema_version": 3,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -64,14 +65,14 @@
       "company": "合成合同测试公司",
       "companies": [
         {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
           "name": "合成合同测试公司",
           "taxpayer_id": "91310000123456789A",
           "status": "active"
         }
       ],
       "current_company": {
-        "company_id": "de074582c0db4246a54ad4a02bb00e48",
+        "company_id": "96beadef893741c2aab6545dedbf5bb8",
         "name": "合成合同测试公司",
         "taxpayer_id": "91310000123456789A",
         "status": "active"
@@ -100,15 +101,15 @@
       ],
       "default_period": "2026-01",
       "default_quarter": "2026-Q1",
-      "generated_at": "2026-09-19T18:25:11.546519+00:00",
+      "generated_at": "2026-09-20T14:12:57.312892+00:00",
       "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
     }
   },
   "cash_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -122,7 +123,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -166,7 +168,7 @@
             "field_sources": {
               "name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -175,7 +177,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "statement": {
@@ -198,7 +200,7 @@
         ],
         "movements": [
           {
-            "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+            "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
             "date": "2026-01-02",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -208,7 +210,7 @@
             "amount_fen": "100000",
             "signed_amount_fen": "100000",
             "reference": "2",
-            "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+            "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
             "type": "现金投入或借款",
             "summary": "股东投入（2026-01） · 甲出资人",
             "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -217,7 +219,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "6b44b523d1d24028aeaf43ceefc97928",
+                  "id": "7a597bb67c7a492e90cbc27d675e4525",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -226,12 +228,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.666Z"
+                  "recorded_at": "2026-09-20T14:12:52.579Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -240,7 +242,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -248,11 +250,11 @@
                 "party_id": "contract-owner",
                 "name": "甲出资人",
                 "source": "display_profile",
-                "id": "6b44b523d1d24028aeaf43ceefc97928",
+                "id": "7a597bb67c7a492e90cbc27d675e4525",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -261,7 +263,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.666Z"
+                    "recorded_at": "2026-09-20T14:12:52.579Z"
                   }
                 }
               }
@@ -273,7 +275,7 @@
             ]
           },
           {
-            "id": "000000000003:c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6:000000",
+            "id": "000000000003:c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02:000000",
             "date": "2026-01-08",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -283,7 +285,7 @@
             "amount_fen": "12500",
             "signed_amount_fen": "-12500",
             "reference": "3",
-            "calculation_id": "c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6",
+            "calculation_id": "c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02",
             "type": "现金收付款",
             "summary": "付款（2026-01） · 合成办公用品商店",
             "display_summary": "付款（2026-01） · 合成办公用品商店",
@@ -292,7 +294,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                  "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -301,12 +303,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.754Z"
+                  "recorded_at": "2026-09-20T14:12:52.837Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -315,7 +317,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -323,11 +325,11 @@
                 "party_id": "contract-supplier",
                 "name": "合成办公用品商店",
                 "source": "display_profile",
-                "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                    "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -336,7 +338,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.754Z"
+                    "recorded_at": "2026-09-20T14:12:52.837Z"
                   }
                 }
               }
@@ -413,7 +415,7 @@
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -422,7 +424,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "statement": {
@@ -454,7 +456,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+                "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
                 "date": "2026-01-02",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -464,7 +466,7 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "reference": "2",
-                "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+                "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
                 "type": "现金投入或借款",
                 "summary": "股东投入（2026-01） · 甲出资人",
                 "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -473,7 +475,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "6b44b523d1d24028aeaf43ceefc97928",
+                      "id": "7a597bb67c7a492e90cbc27d675e4525",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -482,12 +484,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.666Z"
+                      "recorded_at": "2026-09-20T14:12:52.579Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -496,7 +498,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -504,11 +506,11 @@
                     "party_id": "contract-owner",
                     "name": "甲出资人",
                     "source": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "6b44b523d1d24028aeaf43ceefc97928",
+                        "id": "7a597bb67c7a492e90cbc27d675e4525",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -517,7 +519,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.666Z"
+                        "recorded_at": "2026-09-20T14:12:52.579Z"
                       }
                     }
                   }
@@ -529,7 +531,7 @@
                 ]
               },
               {
-                "id": "000000000003:c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6:000000",
+                "id": "000000000003:c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02:000000",
                 "date": "2026-01-08",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -539,7 +541,7 @@
                 "amount_fen": "12500",
                 "signed_amount_fen": "-12500",
                 "reference": "3",
-                "calculation_id": "c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6",
+                "calculation_id": "c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02",
                 "type": "现金收付款",
                 "summary": "付款（2026-01） · 合成办公用品商店",
                 "display_summary": "付款（2026-01） · 合成办公用品商店",
@@ -548,7 +550,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                      "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -557,12 +559,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.754Z"
+                      "recorded_at": "2026-09-20T14:12:52.837Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -571,7 +573,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -579,11 +581,11 @@
                     "party_id": "contract-supplier",
                     "name": "合成办公用品商店",
                     "source": "display_profile",
-                    "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                    "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                        "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -592,7 +594,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.754Z"
+                        "recorded_at": "2026-09-20T14:12:52.837Z"
                       }
                     }
                   }
@@ -645,8 +647,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -802,8 +804,8 @@
   "deferred_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -817,7 +819,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -861,7 +864,7 @@
             "field_sources": {
               "name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -870,7 +873,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "statement": {
@@ -893,7 +896,7 @@
         ],
         "movements": [
           {
-            "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+            "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
             "date": "2026-01-02",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -903,7 +906,7 @@
             "amount_fen": "100000",
             "signed_amount_fen": "100000",
             "reference": "2",
-            "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+            "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
             "type": "现金投入或借款",
             "summary": "股东投入（2026-01） · 甲出资人",
             "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -912,7 +915,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "6b44b523d1d24028aeaf43ceefc97928",
+                  "id": "7a597bb67c7a492e90cbc27d675e4525",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -921,12 +924,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.666Z"
+                  "recorded_at": "2026-09-20T14:12:52.579Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -935,7 +938,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -943,11 +946,11 @@
                 "party_id": "contract-owner",
                 "name": "甲出资人",
                 "source": "display_profile",
-                "id": "6b44b523d1d24028aeaf43ceefc97928",
+                "id": "7a597bb67c7a492e90cbc27d675e4525",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -956,7 +959,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.666Z"
+                    "recorded_at": "2026-09-20T14:12:52.579Z"
                   }
                 }
               }
@@ -968,7 +971,7 @@
             ]
           },
           {
-            "id": "000000000003:c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6:000000",
+            "id": "000000000003:c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02:000000",
             "date": "2026-01-08",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -978,7 +981,7 @@
             "amount_fen": "12500",
             "signed_amount_fen": "-12500",
             "reference": "3",
-            "calculation_id": "c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6",
+            "calculation_id": "c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02",
             "type": "现金收付款",
             "summary": "付款（2026-01） · 合成办公用品商店",
             "display_summary": "付款（2026-01） · 合成办公用品商店",
@@ -987,7 +990,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                  "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -996,12 +999,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.754Z"
+                  "recorded_at": "2026-09-20T14:12:52.837Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -1010,7 +1013,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -1018,11 +1021,11 @@
                 "party_id": "contract-supplier",
                 "name": "合成办公用品商店",
                 "source": "display_profile",
-                "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                    "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1031,7 +1034,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.754Z"
+                    "recorded_at": "2026-09-20T14:12:52.837Z"
                   }
                 }
               }
@@ -1108,7 +1111,7 @@
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1117,7 +1120,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "statement": {
@@ -1149,7 +1152,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+                "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
                 "date": "2026-01-02",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -1159,7 +1162,7 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "reference": "2",
-                "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+                "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
                 "type": "现金投入或借款",
                 "summary": "股东投入（2026-01） · 甲出资人",
                 "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -1168,7 +1171,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "6b44b523d1d24028aeaf43ceefc97928",
+                      "id": "7a597bb67c7a492e90cbc27d675e4525",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -1177,12 +1180,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.666Z"
+                      "recorded_at": "2026-09-20T14:12:52.579Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1191,7 +1194,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -1199,11 +1202,11 @@
                     "party_id": "contract-owner",
                     "name": "甲出资人",
                     "source": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "6b44b523d1d24028aeaf43ceefc97928",
+                        "id": "7a597bb67c7a492e90cbc27d675e4525",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -1212,7 +1215,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.666Z"
+                        "recorded_at": "2026-09-20T14:12:52.579Z"
                       }
                     }
                   }
@@ -1224,7 +1227,7 @@
                 ]
               },
               {
-                "id": "000000000003:c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6:000000",
+                "id": "000000000003:c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02:000000",
                 "date": "2026-01-08",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -1234,7 +1237,7 @@
                 "amount_fen": "12500",
                 "signed_amount_fen": "-12500",
                 "reference": "3",
-                "calculation_id": "c_5471b82468b66209f805e1035b9edbda04c0888a246fa375b11362f71dc7dda6",
+                "calculation_id": "c_c5004aee85d551503d575b53a739a677f1ddf2870411f5b06768e04716a23a02",
                 "type": "现金收付款",
                 "summary": "付款（2026-01） · 合成办公用品商店",
                 "display_summary": "付款（2026-01） · 合成办公用品商店",
@@ -1243,7 +1246,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                      "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -1252,12 +1255,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.754Z"
+                      "recorded_at": "2026-09-20T14:12:52.837Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1266,7 +1269,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -1274,11 +1277,11 @@
                     "party_id": "contract-supplier",
                     "name": "合成办公用品商店",
                     "source": "display_profile",
-                    "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                    "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "d48e4ba3dcc44c2a8085e1238e1e00a0",
+                        "id": "9546af0bd7f54aa7a5970b0ff4e47e47",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -1287,7 +1290,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.754Z"
+                        "recorded_at": "2026-09-20T14:12:52.837Z"
                       }
                     }
                   }
@@ -1353,8 +1356,8 @@
   "page_accounts": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1368,7 +1371,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -1412,7 +1416,7 @@
             "field_sources": {
               "name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -1421,7 +1425,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "statement": {
@@ -1494,7 +1498,7 @@
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1503,7 +1507,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "statement": {
@@ -1535,8 +1539,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -1685,8 +1689,8 @@
   "page_movements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1700,7 +1704,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -1729,7 +1734,7 @@
         "accounts": [],
         "movements": [
           {
-            "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+            "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
             "date": "2026-01-02",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -1739,7 +1744,7 @@
             "amount_fen": "100000",
             "signed_amount_fen": "100000",
             "reference": "2",
-            "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+            "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
             "type": "现金投入或借款",
             "summary": "股东投入（2026-01） · 甲出资人",
             "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -1748,7 +1753,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "6b44b523d1d24028aeaf43ceefc97928",
+                  "id": "7a597bb67c7a492e90cbc27d675e4525",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -1757,12 +1762,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.666Z"
+                  "recorded_at": "2026-09-20T14:12:52.579Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -1771,7 +1776,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -1779,11 +1784,11 @@
                 "party_id": "contract-owner",
                 "name": "甲出资人",
                 "source": "display_profile",
-                "id": "6b44b523d1d24028aeaf43ceefc97928",
+                "id": "7a597bb67c7a492e90cbc27d675e4525",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1792,7 +1797,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.666Z"
+                    "recorded_at": "2026-09-20T14:12:52.579Z"
                   }
                 }
               }
@@ -1839,7 +1844,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+                "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
                 "date": "2026-01-02",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -1849,7 +1854,7 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "reference": "2",
-                "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+                "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
                 "type": "现金投入或借款",
                 "summary": "股东投入（2026-01） · 甲出资人",
                 "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -1858,7 +1863,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "6b44b523d1d24028aeaf43ceefc97928",
+                      "id": "7a597bb67c7a492e90cbc27d675e4525",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -1867,12 +1872,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.666Z"
+                      "recorded_at": "2026-09-20T14:12:52.579Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -1881,7 +1886,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -1889,11 +1894,11 @@
                     "party_id": "contract-owner",
                     "name": "甲出资人",
                     "source": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "6b44b523d1d24028aeaf43ceefc97928",
+                        "id": "7a597bb67c7a492e90cbc27d675e4525",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -1902,7 +1907,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.666Z"
+                        "recorded_at": "2026-09-20T14:12:52.579Z"
                       }
                     }
                   }
@@ -1919,14 +1924,14 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y18xN2NkNDdlOGNkODMzNWUxOWViYmE3YjUwMDk3YmFkOGYyZmIzYzYzMDc5ZmY0YTY2Yzk0Y2QxYjA0NDUyN2FjOjAwMDAwMCIsInNjb3BlIjoiZGMyODIxZWRlOThlNTFiYzA1NDE2MjNjMmQ3ZWU3ZDdkNDAxMWM0Yzc1NmNiNGJjZmFjZTk2ZDVmYjQwMDg4MCJ9"
+              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y184ZTdhNTBiMGYyYTE0MDVmZjExY2Y1ZjMwMzVlMjE5ZjU5OGRhOWE5MDJhMzhjMjc5ZDk2ODFjNzQ0ZmZhZDY3OjAwMDAwMCIsInNjb3BlIjoiZjEyMGE5ZTdiMWJjNWM3YzhhYjQ4MWI5YmRkMjZkMjg4MjJmNTA0NDhkMjhlMTA1NzhlNTk2NmJiYWFjMmZiOSJ9"
             }
           }
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -2074,7 +2079,7 @@
           "filtered_count": 2,
           "returned_count": 1,
           "has_more": true,
-          "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y18xN2NkNDdlOGNkODMzNWUxOWViYmE3YjUwMDk3YmFkOGYyZmIzYzYzMDc5ZmY0YTY2Yzk0Y2QxYjA0NDUyN2FjOjAwMDAwMCIsInNjb3BlIjoiZGMyODIxZWRlOThlNTFiYzA1NDE2MjNjMmQ3ZWU3ZDdkNDAxMWM0Yzc1NmNiNGJjZmFjZTk2ZDVmYjQwMDg4MCJ9"
+          "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y184ZTdhNTBiMGYyYTE0MDVmZjExY2Y1ZjMwMzVlMjE5ZjU5OGRhOWE5MDJhMzhjMjc5ZDk2ODFjNzQ0ZmZhZDY3OjAwMDAwMCIsInNjb3BlIjoiZjEyMGE5ZTdiMWJjNWM3YzhhYjQ4MWI5YmRkMjZkMjg4MjJmNTA0NDhkMjhlMTA1NzhlNTk2NmJiYWFjMmZiOSJ9"
         }
       }
     }
@@ -2082,8 +2087,8 @@
   "page_statements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2097,7 +2102,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -2177,8 +2183,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -2327,8 +2333,8 @@
   "page_investment_products": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2342,7 +2348,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -2415,8 +2422,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -2565,8 +2572,8 @@
   "page_investment_events": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2580,7 +2587,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -2660,8 +2668,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -2810,8 +2818,8 @@
   "account_filter": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "edfb23a584e0886d177ccdd35feba40c7887c75b89b7446c8f7ff579a7a042a8",
+      "schema_version": 3,
+      "snapshot_version": "9aa71028bcc5059ef053a3dc38759aedf8c6a4f0c33eff323f1b1ef222435034",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2825,7 +2833,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -2869,7 +2878,7 @@
             "field_sources": {
               "name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -2878,7 +2887,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "statement": {
@@ -2901,7 +2910,7 @@
         ],
         "movements": [
           {
-            "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+            "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
             "date": "2026-01-02",
             "account_id": "contract-cash",
             "account_code": "账户 1",
@@ -2911,7 +2920,7 @@
             "amount_fen": "100000",
             "signed_amount_fen": "100000",
             "reference": "2",
-            "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+            "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
             "type": "现金投入或借款",
             "summary": "股东投入（2026-01） · 甲出资人",
             "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -2920,7 +2929,7 @@
               "display_summary": [
                 {
                   "source_type": "display_profile",
-                  "id": "6b44b523d1d24028aeaf43ceefc97928",
+                  "id": "7a597bb67c7a492e90cbc27d675e4525",
                   "revision": 1,
                   "field": "display_name",
                   "source": "合成原件中的明确名称",
@@ -2929,12 +2938,12 @@
                     "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                   ],
                   "basis": "current",
-                  "recorded_at": "2026-09-19T18:25:08.666Z"
+                  "recorded_at": "2026-09-20T14:12:52.579Z"
                 }
               ],
               "account_name": {
                 "source_type": "display_profile",
-                "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                 "revision": 1,
                 "field": "display_name",
                 "source": "合成原件中的明确名称",
@@ -2943,7 +2952,7 @@
                   "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                 ],
                 "basis": "current",
-                "recorded_at": "2026-09-19T18:25:08.861Z"
+                "recorded_at": "2026-09-20T14:12:53.134Z"
               }
             },
             "party_sources": [
@@ -2951,11 +2960,11 @@
                 "party_id": "contract-owner",
                 "name": "甲出资人",
                 "source": "display_profile",
-                "id": "6b44b523d1d24028aeaf43ceefc97928",
+                "id": "7a597bb67c7a492e90cbc27d675e4525",
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -2964,7 +2973,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.666Z"
+                    "recorded_at": "2026-09-20T14:12:52.579Z"
                   }
                 }
               }
@@ -3041,7 +3050,7 @@
                 "field_sources": {
                   "name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -3050,7 +3059,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "statement": {
@@ -3082,7 +3091,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac:000000",
+                "id": "000000000002:c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67:000000",
                 "date": "2026-01-02",
                 "account_id": "contract-cash",
                 "account_code": "账户 1",
@@ -3092,7 +3101,7 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "reference": "2",
-                "calculation_id": "c_17cd47e8cd8335e19ebba7b50097bad8f2fb3c63079ff4a66c94cd1b044527ac",
+                "calculation_id": "c_8e7a50b0f2a1405ff11cf5f3035e219f598da9a902a38c279d9681c744ffad67",
                 "type": "现金投入或借款",
                 "summary": "股东投入（2026-01） · 甲出资人",
                 "display_summary": "股东投入（2026-01） · 甲出资人",
@@ -3101,7 +3110,7 @@
                   "display_summary": [
                     {
                       "source_type": "display_profile",
-                      "id": "6b44b523d1d24028aeaf43ceefc97928",
+                      "id": "7a597bb67c7a492e90cbc27d675e4525",
                       "revision": 1,
                       "field": "display_name",
                       "source": "合成原件中的明确名称",
@@ -3110,12 +3119,12 @@
                         "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                       ],
                       "basis": "current",
-                      "recorded_at": "2026-09-19T18:25:08.666Z"
+                      "recorded_at": "2026-09-20T14:12:52.579Z"
                     }
                   ],
                   "account_name": {
                     "source_type": "display_profile",
-                    "id": "cd3fd1b41f4447d4bf9c3b90de1b7ad8",
+                    "id": "99a0e76a148d4fd89ad13ae9ec1a0777",
                     "revision": 1,
                     "field": "display_name",
                     "source": "合成原件中的明确名称",
@@ -3124,7 +3133,7 @@
                       "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                     ],
                     "basis": "current",
-                    "recorded_at": "2026-09-19T18:25:08.861Z"
+                    "recorded_at": "2026-09-20T14:12:53.134Z"
                   }
                 },
                 "party_sources": [
@@ -3132,11 +3141,11 @@
                     "party_id": "contract-owner",
                     "name": "甲出资人",
                     "source": "display_profile",
-                    "id": "6b44b523d1d24028aeaf43ceefc97928",
+                    "id": "7a597bb67c7a492e90cbc27d675e4525",
                     "field_sources": {
                       "name": {
                         "source_type": "display_profile",
-                        "id": "6b44b523d1d24028aeaf43ceefc97928",
+                        "id": "7a597bb67c7a492e90cbc27d675e4525",
                         "revision": 1,
                         "field": "display_name",
                         "source": "合成原件中的明确名称",
@@ -3145,7 +3154,7 @@
                           "9a0f51972691bc41b605bbd6f8136454e23199b4ecf9a66adb8e56e5a3384658"
                         ],
                         "basis": "current",
-                        "recorded_at": "2026-09-19T18:25:08.666Z"
+                        "recorded_at": "2026-09-20T14:12:52.579Z"
                       }
                     }
                   }
@@ -3162,7 +3171,7 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y18xN2NkNDdlOGNkODMzNWUxOWViYmE3YjUwMDk3YmFkOGYyZmIzYzYzMDc5ZmY0YTY2Yzk0Y2QxYjA0NDUyN2FjOjAwMDAwMCIsInNjb3BlIjoiZTU5MmEzYTJiODEzMjE2OGJlMjIwZGNhNDgwOWE4NzFmYzU0NDg5ZGIxMDAyM2NiMjE1MDM2ODdmOWI2ZWRiNyJ9"
+              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y184ZTdhNTBiMGYyYTE0MDVmZjExY2Y1ZjMwMzVlMjE5ZjU5OGRhOWE5MDJhMzhjMjc5ZDk2ODFjNzQ0ZmZhZDY3OjAwMDAwMCIsInNjb3BlIjoiNmU3MzdkYzdiNTFkOGQzOWUyMTI2MTFjMjBiM2YxM2Y2YWZlMjAzZjJjNTlmMDI2OWNhNDMwYzU3YjY1YmQ0ZiJ9"
             }
           },
           "statements": {
@@ -3198,8 +3207,8 @@
         },
         "fact_issues": [],
         "period_preparation": {
-          "company_id": "de074582c0db4246a54ad4a02bb00e48",
-          "database_id": "576b770bcf7342108c5ab0bfd11d770e",
+          "company_id": "96beadef893741c2aab6545dedbf5bb8",
+          "database_id": "abf66427b7d44eb6bb8f4290e6e2c586",
           "period": "2026-01",
           "as_of": "2026-09-20",
           "as_of_semantics": "current_knowledge",
@@ -3347,7 +3356,7 @@
           "filtered_count": 2,
           "returned_count": 1,
           "has_more": true,
-          "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y18xN2NkNDdlOGNkODMzNWUxOWViYmE3YjUwMDk3YmFkOGYyZmIzYzYzMDc5ZmY0YTY2Yzk0Y2QxYjA0NDUyN2FjOjAwMDAwMCIsInNjb3BlIjoiZTU5MmEzYTJiODEzMjE2OGJlMjIwZGNhNDgwOWE4NzFmYzU0NDg5ZGIxMDAyM2NiMjE1MDM2ODdmOWI2ZWRiNyJ9"
+          "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y184ZTdhNTBiMGYyYTE0MDVmZjExY2Y1ZjMwMzVlMjE5ZjU5OGRhOWE5MDJhMzhjMjc5ZDk2ODFjNzQ0ZmZhZDY3OjAwMDAwMCIsInNjb3BlIjoiNmU3MzdkYzdiNTFkOGQzOWUyMTI2MTFjMjBiM2YxM2Y2YWZlMjAzZjJjNTlmMDI2OWNhNDMwYzU3YjY1YmQ0ZiJ9"
         }
       }
     }
@@ -3355,8 +3364,8 @@
   "bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "a3accfc55ddc73f23fd96f75b8ccf270a7ef406b76ae2ffa96d8cd207bf4af22",
+      "schema_version": 3,
+      "snapshot_version": "e64fc9fd431c6108c7cbaf5a2bd19384aa0c1dcb35f1e888de946d3a2ae61ee3",
       "selected_period": {
         "key": "2026-09",
         "year": 2026,
@@ -3370,7 +3379,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -3432,11 +3442,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                 "selected_statement_calculation_ids": [
-                  "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                  "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                 ],
-                "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -3486,11 +3496,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                 "selected_statement_calculation_ids": [
-                  "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                  "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                 ],
-                "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -3508,7 +3518,7 @@
         ],
         "movements": [
           {
-            "id": "000000000001:c_8ec1c5318c4a36ea970391de7a14339f231fad87b760e893488f3c9dc46b604e:000000",
+            "id": "000000000001:c_97973b2aedd9ef4bbd487c333f8a0baf66a91c67f0a821e0de6606023746cee1:000000",
             "date": "2026-09-01",
             "account_id": "bank-a",
             "account_code": "账户 1",
@@ -3518,7 +3528,7 @@
             "amount_fen": "1000",
             "signed_amount_fen": "1000",
             "reference": "1",
-            "calculation_id": "c_8ec1c5318c4a36ea970391de7a14339f231fad87b760e893488f3c9dc46b604e",
+            "calculation_id": "c_97973b2aedd9ef4bbd487c333f8a0baf66a91c67f0a821e0de6606023746cee1",
             "type": "股东投入或借款",
             "summary": "股东投入（2026-09）",
             "display_summary": "股东投入（2026-09）",
@@ -3540,7 +3550,7 @@
             ]
           },
           {
-            "id": "000000000002:c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5:000000",
+            "id": "000000000002:c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46:000000",
             "date": "2026-09-01",
             "account_id": "bank-b",
             "account_code": "账户 2",
@@ -3550,7 +3560,7 @@
             "amount_fen": "500",
             "signed_amount_fen": "500",
             "reference": "2",
-            "calculation_id": "c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5",
+            "calculation_id": "c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46",
             "type": "股东投入或借款",
             "summary": "股东投入（2026-09）",
             "display_summary": "股东投入（2026-09）",
@@ -3619,11 +3629,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                 "selected_statement_calculation_ids": [
-                  "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                  "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                 ],
-                "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -3651,11 +3661,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                 "selected_statement_calculation_ids": [
-                  "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                  "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                 ],
-                "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -3720,11 +3730,11 @@
                     "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                     "statement_confirmed": true,
                     "reconciliation_valid": false,
-                    "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                    "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                     "selected_statement_calculation_ids": [
-                      "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                      "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                     ],
-                    "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                    "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                     "reconciliation_calculation_id": null,
                     "reconciliation_fact_id": null,
                     "selection_source": null,
@@ -3774,11 +3784,11 @@
                     "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                     "statement_confirmed": true,
                     "reconciliation_valid": false,
-                    "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                    "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                     "selected_statement_calculation_ids": [
-                      "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                      "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                     ],
-                    "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                    "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                     "reconciliation_calculation_id": null,
                     "reconciliation_fact_id": null,
                     "selection_source": null,
@@ -3805,7 +3815,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000001:c_8ec1c5318c4a36ea970391de7a14339f231fad87b760e893488f3c9dc46b604e:000000",
+                "id": "000000000001:c_97973b2aedd9ef4bbd487c333f8a0baf66a91c67f0a821e0de6606023746cee1:000000",
                 "date": "2026-09-01",
                 "account_id": "bank-a",
                 "account_code": "账户 1",
@@ -3815,7 +3825,7 @@
                 "amount_fen": "1000",
                 "signed_amount_fen": "1000",
                 "reference": "1",
-                "calculation_id": "c_8ec1c5318c4a36ea970391de7a14339f231fad87b760e893488f3c9dc46b604e",
+                "calculation_id": "c_97973b2aedd9ef4bbd487c333f8a0baf66a91c67f0a821e0de6606023746cee1",
                 "type": "股东投入或借款",
                 "summary": "股东投入（2026-09）",
                 "display_summary": "股东投入（2026-09）",
@@ -3837,7 +3847,7 @@
                 ]
               },
               {
-                "id": "000000000002:c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5:000000",
+                "id": "000000000002:c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46:000000",
                 "date": "2026-09-01",
                 "account_id": "bank-b",
                 "account_code": "账户 2",
@@ -3847,7 +3857,7 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "reference": "2",
-                "calculation_id": "c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5",
+                "calculation_id": "c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46",
                 "type": "股东投入或借款",
                 "summary": "股东投入（2026-09）",
                 "display_summary": "股东投入（2026-09）",
@@ -3899,11 +3909,11 @@
                   "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                   "statement_confirmed": true,
                   "reconciliation_valid": false,
-                  "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                  "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                   "selected_statement_calculation_ids": [
-                    "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                    "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                   ],
-                  "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                  "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                   "reconciliation_calculation_id": null,
                   "reconciliation_fact_id": null,
                   "selection_source": null,
@@ -3931,11 +3941,11 @@
                   "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                   "statement_confirmed": true,
                   "reconciliation_valid": false,
-                  "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                  "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                   "selected_statement_calculation_ids": [
-                    "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                    "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                   ],
-                  "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                  "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                   "reconciliation_calculation_id": null,
                   "reconciliation_fact_id": null,
                   "selection_source": null,
@@ -4199,8 +4209,8 @@
   "filtered_bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "a3accfc55ddc73f23fd96f75b8ccf270a7ef406b76ae2ffa96d8cd207bf4af22",
+      "schema_version": 3,
+      "snapshot_version": "e64fc9fd431c6108c7cbaf5a2bd19384aa0c1dcb35f1e888de946d3a2ae61ee3",
       "selected_period": {
         "key": "2026-09",
         "year": 2026,
@@ -4214,7 +4224,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "current_published",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
         "display": "current",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -4276,11 +4287,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                 "selected_statement_calculation_ids": [
-                  "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                  "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                 ],
-                "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -4298,7 +4309,7 @@
         ],
         "movements": [
           {
-            "id": "000000000002:c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5:000000",
+            "id": "000000000002:c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46:000000",
             "date": "2026-09-01",
             "account_id": "bank-b",
             "account_code": "账户 2",
@@ -4308,7 +4319,7 @@
             "amount_fen": "500",
             "signed_amount_fen": "500",
             "reference": "2",
-            "calculation_id": "c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5",
+            "calculation_id": "c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46",
             "type": "股东投入或借款",
             "summary": "股东投入（2026-09）",
             "display_summary": "股东投入（2026-09）",
@@ -4377,11 +4388,11 @@
                 "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                 "statement_confirmed": true,
                 "reconciliation_valid": false,
-                "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                 "selected_statement_calculation_ids": [
-                  "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                  "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                 ],
-                "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                 "reconciliation_calculation_id": null,
                 "reconciliation_fact_id": null,
                 "selection_source": null,
@@ -4446,11 +4457,11 @@
                     "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                     "statement_confirmed": true,
                     "reconciliation_valid": false,
-                    "statement_calculation_id": "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04",
+                    "statement_calculation_id": "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97",
                     "selected_statement_calculation_ids": [
-                      "c_e4d6351f228c6eaf1353511cdb1ec36ed00b98b86e7c3b8fa7be0f5d820b6e04"
+                      "c_a961041e1e0c29cb29d826aa5dff84d6dae3edca4c9c0bcada7910178c50dd97"
                     ],
-                    "statement_fact_id": "67452a7d9fbd4e558e5cbeb57f282a9d",
+                    "statement_fact_id": "573e342273814caa84c60dfe4c5876a8",
                     "reconciliation_calculation_id": null,
                     "reconciliation_fact_id": null,
                     "selection_source": null,
@@ -4471,13 +4482,13 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiJiYW5rOmJhbmstYSIsInNjb3BlIjoiODU2Mjc0NTgxZTBhZjM2Y2ViN2ZkNjI1Y2U5ZTIwYWMxZGY1YzE5NzZkMDkxOTA2YTllMDYxNzQ5MGM0YTA0YiJ9"
+              "next_cursor": "eyJrZXkiOiJiYW5rOmJhbmstYSIsInNjb3BlIjoiYmNhNTU5Y2Q3NGJjNTVlODAxYjU4NWI4NDNiYTE2Mjg3MTljZmY1ZjRiZjgxMWQ1OGZhYTk3NDMyZmNkMWQ0ZSJ9"
             }
           },
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5:000000",
+                "id": "000000000002:c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46:000000",
                 "date": "2026-09-01",
                 "account_id": "bank-b",
                 "account_code": "账户 2",
@@ -4487,7 +4498,7 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "reference": "2",
-                "calculation_id": "c_ae740c2d692abd1fcf546abb1b3037dbbe3c13cc4b4ab8e746711f38754da7f5",
+                "calculation_id": "c_02163c55418dacdb67207f35de988baf329e3bda4593778cf2e799eb5d7e3b46",
                 "type": "股东投入或借款",
                 "summary": "股东投入（2026-09）",
                 "display_summary": "股东投入（2026-09）",
@@ -4539,11 +4550,11 @@
                   "message": "流水来源已确认，尚无本期已确认的银行对账匹配。",
                   "statement_confirmed": true,
                   "reconciliation_valid": false,
-                  "statement_calculation_id": "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8",
+                  "statement_calculation_id": "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8",
                   "selected_statement_calculation_ids": [
-                    "c_e25f84cf0aa728af4440fe56e94f75d5ae4fdc54251cea1f7154310667fbf5a8"
+                    "c_792347925cb0c212979d5a3214de61c1e9921aaea0cb51f6be815dbe1b3385e8"
                   ],
-                  "statement_fact_id": "dcc16a4d572d425ca7049326e5f36952",
+                  "statement_fact_id": "713dae06f2f6439bab46c892ab6651f6",
                   "reconciliation_calculation_id": null,
                   "reconciliation_fact_id": null,
                   "selection_source": null,
@@ -4807,8 +4818,8 @@
   "frozen_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "1f1c90ff0d5798ae34a69f6bb0a0da0f421470a364c2aeb2ec15e48a469fe80b",
+      "schema_version": 3,
+      "snapshot_version": "fbff6c6b5baba7ab4451999e17a1d63004de3920ba2f986b38a7b617d888c096",
       "selected_period": {
         "key": "2026-09",
         "year": 2026,
@@ -4822,7 +4833,8 @@
       },
       "read_semantics": {
         "knowledge": "current_knowledge",
-        "accounting": "frozen_close",
+        "accounting": "as_posted",
+        "business_basis": "frozen_adoption",
         "display": "frozen_with_current_supplements",
         "system_time_replay": false,
         "recorded_at": "system_recording_time",
@@ -4884,14 +4896,19 @@
                 "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                 "statement_confirmed": true,
                 "reconciliation_valid": true,
-                "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                "selected_statement_calculation_ids": [],
-                "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                "selected_statement_calculation_ids": [
+                  "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                ],
+                "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                 "selection_source": "close_manifest",
                 "selection_proof": {
-                  "basis": "manifest_lineage_root"
+                  "basis": "direct_adoption",
+                  "close_period": "2026-09",
+                  "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                  "role": "state_only"
                 },
                 "proof_method": "frozen_reconciliation_direct_statement"
               },
@@ -4938,14 +4955,19 @@
                 "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                 "statement_confirmed": true,
                 "reconciliation_valid": true,
-                "statement_calculation_id": "c_f15e381b21a6752cc6985ef361e7e83b7b974ba07ffea9e0e576891042cd0f88",
-                "selected_statement_calculation_ids": [],
-                "statement_fact_id": "ff9c9735f2494ca99c61fcf055f79634",
-                "reconciliation_calculation_id": "c_b23e35523b3815062c35cc720c4768242e6931cc30cd520f53f181ef169d67b0",
-                "reconciliation_fact_id": "6a48ccb53b004b77895bcd492fae4787",
+                "statement_calculation_id": "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1",
+                "selected_statement_calculation_ids": [
+                  "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1"
+                ],
+                "statement_fact_id": "51adb8fbdd374e339813ebb294569d7d",
+                "reconciliation_calculation_id": "c_4c15b8233e9582fc01abe2b57f31809f5a9fc9af069388497ee30818fc2b0f52",
+                "reconciliation_fact_id": "d6d59e4710dc46eab1b35931519f1b86",
                 "selection_source": "close_manifest",
                 "selection_proof": {
-                  "basis": "manifest_lineage_root"
+                  "basis": "direct_adoption",
+                  "close_period": "2026-09",
+                  "publication_id": "p_688e85203b9f8acb02e6432ced36078e5b331b171b4e13aabff1e48e4ddc9490",
+                  "role": "state_only"
                 },
                 "proof_method": "frozen_reconciliation_direct_statement"
               },
@@ -4960,7 +4982,7 @@
         ],
         "movements": [
           {
-            "id": "000000000001:c_df1c4ca8fe113feb92bda715bfeecdcde0fc9384c5aa354d432e7a4d379ac8d6:000000",
+            "id": "000000000001:c_d53ad31c42e669f4adb24c88376bc9e8e161ebdb066a0023c5245aa3f7a33d20:000000",
             "date": "2026-09-01",
             "account_id": "bank-a",
             "account_code": "账户 1",
@@ -4970,7 +4992,7 @@
             "amount_fen": "1000",
             "signed_amount_fen": "1000",
             "reference": "1",
-            "calculation_id": "c_df1c4ca8fe113feb92bda715bfeecdcde0fc9384c5aa354d432e7a4d379ac8d6",
+            "calculation_id": "c_d53ad31c42e669f4adb24c88376bc9e8e161ebdb066a0023c5245aa3f7a33d20",
             "type": "股东投入或借款",
             "summary": "股东投入（2026-09）",
             "display_summary": "股东投入（2026-09）",
@@ -4992,7 +5014,7 @@
             ]
           },
           {
-            "id": "000000000002:c_95d50fabe0efa9c8ad93e10ea1b7fe8b3d2a567b75b3a4c4aefd077065d1349b:000000",
+            "id": "000000000002:c_1c1cd8fcada7890c41c602d7274ba661c2a292c38e85c5168570b04c56c03b12:000000",
             "date": "2026-09-01",
             "account_id": "bank-b",
             "account_code": "账户 2",
@@ -5002,7 +5024,7 @@
             "amount_fen": "500",
             "signed_amount_fen": "500",
             "reference": "2",
-            "calculation_id": "c_95d50fabe0efa9c8ad93e10ea1b7fe8b3d2a567b75b3a4c4aefd077065d1349b",
+            "calculation_id": "c_1c1cd8fcada7890c41c602d7274ba661c2a292c38e85c5168570b04c56c03b12",
             "type": "股东投入或借款",
             "summary": "股东投入（2026-09）",
             "display_summary": "股东投入（2026-09）",
@@ -5077,14 +5099,19 @@
                 "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                 "statement_confirmed": true,
                 "reconciliation_valid": true,
-                "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                "selected_statement_calculation_ids": [],
-                "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                "selected_statement_calculation_ids": [
+                  "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                ],
+                "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                 "selection_source": "close_manifest",
                 "selection_proof": {
-                  "basis": "manifest_lineage_root"
+                  "basis": "direct_adoption",
+                  "close_period": "2026-09",
+                  "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                  "role": "state_only"
                 },
                 "proof_method": "frozen_reconciliation_direct_statement"
               }
@@ -5115,14 +5142,19 @@
                 "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                 "statement_confirmed": true,
                 "reconciliation_valid": true,
-                "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                "selected_statement_calculation_ids": [],
-                "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                "selected_statement_calculation_ids": [
+                  "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                ],
+                "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                 "selection_source": "close_manifest",
                 "selection_proof": {
-                  "basis": "manifest_lineage_root"
+                  "basis": "direct_adoption",
+                  "close_period": "2026-09",
+                  "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                  "role": "state_only"
                 },
                 "proof_method": "frozen_reconciliation_direct_statement"
               }
@@ -5153,14 +5185,19 @@
                 "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                 "statement_confirmed": true,
                 "reconciliation_valid": true,
-                "statement_calculation_id": "c_f15e381b21a6752cc6985ef361e7e83b7b974ba07ffea9e0e576891042cd0f88",
-                "selected_statement_calculation_ids": [],
-                "statement_fact_id": "ff9c9735f2494ca99c61fcf055f79634",
-                "reconciliation_calculation_id": "c_b23e35523b3815062c35cc720c4768242e6931cc30cd520f53f181ef169d67b0",
-                "reconciliation_fact_id": "6a48ccb53b004b77895bcd492fae4787",
+                "statement_calculation_id": "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1",
+                "selected_statement_calculation_ids": [
+                  "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1"
+                ],
+                "statement_fact_id": "51adb8fbdd374e339813ebb294569d7d",
+                "reconciliation_calculation_id": "c_4c15b8233e9582fc01abe2b57f31809f5a9fc9af069388497ee30818fc2b0f52",
+                "reconciliation_fact_id": "d6d59e4710dc46eab1b35931519f1b86",
                 "selection_source": "close_manifest",
                 "selection_proof": {
-                  "basis": "manifest_lineage_root"
+                  "basis": "direct_adoption",
+                  "close_period": "2026-09",
+                  "publication_id": "p_688e85203b9f8acb02e6432ced36078e5b331b171b4e13aabff1e48e4ddc9490",
+                  "role": "state_only"
                 },
                 "proof_method": "frozen_reconciliation_direct_statement"
               }
@@ -5222,14 +5259,19 @@
                     "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                     "statement_confirmed": true,
                     "reconciliation_valid": true,
-                    "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                    "selected_statement_calculation_ids": [],
-                    "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                    "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                    "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                    "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                    "selected_statement_calculation_ids": [
+                      "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                    ],
+                    "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                    "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                    "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                     "selection_source": "close_manifest",
                     "selection_proof": {
-                      "basis": "manifest_lineage_root"
+                      "basis": "direct_adoption",
+                      "close_period": "2026-09",
+                      "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                      "role": "state_only"
                     },
                     "proof_method": "frozen_reconciliation_direct_statement"
                   },
@@ -5276,14 +5318,19 @@
                     "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                     "statement_confirmed": true,
                     "reconciliation_valid": true,
-                    "statement_calculation_id": "c_f15e381b21a6752cc6985ef361e7e83b7b974ba07ffea9e0e576891042cd0f88",
-                    "selected_statement_calculation_ids": [],
-                    "statement_fact_id": "ff9c9735f2494ca99c61fcf055f79634",
-                    "reconciliation_calculation_id": "c_b23e35523b3815062c35cc720c4768242e6931cc30cd520f53f181ef169d67b0",
-                    "reconciliation_fact_id": "6a48ccb53b004b77895bcd492fae4787",
+                    "statement_calculation_id": "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1",
+                    "selected_statement_calculation_ids": [
+                      "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1"
+                    ],
+                    "statement_fact_id": "51adb8fbdd374e339813ebb294569d7d",
+                    "reconciliation_calculation_id": "c_4c15b8233e9582fc01abe2b57f31809f5a9fc9af069388497ee30818fc2b0f52",
+                    "reconciliation_fact_id": "d6d59e4710dc46eab1b35931519f1b86",
                     "selection_source": "close_manifest",
                     "selection_proof": {
-                      "basis": "manifest_lineage_root"
+                      "basis": "direct_adoption",
+                      "close_period": "2026-09",
+                      "publication_id": "p_688e85203b9f8acb02e6432ced36078e5b331b171b4e13aabff1e48e4ddc9490",
+                      "role": "state_only"
                     },
                     "proof_method": "frozen_reconciliation_direct_statement"
                   },
@@ -5307,7 +5354,7 @@
           "movements": {
             "items": [
               {
-                "id": "000000000001:c_df1c4ca8fe113feb92bda715bfeecdcde0fc9384c5aa354d432e7a4d379ac8d6:000000",
+                "id": "000000000001:c_d53ad31c42e669f4adb24c88376bc9e8e161ebdb066a0023c5245aa3f7a33d20:000000",
                 "date": "2026-09-01",
                 "account_id": "bank-a",
                 "account_code": "账户 1",
@@ -5317,7 +5364,7 @@
                 "amount_fen": "1000",
                 "signed_amount_fen": "1000",
                 "reference": "1",
-                "calculation_id": "c_df1c4ca8fe113feb92bda715bfeecdcde0fc9384c5aa354d432e7a4d379ac8d6",
+                "calculation_id": "c_d53ad31c42e669f4adb24c88376bc9e8e161ebdb066a0023c5245aa3f7a33d20",
                 "type": "股东投入或借款",
                 "summary": "股东投入（2026-09）",
                 "display_summary": "股东投入（2026-09）",
@@ -5339,7 +5386,7 @@
                 ]
               },
               {
-                "id": "000000000002:c_95d50fabe0efa9c8ad93e10ea1b7fe8b3d2a567b75b3a4c4aefd077065d1349b:000000",
+                "id": "000000000002:c_1c1cd8fcada7890c41c602d7274ba661c2a292c38e85c5168570b04c56c03b12:000000",
                 "date": "2026-09-01",
                 "account_id": "bank-b",
                 "account_code": "账户 2",
@@ -5349,7 +5396,7 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "reference": "2",
-                "calculation_id": "c_95d50fabe0efa9c8ad93e10ea1b7fe8b3d2a567b75b3a4c4aefd077065d1349b",
+                "calculation_id": "c_1c1cd8fcada7890c41c602d7274ba661c2a292c38e85c5168570b04c56c03b12",
                 "type": "股东投入或借款",
                 "summary": "股东投入（2026-09）",
                 "display_summary": "股东投入（2026-09）",
@@ -5407,14 +5454,19 @@
                   "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                   "statement_confirmed": true,
                   "reconciliation_valid": true,
-                  "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                  "selected_statement_calculation_ids": [],
-                  "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                  "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                  "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                  "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                  "selected_statement_calculation_ids": [
+                    "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                  ],
+                  "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                  "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                  "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                   "selection_source": "close_manifest",
                   "selection_proof": {
-                    "basis": "manifest_lineage_root"
+                    "basis": "direct_adoption",
+                    "close_period": "2026-09",
+                    "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                    "role": "state_only"
                   },
                   "proof_method": "frozen_reconciliation_direct_statement"
                 }
@@ -5445,14 +5497,19 @@
                   "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                   "statement_confirmed": true,
                   "reconciliation_valid": true,
-                  "statement_calculation_id": "c_e235018051ec5cd86175255c8e1a0e52196a944c7b395072d2f055da62fed88e",
-                  "selected_statement_calculation_ids": [],
-                  "statement_fact_id": "e9b4a8420dba4f29bfbaddd2c18b4fee",
-                  "reconciliation_calculation_id": "c_c4da1c20f81198770b51207d13a5778019d83fc5c44840f4c00c5228d584b412",
-                  "reconciliation_fact_id": "7b00d8f2319944248f39d7805c649552",
+                  "statement_calculation_id": "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a",
+                  "selected_statement_calculation_ids": [
+                    "c_1179b61405c108efc239f82f04f3fa55642a4db52bcdea7e658510a217ae9c5a"
+                  ],
+                  "statement_fact_id": "4e606770c8bc4cbf9f0490ff64e5cfbd",
+                  "reconciliation_calculation_id": "c_e47b26f1ea735738db4bd73049b3f5a15768b5ce517780e1be8492876afa2d93",
+                  "reconciliation_fact_id": "2878c7a9af144fb8bd6d5e5ccb406683",
                   "selection_source": "close_manifest",
                   "selection_proof": {
-                    "basis": "manifest_lineage_root"
+                    "basis": "direct_adoption",
+                    "close_period": "2026-09",
+                    "publication_id": "p_b3614d2931216c0563efd16435800ca2adb1ad784be16e73a39f49ea68fd031e",
+                    "role": "state_only"
                   },
                   "proof_method": "frozen_reconciliation_direct_statement"
                 }
@@ -5483,14 +5540,19 @@
                   "message": "所选关账对账已采用此精确流水来源，流水匹配已确认。",
                   "statement_confirmed": true,
                   "reconciliation_valid": true,
-                  "statement_calculation_id": "c_f15e381b21a6752cc6985ef361e7e83b7b974ba07ffea9e0e576891042cd0f88",
-                  "selected_statement_calculation_ids": [],
-                  "statement_fact_id": "ff9c9735f2494ca99c61fcf055f79634",
-                  "reconciliation_calculation_id": "c_b23e35523b3815062c35cc720c4768242e6931cc30cd520f53f181ef169d67b0",
-                  "reconciliation_fact_id": "6a48ccb53b004b77895bcd492fae4787",
+                  "statement_calculation_id": "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1",
+                  "selected_statement_calculation_ids": [
+                    "c_510a1d2aa29bd149921bfcd5f34196ee2f347b6984383648ef6ec57b5e16a1b1"
+                  ],
+                  "statement_fact_id": "51adb8fbdd374e339813ebb294569d7d",
+                  "reconciliation_calculation_id": "c_4c15b8233e9582fc01abe2b57f31809f5a9fc9af069388497ee30818fc2b0f52",
+                  "reconciliation_fact_id": "d6d59e4710dc46eab1b35931519f1b86",
                   "selection_source": "close_manifest",
                   "selection_proof": {
-                    "basis": "manifest_lineage_root"
+                    "basis": "direct_adoption",
+                    "close_period": "2026-09",
+                    "publication_id": "p_688e85203b9f8acb02e6432ced36078e5b331b171b4e13aabff1e48e4ddc9490",
+                    "role": "state_only"
                   },
                   "proof_method": "frozen_reconciliation_direct_statement"
                 }
@@ -5534,7 +5596,7 @@
           "as_of_semantics": "current_knowledge",
           "closure": {
             "state": "exact_close",
-            "digest": "dcdf7f2daf12d952a741def67236d52bd67bc40a9b2a161bd62310507d2ab705"
+            "digest": "fc5866fe8d7ad566fc094907f6f9c0897fbe7ad9f6db6a8a570c3841e7de90d2"
           },
           "read_semantics": {
             "knowledge": "current_knowledge",
@@ -5566,7 +5628,7 @@
               "status": "ready",
               "issues": [],
               "inventory_count": 6,
-              "coverage_digest": "ffcc47da30409d79ba1b3592885a0ec4d6ca686de964b9a161451cfe16d779cc"
+              "coverage_digest": "aae1e2c4ecff40fb32940da404bb62e9f86ffcf53657552ae9e2b217d191fc7c"
             },
             "accounting": {
               "status": "ready",

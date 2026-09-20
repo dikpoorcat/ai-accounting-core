@@ -2,12 +2,14 @@
 
 import json
 
+import pytest
 from test_payroll_corrections import Company
 from test_reimbursement_assets import accepted_batch, activation, asset, batch_card
 from test_reimbursement_assets import book as book_fixture
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.business_queries import BusinessQueries
+from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.assets import ReimbursedAsset, ReimbursedAssetBatch
@@ -178,37 +180,24 @@ def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
             CLOSE_ASSET_CARD_ADOPTIONS: 2,
             CLOSE_ASSET_CARD_ACCEPTANCES: 2,
         }
-    selected = BusinessQueries(company.engine).business_status("computer", "2026-02")[
-        "selected_accounting"
-    ]["through_period"]
+    status = BusinessQueries(company.engine).business_status("computer", "2026-02")
+    selected = status["as_posted"]
     card = next(item for item in selected["state_results"] if item["kind"] == "reimbursed_asset")
-    assert card["selection_proof"]["basis"] == "manifest_asset_card_adoption"
+    assert card["selection_proof"]["basis"] == "direct_adoption"
+    assert status["frozen_adoption"]["selection_proof"]["basis"] == "asset_card_adoption"
 
 
-def test_legacy_close_proves_only_the_exact_batch_backed_asset_cards(tmp_path, monkeypatch):
+def test_close_rejects_missing_asset_card_adoptions(tmp_path, monkeypatch):
     company = Company(tmp_path / "legacy-asset-card-close.sqlite")
     prepare_batch_assets(company)
     manifest = Periods._manifest
 
-    def legacy_manifest(self, *args, **kwargs):
+    def incomplete_manifest(self, *args, **kwargs):
         result = manifest(self, *args, **kwargs)
         result.pop("asset_card_adoptions")
         return result
 
-    monkeypatch.setattr(Periods, "_manifest", legacy_manifest)
-    company.close("2026-02")
-
-    assets = Dashboard(company.engine).assets("2026-02")["data"]
-    assert assets["reconciled"] is True
-    assert assets["unestablished_count"] == 0
-    selected = BusinessQueries(company.engine).business_status("computer", "2026-02")[
-        "selected_accounting"
-    ]["through_period"]
-    card = next(item for item in selected["state_results"] if item["kind"] == "reimbursed_asset")
-    with company.engine.store.connection(read_only=True) as connection:
-        acceptance_id = QueryReads(company.engine, connection).parents(card["calculation_id"])[0]
-    assert card["selection_proof"] == {
-        "basis": "legacy_manifest_asset_card_adoption",
-        "contract_version": 1,
-        "acceptance_calculation_id": acceptance_id,
-    }
+    monkeypatch.setattr(Periods, "_manifest", incomplete_manifest)
+    with pytest.raises(KernelError) as failure:
+        company.close("2026-02")
+    assert failure.value.code == "content_integrity_failed"

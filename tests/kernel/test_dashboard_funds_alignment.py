@@ -426,12 +426,12 @@ def test_closed_investment_cost_stays_frozen_and_correction_is_delta(investment_
     investments.close(engine, "2026-02")
     original = Dashboard(engine).funds("2026-02")["data"]["investments"]
     save("money_fund_redemption", "redeem", investments.redemption(cost=4050), revision=1)
-    plan = engine.preview(["redeem"], correction_period="2026-03")
+    plan = engine.preview(["redeem"], posting_period="2026-03")
     engine.confirm(
         ["redeem"],
         preview_digest=plan["digest"],
         epochs=plan["epochs"],
-        correction_period="2026-03",
+        posting_period="2026-03",
         request_id="cost-correction",
     )
     assert Dashboard(engine).funds("2026-02")["data"]["investments"] == original

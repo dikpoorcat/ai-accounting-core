@@ -113,15 +113,16 @@ def test_latest_fact_and_unpublished_state_are_separate(engine):
 
     assert result["latest_fact"]["id"] == saved["fact_id"]
     assert result["latest_fact"]["knowledge"] == "current_knowledge"
-    assert result["current_publication"] is None
+    assert result["current_business_result"] is None
     assert result["review"]["status"] == "unpublished"
     assert result["review"]["latest_matches_publication"] is False
     assert result["review"]["pending_causes"] == [{"cause_fact_id": saved["fact_id"]}]
     assert result["review"]["dispositions"] == []
-    assert result["selected_accounting"]["period_events"] == []
+    assert result["as_posted"]["voucher_events"] == []
+    assert result["as_posted"]["state_results"] == []
     assert result["settlements"]["status"] == "not_established"
     assert result["settlements"]["obligations"] == []
-    assert result["selected_accounting"]["through_period"]["status"] == "not_established"
+    assert result["as_posted"]["status"] == "not_established"
     assert result["external"]["status"] == "unestablished"
 
 
@@ -145,13 +146,13 @@ def test_published_no_entry_result_is_not_unpublished(engine):
     result = BusinessQueries(engine).business_status("charge", "2026-01", as_of="2026-02-01")
 
     assert result["review"]["status"] == "current"
-    assert result["current_publication"]["publication"]["has_journal_lines"] is False
+    assert result["current_business_result"]["publication"]["has_journal_lines"] is False
     assert (
-        result["current_publication"]["calculation"]["id"]
+        result["current_business_result"]["calculation"]["id"]
         == published["results"][0]["calculation_id"]
     )
-    assert result["selected_accounting"]["period_events"][0]["event_type"] == "state_result"
-    assert result["selected_accounting"]["period_events"][0]["vouchers"] == []
+    assert result["as_posted"]["state_results"][0]["event_type"] == "state_result"
+    assert result["as_posted"]["voucher_events"] == []
 
 
 def test_no_impact_review_reuses_one_precise_voucher_event(engine):
@@ -163,13 +164,13 @@ def test_no_impact_review_reuses_one_precise_voucher_event(engine):
 
     result = BusinessQueries(engine).business_status("charge", "2026-01", as_of="2026-02-01")
     current_id = reviewed["results"][0]["calculation_id"]
-    event = result["selected_accounting"]["period_events"][0]
+    event = result["as_posted"]["voucher_events"][0]
 
     assert result["latest_fact"]["id"] == revised["fact_id"]
-    assert result["current_publication"]["calculation"]["id"] == current_id
+    assert result["current_business_result"]["calculation"]["id"] == current_id
     assert event["calculation_id"] == current_id
     assert event["voucher_calculation_id"] == original["results"][0]["calculation_id"]
-    assert len(result["selected_accounting"]["period_events"]) == 1
+    assert len(result["as_posted"]["voucher_events"]) == 1
     assert result["review"]["status"] == "current"
     assert result["trace_targets"] == [
         {
@@ -179,7 +180,7 @@ def test_no_impact_review_reuses_one_precise_voucher_event(engine):
     ]
 
 
-def test_closed_ambiguous_no_entry_states_are_trace_only(state_review_engine):
+def test_close_directly_adopts_latest_no_entry_result(state_review_engine):
     proof = evidence(state_review_engine)
     first_fact = state_review_engine.save_fact(
         "test_charge",
@@ -218,23 +219,20 @@ def test_closed_ambiguous_no_entry_states_are_trace_only(state_review_engine):
     result = BusinessQueries(state_review_engine).business_status(
         "charge", "2026-01", as_of="2026-02-01"
     )
-    accounting = result["selected_accounting"]["through_period"]
+    accounting = result["as_posted"]
 
     assert first_fact["fact_id"] != result["latest_fact"]["id"]
-    assert accounting["state_results"] == []
-    assert accounting["status"] == "unestablished"
-    selection = accounting["unestablished_state_selections"][0]
-    assert selection["status"] == "unestablished"
-    assert {item["calculation_id"] for item in selection["candidates"]} == {
-        first["results"][0]["calculation_id"],
-        second["results"][0]["calculation_id"],
-    }
-    assert result["selected_accounting"]["period_events"] == []
-    assert {item["calculation_id"] for item in result["trace_targets"]} == {
-        item["calculation_id"] for item in selection["candidates"]
-    }
-    assert result["settlements"]["status"] == "not_established"
-    assert result["settlements"]["obligations"] == []
+    assert accounting["status"] == "established"
+    assert accounting["unestablished_state_selections"] == []
+    assert [item["calculation_id"] for item in accounting["state_results"]] == [
+        second["results"][0]["calculation_id"]
+    ]
+    assert result["frozen_adoption"]["calculation_id"] == second["results"][0][
+        "calculation_id"
+    ]
+    assert result["frozen_adoption"]["selection_proof"]["basis"] == "direct_adoption"
+    assert result["settlements"]["status"] == "established"
+    assert result["settlements"]["obligations"][0]["source_amount_fen"] == 100
 
     readiness = BusinessQueries(state_review_engine).period_readiness("2026-01", as_of="2026-02-01")
     current = readiness["current_followups"]["settlements"]
@@ -292,28 +290,31 @@ def test_closed_single_no_entry_dependency_cannot_prove_adoption(
                 "SELECT manifest FROM period_close WHERE period=?", (YearMonth("2026-01").ordinal,)
             ).fetchone()[0]
         )
-        assert set(manifest["calculations"]) == {first_id, reference_id}
+        directly_adopted = {
+            item["calculation_id"] for item in manifest["adopted_results"]
+        }
+        assert directly_adopted == (
+            {reference_id} if move_before_close else {first_id, reference_id}
+        )
 
     result = BusinessQueries(engine).business_status("charge", "2026-01", as_of="2026-03-01")
-    through = result["selected_accounting"]["through_period"]
-    assert result["current_publication"]["calculation"]["posting_period"] == (
+    through = result["as_posted"]
+    assert result["current_business_result"]["calculation"]["posting_period"] == (
         "2026-02" if move_before_close else "2026-01"
     )
-    assert through["status"] == "unestablished"
-    assert through["state_results"] == result["selected_accounting"]["period_events"] == []
-    selection = through["unestablished_state_selections"][0]
-    assert selection["reason"] == "manifest_state_adoption_not_proven"
-    assert [item["calculation_id"] for item in selection["candidates"]] == [first_id]
-    assert selection["candidates"][0]["trace_only"] is True
-    assert result["trace_targets"] == [
-        {
-            "calculation_id": first_id,
-            "voucher_version_id": None,
-            "selection_status": "unestablished",
-        }
-    ]
-    assert result["settlements"]["status"] == "not_established"
-    assert result["settlements"]["obligations"] == []
+    if move_before_close:
+        assert through["status"] == "not_established"
+        assert through["state_results"] == []
+        assert through["unestablished_state_selections"] == []
+        assert result["frozen_adoption"] is None
+        assert result["settlements"]["status"] == "not_established"
+        assert result["settlements"]["obligations"] == []
+    else:
+        assert through["status"] == "established"
+        assert [item["calculation_id"] for item in through["state_results"]] == [first_id]
+        assert through["unestablished_state_selections"] == []
+        assert result["frozen_adoption"]["calculation_id"] == first_id
+        assert result["settlements"]["status"] == "established"
 
 
 @pytest.mark.parametrize(
@@ -335,15 +336,17 @@ def test_closed_independent_no_entry_root_remains_established(state_review_engin
     close(engine, "2026-01")
 
     result = BusinessQueries(engine).business_status("charge", "2026-01", as_of="2026-02-01")
-    through = result["selected_accounting"]["through_period"]
+    through = result["as_posted"]
     assert through["status"] == "established"
     assert through["unestablished_state_selections"] == []
     assert len(through["state_results"]) == 1
     state = through["state_results"][0]
     assert state["calculation_id"] == calculation_id
-    assert state["selection_proof"] == {"basis": "manifest_lineage_root"}
-    assert state["opening"] == result["current_publication"]["calculation"]["outcome"]["opening"]
-    assert result["selected_accounting"]["period_events"] == [state]
+    assert state["selection_proof"]["basis"] == "direct_adoption"
+    assert state["opening"] == result["current_business_result"]["calculation"]["outcome"][
+        "opening"
+    ]
+    assert result["frozen_adoption"]["calculation_id"] == calculation_id
     assert len(result["settlements"]["obligations"]) == 1
     assert result["settlements"]["obligations"][0]["source_amount_fen"] == 100
 
@@ -386,14 +389,14 @@ def test_old_no_entry_dependency_does_not_duplicate_new_voucher_state(state_revi
     result = BusinessQueries(state_review_engine).business_status(
         "charge", "2026-01", as_of="2026-02-01"
     )
-    accounting = result["selected_accounting"]
+    accounting = result["as_posted"]
 
-    assert [item["calculation_id"] for item in accounting["period_events"]] == [
+    assert [item["calculation_id"] for item in accounting["voucher_events"]] == [
         current["results"][0]["calculation_id"]
     ]
-    assert accounting["through_period"]["state_results"] == []
-    assert accounting["through_period"]["status"] == "partially_established"
-    assert len(accounting["through_period"]["unestablished_state_selections"]) == 1
+    assert accounting["state_results"] == []
+    assert accounting["status"] == "established"
+    assert accounting["unestablished_state_selections"] == []
 
 
 def test_period_cutoff_keeps_frozen_original_and_later_correction_events(engine):
@@ -401,25 +404,30 @@ def test_period_cutoff_keeps_frozen_original_and_later_correction_events(engine)
     _, original = publish(engine)
     close(engine, "2026-01")
     save(engine, amount=150, revision=1, request="changed-after-close")
-    _, corrected = publish(engine, request="correct-in-march", correction_period="2026-03")
+    _, corrected = publish(engine, request="correct-in-march", posting_period="2026-03")
 
     january = BusinessQueries(engine).business_status("charge", "2026-01", as_of="2026-03-31")
     march = BusinessQueries(engine).business_status("charge", "2026-03", as_of="2026-03-31")
 
     assert january["latest_fact"]["id"] == march["latest_fact"]["id"]
     assert (
-        january["current_publication"]["calculation"]["id"]
+        january["current_business_result"]["calculation"]["id"]
         == corrected["results"][0]["calculation_id"]
     )
-    assert [item["calculation_id"] for item in january["selected_accounting"]["period_events"]] == [
+    assert [item["calculation_id"] for item in january["as_posted"]["voucher_events"]] == [
         original["results"][0]["calculation_id"]
     ]
-    assert [item["role"] for item in march["selected_accounting"]["period_events"]] == [
+    march_events = [
+        item
+        for item in march["as_posted"]["voucher_events"]
+        if item["posting_period"] == "2026-03"
+    ]
+    assert [item["role"] for item in march_events] == [
         "reversal",
         "replacement",
     ]
     through_roles = [
-        item["role"] for item in march["selected_accounting"]["through_period"]["voucher_events"]
+        item["role"] for item in march["as_posted"]["voucher_events"]
     ]
     assert through_roles == [
         "original",
@@ -449,7 +457,7 @@ def test_closed_correction_to_no_entry_has_original_reversal_and_new_state(
     _, corrected = publish(
         engine,
         request="no-entry-correction",
-        correction_period="2026-03",
+        posting_period="2026-03",
     )
     if close_correction:
         periods = Periods(engine)
@@ -473,16 +481,23 @@ def test_closed_correction_to_no_entry_has_original_reversal_and_new_state(
         )
 
     result = BusinessQueries(engine).business_status("charge", "2026-03", as_of="2026-03-31")
-    events = result["selected_accounting"]["period_events"]
-    reversal = next(item for item in events if item["event_type"] == "voucher")
-    state = next(item for item in events if item["event_type"] == "state_result")
+    reversal = next(
+        item
+        for item in result["as_posted"]["voucher_events"]
+        if item["posting_period"] == "2026-03"
+    )
+    state = next(
+        item
+        for item in result["as_posted"]["state_results"]
+        if item["posting_period"] == "2026-03"
+    )
 
     assert reversal["role"] == "reversal"
     assert reversal["calculation_id"] == original["results"][0]["calculation_id"]
     assert reversal["voucher_calculation_id"] == corrected["results"][0]["calculation_id"]
     assert state["calculation_id"] == corrected["results"][0]["calculation_id"]
     assert state["selection_proof"]["basis"] == (
-        "manifest_voucher_root" if close_correction else "calculation_current"
+        "direct_adoption" if close_correction else "calculation_current"
     )
 
 
@@ -590,7 +605,7 @@ def test_unresolved_settlement_does_not_claim_a_paid_balance(domain_book, monkey
     assert obligation["remaining_fen"] is None
 
 
-def test_repeated_manifest_reference_does_not_repeat_voucher_effect(engine):
+def test_close_contract_rejects_adoptions_copied_to_another_period(engine):
     save(engine)
     publish(engine)
     close(engine, "2026-01")
@@ -608,12 +623,9 @@ def test_repeated_manifest_reference_does_not_repeat_voucher_effect(engine):
             (YearMonth("2026-02").ordinal, json.dumps(duplicate),
              hashlib.sha256(json.dumps(duplicate).encode()).digest()),
         )
-        sync_close(connection, YearMonth("2026-02").ordinal)
-        connection.commit()
-
-    result = BusinessQueries(engine).business_status("charge", "2026-02", as_of="2026-03-01")
-
-    assert len(result["selected_accounting"]["through_period"]["voucher_events"]) == 1
+        with pytest.raises(KernelError) as failure:
+            sync_close(connection, YearMonth("2026-02").ordinal)
+        assert failure.value.code == "content_integrity_failed"
 
 
 def test_withdrawn_open_business_keeps_history_but_clears_current_accounting(domain_book):
@@ -637,8 +649,8 @@ def test_withdrawn_open_business_keeps_history_but_clears_current_accounting(dom
     assert result["latest_fact"]["id"] == saved["fact_id"]
     assert result["latest_fact"]["deleted"] is True
     assert result["review"]["status"] == "deleted"
-    assert result["current_publication"] is None
-    assert result["selected_accounting"]["through_period"]["status"] == "not_established"
+    assert result["current_business_result"] is None
+    assert result["as_posted"]["status"] == "not_established"
 
 
 def test_tax_and_report_jobs_use_only_database_plan_references(engine):
@@ -746,7 +758,7 @@ def test_malformed_job_collections_are_isolated_to_the_associated_job(engine):
     assert all(item["verified_when_succeeded"] is False for item in jobs.values())
 
 
-def test_as_of_changes_no_selected_accounting_or_settlement_amount(domain_book):
+def test_as_of_changes_no_as_posted_accounting_or_settlement_amount(domain_book):
     engine, _save, publish_businesses, *_ = domain_book
     prepare_payment(domain_book)
     publish_businesses("payment")
@@ -754,7 +766,7 @@ def test_as_of_changes_no_selected_accounting_or_settlement_amount(domain_book):
     earlier = BusinessQueries(engine).business_status("expense", "2026-01", as_of="2026-01-15")
     later = BusinessQueries(engine).business_status("expense", "2026-01", as_of="2026-12-31")
 
-    assert earlier["selected_accounting"] == later["selected_accounting"]
+    assert earlier["as_posted"] == later["as_posted"]
     assert earlier["settlements"] == later["settlements"]
 
 
@@ -838,9 +850,10 @@ def test_external_completion_is_not_an_accounting_state_event(domain_book):
 
     result = BusinessQueries(engine).business_status("completion", "2026-02", as_of="2026-02-28")
 
-    assert result["current_publication"]["calculation"]["kind"] == "external_completion"
-    assert result["selected_accounting"]["period_events"] == []
-    assert result["selected_accounting"]["through_period"]["status"] == "not_established"
+    assert result["current_business_result"]["calculation"]["kind"] == "external_completion"
+    assert result["as_posted"]["voucher_events"] == []
+    assert result["as_posted"]["state_results"] == []
+    assert result["as_posted"]["status"] == "not_established"
 
 
 def test_commands_are_discoverable_and_period_is_required():
@@ -920,7 +933,7 @@ def test_period_readiness_external_followups_exclude_other_months(domain_book):
     ] == ["february-obligation"]
 
 
-def test_period_readiness_marks_legacy_manifest_fields_not_recorded(engine):
+def test_period_readiness_rejects_incomplete_close_contract(engine):
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
         connection.execute(
@@ -928,30 +941,17 @@ def test_period_readiness_marks_legacy_manifest_fields_not_recorded(engine):
             (YearMonth("2026-01").ordinal, json.dumps({"period": "2026-01"}),
              hashlib.sha256(json.dumps({"period": "2026-01"}).encode()).digest()),
         )
-        sync_close(connection, YearMonth("2026-01").ordinal)
-        connection.commit()
-
-    result = BusinessQueries(engine).period_readiness("2026-01", as_of="2026-02-01")
-
-    assert result["closure"]["state"] == "exact_close"
-    for field in ("readiness", "inventories", "material_coverage", "previous_close_digest"):
-        assert result["frozen_readiness"][field] == {"status": "not_recorded"}
+        with pytest.raises(KernelError) as failure:
+            sync_close(connection, YearMonth("2026-01").ordinal)
+        assert failure.value.code == "content_integrity_failed"
 
 
 def test_period_readiness_does_not_borrow_later_close_manifest(engine):
-    with engine.store.connection() as connection:
-        connection.execute("BEGIN")
-        connection.execute(
-            "INSERT INTO period_close(period,manifest,digest) VALUES(?,?,?)",
-            (YearMonth("2026-02").ordinal, json.dumps({"period": "2026-02"}),
-             hashlib.sha256(json.dumps({"period": "2026-02"}).encode()).digest()),
-        )
-        sync_close(connection, YearMonth("2026-02").ordinal)
-        connection.commit()
+    close(engine, "2026-02")
 
     result = BusinessQueries(engine).period_readiness("2026-01", as_of="2026-02-01")
 
-    assert result["closure"]["state"] == "sealed_by_later_close"
+    assert result["closure"]["state"] == "covered_by_later_close"
     assert result["closure"]["sealing_boundary"] == "2026-02"
     assert result["frozen_readiness"] == {
         "status": "unavailable",

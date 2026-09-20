@@ -176,7 +176,7 @@ export interface AssetsDashboardData {
 }
 
 export interface AssetsDashboardResponse {
-  schema_version: 2;
+  schema_version: 3;
   snapshot_version: string;
   selected_period: DashboardPeriod | null;
   data: AssetsDashboardData | null;

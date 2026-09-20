@@ -24,13 +24,13 @@ def save(company, kind, subject, data, revision=0):
     )
 
 
-def publish(company, *subjects, correction_period=None):
-    preview = company.engine.preview(list(subjects), correction_period=correction_period)
+def publish(company, *subjects, posting_period=None):
+    preview = company.engine.preview(list(subjects), posting_period=posting_period)
     return company.engine.confirm(
         list(subjects),
         preview_digest=preview["digest"],
         epochs=preview["epochs"],
-        correction_period=correction_period,
+        posting_period=posting_period,
         request_id=company.request(),
     )
 
@@ -324,6 +324,21 @@ def test_closed_sides_remain_frozen_and_new_original_revision_needs_review(book)
         recording_error_confirmed=True,
         request_id=company.request(),
     )
-    publish(company, "transfer", correction_period="2026-02")
+    with pytest.raises(KernelError) as conflict:
+        publish(company, "transfer", posting_period="2026-02")
+    assert conflict.value.code == "posting_period_conflict"
+    preview = engine.preview(["transfer"])
+    route = preview["results"][0]
+    assert (route["source_period"], route["posting_period"], route["mode"]) == (
+        "2026-01",
+        "2026-01",
+        "review_no_impact",
+    )
+    engine.confirm(
+        ["transfer"],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
     assert "material_result_stale" in codes(company.materials.check("2026-01"))
     assert Periods(engine).closed_report("2026-01") == frozen

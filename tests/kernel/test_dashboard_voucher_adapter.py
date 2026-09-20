@@ -253,12 +253,14 @@ def test_voucher_and_trace_show_immutable_evidence_names_without_loading_files(b
         assert engine.store.evidence_metadata(connection, proofs + ["0" * 64]) == names
 
 
-def test_legacy_close_can_use_existing_names_without_changing_frozen_accounting(book, monkeypatch):
+def test_empty_management_snapshot_uses_existing_names_without_changing_frozen_accounting(
+    book, monkeypatch
+):
     engine, save, publish, proof = book
     from test_banking import close_month, inventories
 
     funding(save, publish)
-    # Model the pre-v8 management part, while leaving the native close write immutable.
+    # Keep the management snapshot empty while leaving the direct close write immutable.
     monkeypatch.setattr(Display, "snapshot", staticmethod(lambda *args, **kwargs: {}))
     # A closed synthetic month needs the native materials and bank reconciliation fixtures.
     from test_banking import entry, opening, reconciliation, statement
@@ -309,7 +311,7 @@ def test_all_three_correction_vouchers_open_their_own_basis(engine):
     close(engine)
     original = Dashboard(engine).brief("2026-01")["data"]["vouchers"][0]
     save(engine, amount=125, revision=1, request="amend")
-    publish(engine, request="amend-publish", correction_period="2026-02")
+    publish(engine, request="amend-publish", posting_period="2026-02")
     rows = Dashboard(engine).brief("2026-02")["data"]["vouchers"]
     reversal = next(item for item in rows if item["reverses_version_id"])
     replacement = next(item for item in rows if not item["reverses_version_id"])

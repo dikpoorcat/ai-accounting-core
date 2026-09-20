@@ -76,15 +76,15 @@ def save(
     )
 
 
-def publish(engine, subjects=None, request="publish", correction_period=None):
+def publish(engine, subjects=None, request="publish", posting_period=None):
     subjects = subjects or ["charge"]
-    preview = engine.preview(subjects, correction_period=correction_period)
+    preview = engine.preview(subjects, posting_period=posting_period)
     result = engine.confirm(
         subjects,
         preview_digest=preview["digest"],
         epochs=preview["epochs"],
         request_id=request,
-        correction_period=correction_period,
+        posting_period=posting_period,
     )
     return preview, result
 
@@ -241,9 +241,9 @@ def test_closed_reversal_frozen_history_and_projection_rebuild(engine):
     publish(engine)
     before = close(engine)
     save(engine, amount=125, revision=1, request="change")
-    with pytest.raises(KernelError, match="冲正"):
+    with pytest.raises(KernelError, match="开放入账月"):
         publish(engine, request="bad-correction")
-    publish(engine, request="closed-correction", correction_period="2026-02")
+    publish(engine, request="closed-correction", posting_period="2026-02")
     assert Periods(engine).closed_report("2026-01") == before
     lines = engine.ledger("2026-02")
     assert len(lines) == 2 and sum(row["reverses_id"] is not None for row in lines) == 1
@@ -288,7 +288,7 @@ def test_closed_correction_can_pass_through_zero_and_be_corrected_again(engine):
         expected_revision=1,
         request_id="zero",
     )
-    publish(engine, request="zero-result", correction_period="2026-02")
+    publish(engine, request="zero-result", posting_period="2026-02")
     save(engine, amount=50, revision=2, request="nonzero")
     _, restored = publish(engine, request="restore-result")
     assert len(engine.ledger("2026-01")) == 1

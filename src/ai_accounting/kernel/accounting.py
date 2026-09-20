@@ -19,7 +19,7 @@ ACCOUNTING_CONTRACT = "accounting-v1"
 def compatibility(calculation_id, reason):
     return KernelError(
         "accounting_compatibility_required",
-        "此项核算需要受控历史适配后重新预览；无需补造业务事实",
+        "保存的核算结果无法按当前合同比较，请检查结果格式与来源；无需补造业务事实",
         calculation_id=calculation_id,
         reason=reason,
     )

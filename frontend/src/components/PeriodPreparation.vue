@@ -109,7 +109,7 @@ const closureMessage = computed(() => {
   const closure = props.preparation.closure;
   if (closure.state === "exact_close")
     return `${props.preparation.period} 已关账；以下进展不改变所选月封存结果。`;
-  if (closure.state === "sealed_by_later_close")
+  if (closure.state === "covered_by_later_close")
     return `${props.preparation.period} 已由 ${closure.sealing_boundary} 的后续关账封存；以下显示当前进展。`;
   return `${props.preparation.period} 尚未关账；以下事项会持续更新。`;
 });

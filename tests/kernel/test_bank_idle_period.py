@@ -167,9 +167,10 @@ def test_published_empty_bank_context_can_close_and_remains_frozen(book):
     assert not issues(book)
     book.close()
     frozen = book.periods.closed_report("2026-09")
-    assert len(frozen["calculations"]) == len(subjects)
+    assert {item["subject_id"] for item in frozen["adopted_results"]} == set(subjects)
+    assert all(item["posting_period"] == "2026-09" for item in frozen["adopted_results"])
     assert frozen["vouchers"] == []
-    assert frozen["facts"]
+    assert all(item["fact_id"] for item in frozen["adopted_results"])
     assert not book.engine.overview("2026-09")["accounts"]
     empty_bank(book, month="2026-10", opening=False)
     book.inventory("2026-10")

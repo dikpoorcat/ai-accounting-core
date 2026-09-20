@@ -11,7 +11,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 // Actual synthetic T4 endpoint responses. Used for UI shape, not an accounting golden result.
 const fixtures = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"));
 
-test("actual v2 responses pass runtime consumers and all five pages render historical/current partitions", async () => {
+test("current responses pass runtime consumers and all five pages render historical/current partitions", async () => {
   globalThis.t4RenderFixtures = fixtures;
   globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
   const server = await createServer({
@@ -90,7 +90,7 @@ test("business details visibly retain uncertain adopted candidates, historical d
     { ...known, paid_fen: "10000", remaining_fen: "0", settlement_status: "settled" },
     { ...known, source_amount_fen: null, amount_fen: null, remaining_fen: null, settlement_status: "unestablished", source_issues: [{ message: "此项原金额未知" }] },
   ] } };
-  data.selected_accounting.through_period.unestablished_state_selections = [{ reason: "legacy_manifest_roles", candidates: [{ calculation_id: "exact-candidate-a" }, { calculation_id: "exact-candidate-b" }] }];
+  data.as_posted.unestablished_state_selections = [{ reason: "close_adoption_not_proven", candidates: [{ calculation_id: "exact-candidate-a" }, { calculation_id: "exact-candidate-b" }] }];
   globalThis.t4BusinessRender = data;
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "seed-business-status", enforce: "pre", transform(code, id) {

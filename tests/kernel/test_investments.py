@@ -300,12 +300,12 @@ def test_purchase_partial_redemption_actual_cash_reports_and_rebuild(book):
         close(engine, period)
     assert Reports(engine).preview_export(2026, 1)["statements"] == report["statements"]
     save("money_fund_redemption", "redeem", redemption(cost=4050), revision=1)
-    correction = engine.preview(["redeem"], correction_period="2026-04")
+    correction = engine.preview(["redeem"], posting_period="2026-04")
     engine.confirm(
         ["redeem"],
         preview_digest=correction["digest"],
         epochs=correction["epochs"],
-        correction_period="2026-04",
+        posting_period="2026-04",
         request_id="closed-cost-correction",
     )
     assert Reports(engine).preview_export(2026, 1)["statements"] == report["statements"]

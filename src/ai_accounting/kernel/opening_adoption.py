@@ -1,8 +1,8 @@
 """A narrow immutable proof for the atomic opening-package domain.
 
-A dependency is not a publication root. This proof instead requires an already
-proven opening detail, its exact frozen package contract, and the first close's
-complete gross trial balance. It never runs an evaluator or reads current heads.
+The close directly declares its opening result. This module validates the
+stored package and members without inferring adoption from downstream anchors
+or running an evaluator.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from .domains.opening import CATEGORIES, MODELS
-from .types import YearMonth, canonical
 
 _DETAIL_KINDS = {model.kind for model in MODELS}
 
@@ -109,136 +108,3 @@ def _package_contract(package, facts, dependency_facts):
     if debit != credit or debit != values.get("debit_fen") or credit != values.get("credit_fen"):
         return None
     return {item["subject_id"]: item for item in members}, totals
-
-
-def prove_opening_adoptions(
-    connection, reads, *, close_period, manifest, metadata, independent_proofs
-):
-    """Return every package proven within the complete manifest; callers choose uniquely."""
-    members = set(manifest.get("calculations", ()))
-    month = str(YearMonth.from_ordinal(close_period))
-    package_ids = {
-        ident
-        for ident in members
-        if metadata[ident]["kind"] == "opening_package"
-        and metadata[ident]["period"] == month
-        and metadata[ident]["posting_period"] == month
-    }
-    anchor_ids = {
-        ident
-        for ident in members & independent_proofs.keys()
-        if metadata[ident]["kind"] in _DETAIL_KINDS
-    }
-    if not package_ids or not anchor_ids:
-        return {}
-    if manifest.get("period") != month or "trial_balance" not in manifest:
-        return {}
-    if connection.execute(
-        "SELECT 1 FROM period_close WHERE period<? LIMIT 1", (close_period,)
-    ).fetchone():
-        return {}
-    if connection.execute(
-        "SELECT 1 FROM voucher_version WHERE period<? LIMIT 1", (close_period,)
-    ).fetchone():
-        return {}
-    packages_and_anchors = reads.calculations(package_ids | anchor_ids)
-    dependency_facts = {ident: set() for ident in package_ids}
-    for row in connection.execute(
-        "SELECT d.calculation_id,d.fact_id FROM json_each(?) ids JOIN dependency_fact d "
-        "ON d.calculation_id=ids.value",
-        (canonical(sorted(package_ids)),),
-    ):
-        dependency_facts[row["calculation_id"]].add(row["fact_id"])
-    facts = reads.facts({ident for ids in dependency_facts.values() for ident in ids})
-    references = manifest.get("vouchers", [])
-    if not isinstance(references, list) or any(
-        not isinstance(item, dict) or not item.get("id") for item in references
-    ):
-        return {}
-    voucher_ids = [item["id"] for item in references]
-    if len(set(voucher_ids)) != len(voucher_ids):
-        return {}
-    vouchers = reads.vouchers(voucher_ids)
-    if any(
-        vouchers[item["id"]]["period"] != close_period
-        or vouchers[item["id"]]["calculation_id"] != item.get("calculation_id")
-        or item.get("calculation_id") not in members
-        for item in references
-    ):
-        return {}
-    frozen_totals = _totals(manifest["trial_balance"])
-    if frozen_totals is None:
-        return {}
-    # Gross debit/credit from exactly this manifest, with reversal lines as stored.
-    voucher_totals = {
-        row["account"]: [row["debit"], row["credit"]]
-        for row in connection.execute(
-            "SELECT l.account,sum(l.debit) debit,sum(l.credit) credit FROM json_each(?) ids "
-            "JOIN voucher_line l ON l.version_id=ids.value GROUP BY l.account",
-            (canonical(voucher_ids),),
-        )
-    }
-    close = connection.execute(
-        "SELECT digest FROM period_close WHERE period=?", (close_period,)
-    ).fetchone()
-    if close is None:
-        return {}
-    proven = {}
-    for ident in sorted(package_ids):
-        package = packages_and_anchors[ident]
-        contract = _package_contract(package, facts, dependency_facts[ident])
-        if contract is None:
-            continue
-        declarations, opening_totals = contract
-        compatible, anchors = True, []
-        for anchor_id in sorted(anchor_ids):
-            detail = packages_and_anchors[anchor_id]
-            member = declarations.get(detail["subject_id"])
-            if member is None:
-                continue
-            matches = (
-                detail["kind"] == member["kind"]
-                and detail["fact_id"] == member["fact_id"]
-                and detail["period"] == month
-                and detail["posting_period"] == month
-                and detail["fact_data"].get("package_id") == package["subject_id"]
-                and _detail_shape(detail["outcome"])
-                and detail["outcome"]["values"] == member["values"]
-                and set(reads.parents(anchor_id)) == {ident}
-            )
-            if not matches:
-                compatible = False
-                break
-            anchors.append(
-                {
-                    "calculation_id": anchor_id,
-                    "fact_id": detail["fact_id"],
-                    "result_digest": detail["result_digest"],
-                    "selection_proof": independent_proofs[anchor_id],
-                }
-            )
-        if not compatible or not anchors:
-            continue
-        totals = {key: list(value) for key, value in voucher_totals.items()}
-        for account, amounts in opening_totals.items():
-            total = totals.setdefault(account, [0, 0])
-            total[0] += amounts[0]
-            total[1] += amounts[1]
-        totals = {key: value for key, value in totals.items() if value != [0, 0]}
-        if totals != frozen_totals:
-            continue
-        proven[ident] = {
-            "basis": "manifest_opening_member_adoption",
-            "contract_version": 1,
-            "close_period": month,
-            "close_digest": close["digest"].hex(),
-            "package": {
-                "calculation_id": ident,
-                "fact_id": package["fact_id"],
-                "result_digest": package["result_digest"],
-            },
-            "anchors": anchors,
-            "member_fact_ids": sorted(item["fact_id"] for item in declarations.values()),
-            "trial_balance_basis": "exact_first_close_vouchers_plus_package_opening_lines",
-        }
-    return proven

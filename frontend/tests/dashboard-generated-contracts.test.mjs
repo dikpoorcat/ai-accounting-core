@@ -97,7 +97,7 @@ test("context and funds request and validate with the company-complete final URL
   assert.equal(context.calls[0], `/api/dashboard/context?company_id=${samples.company_with_period.response.current_company.company_id}`);
 
   const funds = await clientHarness(samples.bank_funds.response);
-  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 2);
+  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 3);
   assert.equal(funds.calls[0], "/api/dashboard/funds?period=2026-09&company_id=company-from-location");
 
   const malformed = await clientHarness(changedField(samples.bank_funds.response, (key, value) => key.endsWith("_fen") && typeof value === "string", 100));
@@ -153,7 +153,7 @@ test("generated requests reject responses from a different selection or inconsis
   const filteredHarness = await clientHarness(filteredAlias);
   assert.equal(
     (await filteredHarness.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version,
-    2,
+    3,
   );
 });
 
@@ -183,7 +183,7 @@ test("current backend samples also satisfy request-dependent context and paginat
   };
   for (const [name, path] of Object.entries(fundsRequests)) {
     const harness = await clientHarness(samples[name].response, "");
-    assert.equal((await harness.client.requestDashboardFunds(path)).schema_version, 2, name);
+    assert.equal((await harness.client.requestDashboardFunds(path)).schema_version, 3, name);
     assert.equal(harness.calls[0], path, name);
   }
 });

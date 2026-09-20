@@ -115,7 +115,7 @@ def activate_assets(
     *,
     expected_revision=0,
     request_id=None,
-    correction_period=None,
+    posting_period=None,
 ):
     batches = AssetBatches(engine)
     prepared = [
@@ -125,7 +125,7 @@ def activate_assets(
     options = {
         "evidence": evidence,
         "expected_revision": expected_revision,
-        "correction_period": correction_period,
+        "posting_period": posting_period,
     }
     preview = batches.prepare_activation_batch(batch_subject, period, prepared, **options)
     return batches.confirm_activation_batch(

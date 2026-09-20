@@ -8,8 +8,7 @@ from test_engine import close, publish, save
 from test_engine import engine as engine  # noqa: F401
 from test_integrity_content import damage, frozen_opening, opening_engine
 
-from ai_accounting.kernel.backup import create_portable, restore_portable, verify_portable
-from ai_accounting.kernel.catalog import Catalog
+from ai_accounting.kernel.backup import BackupError, create_portable
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.diagnostics import error_response
 from ai_accounting.kernel.engine import Engine
@@ -111,29 +110,14 @@ def test_source_damage_cannot_be_repaired_or_disguised(engine, target):
     assert frozen_state(engine) == before
 
 
-def test_historical_coverage_limit_survives_backup_restore_and_catalog_receipt(tmp_path):
+def test_missing_direct_opening_adoption_blocks_backup_without_mutating_source(tmp_path):
     engine = opening_engine(tmp_path)
     frozen_opening(engine, selected=False)
     before = frozen_state(engine)
-    bundle = engine.store.bundle
-    archive = create_portable(engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle)
-    expected = archive["verification"]
-    assert expected["status"] == "limited"
-    assert "verification" not in archive["manifest"]
-    assert verify_portable(archive["path"], _bundle=engine.store.bundle)["verification"] == expected
-    restored = restore_portable(
-        archive["path"], tmp_path / "restored.sqlite", _bundle=engine.store.bundle
-    )
-    assert restored["verification"] == expected
-    catalog = Catalog(tmp_path / "catalog", bundle)
-    result = catalog.restore_company(
-        archive["path"], taxpayer_id="91310000123456789A", name="合成公司"
-    )
-    assert result["verification"] == expected
-    assert (
-        catalog.restore_company(archive["path"], taxpayer_id="91310000123456789A", name="合成公司")
-        == result
-    )
+    with pytest.raises(BackupError) as failure:
+        create_portable(engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle)
+    assert failure.value.code == "backup_content_invalid"
+    assert "content_integrity_failed" in str(failure.value)
     assert frozen_state(engine) == before
 
 

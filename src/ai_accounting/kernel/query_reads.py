@@ -139,19 +139,24 @@ class QueryReads:
     def _reset(self):
         self._snapshot_active = False
         self._verified_close_references = set()
+        self._verified_settlement_periods = set()
+        self._verified_balance_scopes = set()
+        self._verified_publications = {}
         self._fact_versions = {}
         self._facts = {}
         self._metadata = {}
         self._calculations = {}
+        self._raw_calculations = {}
         self._parents = {}
         self._vouchers = {}
         self._lines = {}
         self._relations = {}
         self._relation_sources = {}
+        self._raw_relation_sources = {}
         self._ancestor_roots = set()
+        self._raw_ancestor_roots = set()
         self._closes = {}
         self._close_manifests = {}
-        self.closed_accounting_contexts = {}
         self._selections = {}
         self._typed_calculations = {}
         self._jobs = {}
@@ -208,6 +213,58 @@ class QueryReads:
         if pending:
             verify_close_references(self.connection, pending)
             self._verified_close_references.update(keys)
+
+    def verify_settlement_periods(self, periods):
+        """Reuse successful period seals only within this read snapshot."""
+        from .settlement_projection import verify_settlement_periods
+
+        periods = set(periods)
+        pending = periods - self._verified_settlement_periods
+        if not pending:
+            return
+        verify_settlement_periods(self.connection, pending, reads=self)
+        if self._snapshot_active:
+            self._verified_settlement_periods.update(pending)
+
+    def verify_publication_periods(self, periods):
+        """Verify immutable publication identities once in this read snapshot."""
+        from .publication import verify_record
+
+        periods = set(periods)
+        pending = periods - self._verified_publications.keys()
+        grouped = {period: [] for period in pending}
+        if pending:
+            for row in self.connection.execute(
+                "SELECT * FROM calculation_publication WHERE posting_period IN "
+                "(SELECT value FROM json_each(?)) ORDER BY sequence",
+                (canonical(sorted(pending)),),
+            ):
+                value = dict(row)
+                verify_record(value)
+                grouped[value["posting_period"]].append(value)
+            if self._snapshot_active:
+                self._verified_publications.update(
+                    {period: tuple(rows) for period, rows in grouped.items()}
+                )
+        return [
+            row
+            for period in sorted(periods)
+            for row in self._verified_publications.get(period, grouped.get(period, ()))
+        ]
+
+    def verify_balance_scope(self, through_period, category=None):
+        """Cache only a successful seal/source check in this snapshot."""
+        from .period_balances import verify_selected_balances
+
+        key = (through_period, category)
+        if key in self._verified_balance_scopes or any(
+            verified_category == category and verified_period >= through_period
+            for verified_period, verified_category in self._verified_balance_scopes
+        ):
+            return
+        verify_selected_balances(self.connection, through_period, category, reads=self)
+        if self._snapshot_active:
+            self._verified_balance_scopes.add(key)
 
     def fact_versions(self, identifiers):
         identifiers = set(identifiers)
@@ -271,6 +328,7 @@ class QueryReads:
             for row in self.connection.execute(
                 "SELECT c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,c.program_version,"
                 "f.revision AS fact_revision,"
+                "p.id AS publication_id,p.mode AS publication_mode,"
                 "p.posting_period,p.voucher_id,"
                 + expressions
                 + "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
@@ -338,6 +396,31 @@ class QueryReads:
     def calculation(self, ident):
         return self.calculations((ident,))[ident]
 
+    def raw_calculations(self, identifiers):
+        """Load stored fact shapes without applying today's model validation."""
+        identifiers = set(identifiers)
+        missing = identifiers - self._raw_calculations.keys()
+        if missing:
+            metadata = self.metadata(missing)
+            facts = self.store.fact_data_many(
+                self.connection, {row["fact_id"] for row in metadata.values()}
+            )
+            for row in self.connection.execute(
+                "SELECT c.id,c.outcome FROM json_each(?) ids "
+                "JOIN calculation c ON c.id=ids.value",
+                (canonical(sorted(missing)),),
+            ):
+                value = metadata[row["id"]]
+                self._raw_calculations[row["id"]] = {
+                    key: item
+                    for key, item in value.items()
+                    if key not in {"line_count", "opening", "fact_revision"}
+                } | {
+                    "fact_data": facts[value["fact_id"]],
+                    "outcome": json.loads(row["outcome"]),
+                }
+        return {ident: self._raw_calculations[ident] for ident in identifiers}
+
     def prime_parents(self, identifiers):
         missing = {ident for ident in identifiers if ident not in self._parents}
         if not missing:
@@ -375,32 +458,6 @@ class QueryReads:
             }
             self.prime_parents(closure)
             self.calculations(closure)
-            # Frozen slots can retain an exact pointer even when a legacy graph
-            # lacks its edge. Batch those immutable records without treating the
-            # pointer as proof of dependency or of frozen adoption.
-            pointers = set()
-            for ident in closure:
-                values = self._calculations[ident]["outcome"].get("values", {})
-                for field, pointer in (
-                    ("settlements", "source_calculation"),
-                    ("accepted_sources", "source_calculation_id"),
-                    ("tax_transfers", "source_calculation"),
-                ):
-                    pointers.update(
-                        item[pointer]
-                        for item in values.get(field, ())
-                        if isinstance(item.get(pointer), str)
-                    )
-            pointers -= self._calculations.keys()
-            if pointers:
-                existing = {
-                    row[0]
-                    for row in self.connection.execute(
-                        "SELECT c.id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value",
-                        (canonical(sorted(pointers)),),
-                    )
-                }
-                self.calculations(existing)
             self._ancestor_roots.update(closure)
         else:
             self.calculations(identifiers)
@@ -408,18 +465,109 @@ class QueryReads:
 
     prefetch = prime_calculations
 
+    def prime_raw_calculations(self, identifiers, *, verified_calculations=None):
+        """Prefetch an ancestry closure using raw fact adapters for integrity work."""
+        identifiers = set(identifiers)
+        missing_roots = identifiers - self._raw_ancestor_roots
+        if missing_roots:
+            closure = {
+                row[0]
+                for row in self.connection.execute(
+                    "WITH RECURSIVE selected(id) AS (SELECT value FROM json_each(?) UNION "
+                    "SELECT d.upstream_id FROM dependency_calculation d JOIN selected s "
+                    "ON d.calculation_id=s.id) SELECT id FROM selected",
+                    (canonical(sorted(missing_roots)),),
+                )
+            }
+            verified = verified_calculations or {}
+            reusable = closure & verified.keys()
+            if reusable:
+                facts = self.store.fact_data_many(
+                    self.connection, {verified[ident]["fact_id"] for ident in reusable}
+                )
+                publications = {
+                    row["calculation_id"]: dict(row)
+                    for row in self.connection.execute(
+                        "SELECT p.calculation_id,p.id publication_id,p.mode publication_mode,"
+                        "p.posting_period,p.voucher_id FROM json_each(?) ids "
+                        "JOIN calculation_publication p ON p.calculation_id=ids.value",
+                        (canonical(sorted(reusable)),),
+                    )
+                }
+                for ident in reusable:
+                    source = verified[ident]
+                    publication = publications.get(ident, {})
+                    posting_period = publication.get("posting_period")
+                    self._raw_calculations[ident] = {
+                        "id": ident,
+                        "subject_id": source["subject_id"],
+                        "kind": source["kind"],
+                        "period": str(YearMonth.from_ordinal(source["period"])),
+                        "fact_id": source["fact_id"],
+                        "result_digest": bytes(source["digest"]).hex(),
+                        "program_version": source["program_version"],
+                        "publication_id": publication.get("publication_id"),
+                        "publication_mode": publication.get("publication_mode"),
+                        "posting_period": (
+                            str(YearMonth.from_ordinal(posting_period))
+                            if posting_period is not None
+                            else None
+                        ),
+                        "voucher_id": publication.get("voucher_id"),
+                        "publication_role": (
+                            "independent" if posting_period is not None else "asset_member"
+                        ),
+                        "fact_data": facts[source["fact_id"]],
+                        "outcome": source["decoded"],
+                    }
+            self.prime_parents(closure)
+            self.raw_calculations(closure)
+            self._raw_ancestor_roots.update(closure)
+        else:
+            self.raw_calculations(identifiers)
+        return {ident: self._raw_calculations[ident] for ident in identifiers}
+
     def relations(self, calculation, *, resolver=resolve_calculation_relations):
         ident = calculation if isinstance(calculation, str) else calculation["id"]
-        key = (ident, resolver)
-        if key not in self._relations:
-            self.prime_calculations((ident,))
-            self._relations[key] = resolver(
-                self.calculation(ident),
-                load_calculation=self.calculation,
-                load_parents=self.parents,
-                source_cache=self._relation_sources,
-            )
-        return self._relations[key]
+        return self.relations_many((ident,), resolver=resolver)[ident]
+
+    def relations_many(
+        self, calculations, *, resolver=resolve_calculation_relations, raw=False
+    ):
+        """Resolve several roots after one shared ancestry and payload prefetch.
+
+        The semantic resolver is intentionally unchanged.  Batching only moves
+        database work ahead of the per-root pure-Python walk, and the existing
+        relation/source caches remain scoped to this managed read snapshot.
+        """
+
+        identifiers = {
+            item if isinstance(item, str) else item["id"] for item in calculations
+        }
+        missing = {
+            ident for ident in identifiers if (ident, resolver, raw) not in self._relations
+        }
+        if missing:
+            if raw:
+                self.prime_raw_calculations(missing)
+                calculations_by_id = self._raw_calculations
+                sources = self._raw_relation_sources
+            else:
+                self.prime_calculations(missing)
+                calculations_by_id = self._calculations
+                sources = self._relation_sources
+            for ident in sorted(missing):
+                self._relations[ident, resolver, raw] = resolver(
+                    calculations_by_id[ident],
+                    load_calculation=(
+                        (lambda key: self.raw_calculations((key,))[key])
+                        if raw
+                        else self.calculation
+                    ),
+                    load_parents=self.parents,
+                    source_cache=sources,
+                )
+        return {ident: self._relations[ident, resolver, raw] for ident in identifiers}
 
     def vouchers(self, identifiers):
         identifiers = set(identifiers)
@@ -467,7 +615,9 @@ class QueryReads:
     def close_manifest(self, row):
         period = row["period"]
         if period not in self._close_manifests:
-            self._close_manifests[period] = json.loads(row["manifest"])
+            from .close_contract import require_close_contract
+
+            self._close_manifests[period] = require_close_contract(json.loads(row["manifest"]))
         return self._close_manifests[period]
 
     def job_rows(self, *, subject_id=None, period):

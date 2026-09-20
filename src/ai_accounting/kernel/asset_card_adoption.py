@@ -4,8 +4,8 @@ Batch-backed ``reimbursed_asset`` calculations deliberately have no journal
 lines: the accepted batch owns the voucher while each card owns its stable
 asset identity.  A card can also be a dependency of activation in the same
 month, so a flat historical calculation list cannot prove that the card was
-independently adopted.  This module records that role for new closes and
-derives it narrowly from the immutable typed relationship for older closes.
+independently adopted. This module validates the explicit role saved by the
+single direct-adoption close contract.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def _card_shape(card, batch):
     ]
 
 
-def _relationships(reads, metadata, members, close_period, proven_batches, *, strict):
+def _relationships(reads, metadata, members, close_period, proven_batches):
     month = str(YearMonth.from_ordinal(close_period))
     card_ids = {
         ident
@@ -103,14 +103,12 @@ def _relationships(reads, metadata, members, close_period, proven_batches, *, st
             and set(reads.parents(ident)) == {matches[0]}
         )
         if not valid:
-            if strict:
-                raise KernelError(
-                    "asset_card_adoption_unproven",
-                    "整批验收资产卡片缺少唯一、完整的关账采用关系",
-                    asset_id=cards[ident]["subject_id"],
-                    calculation_id=ident,
-                )
-            continue
+            raise KernelError(
+                "asset_card_adoption_unproven",
+                "整批验收资产卡片缺少唯一、完整的关账采用关系",
+                asset_id=cards[ident]["subject_id"],
+                calculation_id=ident,
+            )
         result[ident] = matches[0]
     return result
 
@@ -125,7 +123,6 @@ def build_asset_card_adoptions(reads, *, close_period, calculation_ids, voucher_
         members,
         close_period,
         set(voucher_calculation_ids),
-        strict=True,
     )
     calculations = reads.calculations(set(relationships) | set(relationships.values()))
     return [
@@ -142,31 +139,16 @@ def build_asset_card_adoptions(reads, *, close_period, calculation_ids, voucher_
 
 
 def prove_asset_card_adoptions(reads, *, close_period, manifest, metadata, independent_proofs):
-    """Return exact card roots from a new declaration or a strict legacy relation."""
-    members = set(manifest.get("calculations", ()))
+    """Validate explicitly declared card roles; absent declarations are corruption."""
+    from .close_contract import direct_calculation_ids
+
+    members = direct_calculation_ids(manifest)
     proven_batches = {
         ident
         for ident, proof in independent_proofs.items()
         if proof.get("basis") == "manifest_voucher_root"
     }
     declared = manifest.get("asset_card_adoptions")
-    if declared is None:
-        relationships = _relationships(
-            reads,
-            metadata,
-            members,
-            close_period,
-            proven_batches,
-            strict=False,
-        )
-        return {
-            card_id: {
-                "basis": "legacy_manifest_asset_card_adoption",
-                "contract_version": _CONTRACT_VERSION,
-                "acceptance_calculation_id": batch_id,
-            }
-            for card_id, batch_id in relationships.items()
-        }
     if not isinstance(declared, list):
         raise KernelError("asset_card_adoption", "关账采用的资产卡片清单格式不正确")
     card_ids = {
@@ -221,4 +203,7 @@ def prove_asset_card_adoptions(reads, *, close_period, manifest, metadata, indep
             "acceptance_calculation_id": batch_id,
             "result_digest": item["result_digest"],
         }
+    expected = _relationships(reads, metadata, members, close_period, proven_batches)
+    if seen != set(expected):
+        raise KernelError("asset_card_adoption", "关账采用的资产卡片清单不完整")
     return proofs

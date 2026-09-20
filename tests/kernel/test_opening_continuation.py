@@ -433,13 +433,14 @@ def test_zero_opening_remains_a_frozen_boundary_after_close(book):
         recording_error_confirmed=True,
         request_id="amend-zero",
     )
-    preview = engine.preview(["opening"])
+    preview = engine.preview(["opening"], posting_period="2026-02")
     with pytest.raises(KernelError) as error:
         engine.confirm(
             ["opening"],
             preview_digest=preview["digest"],
             epochs=preview["epochs"],
             request_id="move-zero",
+            posting_period="2026-02",
         )
     assert error.value.code == "closed_opening_immutable"
 

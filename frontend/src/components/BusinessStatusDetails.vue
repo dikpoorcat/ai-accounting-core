@@ -56,7 +56,7 @@ const showCurrentFollowups = computed(() => {
 const compactWarnings = computed(() => {
   if (!data.value) return [];
   const warnings: string[] = [];
-  const accounting = data.value.selected_accounting.through_period;
+  const accounting = data.value.as_posted;
   if (accounting.unestablished_state_selections.length) {
     warnings.push(`${accounting.unestablished_state_selections.length} 组核算依据尚待确认`);
   }
@@ -284,13 +284,24 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
           <dl class="compact-status-grid">
             <div>
               <dt>业务是否已入账</dt>
-              <dd>{{ businessStateLabel(data.selected_accounting.through_period.status) }}</dd>
+              <dd>{{ businessStateLabel(data.as_posted.status) }}</dd>
               <span>
-                截至 {{ periodLabel(data.selected_accounting.cutoff_period) }}
-                <template v-if="data.selected_accounting.through_period.voucher_event_count">
-                  · {{ data.selected_accounting.through_period.voucher_event_count }} 张凭证
+                截至 {{ periodLabel(data.as_posted.cutoff_period) }}
+                <template v-if="data.as_posted.voucher_events.length">
+                  · {{ data.as_posted.voucher_events.length }} 个凭证事件
                 </template>
               </span>
+            </div>
+            <div>
+              <dt>当前业务结果</dt>
+              <dd>{{ data.current_business_result ? "已有正式结果" : "尚无正式结果" }}</dd>
+              <span>当前已知资料下正式采用的业务结果</span>
+            </div>
+            <div>
+              <dt>当时冻结采用</dt>
+              <dd>{{ data.frozen_adoption ? "已明确采用" : "当月无独立冻结" }}</dd>
+              <span v-if="data.frozen_adoption">关账期 {{ periodLabel(data.frozen_adoption.close_period) }}</span>
+              <span v-else>{{ data.closure.state === "covered_by_later_close" ? "仅被后续关账覆盖" : "没有当月关账采用记录" }}</span>
             </div>
             <div>
               <dt>所选月末收付状态</dt>
@@ -340,19 +351,26 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
     <p v-if="error" role="alert">{{ error }}<button type="button" @click="load()">重新读取</button></p>
     <template v-if="data">
       <p>当前核算依据：{{ businessStateLabel(data.review.status) }}</p>
-      <h4>所选月末核算</h4>
-      <p>核算截至 {{ data.selected_accounting.cutoff_period }} · {{ businessStateLabel(data.selected_accounting.through_period.status) }}</p>
-      <section v-for="(selection, index) in data.selected_accounting.through_period.unestablished_state_selections" :key="index">
+      <h4>所选月末账面结果</h4>
+      <p>按实际入账期间还原至 {{ data.as_posted.cutoff_period }} · {{ businessStateLabel(data.as_posted.status) }}</p>
+      <section v-for="(selection, index) in data.as_posted.unestablished_state_selections" :key="index">
         <strong>尚不能证明冻结采用</strong>
         <p>以下为精确候选，不能当作已采用结果或按零金额处理。</p>
         <div v-for="candidate in selection.candidates" :key="candidate.calculation_id">
           <details><summary>查看候选与未建立原因</summary><pre>{{ JSON.stringify({ reason: selection.reason, candidate }, null, 2) }}</pre></details>
         </div>
       </section>
-      <DashboardBusinessRecords :items="data.selected_accounting.through_period.state_results" :period="period" :show-business="false" />
+      <DashboardBusinessRecords :items="[...data.as_posted.voucher_events, ...data.as_posted.state_results]" :period="period" :show-business="false" />
+      <h4>当前业务结果</h4>
+      <DashboardBusinessRecords v-if="data.current_business_result" :items="[data.current_business_result]" :period="period" :show-business="false" />
+      <p v-else>当前没有正式采用的业务结果。</p>
+      <h4>当时冻结采用</h4>
+      <DashboardBusinessRecords v-if="data.frozen_adoption" :items="[data.frozen_adoption]" :period="period" :show-business="false" />
+      <p v-else-if="data.closure.state === 'covered_by_later_close'">所选月份被后续关账覆盖，但没有本月独立冻结内容。</p>
+      <p v-else>所选月份没有冻结采用记录。</p>
       <h4>所选月末款项</h4>
       <p>截至 {{ data.settlements.cutoff_period }} · {{ businessStateLabel(data.settlements.status) }}</p>
-      <p v-if="data.settlements.complete === false || data.settlements.status === 'partially_established' || data.settlements.unestablished_state_selections?.length || data.selected_accounting.through_period.unestablished_state_selections.length" class="incomplete-status" role="status">历史月末款项尚不能完整确定；已有金额不能代表完整清偿结果，请核对下方来源和未建立候选。</p>
+      <p v-if="data.settlements.complete === false || data.settlements.status === 'partially_established' || data.settlements.unestablished_state_selections?.length || data.as_posted.unestablished_state_selections.length" class="incomplete-status" role="status">历史月末款项尚不能完整确定；已有金额不能代表完整清偿结果，请核对下方来源和未建立候选。</p>
       <p v-for="(issue, index) in data.settlements.issues" :key="index">{{ issue.message || "款项来源尚待核对。" }}</p>
       <DashboardBusinessRecords :items="data.settlements.obligations" :period="period" :show-business="false" />
       <h4>本项历史业务相关的当前跟进</h4>

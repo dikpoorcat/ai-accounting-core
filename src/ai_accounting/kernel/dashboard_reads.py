@@ -483,10 +483,9 @@ class FrozenFacts:
         )
 
 
-def account_totals(snapshot):
-    """Exact frozen trial balance plus only the subsequent synchronous increments."""
-    cutoff = snapshot.month
-    row = snapshot.connection.execute(
+def posted_account_totals(connection, cutoff, *, source="open", reads=None):
+    """Shared account totals from a frozen baseline and stored posting increments."""
+    row = connection.execute(
         "SELECT period,json_extract(manifest,'$.trial_balance') AS trial_balance "
         "FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
         (cutoff,),
@@ -495,14 +494,25 @@ def account_totals(snapshot):
     totals = {}
     if row is not None and row["trial_balance"] is not None:
         boundary = row["period"]
-        for item in json.loads(row["trial_balance"]):
+        trial_balance = json.loads(row["trial_balance"])
+        if reads is not None:
+            close_row = reads.close_rows(periods=[boundary])[0]
+            trial_balance = reads.close_manifest(close_row)["trial_balance"]
+        for item in trial_balance:
             totals[item["account"]] = item["debit"] - item["credit"]
-    for item in snapshot.connection.execute(
-        "SELECT account,sum(debit-credit) amount FROM ("
-        "SELECT account,debit,credit FROM monthly_account WHERE period>? AND period<=? "
-        "UNION ALL SELECT account,debit,credit FROM opening_account WHERE period>? AND period<=?) "
-        "GROUP BY account",
-        (boundary, cutoff, boundary, cutoff),
-    ):
-        totals[item["account"]] = totals.get(item["account"], 0) + item["amount"]
+    if source == "open":
+        for item in connection.execute(
+            "SELECT account,sum(debit-credit) amount FROM ("
+            "SELECT account,debit,credit FROM monthly_account WHERE period>? AND period<=? "
+            "UNION ALL SELECT account,debit,credit FROM opening_account "
+            "WHERE period>? AND period<=?) GROUP BY account",
+            (boundary, cutoff, boundary, cutoff),
+        ):
+            totals[item["account"]] = totals.get(item["account"], 0) + item["amount"]
     return totals
+
+
+def account_totals(snapshot):
+    return posted_account_totals(
+        snapshot.connection, snapshot.month, reads=snapshot.reads
+    )

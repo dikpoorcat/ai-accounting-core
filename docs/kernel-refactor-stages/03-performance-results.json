@@ -1,0 +1,1737 @@
+{
+  "benchmark": "stage3-history-1",
+  "baseline_revision": "4ae9fd1",
+  "implementation": "stage 3 working tree prepared for the stage commit",
+  "reproduce": ".tmp-kernel-venv/Scripts/python.exe scripts/benchmark_stage3_history.py --source <source-tree> --output <new-ignored-output.json> --sizes 12,48,120 --repeats 3",
+  "dataset": "Two typed synthetic movements per month: cash 100 fen to target account and 300 fen to a distinct unrelated account; both have payable obligations. Real publish, six inventory confirmations, preview and close every month.",
+  "assertions": [
+    "Each month has two balanced vouchers totaling 400 fen.",
+    "Target balance is 100 * months, total cash 400 * months.",
+    "There are 2 * months unsettled obligations totaling 400 * months.",
+    "Every checkpoint passes complete content, frozen adoption, projection and index verification."
+  ],
+  "counter_notes": [
+    "Application SQL excludes Store connection validation and SQLite internal VM scans; returned rows/bytes are values actually returned to Python (integer scalar width 8).",
+    "Outcome decodes count json.loads of result payloads. SQLite json_extract work is represented by SQL counts and wall time, not Python decode counts. outcome_sql counts SQL text mentioning outcome; it is not a SQLite VM decode counter.",
+    "Target-account path uses old production FundsRead.account_summary versus new scoped balance_totals; funds_history compares the same full-summary API in both versions.",
+    "Cumulative movements explicitly depend on every prior calculation; their real dependency edges are retained and are quadratic. Current-page relations may require their full ancestry.",
+    "Database file bytes include retained WAL; logical database bytes exclude WAL duplication.",
+    "Construction operation samples were measured before final settlement-seal hardening; immutable business sources, dependency counts and close manifests remain unchanged. Projection seal repair and its read-repair revision are explicitly recorded. Construction-run wall times had concurrent pytest/background benchmark load. They do not establish a speedup; final-database historical-cutoff read rechecks are recorded separately when available and supersede earlier reader counts after final correctness fixes.",
+    "Final reader timing is a local three-repeat median, not a strict isolated-host benchmark: one 7-second schema-discovery test and small static checks overlapped the stage3 read window. Deterministic application SQL and returned-data counters remain separately reported."
+  ],
+  "samples": [
+    {
+      "workload": "independent",
+      "months": 12,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 22680,
+          "stage3": 37776
+        },
+        "stored_close_result_references": {
+          "baseline": 24,
+          "stage3": 24
+        },
+        "last_close_result_references": {
+          "baseline": 2,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 745472,
+          "stage3": 909312
+        },
+        "database_file_bytes": {
+          "baseline": 8787552,
+          "stage3": 9985512
+        },
+        "dependency_edges": {
+          "baseline": 0,
+          "stage3": 0
+        },
+        "calculation_count": {
+          "baseline": 24,
+          "stage3": 24
+        },
+        "close_reference_rows": {
+          "baseline": 72,
+          "stage3": 120
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 0.166648,
+            "sql_calls": 176,
+            "returned_sql_rows": 216,
+            "returned_sql_value_bytes": 9863,
+            "outcome_decodes": 8,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.182925,
+            "sql_calls": 213,
+            "returned_sql_rows": 262,
+            "returned_sql_value_bytes": 17062,
+            "outcome_decodes": 12,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 9
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 0.148066,
+            "sql_calls": 213,
+            "returned_sql_rows": 1278,
+            "returned_sql_value_bytes": 225410,
+            "outcome_decodes": 96,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.174592,
+            "sql_calls": 171,
+            "returned_sql_rows": 2426,
+            "returned_sql_value_bytes": 401721,
+            "outcome_decodes": 52,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 0.052282,
+            "sql_calls": 198,
+            "returned_sql_rows": 821,
+            "returned_sql_value_bytes": 134305,
+            "outcome_decodes": 48,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 0.067361,
+            "sql_calls": 173,
+            "returned_sql_rows": 1451,
+            "returned_sql_value_bytes": 228187,
+            "outcome_decodes": 24,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    },
+    {
+      "workload": "independent",
+      "months": 48,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 91209,
+          "stage3": 151686
+        },
+        "stored_close_result_references": {
+          "baseline": 96,
+          "stage3": 96
+        },
+        "last_close_result_references": {
+          "baseline": 2,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 1675264,
+          "stage3": 2088960
+        },
+        "database_file_bytes": {
+          "baseline": 37667040,
+          "stage3": 43057696
+        },
+        "dependency_edges": {
+          "baseline": 0,
+          "stage3": 0
+        },
+        "calculation_count": {
+          "baseline": 96,
+          "stage3": 96
+        },
+        "close_reference_rows": {
+          "baseline": 288,
+          "stage3": 480
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 0.342287,
+            "sql_calls": 176,
+            "returned_sql_rows": 288,
+            "returned_sql_value_bytes": 10439,
+            "outcome_decodes": 8,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.388787,
+            "sql_calls": 213,
+            "returned_sql_rows": 334,
+            "returned_sql_value_bytes": 17638,
+            "outcome_decodes": 12,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 9
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 0.335462,
+            "sql_calls": 501,
+            "returned_sql_rows": 4662,
+            "returned_sql_value_bytes": 902054,
+            "outcome_decodes": 384,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.495578,
+            "sql_calls": 171,
+            "returned_sql_rows": 9266,
+            "returned_sql_value_bytes": 1611315,
+            "outcome_decodes": 196,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 0.12845,
+            "sql_calls": 666,
+            "returned_sql_rows": 3125,
+            "returned_sql_value_bytes": 535927,
+            "outcome_decodes": 192,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 0.174753,
+            "sql_calls": 497,
+            "returned_sql_rows": 5627,
+            "returned_sql_value_bytes": 911335,
+            "outcome_decodes": 96,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    },
+    {
+      "workload": "independent",
+      "months": 120,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 228510,
+          "stage3": 379850
+        },
+        "stored_close_result_references": {
+          "baseline": 240,
+          "stage3": 240
+        },
+        "last_close_result_references": {
+          "baseline": 2,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 3293184,
+          "stage3": 4231168
+        },
+        "database_file_bytes": {
+          "baseline": 104223824,
+          "stage3": 120813496
+        },
+        "dependency_edges": {
+          "baseline": 0,
+          "stage3": 0
+        },
+        "calculation_count": {
+          "baseline": 240,
+          "stage3": 240
+        },
+        "close_reference_rows": {
+          "baseline": 720,
+          "stage3": 1200
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 0.809603,
+            "sql_calls": 176,
+            "returned_sql_rows": 432,
+            "returned_sql_value_bytes": 11593,
+            "outcome_decodes": 8,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.842279,
+            "sql_calls": 213,
+            "returned_sql_rows": 478,
+            "returned_sql_value_bytes": 18792,
+            "outcome_decodes": 12,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 9
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 0.75979,
+            "sql_calls": 1077,
+            "returned_sql_rows": 11430,
+            "returned_sql_value_bytes": 2256356,
+            "outcome_decodes": 960,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.979463,
+            "sql_calls": 171,
+            "returned_sql_rows": 22946,
+            "returned_sql_value_bytes": 4031930,
+            "outcome_decodes": 484,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 0.307697,
+            "sql_calls": 1602,
+            "returned_sql_rows": 7733,
+            "returned_sql_value_bytes": 1339737,
+            "outcome_decodes": 480,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 0.387589,
+            "sql_calls": 1145,
+            "returned_sql_rows": 13979,
+            "returned_sql_value_bytes": 2278399,
+            "outcome_decodes": 240,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    },
+    {
+      "workload": "cumulative",
+      "months": 12,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 36396,
+          "stage3": 37764
+        },
+        "stored_close_result_references": {
+          "baseline": 156,
+          "stage3": 24
+        },
+        "last_close_result_references": {
+          "baseline": 24,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 946176,
+          "stage3": 1040384
+        },
+        "database_file_bytes": {
+          "baseline": 9915256,
+          "stage3": 10829344
+        },
+        "dependency_edges": {
+          "baseline": 264,
+          "stage3": 264
+        },
+        "calculation_count": {
+          "baseline": 24,
+          "stage3": 24
+        },
+        "close_reference_rows": {
+          "baseline": 204,
+          "stage3": 120
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 0.259653,
+            "sql_calls": 180,
+            "returned_sql_rows": 1473,
+            "returned_sql_value_bytes": 201245,
+            "outcome_decodes": 96,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.234285,
+            "sql_calls": 226,
+            "returned_sql_rows": 2025,
+            "returned_sql_value_bytes": 290179,
+            "outcome_decodes": 122,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 10
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 0.240914,
+            "sql_calls": 213,
+            "returned_sql_rows": 2008,
+            "returned_sql_value_bytes": 368725,
+            "outcome_decodes": 96,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.177776,
+            "sql_calls": 171,
+            "returned_sql_rows": 3530,
+            "returned_sql_value_bytes": 546428,
+            "outcome_decodes": 52,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 0.069919,
+            "sql_calls": 198,
+            "returned_sql_rows": 1241,
+            "returned_sql_value_bytes": 212665,
+            "outcome_decodes": 48,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 0.068044,
+            "sql_calls": 173,
+            "returned_sql_rows": 2003,
+            "returned_sql_value_bytes": 300537,
+            "outcome_decodes": 24,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    },
+    {
+      "workload": "cumulative",
+      "months": 48,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 325785,
+          "stage3": 151638
+        },
+        "stored_close_result_references": {
+          "baseline": 2352,
+          "stage3": 96
+        },
+        "last_close_result_references": {
+          "baseline": 96,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 4796416,
+          "stage3": 4325376
+        },
+        "database_file_bytes": {
+          "baseline": 61837080,
+          "stage3": 61090000
+        },
+        "dependency_edges": {
+          "baseline": 4512,
+          "stage3": 4512
+        },
+        "calculation_count": {
+          "baseline": 96,
+          "stage3": 96
+        },
+        "close_reference_rows": {
+          "baseline": 2544,
+          "stage3": 480
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 0.985427,
+            "sql_calls": 180,
+            "returned_sql_rows": 12417,
+            "returned_sql_value_bytes": 1720733,
+            "outcome_decodes": 384,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.649139,
+            "sql_calls": 226,
+            "returned_sql_rows": 18009,
+            "returned_sql_value_bytes": 2523871,
+            "outcome_decodes": 482,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 10
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 0.666649,
+            "sql_calls": 501,
+            "returned_sql_rows": 14536,
+            "returned_sql_value_bytes": 3110329,
+            "outcome_decodes": 384,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 0.568421,
+            "sql_calls": 171,
+            "returned_sql_rows": 27506,
+            "returned_sql_value_bytes": 4014950,
+            "outcome_decodes": 196,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 0.304682,
+            "sql_calls": 666,
+            "returned_sql_rows": 9989,
+            "returned_sql_value_bytes": 1841239,
+            "outcome_decodes": 192,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 0.243083,
+            "sql_calls": 497,
+            "returned_sql_rows": 14747,
+            "returned_sql_value_bytes": 2113149,
+            "outcome_decodes": 96,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    },
+    {
+      "workload": "cumulative",
+      "months": 120,
+      "storage": {
+        "manifest_bytes": {
+          "baseline": 1713510,
+          "stage3": 379730
+        },
+        "stored_close_result_references": {
+          "baseline": 14520,
+          "stage3": 240
+        },
+        "last_close_result_references": {
+          "baseline": 240,
+          "stage3": 2
+        },
+        "database_logical_bytes": {
+          "baseline": 22548480,
+          "stage3": 18071552
+        },
+        "database_file_bytes": {
+          "baseline": 317170376,
+          "stage3": 275201832
+        },
+        "dependency_edges": {
+          "baseline": 28560,
+          "stage3": 28560
+        },
+        "calculation_count": {
+          "baseline": 240,
+          "stage3": 240
+        },
+        "close_reference_rows": {
+          "baseline": 15000,
+          "stage3": 1200
+        }
+      },
+      "operations": {
+        "publish_last": {
+          "baseline": {
+            "seconds": 2.307909,
+            "sql_calls": 180,
+            "returned_sql_rows": 65409,
+            "returned_sql_value_bytes": 8865995,
+            "outcome_decodes": 960,
+            "outcome_sql": 2,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 2.354443,
+            "sql_calls": 226,
+            "returned_sql_rows": 96633,
+            "returned_sql_value_bytes": 13150547,
+            "outcome_decodes": 1202,
+            "outcome_sql": 5,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 10
+          }
+        },
+        "close_last": {
+          "baseline": {
+            "seconds": 2.322726,
+            "sql_calls": 1077,
+            "returned_sql_rows": 70696,
+            "returned_sql_value_bytes": 15935795,
+            "outcome_decodes": 960,
+            "outcome_sql": 10,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 8
+          },
+          "stage3": {
+            "seconds": 2.367882,
+            "sql_calls": 171,
+            "returned_sql_rows": 137666,
+            "returned_sql_value_bytes": 19165161,
+            "outcome_decodes": 484,
+            "outcome_sql": 6,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 2,
+            "queryreads_prime_parents_calls": 2,
+            "dependency_sql": 8
+          }
+        },
+        "full_verify": {
+          "baseline": {
+            "seconds": 1.152383,
+            "sql_calls": 1602,
+            "returned_sql_rows": 50813,
+            "returned_sql_value_bytes": 9567627,
+            "outcome_decodes": 480,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          },
+          "stage3": {
+            "seconds": 1.214184,
+            "sql_calls": 1145,
+            "returned_sql_rows": 71339,
+            "returned_sql_value_bytes": 9845009,
+            "outcome_decodes": 240,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      }
+    }
+  ],
+  "final_database_read_recheck": {
+    "baseline": {
+      "timing_context": "quiet-window-sequential-baseline-then-stage3",
+      "recorded_projection_repairs": {},
+      "database_months": 120,
+      "samples": [
+        {
+          "workload": "independent",
+          "selected_months": 12,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.176221,
+              "sql_calls": 26,
+              "returned_sql_rows": 119,
+              "returned_sql_value_bytes": 15112,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.179518,
+              "sql_calls": 26,
+              "returned_sql_rows": 119,
+              "returned_sql_value_bytes": 15112,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.176771,
+              "sql_calls": 19,
+              "returned_sql_rows": 396,
+              "returned_sql_value_bytes": 91632,
+              "outcome_decodes": 24,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 24,
+              "queryreads_relations_calls": 24,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 0.209022,
+              "sql_calls": 292,
+              "returned_sql_rows": 866,
+              "returned_sql_value_bytes": 209615,
+              "outcome_decodes": 24,
+              "outcome_sql": 43,
+              "queryreads_calculations_loaded": 24,
+              "queryreads_relations_calls": 74,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 37,
+              "dependency_sql": 50
+            },
+            "close_verify": {
+              "seconds": 0.185775,
+              "sql_calls": 79,
+              "returned_sql_rows": 1156,
+              "returned_sql_value_bytes": 251111,
+              "outcome_decodes": 264,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          }
+        },
+        {
+          "workload": "independent",
+          "selected_months": 48,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.178004,
+              "sql_calls": 26,
+              "returned_sql_rows": 407,
+              "returned_sql_value_bytes": 48710,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.177706,
+              "sql_calls": 26,
+              "returned_sql_rows": 407,
+              "returned_sql_value_bytes": 48710,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.201743,
+              "sql_calls": 19,
+              "returned_sql_rows": 1584,
+              "returned_sql_value_bytes": 367017,
+              "outcome_decodes": 96,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 96,
+              "queryreads_relations_calls": 96,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 0.259256,
+              "sql_calls": 724,
+              "returned_sql_rows": 3350,
+              "returned_sql_value_bytes": 818528,
+              "outcome_decodes": 96,
+              "outcome_sql": 115,
+              "queryreads_calculations_loaded": 96,
+              "queryreads_relations_calls": 290,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 109,
+              "dependency_sql": 194
+            },
+            "close_verify": {
+              "seconds": 0.200753,
+              "sql_calls": 223,
+              "returned_sql_rows": 2668,
+              "returned_sql_value_bytes": 543509,
+              "outcome_decodes": 336,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          }
+        },
+        {
+          "workload": "independent",
+          "selected_months": 120,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.185607,
+              "sql_calls": 26,
+              "returned_sql_rows": 983,
+              "returned_sql_value_bytes": 115888,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.184858,
+              "sql_calls": 26,
+              "returned_sql_rows": 983,
+              "returned_sql_value_bytes": 115888,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.243155,
+              "sql_calls": 19,
+              "returned_sql_rows": 3960,
+              "returned_sql_value_bytes": 918030,
+              "outcome_decodes": 240,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 240,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 0.396713,
+              "sql_calls": 1596,
+              "returned_sql_rows": 8318,
+              "returned_sql_value_bytes": 2037051,
+              "outcome_decodes": 240,
+              "outcome_sql": 261,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 722,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 253,
+              "dependency_sql": 482
+            },
+            "close_verify": {
+              "seconds": 0.246066,
+              "sql_calls": 511,
+              "returned_sql_rows": 5692,
+              "returned_sql_value_bytes": 1128791,
+              "outcome_decodes": 480,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          },
+          "full_verify_all_120_months": {
+            "seconds": 0.285275,
+            "sql_calls": 1602,
+            "returned_sql_rows": 7733,
+            "returned_sql_value_bytes": 1339737,
+            "outcome_decodes": 480,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 12,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.428921,
+              "sql_calls": 26,
+              "returned_sql_rows": 141,
+              "returned_sql_value_bytes": 19635,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.431452,
+              "sql_calls": 26,
+              "returned_sql_rows": 141,
+              "returned_sql_value_bytes": 19635,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.471867,
+              "sql_calls": 19,
+              "returned_sql_rows": 1008,
+              "returned_sql_value_bytes": 157378,
+              "outcome_decodes": 24,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 24,
+              "queryreads_relations_calls": 24,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 1.074796,
+              "sql_calls": 174,
+              "returned_sql_rows": 47532,
+              "returned_sql_value_bytes": 7804970,
+              "outcome_decodes": 240,
+              "outcome_sql": 23,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 290,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 16,
+              "dependency_sql": 8
+            },
+            "close_verify": {
+              "seconds": 0.442361,
+              "sql_calls": 79,
+              "returned_sql_rows": 1444,
+              "returned_sql_value_bytes": 316439,
+              "outcome_decodes": 264,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 48,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.44222,
+              "sql_calls": 26,
+              "returned_sql_rows": 501,
+              "returned_sql_value_bytes": 68065,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.44483,
+              "sql_calls": 26,
+              "returned_sql_rows": 501,
+              "returned_sql_value_bytes": 68065,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.552625,
+              "sql_calls": 19,
+              "returned_sql_rows": 8496,
+              "returned_sql_value_bytes": 1429531,
+              "outcome_decodes": 96,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 96,
+              "queryreads_relations_calls": 96,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 1.09435,
+              "sql_calls": 174,
+              "returned_sql_rows": 48900,
+              "returned_sql_value_bytes": 8598686,
+              "outcome_decodes": 240,
+              "outcome_sql": 23,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 434,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 16,
+              "dependency_sql": 8
+            },
+            "close_verify": {
+              "seconds": 0.511273,
+              "sql_calls": 223,
+              "returned_sql_rows": 7276,
+              "returned_sql_value_bytes": 1619357,
+              "outcome_decodes": 336,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 120,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.45665,
+              "sql_calls": 26,
+              "returned_sql_rows": 1221,
+              "returned_sql_value_bytes": 165047,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.445254,
+              "sql_calls": 26,
+              "returned_sql_rows": 1221,
+              "returned_sql_value_bytes": 165047,
+              "outcome_decodes": 0,
+              "outcome_sql": 6,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 1.008276,
+              "sql_calls": 19,
+              "returned_sql_rows": 46800,
+              "returned_sql_value_bytes": 7633910,
+              "outcome_decodes": 240,
+              "outcome_sql": 3,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 240,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 3
+            },
+            "brief": {
+              "seconds": 1.181007,
+              "sql_calls": 169,
+              "returned_sql_rows": 51396,
+              "returned_sql_value_bytes": 11788140,
+              "outcome_decodes": 240,
+              "outcome_sql": 21,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 722,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 15,
+              "dependency_sql": 6
+            },
+            "close_verify": {
+              "seconds": 0.832839,
+              "sql_calls": 511,
+              "returned_sql_rows": 34492,
+              "returned_sql_value_bytes": 7896091,
+              "outcome_decodes": 480,
+              "outcome_sql": 1,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 2
+            }
+          },
+          "full_verify_all_120_months": {
+            "seconds": 1.103838,
+            "sql_calls": 1602,
+            "returned_sql_rows": 50813,
+            "returned_sql_value_bytes": 9567627,
+            "outcome_decodes": 480,
+            "outcome_sql": 1,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 0,
+            "queryreads_prime_parents_calls": 0,
+            "dependency_sql": 1
+          }
+        }
+      ]
+    },
+    "stage3": {
+      "timing_context": "final-source-window-without-full-regression-or-package-build; one 7-second schema-discovery test and small static checks ran during the window; not an isolated performance host",
+      "recorded_projection_repairs": {
+        "independent": {
+          "status": "rebuilt",
+          "changed": true,
+          "read_repair_revision": 1,
+          "verification": {
+            "status": "verified",
+            "coverage": {
+              "sources": "verified",
+              "historical_adoption": "verified",
+              "projections": "verified",
+              "read_indexes": "not_checked"
+            },
+            "limitations": [],
+            "counts": {
+              "facts": 240,
+              "calculations": 240,
+              "vouchers": 240,
+              "closes": 120,
+              "evidence": 1
+            }
+          },
+          "sources_and_closes_unchanged": true,
+          "preserved_source_digest": "fb587c441ea6400af5bbfb1a37180613cacf9cb04c78eda40f66fbaa82cce26d"
+        },
+        "cumulative": {
+          "status": "rebuilt",
+          "changed": true,
+          "read_repair_revision": 1,
+          "verification": {
+            "status": "verified",
+            "coverage": {
+              "sources": "verified",
+              "historical_adoption": "verified",
+              "projections": "verified",
+              "read_indexes": "not_checked"
+            },
+            "limitations": [],
+            "counts": {
+              "facts": 240,
+              "calculations": 240,
+              "vouchers": 240,
+              "closes": 120,
+              "evidence": 1
+            }
+          },
+          "sources_and_closes_unchanged": true,
+          "preserved_source_digest": "ac21ef358e655839281ba77d5390f97f51b3440e599d518e0538ec26ba0ee099"
+        }
+      },
+      "database_months": 120,
+      "samples": [
+        {
+          "workload": "independent",
+          "selected_months": 12,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.187685,
+              "sql_calls": 8,
+              "returned_sql_rows": 109,
+              "returned_sql_value_bytes": 12042,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.197407,
+              "sql_calls": 31,
+              "returned_sql_rows": 224,
+              "returned_sql_value_bytes": 28257,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.189695,
+              "sql_calls": 11,
+              "returned_sql_rows": 123,
+              "returned_sql_value_bytes": 20400,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.228554,
+              "sql_calls": 156,
+              "returned_sql_rows": 437,
+              "returned_sql_value_bytes": 65760,
+              "outcome_decodes": 2,
+              "outcome_sql": 17,
+              "queryreads_calculations_loaded": 2,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.271579,
+              "sql_calls": 60,
+              "returned_sql_rows": 6297,
+              "returned_sql_value_bytes": 1182581,
+              "outcome_decodes": 672,
+              "outcome_sql": 4,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          }
+        },
+        {
+          "workload": "independent",
+          "selected_months": 48,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.189996,
+              "sql_calls": 8,
+              "returned_sql_rows": 433,
+              "returned_sql_value_bytes": 48114,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.201346,
+              "sql_calls": 31,
+              "returned_sql_rows": 800,
+              "returned_sql_value_bytes": 86311,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.195512,
+              "sql_calls": 11,
+              "returned_sql_rows": 483,
+              "returned_sql_value_bytes": 81528,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.227079,
+              "sql_calls": 156,
+              "returned_sql_rows": 1517,
+              "returned_sql_value_bytes": 211160,
+              "outcome_decodes": 2,
+              "outcome_sql": 17,
+              "queryreads_calculations_loaded": 2,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.289563,
+              "sql_calls": 60,
+              "returned_sql_rows": 8097,
+              "returned_sql_value_bytes": 1466489,
+              "outcome_decodes": 528,
+              "outcome_sql": 4,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          }
+        },
+        {
+          "workload": "independent",
+          "selected_months": 120,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.196848,
+              "sql_calls": 8,
+              "returned_sql_rows": 1081,
+              "returned_sql_value_bytes": 120258,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.207845,
+              "sql_calls": 31,
+              "returned_sql_rows": 1952,
+              "returned_sql_value_bytes": 202381,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.208398,
+              "sql_calls": 11,
+              "returned_sql_rows": 1203,
+              "returned_sql_value_bytes": 203784,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.26733,
+              "sql_calls": 156,
+              "returned_sql_rows": 3677,
+              "returned_sql_value_bytes": 501905,
+              "outcome_decodes": 2,
+              "outcome_sql": 17,
+              "queryreads_calculations_loaded": 2,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.334662,
+              "sql_calls": 54,
+              "returned_sql_rows": 11697,
+              "returned_sql_value_bytes": 2034993,
+              "outcome_decodes": 240,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          },
+          "full_verify_all_120_months": {
+            "seconds": 0.386714,
+            "sql_calls": 1146,
+            "returned_sql_rows": 14219,
+            "returned_sql_value_bytes": 2296159,
+            "outcome_decodes": 240,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 12,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.376798,
+              "sql_calls": 8,
+              "returned_sql_rows": 109,
+              "returned_sql_value_bytes": 12042,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.383143,
+              "sql_calls": 31,
+              "returned_sql_rows": 224,
+              "returned_sql_value_bytes": 28255,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.387629,
+              "sql_calls": 11,
+              "returned_sql_rows": 123,
+              "returned_sql_value_bytes": 20400,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.40738,
+              "sql_calls": 160,
+              "returned_sql_rows": 855,
+              "returned_sql_value_bytes": 131660,
+              "outcome_decodes": 24,
+              "outcome_sql": 18,
+              "queryreads_calculations_loaded": 24,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.697876,
+              "sql_calls": 60,
+              "returned_sql_rows": 35145,
+              "returned_sql_value_bytes": 4991071,
+              "outcome_decodes": 672,
+              "outcome_sql": 4,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 48,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.379578,
+              "sql_calls": 8,
+              "returned_sql_rows": 433,
+              "returned_sql_value_bytes": 48114,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.397231,
+              "sql_calls": 31,
+              "returned_sql_rows": 800,
+              "returned_sql_value_bytes": 86309,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.391021,
+              "sql_calls": 11,
+              "returned_sql_rows": 483,
+              "returned_sql_value_bytes": 81528,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.453912,
+              "sql_calls": 160,
+              "returned_sql_rows": 6687,
+              "returned_sql_value_bytes": 939460,
+              "outcome_decodes": 96,
+              "outcome_sql": 18,
+              "queryreads_calculations_loaded": 96,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.796237,
+              "sql_calls": 60,
+              "returned_sql_rows": 41265,
+              "returned_sql_value_bytes": 5843491,
+              "outcome_decodes": 528,
+              "outcome_sql": 4,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          }
+        },
+        {
+          "workload": "cumulative",
+          "selected_months": 120,
+          "operations": {
+            "target_account_balance": {
+              "seconds": 0.385559,
+              "sql_calls": 8,
+              "returned_sql_rows": 1081,
+              "returned_sql_value_bytes": 120258,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "funds_history": {
+              "seconds": 0.4024,
+              "sql_calls": 31,
+              "returned_sql_rows": 1952,
+              "returned_sql_value_bytes": 202379,
+              "outcome_decodes": 0,
+              "outcome_sql": 5,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "settlement_summary": {
+              "seconds": 0.416329,
+              "sql_calls": 11,
+              "returned_sql_rows": 1203,
+              "returned_sql_value_bytes": 203784,
+              "outcome_decodes": 0,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 0,
+              "queryreads_prime_parents_calls": 0,
+              "dependency_sql": 0
+            },
+            "brief": {
+              "seconds": 0.784952,
+              "sql_calls": 160,
+              "returned_sql_rows": 33903,
+              "returned_sql_value_bytes": 4608009,
+              "outcome_decodes": 240,
+              "outcome_sql": 18,
+              "queryreads_calculations_loaded": 240,
+              "queryreads_relations_calls": 2,
+              "queryreads_relations_many_calls": 2,
+              "queryreads_prime_parents_calls": 2,
+              "dependency_sql": 4
+            },
+            "close_verify": {
+              "seconds": 0.913313,
+              "sql_calls": 54,
+              "returned_sql_rows": 69057,
+              "returned_sql_value_bytes": 9601603,
+              "outcome_decodes": 240,
+              "outcome_sql": 0,
+              "queryreads_calculations_loaded": 0,
+              "queryreads_relations_calls": 0,
+              "queryreads_relations_many_calls": 1,
+              "queryreads_prime_parents_calls": 1,
+              "dependency_sql": 4
+            }
+          },
+          "full_verify_all_120_months": {
+            "seconds": 1.077015,
+            "sql_calls": 1146,
+            "returned_sql_rows": 71579,
+            "returned_sql_value_bytes": 9862769,
+            "outcome_decodes": 240,
+            "outcome_sql": 0,
+            "queryreads_calculations_loaded": 0,
+            "queryreads_relations_calls": 0,
+            "queryreads_relations_many_calls": 1,
+            "queryreads_prime_parents_calls": 1,
+            "dependency_sql": 3
+          }
+        }
+      ]
+    }
+  }
+}
