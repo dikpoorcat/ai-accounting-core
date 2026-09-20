@@ -43,6 +43,9 @@ class Company:
         return f"test-command-{self.sequence}"
 
     def save(self, fact, subject, revision=0):
+        from entity_fixture import seed_fact_entities
+
+        seed_fact_entities(self.engine, fact)
         confirmed = canonical(
             {
                 "subject": subject,

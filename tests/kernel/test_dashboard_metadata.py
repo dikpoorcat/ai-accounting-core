@@ -2,21 +2,45 @@
 
 import json
 
+from entity_fixture import seed_entities
 from test_banking import book as _bank_book
-from test_dashboard_provenance import profile
 from test_engine import close, publish, save
 from test_engine import engine as _engine
 
+from ai_accounting.kernel import entities
 from ai_accounting.kernel.dashboard import _Snapshot
 from ai_accounting.kernel.dashboard_metadata import initialize_metadata
 from ai_accounting.kernel.dashboard_reads import FrozenFacts
 from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth
 
 engine, bank_book = _engine, _bank_book
+
+
+def profile(engine, kind, entity_id, revision=0, **fields):
+    entity_kind, account_type = {
+        "employee": ("person", None),
+        "asset": ("asset", None),
+        "fund_account": ("fund_account", "bank"),
+    }[kind]
+    with engine.store.connection(read_only=True) as connection:
+        exists = connection.execute("SELECT 1 FROM entity WHERE id=?", (entity_id,)).fetchone()
+    if exists is None:
+        seed_entities(engine, ((entity_id, entity_kind, account_type),))
+    evidence_digest = fields.pop("evidence_digest", None)
+    result = Entities(engine).update_entity_profile(
+        entity_id,
+        fields,
+        source=f"明确资料 {revision + 1}",
+        expected_revision=revision + 1,
+        request_id=f"entity-profile:{kind}:{entity_id}:{revision}",
+        evidence_digest=evidence_digest,
+    )
+    return {"id": result["profile_id"], **result}
 
 
 def detached_snapshot(engine, connection, period="2026-01"):
@@ -40,24 +64,24 @@ def test_profile_key_iteration_and_entity_batch_do_not_decode_other_records(engi
         profile(engine, "employee", f"employee-{index:03}", display_name=f"姓名 {index}")
         profile(engine, "asset", f"asset-{index:03}", display_name=f"资产 {index}")
     decoded = []
-    original = Display._record
+    original = entities._profile_record
 
     def watched(record):
         decoded.append(record["id"])
         return original(record)
 
-    monkeypatch.setattr(Display, "_record", watched)
+    monkeypatch.setattr(entities, "_profile_record", watched)
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         snapshot = detached_snapshot(engine, connection)
         assert decoded == []
-        assert len(set(snapshot.profiles["employee"])) == 30
+        assert len(set(snapshot.profiles["asset"])) == 30
         assert decoded == []
-        snapshot.metadata.prime_profiles("employee", {f"employee-{index:03}" for index in range(5)})
+        snapshot.metadata.prime_profiles("asset", {f"asset-{index:03}" for index in range(5)})
         assert len(decoded) == 5
-        assert snapshot.profile("employee", "employee-003")["display_name"] == "姓名 3"
+        assert snapshot.profile("asset", "asset-003")["display_name"] == "资产 3"
         assert len(decoded) == 5
-        assert snapshot.profiles["asset"].cache == {}
+        assert snapshot.profiles["employee"].cache == {}
 
 
 def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
@@ -77,6 +101,7 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
         b"synthetic payee", "text/plain", "payee", request_id="payee-proof"
     )["digest"]
     export = Exports(engine)
+    seed_entities(engine, (("party", "organization", None),))
     old_payee = export.save_payee(
         "party",
         name="原名称",
@@ -103,7 +128,13 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
         expected_revision=1,
         request_id="new-payee",
     )
-    profile(engine, "employee", "later-person", display_name="后来录入姓名")
+    profile(
+        engine,
+        "employee",
+        "later-person",
+        display_name="后来录入姓名",
+        employment_status="active",
+    )
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         snapshot = detached_snapshot(engine, connection)

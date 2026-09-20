@@ -14,8 +14,11 @@ from .catalog import Catalog
 from .contracts import KernelError, NeedsInformation
 from .discovery import Discovery
 from .display import Display
+from .duplicates import DuplicateReview, Duplicates, SourceLocation
 from .engine import Engine
+from .entities import Entities, EntityProfile
 from .exports import Exports
+from .identity_corrections import IdentityCorrections
 from .maintenance import Maintenance
 from .materials import (
     MaterialGroupResolution,
@@ -47,6 +50,12 @@ def command_models(registry):
     from .service import LocalService
 
     functions = {
+        "prepare_fact_registration": Duplicates.prepare_fact_registration,
+        "find_entities": Entities.find_entities,
+        "register_entity": Entities.register_entity,
+        "update_entity_profile": Entities.update_entity_profile,
+        "preview_identity_correction": IdentityCorrections.preview_identity_correction,
+        "confirm_identity_correction": IdentityCorrections.confirm_identity_correction,
         "create_company": Catalog.create_company,
         "restore_company": Catalog.restore_company,
         "company_settings": Catalog.company_settings,
@@ -161,6 +170,8 @@ def command_models(registry):
             fields["data"] = (MaterialResolution, ...)
         elif name == "resolve_material_group":
             fields["data"] = (MaterialGroupResolution, ...)
+        elif name in {"register_entity", "update_entity_profile"}:
+            fields["data"] = (EntityProfile, ...)
         result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
     records = []
     for kind, model in registry.models.items():
@@ -175,6 +186,8 @@ def command_models(registry):
                 data=(model, ...),
                 evidence=(list[str], Field(min_length=1)),
                 expected_revision=(int, Field(ge=0, strict=True)),
+                review=(DuplicateReview | None, None),
+                source_locations=(list[SourceLocation], Field(default_factory=list)),
             )
         )
     record = Annotated[reduce(or_, records), Field(discriminator="kind")]

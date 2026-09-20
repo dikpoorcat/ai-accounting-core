@@ -39,7 +39,7 @@ def _card_shape(card, batch):
     members = [
         item
         for item in batch_data.get("assets", ())
-        if isinstance(item, dict) and item.get("asset_id") == card["subject_id"]
+        if isinstance(item, dict) and item.get("asset_id") == card["fact_data"]["asset_id"]
     ]
     if len(members) != 1:
         return False
@@ -58,11 +58,12 @@ def _card_shape(card, batch):
     carrying = [
         item
         for item in batch_outcome.get("balances", ())
-        if isinstance(item, dict) and item.get("key") == f"asset:{card['subject_id']}:carrying"
+        if isinstance(item, dict)
+        and item.get("key") == f"asset:{card['fact_data']['asset_id']}:carrying"
     ]
     return carrying == [
         {
-            "key": f"asset:{card['subject_id']}:carrying",
+            "key": f"asset:{card['fact_data']['asset_id']}:carrying",
             "amount": data.get("cost_fen"),
             "category": "asset",
         }
@@ -106,7 +107,7 @@ def _relationships(reads, metadata, members, close_period, proven_batches):
             raise KernelError(
                 "asset_card_adoption_unproven",
                 "整批验收资产卡片缺少唯一、完整的关账采用关系",
-                asset_id=cards[ident]["subject_id"],
+                asset_id=cards[ident]["fact_data"]["asset_id"],
                 calculation_id=ident,
             )
         result[ident] = matches[0]
@@ -128,7 +129,7 @@ def build_asset_card_adoptions(reads, *, close_period, calculation_ids, voucher_
     return [
         {
             "contract_version": _CONTRACT_VERSION,
-            "asset_id": calculations[card_id]["subject_id"],
+            "asset_id": calculations[card_id]["fact_data"]["asset_id"],
             "calculation_id": card_id,
             "result_digest": calculations[card_id]["result_digest"],
             "acceptance_calculation_id": batch_id,
@@ -188,7 +189,7 @@ def prove_asset_card_adoptions(reads, *, close_period, manifest, metadata, indep
             and batch_id in members
             and batch_id in proven_batches
             and metadata[card_id]["posting_period"] == month
-            and calculations[card_id]["subject_id"] == item.get("asset_id")
+            and calculations[card_id]["fact_data"]["asset_id"] == item.get("asset_id")
             and calculations[card_id]["result_digest"] == item.get("result_digest")
             and calculations[batch_id]["result_digest"] == item.get("acceptance_result_digest")
             and set(reads.parents(card_id)) == {batch_id}

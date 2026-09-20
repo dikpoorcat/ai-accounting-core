@@ -59,7 +59,7 @@ def _package_contract(package, facts, dependency_facts):
     members = values["members"]
     if any(
         not isinstance(item, dict)
-        or set(item) != {"subject_id", "fact_id", "kind", "values", "opening_lines"}
+        or set(item) != {"subject_id", "fact_id", "kind", "values", "opening_lines", "balances"}
         for item in members
     ):
         return None
@@ -77,7 +77,7 @@ def _package_contract(package, facts, dependency_facts):
     if expected_ids != exact_details or len(expected_ids) != len(members):
         return None
     counts = Counter({category: 0 for category in CATEGORIES.values()})
-    lines = []
+    lines, balances = [], []
     for member in members:
         fact = facts[member["fact_id"]]
         if (
@@ -87,16 +87,22 @@ def _package_contract(package, facts, dependency_facts):
             or fact["data"].get("package_id") != package["subject_id"]
             or not fact["evidence"]
             or not isinstance(member["opening_lines"], list)
+            or not isinstance(member["balances"], list)
             or not isinstance(member["values"], dict)
             or any(member["values"].get(key) != value for key, value in fact["data"].items())
         ):
             return None
         counts[CATEGORIES[fact["kind"]]] += 1
         lines.extend(member["opening_lines"])
+        balances.extend(member["balances"])
     # Counts come from the exact immutable facts, not two mutually agreeing labels.
     if dict(counts) != data.get("counts") or dict(counts) != values.get("counts"):
         return None
-    if lines != outcome.get("opening_lines") or any(line.get("cashflow") for line in lines):
+    if (
+        lines != outcome.get("opening_lines")
+        or balances != outcome.get("balances")
+        or any(line.get("cashflow") for line in lines)
+    ):
         return None
     totals = _totals(lines)
     if totals is None:

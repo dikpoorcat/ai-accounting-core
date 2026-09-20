@@ -816,20 +816,17 @@ class _Snapshot:
         data = fact["data"]
         identities = []
         if kind in ASSET_KINDS:
-            identities.append((fact["subject_id"], data.get("asset_type")))
+            identities.append((data["asset_id"], data.get("asset_type")))
         elif kind in ASSET_LIFECYCLE_KINDS:
             identities.append(
                 (
-                    data.get("asset_id")
-                    or calc["outcome"].get("values", {}).get("asset_id"),
-                    data.get("asset_type")
-                    or calc["outcome"].get("values", {}).get("asset_type"),
+                    data.get("asset_id") or calc["outcome"].get("values", {}).get("asset_id"),
+                    data.get("asset_type") or calc["outcome"].get("values", {}).get("asset_type"),
                 )
             )
         elif kind == "reimbursed_asset_batch":
             identities.extend(
-                (item.get("asset_id"), item.get("asset_type"))
-                for item in data.get("assets", ())
+                (item.get("asset_id"), item.get("asset_type")) for item in data.get("assets", ())
             )
         if not identities:
             return ()
@@ -979,11 +976,7 @@ class _Snapshot:
                 "bank_promotion_reward": "奖励到账",
             }.get(data.get("income_kind"), short)
         if asset_references and kind == "asset_consumption":
-            short = (
-                "计提摊销"
-                if asset_references[0]["asset_type"] == "intangible"
-                else "计提折旧"
-            )
+            short = "计提摊销" if asset_references[0]["asset_type"] == "intangible" else "计提折旧"
         elif kind == "asset_disposal":
             short = "出售资产" if data.get("disposal_kind") == "sale" else "报废资产"
         if profile.get("display_name"):
@@ -1166,8 +1159,7 @@ class _Snapshot:
             costs = {
                 item["asset_id"]: item["cost_fen"]
                 for item in data.get("assets", ())
-                if isinstance(item.get("asset_id"), str)
-                and type(item.get("cost_fen")) is int
+                if isinstance(item.get("asset_id"), str) and type(item.get("cost_fen")) is int
             }
             asset_members = [
                 {
@@ -1312,8 +1304,11 @@ class _Snapshot:
                         if line["line_no"] in asset_lines
                         else self.line_source(line, relations)
                     ),
-                    **({"asset": asset_lines[line["line_no"]]}
-                       if line["line_no"] in asset_lines else {}),
+                    **(
+                        {"asset": asset_lines[line["line_no"]]}
+                        if line["line_no"] in asset_lines
+                        else {}
+                    ),
                     "field_sources": {
                         field: [
                             source
@@ -1472,7 +1467,7 @@ class Dashboard:
         if snapshot:
             snapshot.attach_recorded_times()
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
@@ -1594,14 +1589,11 @@ class Dashboard:
             profile_rows = [*rows, *([focused_row] if focused_row else [])]
             asset_ids = set()
             for row in profile_rows:
-                asset_ids.update(
-                    asset_id for asset_id, _ in snap.asset_identities(row["basis"])
-                )
+                asset_ids.update(asset_id for asset_id, _ in snap.asset_identities(row["basis"]))
                 _, contributions = snap.asset_member_contributions(row)
                 for _, contribution in contributions:
                     asset_ids.update(
-                        asset_id
-                        for asset_id, _ in snap.asset_identities(contribution)
+                        asset_id for asset_id, _ in snap.asset_identities(contribution)
                     )
             if asset_ids:
                 snap.metadata.prime_profiles("asset", asset_ids)
@@ -1797,9 +1789,9 @@ class Dashboard:
                 },
             }
             data["collections"] = {
+                # Page envelope only: the rows are already carried as data["vouchers"],
+                # and repeating them here duplicated 88 KB of a 279 KB response.
                 **(
-                    # Page envelope only: the rows are already carried as data["vouchers"],
-                    # and repeating them here duplicated 88 KB of a 279 KB response.
                     {"vouchers": {"items": [], "page": {**page, "returned_count": 0}}}
                     if section in {None, "vouchers"}
                     else {}
@@ -2157,7 +2149,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", data, filters)
             )
-            response["schema_version"] = 2
+            response["schema_version"] = 3
             return response
 
     def quarterly_report(
@@ -2303,10 +2295,7 @@ def _position(snap):
     )
     needs_line_resolution = bool(classification_ids) or any(
         obligation.get("account") in RECLASS
-        and (
-            obligation.get("counterparty_id") is None
-            or obligation.get("remaining_fen") is None
-        )
+        and (obligation.get("counterparty_id") is None or obligation.get("remaining_fen") is None)
         for obligation in settlements["obligations"]
     )
     if needs_line_resolution:
@@ -2418,6 +2407,7 @@ def _position(snap):
         )
         position.update(assets_fen=None, liabilities_fen=None, equation_valid=None, complete=False)
     assets, liabilities = position["assets_fen"], position["liabilities_fen"]
+
     def result(values):
         revenue = -sum(
             value
@@ -2824,10 +2814,22 @@ def _employees(
         and calc["posting_period"] == snap.month
         and calc["subject_id"] not in posted
     )
+    profile_facts = list(snap.by_kind("payroll_profile"))
+    wage_calculations = list(snap.calculations_of_kind(*PAYROLL_KINDS, "opening_payroll_payable"))
+    confirmed_employees = {}
+    if not snap.close:
+        from .entity_references import current_role_matches
+
+        fact_ids = {row["basis"]["fact_id"] for row in rows}
+        fact_ids.update(calc["fact_id"] for calc in wage_calculations)
+        fact_ids.update(fact["id"] for fact in profile_facts)
+        confirmed_employees = current_role_matches(
+            snap.connection, fact_ids, "employee", registry=snap.store.registry
+        )
     for row in rows:
         calc, sign = row["basis"], row["sign"]
         data, values = calc["fact"]["data"], calc["outcome"]["values"]
-        ident = data["employee_id"]
+        ident = confirmed_employees.get(calc["fact_id"], data["employee_id"])
         item = aggregates.setdefault(
             ident,
             {
@@ -2856,18 +2858,20 @@ def _employees(
                 item[f"{side}_{label}_fen"] += sign * contributions.get(f"{side}_{kind}", 0)
         period_rows[data["period"]].append(row)
     profiles = defaultdict(list)
-    for fact in snap.by_kind("payroll_profile"):
+    for fact in profile_facts:
         data = fact["data"]
         if data["effective_from"] <= snap.period and (
             data["effective_to"] is None or data["effective_to"] >= snap.period
         ):
-            profiles[data["employee_id"]].append(fact)
+            profiles[confirmed_employees.get(fact["id"], data["employee_id"])].append(fact)
     known = set(aggregates) | set(snap.profiles.get("employee", {}))
-    wage_calculations = list(snap.calculations_of_kind(*PAYROLL_KINDS, "opening_payroll_payable"))
     unestablished_employees = snap.calculations.unestablished_entities(
         kinds={*PAYROLL_KINDS, "opening_payroll_payable"}, field="employee_id"
     )
-    wage_scalars = scalar_facts(snap, wage_calculations)
+    wage_scalars = {
+        fact_id: {**data, "employee_id": confirmed_employees.get(fact_id, data["employee_id"])}
+        for fact_id, data in scalar_facts(snap, wage_calculations).items()
+    }
     known.update(data["employee_id"] for data in wage_scalars.values())
     known.update(profiles)
     known.update(unestablished_employees)
@@ -3032,7 +3036,7 @@ def _employees(
         if calc["kind"] not in PAYROLL_KINDS | {"opening_payroll_payable"}:
             continue
         data = calc["fact"]["data"]
-        ident = data["employee_id"]
+        ident = confirmed_employees.get(calc["fact_id"], data["employee_id"])
         known.add(ident)
         # The card shows the obligation summary; the itemised settlement page is
         # fetched per employee on demand, so it is not built for every source here.
@@ -3460,9 +3464,7 @@ def _employees(
         ],
     }
     labor_items = []
-    all_labor_calculations = list(
-        snap.calculations_of_kind(*LABOR_KINDS, "labor_project_cost")
-    )
+    all_labor_calculations = list(snap.calculations_of_kind(*LABOR_KINDS, "labor_project_cost"))
     labor_calculations = [
         calc for calc in all_labor_calculations if calc["posting_period"] == snap.month
     ]
@@ -3640,10 +3642,10 @@ def _assets(
             batch_amounts[calc["fact_id"]] if calc["kind"] == "reimbursed_asset_batch" else (data,)
         ):
             amounts[detail["asset_type"]] += row["sign"] * detail["cost_fen"]
+    acquisition_rows = list(snap.calculations_of_kind(*ASSET_KINDS))
+    acquisition_facts = scalar_facts(snap, acquisition_rows)
     acquisitions = {
-        calc["subject_id"]: calc
-        for calc in snap.calculations_of_kind(*ASSET_KINDS)
-        if calc["kind"] in ASSET_KINDS
+        acquisition_facts[calc["fact_id"]]["asset_id"]: calc for calc in acquisition_rows
     }
     unestablished_assets = snap.calculations.unestablished_entities(
         kinds={
@@ -3720,7 +3722,8 @@ def _assets(
                 "owner_calculation_id": event["owner_calculation_id"],
                 "voucher_version_id": event["voucher_version_id"],
                 "voucher_number": event["voucher_number"],
-                "period": event["adoption_period"], "label": _name(event["kind"]),
+                "period": event["adoption_period"],
+                "label": _name(event["kind"]),
             }
         elif (
             batch_references.get((ident, event["kind"]), {}).get("calculation_id")
@@ -3835,7 +3838,8 @@ def _assets(
         )
         entity_sources.update(
             snap.calculation(event["owner_calculation_id"])["subject_id"]
-            for event in batch_events if event["asset_id"] == asset_id
+            for event in batch_events
+            if event["asset_id"] == asset_id
         )
     settlement_subjects = {
         calc["subject_id"] for ident, calc in acquisitions.items() if ident in selected

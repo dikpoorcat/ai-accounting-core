@@ -156,9 +156,31 @@ def required_asset_ids(period: YearMonth, selections) -> tuple[str, ...]:
     """
     by_kind = {kind: list(selections.get(kind, ())) for kind in LIFECYCLE_KINDS}
     acquisitions = {
-        v.subject_id: v for kind in ("asset", "reimbursed_asset") for v in by_kind[kind]
+        v.fact.asset_id: v for kind in ("asset", "reimbursed_asset") for v in by_kind[kind]
     }
-    openings = {v.subject_id: v for v in by_kind["opening_asset"]}
+    openings = {v.fact.asset_id: v for v in by_kind["opening_asset"]}
+    from types import SimpleNamespace
+
+    from .identity_corrections import _assignment_data
+
+    by_subject = {v.subject_id: v for v in by_kind["opening_asset"]}
+    for binding in by_kind["opening_identity_binding"]:
+        if binding.fact.source_kind != "opening_asset":
+            continue
+        original = by_subject.get(binding.fact.source_subject_id)
+        if original is None:
+            raise KernelError("opening_binding_source", "期初资产绑定缺少原始来源")
+        openings.pop(original.fact.asset_id, None)
+        if binding.fact.operation == "supersede":
+            continue
+        corrected = _assignment_data(original, binding.fact.assignments)
+        if corrected.asset_id in openings:
+            raise KernelError("opening_identity_conflict", "纠错后存在冲突期初资产，不能自动合并")
+        openings[corrected.asset_id] = SimpleNamespace(
+            subject_id=original.subject_id,
+            fact=corrected,
+            binding_fact_id=binding.id,
+        )
     disposals = {v.fact.asset_id: v for v in by_kind["asset_disposal"]}
     activated = {}
     for version in by_kind["asset_activation"]:
@@ -803,6 +825,10 @@ class AssetBatches:
                 connection.execute("DELETE FROM pending WHERE subject_id=?", (sid,))
                 if activation:
                     connection.execute("DELETE FROM fact_current WHERE subject_id=?", (sid,))
+            if removed:
+                from .discovery_indexes import sync_discovery_subjects
+
+                sync_discovery_subjects(connection, removed)
             results = []
             for item in prepared:
                 if item.version.fact.kind in MEMBER_KINDS:

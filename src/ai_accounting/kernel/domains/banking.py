@@ -83,6 +83,38 @@ def published_cash(context, bank_account_id: str, key: str, before_period=None):
     return result
 
 
+def continuation_openings(context, bank_account_id):
+    """Use precise adopted opening identities without changing their frozen sources."""
+    from ..identity_corrections import opening_bindings
+
+    key = f"bank:{bank_account_id}"
+    bindings = opening_bindings(context, "opening_bank", key)
+    replaced = {fact.fact.source_subject_id for fact, _ in bindings}
+    result = [
+        dict(
+            period=row.period,
+            opening_fen=row.values["opening_fen"],
+            source_calculation_id=row.id,
+            binding_calculation_id=None,
+        )
+        for row in context.calculations("opening_bank", key)
+        if row.subject_id not in replaced
+    ]
+    for _, row in bindings:
+        values = row.values
+        if values.get("superseded") or values["basis_data"]["bank_account_id"] != bank_account_id:
+            continue
+        result.append(
+            dict(
+                period=YearMonth(values["basis_data"]["period"]),
+                opening_fen=values["basis_values"]["opening_fen"],
+                source_calculation_id=values["source_calculation_id"],
+                binding_calculation_id=row.id,
+            )
+        )
+    return result
+
+
 class BankOpening(Fact):
     """Explicit book opening; never a synthetic cash movement or free journal."""
 
@@ -98,10 +130,13 @@ class BankOpening(Fact):
         return (str(self.period), f"bank:{self.bank_account_id}")
 
     def reads(self):
+        from ..identity_corrections import opening_binding_reads
+
         key = f"bank:{self.bank_account_id}"
         return (
             Read("fact", self.kind, key),
             Read("calculation", "opening_bank", key),
+            *opening_binding_reads(key),
             *cash_reads(key, self.period),
         )
 
@@ -112,15 +147,15 @@ def calculate_opening(version, context):
     if any(item.subject_id != version.subject_id for item in context.facts(fact.kind, key)):
         raise KernelError("duplicate_bank_opening", "每个实际银行账户仅有一个明确账面起点")
     sources = published_cash(context, fact.bank_account_id, key, fact.period)
-    continuations = context.calculations("opening_bank", key)
-    if len(continuations) > 1 or any(row.period > fact.period for row in continuations):
+    continuations = continuation_openings(context, fact.bank_account_id)
+    if len(continuations) > 1 or any(row["period"] > fact.period for row in continuations):
         raise KernelError("bank_opening_conflict", "接续银行起点不唯一或晚于所核对月份")
     if fact.basis == "new_account" and (fact.opening_fen != 0 or sources or continuations):
         raise KernelError("new_bank_opening_conflict", "新开户的账面起点须为零且不得已有资金历史")
     book = sum_fen(
         (
             *[amount for _, amount in sources.values()],
-            *[row.values["opening_fen"] for row in continuations],
+            *[row["opening_fen"] for row in continuations],
         )
     )
     if book != fact.opening_fen:
@@ -230,6 +265,8 @@ class BankReconciliation(Fact):
         )
 
     def reads(self):
+        from ..identity_corrections import opening_binding_reads
+
         key = f"bank:{self.bank_account_id}"
         return (
             Read("fact", "bank_statement", "@" + self.statement_id),
@@ -237,6 +274,7 @@ class BankReconciliation(Fact):
             Read("fact", self.kind, f"{key}:{self.period}"),
             Read("calculation", "bank_opening", key),
             Read("calculation", "opening_bank", key),
+            *opening_binding_reads(key),
             Read("calculation", self.kind, key, self.period),
             *cash_reads(f"{key}:{self.period}"),
             *(
@@ -262,10 +300,13 @@ def calculate_reconciliation(version, context):
     alternatives = context.facts(fact.kind, f"bank:{fact.bank_account_id}:{fact.period}")
     if any(item.subject_id != version.subject_id for item in alternatives):
         raise KernelError("duplicate_reconciliation", "同一账户月份的对账应沿原身份修订")
-    legacy_openings = context.calculations("bank_opening", f"bank:{fact.bank_account_id}")
-    continuations = context.calculations("opening_bank", f"bank:{fact.bank_account_id}")
-    openings = legacy_openings or continuations
-    if len(openings) != 1 or openings[0].period > fact.period:
+    declared_openings = [
+        dict(period=row.period, opening_fen=row.values["opening_fen"])
+        for row in context.calculations("bank_opening", f"bank:{fact.bank_account_id}")
+    ]
+    continuations = continuation_openings(context, fact.bank_account_id)
+    openings = declared_openings or continuations
+    if len(openings) != 1 or openings[0]["period"] > fact.period:
         raise NeedsInformation("bank_opening", "需要明确账面起点；银行流水期初不能自动代替账面期初")
     previous = context.select(
         Read("calculation", fact.kind, f"bank:{fact.bank_account_id}", fact.period)
@@ -276,9 +317,9 @@ def calculate_reconciliation(version, context):
             raise NeedsInformation("previous_reconciliation", "需先完成中间月份的银行对账")
         opening_fen = prior.values["closing_fen"]
     else:
-        if openings[0].period != fact.period:
+        if openings[0]["period"] != fact.period:
             raise NeedsInformation("previous_reconciliation", "需从明确账面起点月份连续完成对账")
-        opening_fen = openings[0].values["opening_fen"]
+        opening_fen = openings[0]["opening_fen"]
     if opening_fen != statement.opening_fen:
         raise KernelError("bank_opening_difference", "流水期初与账面起点或上期对账不一致")
     entries = {entry.reference: entry for entry in statement.entries}
@@ -334,9 +375,22 @@ def calculate_reconciliation(version, context):
 def required_reads(period: YearMonth):
     before = YearMonth.from_ordinal(period.ordinal + 1)
     return tuple(
-        Read(source, kind, "*" if kind in {"bank_opening", "opening_bank"} else str(period), before)
+        Read(
+            source,
+            kind,
+            "*"
+            if kind in {"bank_opening", "opening_bank", "opening_identity_binding"}
+            else str(period),
+            before,
+        )
         for source in ("fact", "calculation")
-        for kind in ("bank_opening", "opening_bank", "bank_statement", "bank_reconciliation")
+        for kind in (
+            "bank_opening",
+            "opening_bank",
+            "bank_statement",
+            "bank_reconciliation",
+            "opening_identity_binding",
+        )
     )
 
 
@@ -345,14 +399,33 @@ def required_work(period: YearMonth, context):
     selected = {(read.source, read.kind): context.select(read) for read in required_reads(period)}
     posted = {
         row.fact_id
-        for kind in ("bank_opening", "opening_bank", "bank_statement", "bank_reconciliation")
+        for kind in (
+            "bank_opening",
+            "opening_bank",
+            "bank_statement",
+            "bank_reconciliation",
+            "opening_identity_binding",
+        )
         for row in selected[("calculation", kind)]
+    }
+    binding_facts = {
+        row.fact.source_subject_id: row
+        for row in selected[("fact", "opening_identity_binding")]
+        if row.fact.source_kind == "opening_bank"
     }
     openings = {
         row.fact.bank_account_id: row
         for kind in ("opening_bank", "bank_opening")
         for row in selected[("fact", kind)]
+        if kind != "opening_bank" or row.subject_id not in binding_facts
     }
+    bindings = {row.fact_id: row for row in selected[("calculation", "opening_identity_binding")]}
+    for row in binding_facts.values():
+        adopted = bindings.get(row.id)
+        if adopted is None:
+            raise NeedsInformation("opening_identity_binding", "银行期初身份纠错尚未完整发布")
+        if not adopted.values.get("superseded"):
+            openings[adopted.values["basis_data"]["bank_account_id"]] = row
     statements = {
         row.fact.bank_account_id: row
         for row in selected[("fact", "bank_statement")]

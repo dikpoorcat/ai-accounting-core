@@ -13,8 +13,11 @@ from .catalog import Catalog
 from .contracts import KernelError, Registry
 from .discovery import Discovery
 from .display import Display
+from .duplicates import Duplicates
 from .engine import Engine
+from .entities import Entities
 from .exports import Exports, run_export_jobs
+from .identity_corrections import IdentityCorrections
 from .materials import Materials
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
@@ -28,6 +31,25 @@ OPERATING_PROTOCOL = {
     "company_binding": "先列出公司并明确当前company_id；公司切换不能沿用另一公司的业务身份或预览。",
     "evidence_first": "先核对已提供资料及既有事实；正式确认事实必须引用实际采用的不可变证据。",
     "typed_facts": "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。",
+    "entities": (
+        "登记前用find_entities按明确资料查找公司内对象；复用或用register_entity生成对象编号。"
+        "人员、机构、资金账户、资产、项目、基金产品与单笔业务编号分开；同名不自动合并。"
+        "payee收款账户属于付款指令，不能当作公司资金账户。"
+    ),
+    "fact_discovery": (
+        "find_facts使用entity_id和可选role、identity_match=current|recorded及不透明cursor；"
+        "返回原事实与匹配归属，不从聊天记忆判断状态；游标失效后重新查第一页。"
+    ),
+    "duplicate_review": (
+        "save_fact/amend_fact/save_facts自动查重；明显疑点先查既有原件，仍不能判断才问负责人。"
+        "可提前prepare_fact_registration，不要求无疑点业务额外预检。复用已有业务不另建；"
+        "确认另笔必须引用区分依据，不能只写解释；弱线索仅供查找，不主动打断。"
+    ),
+    "identity_correction": (
+        "身份指错用preview_identity_correction/confirm_identity_correction，明确事实范围与依据；"
+        "名单、累计、清偿和资产影响一起处理，不能先合并显示再留下未处理账务。"
+        "不能通过改名称掩盖实际付错人；已冻结内容保留，闭期归属更正在指定开放月承接。"
+    ),
     "missing_information": "根据fact_issues核对可复用来源后再补充，不把错误码直接变成负责人追问。",
     "publication": (
         "保存事实与发布结果分开；预览逐项核对source_period、posting_period和mode，"
@@ -45,7 +67,8 @@ OPERATING_PROTOCOL = {
     ),
     "management": "管理说明、归集资料可后补，不把管理缺项当核算门禁，不以月末冒充实际日期。",
     "dashboard_management": (
-        "看板名称、人员入离职资料与用途通过save_display_profile按明确来源追加管理版本；"
+        "对象名称、人员入离职资料与用途通过update_entity_profile按明确来源追加管理版本；"
+        "save_display_profile只保存单笔业务说明；"
         "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
         "复用稳定业务身份，记录证据文件名和具体来源位置；不只保留内部编号。"
         "资料后补同时维护私有重放补充清单，不因展示资料缺项阻断核算。"
@@ -134,6 +157,9 @@ def default_registry():
     tax_import.register(registry)
     payroll_tax_declarations.register(registry)
     accounting.register(registry)
+    from .identity_corrections import register as register_identity_corrections
+
+    register_identity_corrections(registry)
     return registry
 
 
@@ -389,6 +415,9 @@ class LocalService:
         workflow = Workflow(engine)
         materials = Materials(engine)
         discovery = Discovery(engine)
+        duplicates = Duplicates(engine)
+        entities = Entities(engine)
+        identities = IdentityCorrections(engine)
         display = Display(engine)
         from .dashboard import Dashboard
 
@@ -402,6 +431,12 @@ class LocalService:
 
         maintenance = Maintenance(engine)
         actions = {
+            "prepare_fact_registration": duplicates.prepare_fact_registration,
+            "find_entities": entities.find_entities,
+            "register_entity": entities.register_entity,
+            "update_entity_profile": entities.update_entity_profile,
+            "preview_identity_correction": identities.preview_identity_correction,
+            "confirm_identity_correction": identities.confirm_identity_correction,
             "save_fact": engine.save_fact,
             "amend_fact": engine.amend_fact,
             "save_facts": engine.save_facts,

@@ -279,9 +279,7 @@ class BusinessQueries:
                 )
             ]
         adopted_by_period = {
-            close_period: {
-                item["calculation_id"]: item for item in manifest["adopted_results"]
-            }
+            close_period: {item["calculation_id"]: item for item in manifest["adopted_results"]}
             for close_period, manifest in manifests
         }
         voucher_by_period = {
@@ -335,12 +333,10 @@ class BusinessQueries:
                             reason="voucher_adoption_missing",
                         )
                     adopted_calculation_id = frozen_voucher["adopted_calculation_id"]
-                    adopted = adopted_by_period[row["close_period"]].get(
+                    adopted = adopted_by_period[row["close_period"]].get(adopted_calculation_id)
+                    calc = reads.metadata({adopted_calculation_id}, state=False)[
                         adopted_calculation_id
-                    )
-                    calc = reads.metadata(
-                        {adopted_calculation_id}, state=False
-                    )[adopted_calculation_id]
+                    ]
                     if adopted is None or any(
                         (
                             adopted["publication_id"] != calc["publication_id"],
@@ -381,9 +377,7 @@ class BusinessQueries:
                         "calculation_id": calculation_id,
                         "fact_id": fact_id,
                         "kind": kind,
-                        "calculation_period": str(
-                            YearMonth.from_ordinal(calculation_period)
-                        ),
+                        "calculation_period": str(YearMonth.from_ordinal(calculation_period)),
                         "posting_period": str(YearMonth.from_ordinal(row["period"])),
                         "result_digest": result_digest,
                         "role": role,
@@ -533,8 +527,12 @@ class BusinessQueries:
         if not owners:
             return []
         selected = self._selected_accounting(
-            connection, owners, period, current_heads=current_heads,
-            kinds={"asset_activation_batch", "asset_consumption_month"}, include_lines=False,
+            connection,
+            owners,
+            period,
+            current_heads=current_heads,
+            kinds={"asset_activation_batch", "asset_consumption_month"},
+            include_lines=False,
         )["through_period"]
         reads = self._reads(connection)
         result = []
@@ -548,28 +546,42 @@ class BusinessQueries:
                     subjects is not None and calc["subject_id"] not in subjects
                 ):
                     continue
-                result.append({
-                    "event_type": "asset_member", "status": "established",
-                    "calculation_id": calc["id"], "subject_id": calc["subject_id"],
-                    "fact_id": calc["fact_id"], "kind": calc["kind"],
-                    "calculation_period": calc["period"], "posting_period": None,
-                    "adoption_period": event["posting_period"],
-                    "result_digest": calc["result_digest"], "asset_id": member["asset_id"],
-                    "owner_calculation_id": owner_id,
-                    "voucher_version_id": event.get("voucher_version_id"),
-                    "voucher_number": event.get("voucher_number"),
-                    "direction": event.get("direction", 1), "role": event.get("role", "state"),
-                    "line_start": member["line_start"], "line_count": member["line_count"],
-                    "selection_source": event["selection_source"],
-                    "selection_proof": {
-                        "basis": "asset_batch_member",
+                result.append(
+                    {
+                        "event_type": "asset_member",
+                        "status": "established",
+                        "calculation_id": calc["id"],
+                        "subject_id": calc["subject_id"],
+                        "fact_id": calc["fact_id"],
+                        "kind": calc["kind"],
+                        "calculation_period": calc["period"],
+                        "posting_period": None,
+                        "adoption_period": event["posting_period"],
+                        "result_digest": calc["result_digest"],
+                        "asset_id": member["asset_id"],
                         "owner_calculation_id": owner_id,
-                    },
-                })
-        return sorted(result, key=lambda item: (
-            item["adoption_period"], item["voucher_number"] or 0,
-            item["owner_calculation_id"], item["asset_id"],
-        ))
+                        "voucher_version_id": event.get("voucher_version_id"),
+                        "voucher_number": event.get("voucher_number"),
+                        "direction": event.get("direction", 1),
+                        "role": event.get("role", "state"),
+                        "line_start": member["line_start"],
+                        "line_count": member["line_count"],
+                        "selection_source": event["selection_source"],
+                        "selection_proof": {
+                            "basis": "asset_batch_member",
+                            "owner_calculation_id": owner_id,
+                        },
+                    }
+                )
+        return sorted(
+            result,
+            key=lambda item: (
+                item["adoption_period"],
+                item["voucher_number"] or 0,
+                item["owner_calculation_id"],
+                item["asset_id"],
+            ),
+        )
 
     @staticmethod
     def _state_metadata(calc, selection_source, selection_proof):
@@ -626,13 +638,18 @@ class BusinessQueries:
             if not owners:
                 return None
             return {
-                "status": "adopted", "knowledge": "current_knowledge", "calculation": calc,
+                "status": "adopted",
+                "knowledge": "current_knowledge",
+                "calculation": calc,
                 "publication": {
-                    "role": "asset_member", "posting_period": None, "voucher_id": None,
+                    "role": "asset_member",
+                    "posting_period": None,
+                    "voucher_id": None,
                     "has_journal_lines": False,
                     "owner_calculation_ids": [owner[0] for owner in owners],
                 },
-                "voucher_versions": [], "current_voucher_version_id": None,
+                "voucher_versions": [],
+                "current_voucher_version_id": None,
             }
         vouchers = [
             self._voucher(connection, item["id"], "current_publication")
@@ -1082,8 +1099,7 @@ class BusinessQueries:
                 kinds = [
                     key
                     for key, definition in OBLIGATION_DEFINITIONS.items()
-                    if "*" in definition.basis_kinds
-                    or current["kind"] in definition.basis_kinds
+                    if "*" in definition.basis_kinds or current["kind"] in definition.basis_kinds
                 ]
                 candidates.update(
                     row[0]
@@ -1533,17 +1549,13 @@ class BusinessQueries:
         selected = self._selected_accounting(
             connection, subject_id, period, include_lines=not summary
         )
-        exact_close = self._reads(connection).close_rows(
-            periods=[YearMonth(period).ordinal]
-        )
+        exact_close = self._reads(connection).close_rows(periods=[YearMonth(period).ordinal])
         later_close = connection.execute(
             "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
             (YearMonth(period).ordinal,),
         ).fetchone()
         if later_close is not None:
-            later_close = self._reads(connection).close_rows(
-                periods=[later_close["period"]]
-            )[0]
+            later_close = self._reads(connection).close_rows(periods=[later_close["period"]])[0]
         if exact_close:
             close_row = exact_close[0]
             close_manifest = self._reads(connection).close_manifest(close_row)
@@ -1577,19 +1589,22 @@ class BusinessQueries:
                 if frozen_entry is not None
                 else None
             )
+            card_metadata = self._reads(connection).metadata(
+                {item["calculation_id"] for item in close_manifest["asset_card_adoptions"]},
+                state=False,
+            )
             if frozen_adoption is None or any(
-                item["asset_id"] == subject_id
+                card_metadata[item["calculation_id"]]["subject_id"] == subject_id
                 for item in close_manifest["asset_card_adoptions"]
             ):
                 direct_by_calculation = {
-                    item["calculation_id"]: item
-                    for item in close_manifest["adopted_results"]
+                    item["calculation_id"]: item for item in close_manifest["adopted_results"]
                 }
                 card = next(
                     (
                         item
                         for item in close_manifest["asset_card_adoptions"]
-                        if item["asset_id"] == subject_id
+                        if card_metadata[item["calculation_id"]]["subject_id"] == subject_id
                     ),
                     None,
                 )
@@ -1789,6 +1804,60 @@ class BusinessQueries:
                     connection, period, subject_ids={subject_id}, current=True
                 )
             }
+        from .duplicates import DuplicateCandidates
+        from .entity_references import verify_hits
+
+        result["duplicate_checks"] = DuplicateCandidates(self.store).business_detail(
+            connection, subject_id, summary=summary
+        )
+        corrections = list(
+            connection.execute(
+                "SELECT c.id,c.plan,c.digest,i.action,i.before_fact_id,i.after_fact_id,"
+                "i.replacement_subject_id FROM identity_correction_item i "
+                "JOIN identity_correction c ON c.id=i.correction_id "
+                "WHERE i.subject_id=? OR i.replacement_subject_id=? ORDER BY i.rowid",
+                (subject_id, subject_id),
+            )
+        )
+        result["identity_corrections"] = [
+            {
+                **{
+                    key: row[key]
+                    for key in (
+                        "id",
+                        "action",
+                        "before_fact_id",
+                        "after_fact_id",
+                        "replacement_subject_id",
+                    )
+                },
+                "digest": row["digest"].hex(),
+                **({"plan": json.loads(row["plan"])} if not summary else {}),
+            }
+            for row in corrections
+        ]
+        facts = list(
+            connection.execute(
+                "SELECT id fact_id FROM fact_revision WHERE subject_id=?", (subject_id,)
+            )
+        )
+        verify_hits(
+            connection,
+            facts,
+            identity_match="current",
+            registry=self.store.registry,
+        )
+        result["entity_references"] = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT r.fact_id,r.path,r.entity_id recorded_entity_id,"
+                "c.entity_id current_entity_id,r.role FROM entity_reference_recorded r "
+                "JOIN entity_reference_current c ON c.fact_id=r.fact_id AND c.path=r.path "
+                "JOIN fact_revision f ON f.id=r.fact_id WHERE f.subject_id=? "
+                "ORDER BY f.revision,r.path",
+                (subject_id,),
+            )
+        ]
         return result
 
     @staticmethod
@@ -1805,8 +1874,11 @@ class BusinessQueries:
                     through["unestablished_state_selections"]
                 ),
                 "state_results": through["state_results"],
-                **({"asset_member_results": through["asset_member_results"]}
-                   if "asset_member_results" in through else {}),
+                **(
+                    {"asset_member_results": through["asset_member_results"]}
+                    if "asset_member_results" in through
+                    else {}
+                ),
                 "unestablished_state_selections": through["unestablished_state_selections"],
             },
         }
@@ -2165,9 +2237,7 @@ class BusinessQueries:
                 if readiness.get("order_failure") is not None
                 else readiness
             )
-        external_obligation_ids = self._external_obligation_ids_for_period(
-            connection, period
-        )
+        external_obligation_ids = self._external_obligation_ids_for_period(connection, period)
         if summary:
             external = Workflow(self.engine)._external_obligations(
                 connection,

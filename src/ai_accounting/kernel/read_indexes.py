@@ -21,6 +21,8 @@ AUDIT_ACTIONS = (
     "recording_correction",
     "save_display_profile",
     "payee",
+    "register_entity",
+    "update_entity_profile",
 )
 CLOSE_CALCULATIONS = "adopted_results[*].calculation_id"
 CLOSE_ADOPTION_FACTS = "adopted_results[*].fact_id"
@@ -34,6 +36,7 @@ CLOSE_VOUCHER_CALCULATIONS = "vouchers[*].calculation_id"
 CLOSE_REPORT_FACTS = "readiness.financial_reports.facts[*]"
 CLOSE_TYPED_FACTS = "management_snapshot.typed_facts[*].id"
 CLOSE_PROFILES = "management_snapshot.profiles[*].id"
+CLOSE_ENTITY_PROFILES = "management_snapshot.entity_profiles[*].id"
 CLOSE_MANAGEMENT = "management_snapshot.management[*].id"
 CLOSE_PAYEES = "management_snapshot.payees[*].id"
 _CLOSE_PATH_TYPES = {
@@ -49,6 +52,7 @@ _CLOSE_PATH_TYPES = {
     CLOSE_REPORT_FACTS: "fact",
     CLOSE_TYPED_FACTS: "fact",
     CLOSE_PROFILES: "display_profile",
+    CLOSE_ENTITY_PROFILES: "entity_profile",
     CLOSE_MANAGEMENT: "management",
     CLOSE_PAYEES: "payee",
 }
@@ -71,7 +75,8 @@ CREATE TRIGGER read_index_source_owner BEFORE INSERT ON read_index_source
  AND kind IN ('payment_export','tax_import','report_export')))
  OR (NEW.source_kind='audit' AND NOT EXISTS(SELECT 1 FROM audit
  WHERE id=CAST(NEW.source_id AS INTEGER) AND CAST(id AS TEXT)=NEW.source_id AND action IN
- ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee')))
+ ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee',
+ 'register_entity','update_entity_profile')))
  BEGIN SELECT RAISE(ABORT,'read index source ownership mismatch'); END;
 CREATE TABLE close_reference(close_period INTEGER NOT NULL REFERENCES period_close(period),
  path TEXT NOT NULL,position TEXT NOT NULL,reference_type TEXT NOT NULL,
@@ -191,6 +196,7 @@ def _close_references(row):
         for field, typ in (
             ("typed_facts", "fact"),
             ("profiles", "display_profile"),
+            ("entity_profiles", "entity_profile"),
             ("management", "management"),
             ("payees", "payee"),
         ):

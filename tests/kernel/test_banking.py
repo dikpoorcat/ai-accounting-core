@@ -4,6 +4,7 @@ import itertools
 import sqlite3
 
 import pytest
+from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 
 from ai_accounting.kernel.asset_batches import AssetBatches
@@ -32,6 +33,7 @@ def book(tmp_path):
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
+        seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,
             subject,
@@ -68,9 +70,7 @@ def activate_asset(engine, proof, subject, data):
     period = data["period"]
     members = [{"subject_id": subject, "expected_revision": 0, "data": data}]
     options = {"evidence": (proof,), "expected_revision": 0}
-    preview = batches.prepare_activation_batch(
-        subject + "-batch", period, members, **options
-    )
+    preview = batches.prepare_activation_batch(subject + "-batch", period, members, **options)
     return batches.confirm_activation_batch(
         subject + "-batch",
         period,
@@ -716,6 +716,7 @@ def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(boo
         "asset",
         "asset",
         {
+            "asset_id": "asset",
             "period": "2026-01",
             "asset_type": "fixed",
             "supplier_id": "supplier",
@@ -758,6 +759,7 @@ def test_fully_depreciated_asset_does_not_permanently_block_later_months(book):
         "asset",
         "asset",
         {
+            "asset_id": "asset",
             "period": "2026-01",
             "asset_type": "fixed",
             "supplier_id": "supplier",

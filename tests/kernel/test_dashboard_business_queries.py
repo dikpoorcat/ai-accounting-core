@@ -9,8 +9,8 @@ from test_workflow import setup_company
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains import taxes, transactions
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.reports import ReportProfile, Reports
 
 wage_company, tax_company = _wage_company, _tax_company
@@ -76,14 +76,11 @@ def test_refundable_tax_position_agrees_with_report_and_refund(tax_company):
 def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, reserve):
     company = wage_company
     for person in ("one", "two"):
-        Display(company.engine).save_display_profile(
-            {
-                "kind": "employee",
-                "entity_id": person,
-                "display_name": "合成人员" + person,
-                "source": "合成人员身份资料",
-            },
-            expected_revision=0,
+        Entities(company.engine).update_entity_profile(
+            person,
+            {"display_name": "合成人员" + person},
+            source="合成人员身份资料",
+            expected_revision=1,
             request_id=company.request(),
         )
     if reserve:

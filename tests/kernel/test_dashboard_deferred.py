@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 
 import pytest
 import test_reports as report_cases
+from entity_fixture import seed_entities
 from test_dashboard_transport import _publish_expense, authenticated
 from test_resident_service import resident as resident_fixture
 
@@ -102,7 +103,7 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
 
     forbid_preparation(monkeypatch)
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 3
+    assert deferred["schema_version"] == complete["schema_version"] == 4
     assert deferred["projection"] == "dashboard_brief_deferred"
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
@@ -278,7 +279,7 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 3
+    assert result["schema_version"] == 4
     assert result["projection"] == "dashboard_brief_deferred"
     assert result["read_context"] is None and result["data"] is None
 
@@ -287,7 +288,9 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
     service, _, _, http, _ = resident
     headers, token = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "分段合成公司")["id"]
-    _publish_expense(service.engine(company), "expense", 12345)
+    company_engine = service.engine(company)
+    seed_entities(company_engine, (("expense-supplier", "organization", None),))
+    _publish_expense(company_engine, "expense", 12345)
     schema = service.dispatch("schema", {})["command_schemas"]
     command = "dashboard_period_preparation"
     assert {"company_id", "period", "as_of", "expected_read_version"} <= set(

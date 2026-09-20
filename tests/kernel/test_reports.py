@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from entity_fixture import seed_entities
 from material_fixture import supporting_text
 from openpyxl import load_workbook
 
@@ -24,6 +25,14 @@ def book(tmp_path):
         Store.create(
             tmp_path / "company.sqlite", production_bundle(), "co", "911100000000000001", "db"
         )
+    )
+    seed_entities(
+        engine,
+        (
+            ("owner", "person", None),
+            ("supplier", "organization", None),
+            ("cash", "fund_account", "cash"),
+        ),
     )
     proof = engine.register_evidence(
         b"fictional report evidence", "text/plain", "proof", request_id="proof"

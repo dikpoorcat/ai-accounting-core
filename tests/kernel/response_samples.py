@@ -20,7 +20,43 @@ from test_dashboard_empty_replay import (
 )
 
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.response_contracts import http_response, validate_response
+
+
+def public_bank_book(path):
+    """Adapt older scenario helpers to generated IDs through the public entity API."""
+
+    engine, save, publish, proof = banking.book.__wrapped__(path)
+    entities = Entities(engine)
+    identifiers = {
+        "owner": entities.register_entity(
+            "person", {}, source="合成银行资料", request_id="bank-owner"
+        )["entity_id"],
+        "bank-a": entities.register_entity(
+            "fund_account",
+            {},
+            account_type="bank",
+            source="合成银行资料",
+            request_id="bank-a",
+        )["entity_id"],
+        "bank-b": entities.register_entity(
+            "fund_account",
+            {},
+            account_type="bank",
+            source="合成银行资料",
+            request_id="bank-b",
+        )["entity_id"],
+    }
+
+    def mapped_save(kind, subject, data, revision=0):
+        mapped = dict(data)
+        for field in ("bank_account_id", "owner_id"):
+            if mapped.get(field) in identifiers:
+                mapped[field] = identifiers[mapped[field]]
+        return save(kind, subject, mapped, revision)
+
+    return (engine, mapped_save, publish, proof), identifiers
 
 
 def native_samples(root):
@@ -77,7 +113,7 @@ def native_samples(root):
 
     bank_path = root / "banks"
     bank_path.mkdir()
-    book = banking.book.__wrapped__(bank_path)
+    book, bank_ids = public_bank_book(bank_path)
     engine, save, publish, _ = book
     banking.opening(save, publish)
     banking.funding(save, publish)
@@ -98,15 +134,16 @@ def native_samples(root):
         Dashboard(engine).funds(
             "2026-09",
             movement_account_type="bank",
-            movement_account_id="bank-b",
-            statement_account_id="bank-b",
+            movement_account_id=bank_ids["bank-b"],
+            statement_account_id=bank_ids["bank-b"],
             limit=1,
         ),
     )
 
     closed_path = root / "closed"
     closed_path.mkdir()
-    engine, _, _ = closed_banks(banking.book.__wrapped__(closed_path))
+    closed_book, _ = public_bank_book(closed_path)
+    engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
     return samples
 

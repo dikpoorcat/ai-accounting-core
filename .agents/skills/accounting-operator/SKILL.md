@@ -12,7 +12,7 @@ description: Operate real local accounting from invoices, bank records, payroll,
 - 用户要求启动时先使用 `$accounting-startup`。单独启动只准备环境。
 - 先调用 `finance_local_schema`，以 `agent_operating_protocol`、`facts` 和 `command_schemas` 为当前契约。业务调用统一使用 `finance_local_command(command=..., payload=...)`；除全局命令外都绑定明确的 `company_id`。
 - 调用 `companies`。已明确选择的公司持续有效；多家公司且上下文不能确定时，先让负责人选择公司，再读取其账务。
-- 读取 `company_context` 和 `find_facts`，按人员、业务类型、期间和状态找回既有依据。无需先知道计算 ID，不从聊天记忆重建账务状态。`update_company_note` 使用返回的版本防止覆盖；说明文本不代替正式核算事实。
+- 读取 `company_context`，先用 `find_entities` 找对象，再用 `find_facts(entity_id, role, identity_match, cursor)` 按对象、业务类型、期间和状态找回依据。默认查当前确认归属；`recorded` 查原记录身份。游标失效后重新查第一页，不拼接不同版本的结果。无需先知道计算 ID，不从聊天记忆重建账务状态。`update_company_note` 使用返回的版本防止覆盖；说明文本不代替正式核算事实。
 - 泛化的“开始记账”读取所选期间的 `workflow(period, as_of)`，按内核返回的 `steps` 展示简短进度。具体业务请求直接处理该事项，不插入无关看板。`as_of` 由当前实际日期明确给出，不能替代业务发生日。
 
 ## 资料与事实
@@ -39,7 +39,9 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 Schema 标有 `x-registration-command` 的记录由对应类型化命令核对并生成，不通过通用事实保存入口自行构造。
 
-登记业务时同步检查原件已明确的人员、往来方、账户及资产名称，并通过 `save_display_profile` 复用同一业务身份保存名称、用途和说明。已有收款人或个税身份可直接复用；不从内部编号、同名或相同金额推断关联，不将批次对应关系拆成未经确认的逐项分摊。证据首次登记使用原文件名。管理资料后补不重算凭证，同时将来源、稳定业务引用及操作回执加入私有重放补充清单；空库操作按 `docs/empty-database-replay.md` 执行。
+登记业务前先 `find_entities` 查找并复用人员、机构、资金账户、资产、项目或基金产品；确实是新对象才 `register_entity`，使用内核生成的编号。单笔业务另用独立编号。事实 Schema 的 `x-references` 明确对象与业务引用，不能按字段后缀猜测。一个自然人可同时是员工、报销人和交易方；同名不自动合并。公司资金账户与 `save_payee` 的收款指令分开。名称、入离职资料和用途用 `update_entity_profile` 追加明确资料，业务说明用 `save_display_profile(kind="business")`；管理资料缺项不编造，改名不重算账务。
+
+`save_fact`、`amend_fact` 和 `save_facts` 自动查重；可用 `prepare_fact_registration` 提前核对，不要求无疑点业务多调用一次。明显疑点先查已有原件及位置，仍不能区分才问负责人。复用已有业务不另建；确认另笔要引用不同原行、明确拆分或负责人确认等区分依据，不能只填解释。核对绑定事实、资料和规则版本，失效后重新核对；弱线索不主动打断，核对不能绕过工资唯一性或重复核销等硬约束。
 
 ## 工资、付款与外部办理
 
@@ -52,6 +54,8 @@ Schema 标有 `x-registration-command` 的记录由对应类型化命令核对�
 - 外部申报、缴税和其他办理进度单独保存事实、形成待办。它们的进度本身不阻断关账。用已确认公司适用范围和规则版本 `prepare_obligations` / `confirm_obligations` 生成季、年义务，不自行编造义务或申报日期。
 
 ## 更正、接续与关账
+
+身份指错使用 `preview_identity_correction` / `confirm_identity_correction`，明确原对象、目标对象、具体事实范围和依据。核对累计、清偿、资产批次及入账差额后一次确认；不能只合并名字而留下错误账务。同月工资冲突先确认完整正确工资，不能自动相加或填零。冻结期初保留原文并记录采用绑定；真实付错人要处理追收，不能改字段掩盖。纠错仍可按精确范围再次纠正，不使用永久全局别名。
 
 开放期修订发布替代版本，保留凭证号；误记删除先 `preview_delete`，仅无有效下游依赖时确认。闭期更正指定开放期，原版本保留，冲正反向原凭证。新事实确实不影响会计处理时使用内核复核处置。管理资料后补不重新计算会计结果。
 

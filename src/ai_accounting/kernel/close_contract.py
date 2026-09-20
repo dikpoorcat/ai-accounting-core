@@ -4,7 +4,7 @@ from .contracts import KernelError
 from .types import YearMonth
 
 CLOSE_FORMAT = "ai-accounting-kernel/2/period-close"
-CLOSE_FORMAT_VERSION = 1
+CLOSE_FORMAT_VERSION = 2
 ADOPTION_ROLES = frozenset({"journal_basis", "state_only", "opening_basis", "asset_batch_owner"})
 
 
@@ -73,6 +73,19 @@ def require_close_contract(manifest):
             _invalid("invalid_close_range")
     if type(manifest["publication_sequence"]) is not int or manifest["publication_sequence"] < 0:
         _invalid("invalid_publication_boundary")
+    if not isinstance(manifest.get("management_snapshot"), dict) or not isinstance(
+        manifest["management_snapshot"].get("entity_profiles"), list
+    ):
+        _invalid("missing_entity_profile_adoption")
+    management = manifest["management_snapshot"]
+    employees = management.get("employee_entities")
+    if (
+        not isinstance(employees, list)
+        or any(not isinstance(value, str) for value in employees)
+        or employees != sorted(set(employees))
+        or not set(employees) <= {item["entity_id"] for item in management["entity_profiles"]}
+    ):
+        _invalid("invalid_employee_profile_adoption")
     try:
         YearMonth(manifest["period"])
         if manifest["previous_close_period"] is not None:

@@ -405,6 +405,7 @@ def schema_sql(registry: Registry) -> str:
 @lru_cache(maxsize=32)
 def _schema_for_models(models) -> str:
     from .asset_batch_schema import ASSET_BATCH_DDL
+
     registry = Registry()
     registry.models = dict(models)
     script = DDL + "\n" + "\n".join(immutable_sql(t) for t in IMMUTABLE) + fact_ddl(registry)
@@ -423,7 +424,12 @@ def _schema_for_models(models) -> str:
             "dependency_calculation",
         )
     )
+    from .discovery_indexes import DISCOVERY_INDEX_DDL
     from .display import DISPLAY_DDL
+    from .duplicates import DUPLICATE_ACTUAL_INDEX_DDL, DUPLICATE_DDL
+    from .entities import ENTITY_DDL
+    from .entity_references import ENTITY_REFERENCE_DDL
+    from .identity_corrections import IDENTITY_CORRECTION_DDL
     from .read_indexes import READ_INDEX_DDL
     from .security.schema import COMPANY_DDL
     from .versions import HISTORY_DDL, META_DDL
@@ -442,6 +448,17 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
 """
         + immutable_sql("company_note_revision")
         + DISPLAY_DDL
+        + ENTITY_DDL
+        + ENTITY_REFERENCE_DDL
+        + IDENTITY_CORRECTION_DDL
+        + DISCOVERY_INDEX_DDL
+        + DUPLICATE_DDL
+        + "\n".join(
+            sql for kind, sql in DUPLICATE_ACTUAL_INDEX_DDL.items() if kind in registry.models
+        )
+        + immutable_sql("entity")
+        + immutable_sql("entity_profile_revision")
+        + immutable_sql("entity_resolution")
         + COMMENTARY_BASIS_DDL
         + immutable_sql("display_profile_revision")
         + immutable_sql("period_commentary_revision")

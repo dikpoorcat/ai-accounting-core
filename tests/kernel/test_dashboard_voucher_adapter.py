@@ -2,6 +2,7 @@
 
 import pytest
 import test_payroll_reserve_payment as reserve_payroll
+from entity_fixture import save_entity_display_profile, seed_entities, seed_fact_entities
 from test_bank_group_matching import batch_payment
 from test_banking import book as book
 from test_banking import funding
@@ -14,7 +15,6 @@ from test_tax_import import complete_details
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.cash import CashPayment
 from ai_accounting.kernel.domains.platforms import PlatformMovement, PlatformPayment
 from ai_accounting.kernel.domains.transactions import Allocation, Payment
@@ -29,6 +29,7 @@ def test_brief_includes_pending_intangible_in_asset_amount_and_count(book):
         "asset",
         "software",
         {
+            "asset_id": "software",
             "period": "2026-09",
             "asset_type": "intangible",
             "supplier_id": "supplier",
@@ -88,7 +89,8 @@ def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
     reserve_payroll.prepare(company)
     company.publish("scope", "gross-batch")
     for ident, name in (("one", "甲员工"), ("two", "乙员工")):
-        Display(company.engine).save_display_profile(
+        save_entity_display_profile(
+            company.engine,
             {
                 "kind": "employee",
                 "entity_id": ident,
@@ -117,7 +119,8 @@ def test_social_payment_uses_actual_recipient_and_exact_wage_sources(tmp_path, c
     company = reserve_payroll.company.__wrapped__(tmp_path)
     allocations = []
     for employee, name in (("one", "甲员工"), ("two", "乙员工")):
-        Display(company.engine).save_display_profile(
+        save_entity_display_profile(
+            company.engine,
             {"kind": "employee", "entity_id": employee, "display_name": name, "source": "合成资料"},
             expected_revision=0,
             request_id="profile-" + employee,
@@ -134,7 +137,8 @@ def test_social_payment_uses_actual_recipient_and_exact_wage_sources(tmp_path, c
                         amount_fen=obligation["amount_fen"],
                     )
                 )
-    Display(company.engine).save_display_profile(
+    save_entity_display_profile(
+        company.engine,
         {
             "kind": "counterparty",
             "entity_id": "authority",
@@ -167,6 +171,7 @@ def test_social_payment_uses_actual_recipient_and_exact_wage_sources(tmp_path, c
             source_evidence_digest=company.owner_confirmation,
             source_location="row:1",
         )
+        seed_fact_entities(company.engine, movement)
         company.engine.save_fact(
             "platform_movement",
             "movement",
@@ -197,6 +202,7 @@ def test_voucher_and_trace_show_immutable_evidence_names_without_loading_files(b
     import hashlib
 
     engine, _, publish_fact, _ = book
+    seed_entities(engine, [("cash", "fund_account", "cash"), ("owner", "person", None)])
     proofs = [
         engine.register_evidence(
             content,
@@ -253,15 +259,11 @@ def test_voucher_and_trace_show_immutable_evidence_names_without_loading_files(b
         assert engine.store.evidence_metadata(connection, proofs + ["0" * 64]) == names
 
 
-def test_empty_management_snapshot_uses_existing_names_without_changing_frozen_accounting(
-    book, monkeypatch
-):
+def test_frozen_unnamed_profiles_accept_later_names_without_changing_frozen_accounting(book):
     engine, save, publish, proof = book
     from test_banking import close_month, inventories
 
     funding(save, publish)
-    # Keep the management snapshot empty while leaving the direct close write immutable.
-    monkeypatch.setattr(Display, "snapshot", staticmethod(lambda *args, **kwargs: {}))
     # A closed synthetic month needs the native materials and bank reconciliation fixtures.
     from test_banking import entry, opening, reconciliation, statement
 

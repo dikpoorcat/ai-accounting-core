@@ -215,16 +215,41 @@ def resolve_calculation_relations(
                 matches.append(candidate)
         return matches[0] if len(matches) == 1 else None
 
-    def source_obligation(source, *, key=None, name=None):
+    def source_obligation(source, *, key=None, name=None, binding_id=None):
         if source is None:
             return None
+        source_values = _values(source)
+        if binding_id is not None:
+            binding = loaded(binding_id)
+            if (
+                binding is None
+                or binding.get("kind") != "opening_identity_binding"
+                or _values(binding).get("source_calculation_id") != source.get("id")
+                or _values(binding).get("superseded")
+                or binding_id not in parent_ids(str(calculation.get("id")))
+            ):
+                issues.append(
+                    _issue(
+                        "query_source.identity_binding",
+                        "清偿归属缺少精确的身份纠错采用依据",
+                        calculation_id=calculation.get("id"),
+                    )
+                )
+                return None
+            source_values = _values(binding)["basis_values"]
         candidates = [
             item
-            for item in _values(source).get("obligations", ())
+            for item in source_values.get("obligations", ())
             if (key is None or item.get("key") == key)
             and (name is None or item.get("name") == name)
         ]
-        return _obligation(source, candidates[0]) if len(candidates) == 1 else None
+        if len(candidates) != 1:
+            return None
+        item = _obligation(source, candidates[0])
+        if binding_id is not None:
+            item["identity_binding_calculation_id"] = binding_id
+            obligations[item["key"]] = item
+        return item
 
     def add_relation(line_no: int, role: str, amount: int, source, item, **extra):
         line_relations.append(
@@ -296,7 +321,11 @@ def resolve_calculation_relations(
         for index, (allocation, frozen_item) in enumerate(zip(allocations, frozen, strict=False)):
             pointer = frozen_item.get("source_calculation")
             source = loaded(pointer) if isinstance(pointer, str) and pointer else None
-            item = source_obligation(source, key=frozen_item.get("obligation"))
+            item = source_obligation(
+                source,
+                key=frozen_item.get("obligation"),
+                binding_id=frozen_item.get("binding_calculation_id"),
+            )
             amount = frozen_item.get("amount_fen")
             recipient = (
                 allocation.get("recipient_id")

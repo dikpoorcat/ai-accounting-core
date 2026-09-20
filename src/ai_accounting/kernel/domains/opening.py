@@ -92,6 +92,8 @@ class OpeningObligation(OpeningDetail):
 
 class OpeningAsset(OpeningDetail):
     kind: ClassVar[str] = "opening_asset"
+    identity_fields: ClassVar[tuple[str, ...]] = ("asset_id", "asset_type")
+    asset_id: Identifier
     asset_type: Literal["fixed", "intangible"]
     cost_fen: PositiveFen
     accumulated_fen: NonNegativeFen
@@ -101,6 +103,9 @@ class OpeningAsset(OpeningDetail):
     residual_fen: NonNegativeFen
     benefit_area: Literal["administration", "sales", "service"]
     rounding_policy: Literal["floor_final_remainder", "round_half_up_card"]
+
+    def scopes(self):
+        return (*super().scopes(), f"asset-source:{self.asset_id}")
 
     @model_validator(mode="after")
     def consistent_card(self):
@@ -192,6 +197,8 @@ class OpeningPayrollPayable(OpeningDetail):
 
 class OpeningPayrollState(PayrollOpeningState):
     kind: ClassVar[str] = "opening_payroll_state"
+    # A continuation basis is evidenced by its opening package, not this month's wages.
+    material_category: ClassVar[str | None] = None
     immutable: ClassVar[bool] = True
     package_id: Identifier
     separate_method_already_used: bool
@@ -340,9 +347,9 @@ class OpeningPackage(Fact):
                 if member.agreement_id is not None
             ),
             *(
-                Read("fact", "reimbursed_asset_batch", f"accepted-asset:{member.subject_id}")
-                for member in self.members
-                if member.kind == "opening_asset"
+                (Read("fact", "reimbursed_asset_batch", "*"),)
+                if any(member.kind == "opening_asset" for member in self.members)
+                else ()
             ),
         )
 
@@ -405,7 +412,7 @@ def detail_output(version):
             )
         balances.append(
             BalanceEffect(
-                f"asset:{version.subject_id}:carrying",
+                f"asset:{fact.asset_id}:carrying",
                 fact.cost_fen - fact.accumulated_fen,
                 "asset",
             )
@@ -494,8 +501,10 @@ def calculate_package(version: FactVersion, ctx: Context) -> Outcome:
             raise KernelError("opening_period", "全部期初明细必须使用同一建账月份")
         if not row.evidence:
             raise NeedsInformation("evidence", "每项期初明细都需要明确依据")
-        if isinstance(row.fact, OpeningAsset) and ctx.facts(
-            "reimbursed_asset_batch", f"accepted-asset:{row.subject_id}"
+        if isinstance(row.fact, OpeningAsset) and any(
+            item.asset_id == row.fact.asset_id
+            for batch in ctx.facts("reimbursed_asset_batch", "*")
+            for item in batch.fact.assets
         ):
             raise KernelError("duplicate_asset_acceptance", "已在验收批次中的资产不能再次计入期初")
         counts[CATEGORIES[row.fact.kind]] += 1
@@ -504,6 +513,8 @@ def calculate_package(version: FactVersion, ctx: Context) -> Outcome:
             identity = (row.fact.kind, row.fact.bank_account_id)
         elif isinstance(row.fact, OpeningCash):
             identity = (row.fact.kind, row.fact.cash_account_id)
+        elif isinstance(row.fact, OpeningAsset):
+            identity = (row.fact.kind, row.fact.asset_id)
         elif isinstance(row.fact, OpeningPayrollState):
             identity = (row.fact.kind, row.fact.employee_id)
         elif isinstance(row.fact, OpeningMoneyFund):
@@ -554,6 +565,7 @@ def calculate_package(version: FactVersion, ctx: Context) -> Outcome:
                 "kind": row.fact.kind,
                 "values": values,
                 "opening_lines": [asdict(line) for line in member_lines],
+                "balances": [asdict(effect) for effect in member_balances],
             }
         )
     debit, credit = sum_fen(line.debit for line in lines), sum_fen(line.credit for line in lines)

@@ -4,7 +4,9 @@ import pytest
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.discovery import Discovery
+from ai_accounting.kernel.discovery_indexes import rebuild_discovery_indexes
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
@@ -63,9 +65,12 @@ def test_find_facts_recovers_people_periods_versions_and_publication_states(comp
     proof = company.register_evidence(b"source", "text/plain", "proof", request_id="proof")[
         "digest"
     ]
+    employee = Entities(company).register_entity(
+        "person", {"display_name": "Employee 1"}, source="test", request_id="employee"
+    )["entity_id"]
     profile = {
         "period": "2026-02",
-        "employee_id": "employee-1",
+        "employee_id": employee,
         "effective_from": "2026-02",
         "effective_to": None,
         "withholding_start_date": "2026-02-01",
@@ -85,29 +90,45 @@ def test_find_facts_recovers_people_periods_versions_and_publication_states(comp
             request_id=f"profile-{revision}",
         )
     query = Discovery(Engine(company.store))
-    current = query.find_facts(person_id="employee-1", period_from="2026-02", period_to="2026-02")
+    current = query.find_facts(period_from="2026-02", period_to="2026-02")
+    assert current["schema_version"] == 2
+    assert current["sort"] == "period_desc_fact_id_desc"
     assert len(current["items"]) == 1
     assert current["items"][0]["revision"] == 2
     assert current["items"][0]["evidence"] == [proof]
-    assert query.find_facts(person_id="someone-else")["items"] == []
     assert query.find_facts(period_from="2026-03")["items"] == []
+    superseded = query.find_facts(kind="payroll_profile", status="superseded")
+    assert [item["revision"] for item in superseded["items"]] == [1]
+    assert superseded["items"][0]["superseded"] is True
     first = query.find_facts(kind="payroll_profile", status="history", limit=1)
     second = query.find_facts(
-        kind="payroll_profile", status="history", limit=1, after_id=first["next_after_id"]
+        kind="payroll_profile", status="history", limit=1, cursor=first["next_cursor"]
     )
     assert len(first["items"]) == len(second["items"]) == 1
     assert first["items"][0]["fact_id"] != second["items"][0]["fact_id"]
-    assert second["next_after_id"] is None
+    assert second["next_cursor"] is None
+    matched = query.find_facts(entity_id=employee, role="employee", status="history")
+    assert len(matched["items"]) == 2
+    assert all(item["identity_matches"] for item in matched["items"])
+    assert all(
+        match["entity_id"] == employee and match["role"] == "employee"
+        for item in matched["items"]
+        for match in item["identity_matches"]
+    )
+    assert len(query.find_facts(role="employee", status="history")["items"]) == 2
 
 
 def test_find_sources_distinguishes_saved_published_and_deleted(company):
     proof = company.register_evidence(b"cost", "text/plain", "proof", request_id="proof")["digest"]
+    vendor = Entities(company).register_entity(
+        "organization", {"display_name": "Vendor"}, source="test", request_id="vendor"
+    )["entity_id"]
     company.save_fact(
         "expense",
         "cost",
         {
             "period": "2026-01",
-            "counterparty_id": "vendor",
+            "counterparty_id": vendor,
             "amount_fen": 100,
             "expense_class": "administration",
             "creditor_kind": "supplier",
@@ -123,13 +144,166 @@ def test_find_sources_distinguishes_saved_published_and_deleted(company):
     company.confirm(
         ["cost"], preview_digest=preview["digest"], epochs=preview["epochs"], request_id="publish"
     )
-    assert len(query.find_facts(status="published")["items"]) == 1
+    published = query.find_facts(status="published")["items"]
+    assert len(published) == 1
+    assert published[0]["adoption"]["basis"] == "direct_publication"
+    assert published[0]["adoption"]["calculation_id"] == published[0]["calculation_id"]
+    assert published[0]["adoption"]["current"] is True
     preview = company.preview_delete("cost")
     company.delete(
         "cost", preview_digest=preview["digest"], epochs=preview["epochs"], request_id="delete"
     )
     assert query.find_facts()["items"] == []
-    assert len(query.find_facts(status="deleted")["items"]) == 1
+    deleted = query.find_facts(status="deleted")["items"]
+    assert len(deleted) == 1
+    assert deleted[0]["adoption"]["current"] is False
+
+
+def test_find_facts_cursor_binds_filters_and_versions(company):
+    vendor = Entities(company).register_entity(
+        "organization", {"display_name": "Vendor"}, source="test", request_id="vendor"
+    )["entity_id"]
+    proof = company.register_evidence(b"cost", "text/plain", "proof", request_id="proof")["digest"]
+    for index, period in enumerate(("2026-03", "2026-02", "2026-01")):
+        company.save_fact(
+            "expense",
+            f"cost-{index}",
+            {
+                "period": period,
+                "counterparty_id": vendor,
+                "amount_fen": 100 + index,
+                "expense_class": "administration",
+                "creditor_kind": "supplier",
+            },
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=f"cost-{index}",
+        )
+    query = Discovery(company)
+    first = query.find_facts(kind="expense", limit=1)
+    assert [item["period"] for item in first["items"]] == ["2026-03"]
+    second = query.find_facts(kind="expense", limit=1, cursor=first["next_cursor"])
+    assert [item["period"] for item in second["items"]] == ["2026-02"]
+    with pytest.raises(KernelError) as changed_filter:
+        query.find_facts(status="history", limit=1, cursor=first["next_cursor"])
+    assert changed_filter.value.code == "fact_cursor_stale"
+    company.save_fact(
+        "expense",
+        "later",
+        {
+            "period": "2026-04",
+            "counterparty_id": vendor,
+            "amount_fen": 999,
+            "expense_class": "administration",
+            "creditor_kind": "supplier",
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="later",
+    )
+    with pytest.raises(KernelError) as changed_version:
+        query.find_facts(kind="expense", limit=1, cursor=first["next_cursor"])
+    assert changed_version.value.code == "fact_cursor_stale"
+
+
+def test_find_facts_batches_raw_hydration(company, monkeypatch):
+    vendor = Entities(company).register_entity(
+        "organization", {"display_name": "Vendor"}, source="test", request_id="vendor"
+    )["entity_id"]
+    proof = company.register_evidence(b"cost", "text/plain", "proof", request_id="proof")["digest"]
+    for index in range(5):
+        company.save_fact(
+            "expense",
+            f"cost-{index}",
+            {
+                "period": "2026-01",
+                "counterparty_id": vendor,
+                "amount_fen": 100 + index,
+                "expense_class": "administration",
+                "creditor_kind": "supplier",
+            },
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=f"cost-{index}",
+        )
+    calls = []
+    original = company.store.fact_data_many
+
+    def counted(connection, identifiers):
+        calls.append(tuple(identifiers))
+        return original(connection, identifiers)
+
+    monkeypatch.setattr(company.store, "fact_data_many", counted)
+    monkeypatch.setattr(
+        company.store,
+        "fact",
+        lambda *_: (_ for _ in ()).throw(AssertionError("scalar fact load")),
+    )
+    result = Discovery(company).find_facts(kind="expense", limit=5)
+    assert len(result["items"]) == 5
+    assert len(calls) == 1 and len(calls[0]) == 5
+    seen, cursor = [], None
+    while True:
+        page = Discovery(company).find_facts(kind="expense", limit=2, cursor=cursor)
+        seen.extend(item["fact_id"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert len(seen) == len(set(seen)) == 5
+
+
+def test_discovery_index_rebuild_changes_only_a_damaged_projection(company):
+    vendor = Entities(company).register_entity(
+        "organization", {"display_name": "Vendor"}, source="test", request_id="vendor"
+    )["entity_id"]
+    proof = company.register_evidence(b"cost", "text/plain", "proof", request_id="proof")["digest"]
+    company.save_fact(
+        "expense",
+        "cost",
+        {
+            "period": "2026-01",
+            "counterparty_id": vendor,
+            "amount_fen": 100,
+            "expense_class": "administration",
+            "creditor_kind": "supplier",
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="cost",
+    )
+    with company.store.connection() as connection:
+        connection.execute("BEGIN")
+        assert rebuild_discovery_indexes(connection) is False
+        connection.execute("DELETE FROM discovery_fact_current")
+        assert rebuild_discovery_indexes(connection) is True
+        assert rebuild_discovery_indexes(connection) is False
+
+
+def test_find_facts_rejects_a_damaged_hit_without_scanning_unrelated_rows(company):
+    vendor = Entities(company).register_entity(
+        "organization", {"display_name": "Vendor"}, source="test", request_id="vendor"
+    )["entity_id"]
+    proof = company.register_evidence(b"cost", "text/plain", "proof", request_id="proof")["digest"]
+    company.save_fact(
+        "expense",
+        "cost",
+        {
+            "period": "2026-01",
+            "counterparty_id": vendor,
+            "amount_fen": 100,
+            "expense_class": "administration",
+            "creditor_kind": "supplier",
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="cost",
+    )
+    with company.store.connection() as connection:
+        connection.execute("UPDATE discovery_fact_current SET period=24240 WHERE subject_id='cost'")
+    with pytest.raises(KernelError) as error:
+        Discovery(company).find_facts(kind="expense")
+    assert error.value.code == "content_integrity_failed"
+    assert error.value.details["reason"] == "discovery_source_mismatch"
 
 
 def test_context_cannot_cross_company_binding(company, tmp_path):

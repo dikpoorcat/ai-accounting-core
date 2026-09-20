@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import pytest
+from entity_fixture import seed_fact_entities, seed_registration_entities
 
 from ai_accounting.kernel.backup import create_portable
 from ai_accounting.kernel.contracts import KernelError
@@ -90,13 +91,13 @@ def service(tmp_path):
 
 def records(engine):
     evidence = engine.register_evidence(b"confirmed batch", "text/plain", "batch", request_id="e")
-    return [
+    result = [
         {
             "kind": "expense",
             "subject_id": f"expense-{i}",
             "data": {
                 "period": "2026-01",
-                "amount_fen": 1200,
+                "amount_fen": 1200 + i,
                 "counterparty_id": "supplier",
                 "expense_class": "administration",
                 "creditor_kind": "supplier",
@@ -106,6 +107,9 @@ def records(engine):
         }
         for i in range(2)
     ]
+    for item in result:
+        seed_registration_entities(engine, item["kind"], item["data"])
+    return result
 
 
 def test_source_batch_rolls_back_late_failure_and_replays_once(service):
@@ -267,6 +271,7 @@ def test_explicit_recording_correction_retains_actual_fact_history_and_voucher_n
         "actual_date": "2026-01-10",
         "bank_account_id": "bank",
     }
+    seed_fact_entities(engine, engine.store.registry.models["funding"].model_validate(fact))
     original = engine.save_fact(
         "funding", "capital", fact, evidence=(proof,), expected_revision=0, request_id="original"
     )

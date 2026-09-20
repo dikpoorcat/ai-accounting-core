@@ -128,6 +128,9 @@ class Exports:
         )
 
         def operation(connection):
+            from .entities import require_entity
+
+            require_entity(connection, party_id, kinds=("person", "organization"))
             if not connection.execute(
                 "SELECT 1 FROM evidence WHERE digest=?", (evidence,)
             ).fetchone():

@@ -154,6 +154,8 @@ class MoneyFundRedemption(Fact):
         return tuple(Claim(cost_key(item.source_id), item.cost_fen) for item in self.costs or ())
 
     def reads(self):
+        from ..identity_corrections import opening_binding_reads
+
         return tuple(
             sorted(
                 {
@@ -161,6 +163,11 @@ class MoneyFundRedemption(Fact):
                     for item in self.costs or ()
                     for read in (
                         Read("calculation", item.source_kind, "@" + item.source_id),
+                        *(
+                            opening_binding_reads("opening-binding:" + item.source_id)
+                            if item.source_kind == "opening_money_fund"
+                            else ()
+                        ),
                         Read("fact", self.kind, cost_key(item.source_id)),
                     )
                 }
@@ -183,6 +190,23 @@ def calculate_redemption(version, ctx):
                 "costs.source_id", "需要已正式确认的申购或期初成本", sources=(item.source_id,)
             )
         source = rows[0]
+        if item.source_kind == "opening_money_fund":
+            from dataclasses import replace
+
+            from ..identity_corrections import opening_bindings
+
+            bindings = opening_bindings(ctx, item.source_kind, "opening-binding:" + item.source_id)
+            if len(bindings) > 1:
+                raise KernelError("opening_identity_conflict", "期初基金成本采用绑定不唯一")
+            if bindings:
+                adopted = bindings[0][1]
+                if adopted.values.get("superseded"):
+                    raise NeedsInformation(
+                        "costs.source_id",
+                        "原期初成本已被替代，须明确改指保留成本来源",
+                        sources=(adopted.values["replacement_source_subject_id"],),
+                    )
+                source = replace(source, values=adopted.values["basis_values"])
         if source.values["fund_id"] != fact.fund_id:
             raise KernelError("money_fund_identity", "赎回只能消耗同一具体基金产品的成本")
         if source.period > fact.period or (

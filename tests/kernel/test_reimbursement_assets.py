@@ -21,17 +21,23 @@ def book(tmp_path):
             tmp_path / "book.sqlite", production_bundle(), "co", "911100000000000001", "db"
         )
     )
-    proof = engine.register_evidence(
-        b"accepted expense and asset originals", "text/plain", "proof", request_id="proof"
-    )["digest"]
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
+        from entity_fixture import seed_registration_entities
+
+        seed_registration_entities(engine, kind, data)
+        source = engine.register_evidence(
+            ("Synthetic separate business source: " + subject).encode(),
+            "text/plain",
+            subject,
+            request_id=f"proof-{next(counter)}",
+        )["digest"]
         return engine.save_fact(
             kind,
             subject,
             data,
-            evidence=(proof,),
+            evidence=(source,),
             expected_revision=revision,
             request_id=f"save-{next(counter)}",
         )
@@ -51,6 +57,7 @@ def book(tmp_path):
 def asset(**changes):
     return {
         "period": "2026-02",
+        "asset_id": "computer",
         "asset_type": "fixed",
         "cost_fen": 120000,
         "company_acceptance_confirmed": True,
@@ -308,7 +315,7 @@ def test_batch_cards_do_not_duplicate_assets_creditors_or_actual_cash(book):
     engine, save, publish = book
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     evidence = fact_evidence(engine, "batch")
     activate_assets(
@@ -383,6 +390,7 @@ def test_opening_package_cannot_adopt_asset_already_in_accepted_batch(book):
         "opening_asset",
         "computer",
         {
+            "asset_id": "computer",
             "period": "2026-03",
             "package_id": "opening",
             "asset_type": "fixed",

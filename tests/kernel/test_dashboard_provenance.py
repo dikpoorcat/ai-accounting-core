@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from entity_fixture import save_entity_display_profile, seed_entities
 from test_engine import close, publish, save
 from test_engine import engine as engine  # noqa: F401
 from test_payroll_corrections import company as company  # noqa: F401
@@ -23,7 +24,8 @@ asset_book = _asset_book
 
 
 def profile(book, kind, entity_id, revision=0, **fields):
-    return Display(book).save_display_profile(
+    return save_entity_display_profile(
+        book,
         {"kind": kind, "entity_id": entity_id, "source": f"明确资料 {revision + 1}", **fields},
         expected_revision=revision,
         request_id=f"display:{kind}:{entity_id}:{revision}",
@@ -73,7 +75,7 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert sources["name"]["id"] == old["id"]
     assert sources["name"]["basis"] == "frozen"
     assert sources["employment_end_date"]["id"] == latest["id"]
-    assert sources["employment_end_date"]["revision"] == 2
+    assert sources["employment_end_date"]["revision"] == latest["revision"]
     assert sources["employment_end_date"]["source"] == "明确资料 2"
     assert sources["employment_end_date"]["evidence_digest"] == company.owner_confirmation
     assert sources["employment_end_date"]["basis"] == "current_supplement"
@@ -189,6 +191,7 @@ def test_false_and_empty_management_fields_keep_their_actual_selected_sources(en
 
 
 def test_payee_and_tax_identity_fallbacks_keep_exact_sources(company):
+    seed_entities(company.engine, [("payee-only", "person", None)])
     company.publish("january", "february")
     export = Exports(company.engine)
     payee = export.save_payee(
@@ -259,7 +262,7 @@ def test_asset_and_fund_account_fields_reach_the_actual_dashboard_outputs(asset_
     engine, save, publish = asset_book
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     save(
         "payment",
@@ -286,7 +289,10 @@ def test_asset_creditor_names_and_single_payee_fallback_keep_later_sources(compa
     company.publish("january", "february")
     company.save(ReimbursedAssetBatch.model_validate_json(json.dumps(accepted_batch())), "batch")
     company.save(ReimbursedAsset.model_validate_json(json.dumps(batch_card())), "computer")
-    company.save(ReimbursedAsset.model_validate_json(json.dumps(batch_card(30000))), "chair")
+    company.save(
+        ReimbursedAsset.model_validate_json(json.dumps(batch_card(30000, asset_id="chair"))),
+        "chair",
+    )
     company.publish("batch", "computer", "chair")
     alice = profile(company.engine, "employee", "alice", display_name="关账前甲")
     company.close("2026-01")

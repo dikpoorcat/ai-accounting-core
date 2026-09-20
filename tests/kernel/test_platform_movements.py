@@ -211,8 +211,26 @@ def test_duplicate_source_identity_is_rejected_with_current_empty_scope_tracking
     ],
 )
 def test_expense_group_rejects_missing_wrong_or_unsupported_sources(book, changes, code):
-    _, save, publish, *_ = book
+    engine, save, publish, _, _, proof = book
     group(book)
+    if "platform_account_id" in changes:
+        from entity_fixture import seed_registration_entities
+
+        from ai_accounting.kernel.identity_corrections import IdentityCorrections
+
+        data = cost(**changes)
+        seed_registration_entities(engine, "platform_expense_confirmation", data)
+        publish("out", "returned", "cost")
+        with pytest.raises(KernelError) as error:
+            IdentityCorrections(engine).preview_identity_correction(
+                changes=[
+                    dict(subject_id="cost", expected_revision=1, action="reassign", data=data)
+                ],
+                evidence=[proof],
+                reason="核对费用所属平台账户",
+            )
+        assert error.value.code == code
+        return
     save("platform_expense_confirmation", "cost", cost(**changes), revision=1)
     with pytest.raises(KernelError) as error:
         publish("out", "returned", "cost")

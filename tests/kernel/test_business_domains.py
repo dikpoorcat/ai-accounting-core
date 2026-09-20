@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal, localcontext
 
 import pytest
+from entity_fixture import seed_entities
 from pydantic import ValidationError
 from schema_fixture import test_bundle
 
@@ -241,6 +242,7 @@ def asset_sources(asset_type="fixed", cost=1001, life=3):
         assets.AssetAcquisition,
         "asset",
         period="2026-06",
+        asset_id="asset",
         asset_type=asset_type,
         supplier_id="supplier",
         acquisition_date="2026-06-10",
@@ -307,6 +309,7 @@ def test_accounting_domains_publish_to_generated_strict_tables(tmp_path):
         "instance",
     )
     engine = Engine(store)
+    seed_entities(engine, [("supplier", "person", None)])
     evidence = engine.register_evidence(
         b"test invoice", "text/plain", "invoice", request_id="evidence"
     )["digest"]
@@ -401,6 +404,7 @@ def test_project_cost_cannot_be_both_expensed_and_capitalized():
         assets.AssetAcquisition,
         "asset",
         period="2026-08",
+        asset_id="asset",
         acquisition_date="2026-08-01",
         cost_fen=400,
         asset_type="intangible",

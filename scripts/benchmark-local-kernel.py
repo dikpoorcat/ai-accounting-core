@@ -146,15 +146,18 @@ def seed_to(
     outcome_json, outcome_digest = canonical(outcome), digest(outcome)
 
     def calculation_id(fact_id):
-        return "c_" + digest(
-            {
-                "fact": fact_id,
-                "outcome": outcome,
-                "reads": [],
-                "versions": [],
-                "program": PROGRAM_VERSION,
-            }
-        ).hex()
+        return (
+            "c_"
+            + digest(
+                {
+                    "fact": fact_id,
+                    "outcome": outcome,
+                    "reads": [],
+                    "versions": [],
+                    "program": PROGRAM_VERSION,
+                }
+            ).hex()
+        )
 
     started = time.perf_counter()
     with engine.store.connection() as connection:
@@ -253,10 +256,18 @@ def seed_to(
                 from ai_accounting.kernel.publication import append
 
                 for row in rows:
-                    append(connection, row[1], row[3], {
-                        "previous_publication_id": None, "mode": "initial",
-                        "posting_period": row[6], "baseline_calculation_id": None,
-                    }, row[4])
+                    append(
+                        connection,
+                        row[1],
+                        row[3],
+                        {
+                            "previous_publication_id": None,
+                            "mode": "initial",
+                            "posting_period": row[6],
+                            "baseline_calculation_id": None,
+                        },
+                        row[4],
+                    )
                 connection.executemany(
                     "INSERT INTO calculation_seal VALUES(?)", [(r[3],) for r in rows]
                 )
@@ -281,6 +292,14 @@ def seed_to(
                 raise
             if progress and (finish % 10000 == 0 or finish == target):
                 progress(f"history {finish:,}/{target:,}, {time.perf_counter() - started:.1f}s")
+    # Bulk fixture construction must install every derived discovery index too;
+    # normal writes do this in Store.write_fact, which this benchmark bypasses.
+    from ai_accounting.kernel.discovery_indexes import rebuild_discovery_indexes
+
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        rebuild_discovery_indexes(connection)
+        connection.commit()
     engine.rebuild_projections(request_id=f"fixture-rebuild-{target}")
     periods_service = Periods(engine)
     for category in MATERIAL_CATEGORIES:
@@ -535,9 +554,7 @@ def measure_scale(
         directory = workspace / f"backup-{scale}"
         metrics["portable_backup"], archive = measure(
             engine,
-            lambda _: create_portable(
-                engine.store.path, directory, _bundle=engine.store.bundle
-            ),
+            lambda _: create_portable(engine.store.path, directory, _bundle=engine.store.bundle),
             repetitions=1,
         )
         metrics["restore_and_verify"], restored = measure(

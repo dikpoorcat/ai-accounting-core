@@ -3,6 +3,7 @@
 from typing import get_args
 
 import pytest
+from entity_fixture import save_entity_display_profile
 from test_labor_assets import book as _labor_book
 from test_labor_assets import chain, cost
 from test_opening_continuation import book as _opening_book
@@ -16,7 +17,6 @@ from test_reimbursement_assets import pay as asset_payment
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.adjustments import EmployeeAdvance
 from ai_accounting.kernel.domains.labor_assets import LaborProjectCost
 from ai_accounting.kernel.domains.opening import OpeningPayrollPayable
@@ -128,7 +128,8 @@ def test_explicit_employment_interval_precedes_current_inactive_status(
     company, start, end, expected_state, expected_member
 ):
     company.publish("january", "february")
-    Display(company.engine).save_display_profile(
+    save_entity_display_profile(
+        company.engine,
         {
             "kind": "employee",
             "entity_id": "employee",
@@ -153,7 +154,8 @@ def test_later_exit_record_preserves_explicit_employment_in_closed_month(company
     company.publish("january", "february")
     company.close("2026-01")
     before = company.engine.ledger("2026-01")
-    Display(company.engine).save_display_profile(
+    save_entity_display_profile(
+        company.engine,
         {
             "kind": "employee",
             "entity_id": "employee",
@@ -392,7 +394,7 @@ def test_batch_asset_uses_batch_settlement_and_month_precision(asset_book):
     engine, save, publish = asset_book
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     save(
         "payment",

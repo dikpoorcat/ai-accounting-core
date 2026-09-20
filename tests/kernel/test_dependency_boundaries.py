@@ -196,7 +196,9 @@ def test_batch_selection_cost_and_results_follow_matches_not_unrelated_history(
     assert {item.id for item in selected[reads[2]]} == {replacement}
     assert {item.id for item in selected[reads[3]]} == current
     assert {item.id for item in selected[reads[4]]} == current
-    assert len(statements) == 4
+    # One bounded query excludes explicitly superseded current subjects.
+    assert len(statements) == 5
+    assert sum("identity_correction_item" in sql for sql in statements) == 1
 
 
 def test_context_copies_inputs_and_traces_empty_reads_without_exposing_selections():

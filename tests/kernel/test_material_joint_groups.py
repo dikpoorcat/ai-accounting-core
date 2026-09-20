@@ -443,7 +443,10 @@ def test_356_row_social_style_pool_preserves_known_month_and_hidden_members(comp
         source_fact_id=source["fact_id"],
         members=[dict(location=f"Contributions!B{row}", amount_fen=100) for row in range(2, 358)],
         group_amount_fen=35600,
-        links=[company.expense("one", 17800), company.expense("two", 17800)],
+        links=[
+            company.expense("one", 17800, proof=company.evidence(b"distinct expense one")),
+            company.expense("two", 17800, proof=company.evidence(b"distinct expense two")),
+        ],
         joint_basis_confirmed=True,
         basis_evidence_digest=company.proof,
         basis_location="full known monthly population",
@@ -519,6 +522,16 @@ def test_unknown_member_cannot_weaken_another_members_known_month(
 def test_authenticated_public_command_validates_group_and_blocks_generic_fact_injection(service):
     app, company_id = service
     engine = app.engine(company_id)
+    party = app.dispatch(
+        "register_entity",
+        dict(
+            company_id=company_id,
+            kind="organization",
+            data={},
+            source="synthetic supplier",
+            request_id="supplier",
+        ),
+    )["entity_id"]
     proof = engine.register_evidence(
         b"Approved complete collective pool", "text/plain", "basis", request_id="proof"
     )["digest"]
@@ -550,7 +563,7 @@ def test_authenticated_public_command_validates_group_and_blocks_generic_fact_in
             subject_id="cost",
             data=dict(
                 period="2026-02",
-                counterparty_id="supplier",
+                counterparty_id=party,
                 amount_fen=3000,
                 expense_class="administration",
                 creditor_kind="supplier",

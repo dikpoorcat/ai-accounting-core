@@ -255,9 +255,10 @@ def main():
         assert Path(module.__file__).resolve().is_relative_to(package)
         assert "kernel/" + name + ".py" in manifest["application_modules"]
     contracts = package / "app/ai_accounting/kernel/schema_contracts"
-    assert sorted(
-        path.relative_to(contracts).as_posix() for path in contracts.rglob("*.json")
-    ) == ["catalog/draft.json", "company/draft.json"]
+    assert sorted(path.relative_to(contracts).as_posix() for path in contracts.rglob("*.json")) == [
+        "catalog/draft.json",
+        "company/draft.json",
+    ]
     assert not (package / "app/ai_accounting/kernel/migrations").exists()
     assert sqlite3.sqlite_version == manifest["runtime"]["sqlite"] == "3.53.1"
     assert sys.version.split()[0] == manifest["runtime"]["python"] == "3.12.13"
@@ -306,9 +307,7 @@ def main():
             diagnostic = {"command": command, "returncode": result.returncode}
             if isinstance(response, dict):
                 diagnostic["response"] = {
-                    key: response[key]
-                    for key in ("status", "code", "message")
-                    if key in response
+                    key: response[key] for key in ("status", "code", "message") if key in response
                 }
             else:
                 stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
@@ -412,6 +411,26 @@ def main():
         "create_company", {"taxpayer_id": "91310000123456789A", "name": "运行包合成验证企业"}
     )
     company_id = company["id"]
+    supplier = call(
+        "register_entity",
+        {
+            "company_id": company_id,
+            "kind": "organization",
+            "data": {"display_name": "合成供应商原身份"},
+            "source": "运行包合成资料",
+            "request_id": "package-supplier",
+        },
+    )["entity_id"]
+    corrected_supplier = call(
+        "register_entity",
+        {
+            "company_id": company_id,
+            "kind": "organization",
+            "data": {"display_name": "合成供应商正确身份"},
+            "source": "运行包合成纠错依据",
+            "request_id": "package-correct-supplier",
+        },
+    )["entity_id"]
     proof = call(
         "evidence",
         {
@@ -433,7 +452,7 @@ def main():
             "data": {
                 "period": "2026-09",
                 "amount_fen": 123456,
-                "counterparty_id": "synthetic-supplier",
+                "counterparty_id": supplier,
                 "expense_class": "administration",
                 "creditor_kind": "supplier",
             },
@@ -452,6 +471,43 @@ def main():
     }
     published = call("confirm", confirmation)
     assert call("confirm", confirmation) == published
+    correction = {
+        "company_id": company_id,
+        "changes": [
+            {
+                "subject_id": "synthetic-expense",
+                "expected_revision": 1,
+                "action": "reassign",
+                "data": {
+                    "period": "2026-09",
+                    "amount_fen": 123456,
+                    "counterparty_id": corrected_supplier,
+                    "expense_class": "administration",
+                    "creditor_kind": "supplier",
+                },
+            }
+        ],
+        "evidence": [proof["digest"]],
+        "reason": "合成资料确认同一业务引用了错误对象",
+        "entity_resolution": {"source_entity_id": supplier, "target_entity_id": corrected_supplier},
+    }
+    correction_preview = call("preview_identity_correction", correction)
+    correction_result = call(
+        "confirm_identity_correction",
+        {
+            **correction,
+            "preview_digest": correction_preview["digest"],
+            "epochs": correction_preview["epochs"],
+            "request_id": "package-identity-correction",
+        },
+    )
+    assert correction_result["status"] == "corrected"
+    discovered = call(
+        "find_facts",
+        {"company_id": company_id, "entity_id": corrected_supplier, "kind": "expense", "limit": 1},
+    )
+    assert discovered["schema_version"] == 2
+    assert discovered["items"][0]["revision"] == 2
     overview_request = {"company_id": company_id, "period": "2026-09"}
     overview = call("overview", overview_request)
     assert sum(row["debit"] for row in overview["accounts"]) == 123456
@@ -513,6 +569,16 @@ def main():
         },
     )["digest"]
     close_subject = "closed-expense"
+    close_supplier = call(
+        "register_entity",
+        {
+            "company_id": close_company_id,
+            "kind": "organization",
+            "data": {"display_name": "合成关账供应商"},
+            "source": "合成关账原件",
+            "request_id": "package-close-supplier",
+        },
+    )["entity_id"]
     close_fact = {
         "company_id": close_company_id,
         "kind": "expense",
@@ -520,7 +586,7 @@ def main():
         "data": {
             "period": close_period,
             "amount_fen": 1000,
-            "counterparty_id": "closed-supplier",
+            "counterparty_id": close_supplier,
             "expense_class": "administration",
             "creditor_kind": "supplier",
         },
@@ -635,9 +701,7 @@ def main():
         },
     )
     assert closed["status"] == "closed" and closed["backup_job"]
-    frozen_close = call(
-        "closed_report", {"company_id": close_company_id, "period": close_period}
-    )
+    frozen_close = call("closed_report", {"company_id": close_company_id, "period": close_period})
     close_backup = wait_for_backup(
         close_company_id, {"status": "pending", "job_id": closed["backup_job"]}
     )
@@ -714,8 +778,7 @@ def main():
         row["account"]: row["debit"] - row["credit"] for row in frozen_overview["accounts"]
     }
     correction_net = {
-        row["account"]: row["debit"] - row["credit"]
-        for row in correction_overview["accounts"]
+        row["account"]: row["debit"] - row["credit"] for row in correction_overview["accounts"]
     }
     assert frozen_net == {"2202": -1000, "5602": 1000}
     assert correction_net == {"2202": -500, "5602": 500}
@@ -761,18 +824,20 @@ def main():
     assert restored_frozen_overview == frozen_overview
     assert restored_correction_overview == correction_overview
     assert {
-        row["account"]: row["debit"] - row["credit"]
-        for row in restored_frozen_overview["accounts"]
+        row["account"]: row["debit"] - row["credit"] for row in restored_frozen_overview["accounts"]
     } == frozen_net
     assert {
         row["account"]: row["debit"] - row["credit"]
         for row in restored_correction_overview["accounts"]
     } == correction_net
-    assert call(
-        "verify_integrity",
-        {"company_id": close_company_id},
-        root=corrected_restored_root,
-    )["status"] == "verified"
+    assert (
+        call(
+            "verify_integrity",
+            {"company_id": close_company_id},
+            root=corrected_restored_root,
+        )["status"]
+        == "verified"
+    )
 
     for launcher in (
         [str(package / "finance-local.cmd")],
@@ -795,7 +860,8 @@ def main():
             encoding="utf-8",
         )
         assert {item["id"] for item in json.loads(result.stdout)} == {
-            company_id, close_company_id,
+            company_id,
+            close_company_id,
         }
 
     default_environment = {
@@ -956,7 +1022,9 @@ def main():
             wire_dashboard = json.loads(response.read())
             assert response.status == 200, (action, wire_dashboard)
             assert wire_dashboard["schema_version"] == (
-                2 if action in {"context", "quarterly-report", "business-status"} else 3
+                2
+                if action in {"context", "quarterly-report"}
+                else (3 if action == "business-status" else 4)
             )
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id
@@ -997,6 +1065,8 @@ def main():
                 "verified_files": len(manifest["files"]),
                 "cli_calls": calls,
                 "fact_kinds": len(schema["facts"]),
+                "entity_registration_and_atomic_identity_correction": True,
+                "corrected_entity_fact_discovery_v2": True,
                 "published_vouchers": len(published["results"]),
                 "debit_fen": 123456,
                 "credit_fen": 123456,

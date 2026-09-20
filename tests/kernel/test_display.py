@@ -3,13 +3,15 @@
 import sqlite3
 
 import pytest
+from entity_fixture import seed_registration_entities
 from pydantic import TypeAdapter, ValidationError
 from test_close_range import arguments, ready
 from test_opening_continuation import book as book  # noqa: F401
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
-from ai_accounting.kernel.display import Display, DisplayProfile
+from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.entities import Entities, EntityProfile
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
@@ -17,12 +19,26 @@ from ai_accounting.kernel.storage import Store
 
 def profile(**changes):
     return {
-        "kind": "employee",
-        "entity_id": "person-1",
         "display_name": "明确提供姓名",
-        "source": "负责人明确提供的展示资料",
+        "employment_status": "active",
         **changes,
     }
+
+
+def register_employee(engine, *, data=None, proof=None, request_id="profile"):
+    saved = Entities(engine).register_entity(
+        "person",
+        profile(**(data or {})),
+        source="负责人明确提供的展示资料",
+        evidence_digest=proof,
+        request_id=request_id,
+    )
+    item = next(
+        item
+        for item in Entities(engine).find_entities(kind="person")["items"]
+        if item["entity_id"] == saved["entity_id"]
+    )
+    return saved, item["profile"]
 
 
 def database_state(engine):
@@ -37,6 +53,8 @@ def database_state(engine):
                     "voucher_version",
                     "period_close",
                     "display_profile_revision",
+                    "entity",
+                    "entity_profile_revision",
                     "period_commentary_revision",
                     "period_commentary_basis",
                     "audit",
@@ -51,20 +69,30 @@ def test_profiles_keep_explicit_precision_and_only_advance_management(book, star
     engine, _, _, _, proof = book
     display = Display(engine)
     before = database_state(engine)
-    data = profile(evidence_digest=proof)
+    data = {}
     if start is not None:
         data["employment_start"] = start
-    saved = display.save_display_profile(data, expected_revision=0, request_id="profile")
-    assert saved["employment_start"] == start and saved["employment_status"] == "unknown"
-    assert saved["employment_end"] is None and saved["evidence_digest"] == proof
-    assert display.save_display_profile(data, expected_revision=0, request_id="profile") == saved
+    saved, current = register_employee(engine, data=data, proof=proof)
+    assert current["employment_start"] == start and current["employment_status"] == "active"
+    assert current["employment_end"] is None and current["evidence_digest"] == proof
+    assert (
+        Entities(engine).register_entity(
+            "person",
+            profile(**data),
+            source="负责人明确提供的展示资料",
+            evidence_digest=proof,
+            request_id="profile",
+        )
+        == saved
+    )
     after = database_state(engine)
     assert after["epochs"] == {**before["epochs"], "management": before["epochs"]["management"] + 1}
     for key in ("fact_revision", "calculation", "voucher_version", "period_close"):
         assert after[key] == before[key]
-    assert display.display_profiles()["profiles"]["employee"]["person-1"] == {
-        key: value for key, value in saved.items() if key != "status"
-    }
+    displayed = display.display_profiles()["profiles"]["employee"][saved["entity_id"]]
+    assert displayed["id"] == saved["profile_id"]
+    assert displayed["display_name"] == "明确提供姓名"
+    assert displayed["employment_start"] == start
 
 
 @pytest.mark.parametrize(
@@ -81,28 +109,47 @@ def test_profiles_keep_explicit_precision_and_only_advance_management(book, star
 def test_typed_profiles_reject_accounting_fields_and_invalid_dates_atomically(book, changes):
     engine, *_ = book
     before = database_state(engine)
-    with pytest.raises(ValidationError):
-        Display(engine).save_display_profile(
-            profile(**changes), expected_revision=0, request_id="bad"
+    with pytest.raises((ValidationError, ValueError)):
+        Entities(engine).register_entity(
+            "person",
+            profile(**{key: value for key, value in changes.items() if key != "source"}),
+            source=changes.get("source", "负责人明确提供的展示资料"),
+            request_id="bad",
         )
     assert database_state(engine) == before
 
 
 def test_profiles_reject_conflicts_missing_sources_and_faults_atomically(book):
     engine, *_ = book
-    display = Display(engine)
-    saved = display.save_display_profile(profile(), expected_revision=0, request_id="save")
+    entities = Entities(engine)
+    saved, _ = register_employee(engine, request_id="save")
     before = database_state(engine)
-    for data, revision, request, code in (
-        (profile(display_name="另一姓名"), 0, "save", "idempotency_conflict"),
-        (profile(), 0, "another", "display_profile_conflict"),
-    ):
-        with pytest.raises(KernelError) as conflict:
-            display.save_display_profile(data, expected_revision=revision, request_id=request)
-        assert conflict.value.code == code and database_state(engine) == before
+    with pytest.raises(KernelError) as conflict:
+        entities.register_entity(
+            "person",
+            profile(display_name="另一姓名"),
+            source="负责人明确提供的展示资料",
+            request_id="save",
+        )
+    assert conflict.value.code == "idempotency_conflict" and database_state(engine) == before
+    with pytest.raises(KernelError) as conflict:
+        entities.update_entity_profile(
+            saved["entity_id"],
+            profile(),
+            source="负责人明确提供的展示资料",
+            expected_revision=0,
+            request_id="another",
+        )
+    assert conflict.value.code == "entity_profile_version_conflict"
+    assert database_state(engine) == before
     with pytest.raises(NeedsInformation):
-        display.save_display_profile(
-            profile(evidence_digest="00" * 32), expected_revision=1, request_id="absent-proof"
+        entities.update_entity_profile(
+            saved["entity_id"],
+            profile(),
+            source="负责人明确提供的展示资料",
+            evidence_digest="00" * 32,
+            expected_revision=1,
+            request_id="absent-proof",
         )
     assert database_state(engine) == before
 
@@ -112,15 +159,21 @@ def test_profiles_reject_conflicts_missing_sources_and_faults_atomically(book):
 
     engine.fault = fail
     with pytest.raises(RuntimeError):
-        display.save_display_profile(profile(note="修订"), expected_revision=1, request_id="fault")
+        entities.update_entity_profile(
+            saved["entity_id"],
+            profile(note="修订"),
+            source="负责人明确提供的展示资料",
+            expected_revision=1,
+            request_id="fault",
+        )
     assert database_state(engine) == before
     with engine.store.connection() as connection:
         for sql in (
-            "UPDATE display_profile_revision SET note='overwrite' WHERE id=?",
-            "DELETE FROM display_profile_revision WHERE id=?",
+            "UPDATE entity_profile_revision SET source='overwrite' WHERE id=?",
+            "DELETE FROM entity_profile_revision WHERE id=?",
         ):
             with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-                connection.execute(sql, (saved["id"],))
+                connection.execute(sql, (saved["profile_id"],))
 
 
 def save_commentary(display, period="2026-01", text="确认本期经营情况", request_id="commentary"):
@@ -139,7 +192,7 @@ def test_commentary_context_conflicts_and_repeat_are_atomic(book):
     engine, *_ = book
     display = Display(engine)
     preview = display.preview_period_commentary("2026-01")
-    display.save_display_profile(profile(), expected_revision=0, request_id="profile")
+    register_employee(engine)
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
         display.update_period_commentary(
@@ -184,7 +237,7 @@ def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
     engine, _, _, _, proof = book
     ready(engine, proof)
     display, periods = Display(engine), Periods(engine)
-    person = display.save_display_profile(profile(), expected_revision=0, request_id="person")
+    person, _ = register_employee(engine, request_id="person")
     commentary = save_commentary(display)
     if batch:
         preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
@@ -199,17 +252,27 @@ def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
             request_id="close",
         )
     frozen = periods.closed_report("2026-01")
-    assert frozen["management_snapshot"]["profiles"][0]["id"] == person["id"]
+    assert frozen["management_snapshot"]["entity_profiles"][0]["id"] == person["profile_id"]
     assert frozen["management_snapshot"]["commentary"]["id"] == commentary["id"]
-    display.save_display_profile(
-        profile(display_name="后补姓名"), expected_revision=1, request_id="update"
+    Entities(engine).update_entity_profile(
+        person["entity_id"],
+        profile(display_name="后补姓名"),
+        source="负责人明确提供的展示资料",
+        expected_revision=1,
+        request_id="update",
     )
     supplement = save_commentary(display, text="后补说明", request_id="supplement")
     assert supplement["supplementary"] is True
     assert periods.closed_report("2026-01") == frozen
     with engine.store.connection(read_only=True) as connection:
-        assert Display.profiles(connection, "2026-01")["employee"]["person-1"]["id"] == person["id"]
-        assert Display.profiles(connection)["employee"]["person-1"]["display_name"] == "后补姓名"
+        assert (
+            Display.profiles(connection, "2026-01")["employee"][person["entity_id"]]["id"]
+            == person["profile_id"]
+        )
+        assert (
+            Display.profiles(connection)["employee"][person["entity_id"]]["display_name"]
+            == "后补姓名"
+        )
         result = Display.commentary(connection, "2026-01")
         assert result["frozen"]["id"] == commentary["id"]
         assert result["current"] == result["frozen"]
@@ -220,12 +283,12 @@ def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
 def test_metadata_change_expires_close_preview_without_accounting_mutation(book, batch):
     engine, _, _, _, proof = book
     ready(engine, proof)
-    display, periods = Display(engine), Periods(engine)
+    periods = Periods(engine)
     if batch:
         preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
     else:
         preview = periods.preview_close("2026-01", owner_confirmation=proof)
-    display.save_display_profile(profile(), expected_revision=0, request_id="person")
+    register_employee(engine, request_id="person")
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
         if batch:
@@ -242,8 +305,8 @@ def test_metadata_change_expires_close_preview_without_accounting_mutation(book,
 
 
 def test_employment_dates_describe_management_precision_in_typed_schema():
-    schema = TypeAdapter(DisplayProfile).json_schema()
-    start = schema["$defs"]["EmployeeProfile"]["properties"]["employment_start"]
+    schema = TypeAdapter(EntityProfile).json_schema()
+    start = schema["properties"]["employment_start"]
     assert start["anyOf"][0]["x-accounting-fact"]["role"] == "management"
     assert start["anyOf"][0]["x-accounting-fact"]["allowed_precision"] == ["month", "day"]
 
@@ -267,14 +330,59 @@ def test_employment_dates_describe_management_precision_in_typed_schema():
     ],
 )
 def test_finite_profile_fields_preserve_original_display_capabilities(book, data):
-    engine, *_ = book
-    payload = {"entity_id": "item", "source": "明确管理资料", **data}
-    result = Display(engine).save_display_profile(
-        payload, expected_revision=0, request_id="profile"
-    )
-    for key, value in data.items():
-        assert result[key] == value
-    assert database_state(engine)["epochs"]["accounting"] == 0
+    engine, save, _, _, _ = book
+    kind = data["kind"]
+    if kind != "business":
+        accounting_epoch = database_state(engine)["epochs"]["accounting"]
+        saved = Entities(engine).register_entity(
+            kind,
+            {key: value for key, value in data.items() if key != "kind"},
+            account_type="bank" if kind == "fund_account" else None,
+            source="明确管理资料",
+            request_id="profile",
+        )
+        result = next(
+            item["profile"]
+            for item in Entities(engine).find_entities(kind=kind)["items"]
+            if item["entity_id"] == saved["entity_id"]
+        )
+        for key, value in data.items():
+            if key != "kind":
+                assert result[key] == value
+    else:
+        references = {
+            key: Entities(engine).register_entity(
+                "organization" if key == "counterparty_id" else "person",
+                {},
+                source="明确管理资料",
+                request_id="profile-" + key,
+            )["entity_id"]
+            for key in ("counterparty_id", "beneficiary_id", "handler_id")
+        }
+        save(
+            "expense",
+            "item",
+            {
+                "period": "2026-01",
+                "counterparty_id": references["counterparty_id"],
+                "amount_fen": 1,
+                "expense_class": "administration",
+                "creditor_kind": "supplier",
+            },
+        )
+        accounting_epoch = database_state(engine)["epochs"]["accounting"]
+        result = Display(engine).save_display_profile(
+            {
+                "kind": "business",
+                "entity_id": "item",
+                "source": "明确管理资料",
+                **references,
+            },
+            expected_revision=0,
+            request_id="profile",
+        )
+        assert all(result[key] == value for key, value in references.items())
+    assert database_state(engine)["epochs"]["accounting"] == accounting_epoch
 
 
 def test_stale_commentary_is_history_and_does_not_block_close(book):
@@ -282,7 +390,7 @@ def test_stale_commentary_is_history_and_does_not_block_close(book):
     ready(engine, proof, last="2026-01")
     display, periods = Display(engine), Periods(engine)
     saved = save_commentary(display)
-    display.save_display_profile(profile(), expected_revision=0, request_id="profile")
+    register_employee(engine)
     current = display.preview_period_commentary("2026-01")
     assert current["status"] == "stale" and current["current"] is None
     assert current["latest"]["id"] == saved["id"]
@@ -382,6 +490,7 @@ def test_close_preserves_independent_management_fact_versions_without_future_fac
         "declared_tax_fen": 123,
         "declaration_confirmed": True,
     }
+    seed_registration_entities(engine, "payroll_tax_declaration_actual", declaration)
     current = save("payroll_tax_declaration_actual", "january-declaration", declaration)
     future = save(
         "payroll_tax_declaration_actual",
@@ -424,18 +533,16 @@ def test_independent_management_fact_changes_expire_commentary_basis(book):
     display = Display(engine)
     saved = save_commentary(display)
     before = database_state(engine)["epochs"]
-    declaration = save(
-        "payroll_tax_declaration_actual",
-        "january-declaration",
-        {
-            "period": "2026-01",
-            "employee_id": "employee",
-            "tax_period": "2026-01",
-            "income_category": "wages",
-            "declared_tax_fen": 123,
-            "declaration_confirmed": True,
-        },
-    )
+    data = {
+        "period": "2026-01",
+        "employee_id": "employee",
+        "tax_period": "2026-01",
+        "income_category": "wages",
+        "declared_tax_fen": 123,
+        "declaration_confirmed": True,
+    }
+    seed_registration_entities(engine, "payroll_tax_declaration_actual", data)
+    declaration = save("payroll_tax_declaration_actual", "january-declaration", data)
     current = display.preview_period_commentary("2026-01")
     assert current["status"] == "stale" and current["latest"]["id"] == saved["id"]
     assert current["basis"]["typed_facts"][0]["id"] == declaration["fact_id"]

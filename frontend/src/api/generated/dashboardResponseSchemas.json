@@ -1152,6 +1152,73 @@
         "title": "DirectAdoptionProof",
         "type": "object"
       },
+      "DuplicateSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "same_exact_material_location",
+              "same_complete_signature_and_evidence",
+              "same_complete_actual_money",
+              "same_complete_signature",
+              "shared_evidence",
+              "same_material_location_different_signature"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "source_locations": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSourceLocation"
+            },
+            "title": "Source Locations",
+            "type": "array"
+          },
+          "distinct_locations_proven": {
+            "title": "Distinct Locations Proven",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "matched_fields"
+        ],
+        "title": "DuplicateSignal",
+        "type": "object"
+      },
+      "DuplicateSourceLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateSourceLocation",
+        "type": "object"
+      },
       "ExactClosure": {
         "additionalProperties": false,
         "properties": {
@@ -1309,6 +1376,19 @@
             "type": "string",
             "x-fen-int64": true
           },
+          "attribution_adjustment_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution Adjustment Fen"
+          },
           "closing_fen": {
             "anyOf": [
               {
@@ -1393,6 +1473,7 @@
           "inflow_fen",
           "outflow_fen",
           "net_change_fen",
+          "attribution_adjustment_fen",
           "closing_fen",
           "movement_count",
           "last_activity_date",
@@ -2756,6 +2837,26 @@
             ],
             "title": "Expected Direction",
             "type": "string"
+          },
+          "candidate_subject_id": {
+            "title": "Candidate Subject Id",
+            "type": "string"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
+          "review_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Review Period",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSignal"
+            },
+            "title": "Signals",
+            "type": "array"
           }
         },
         "required": [
@@ -3202,7 +3303,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 3,
+        "const": 4,
         "title": "Schema Version",
         "type": "integer"
       },

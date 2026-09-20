@@ -8,6 +8,8 @@ from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as _opening_book
 
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.entities import Entities
+from ai_accounting.kernel.identity_corrections import IdentityCorrections
 from ai_accounting.kernel.integrity import _check_closes, _check_sources
 from ai_accounting.kernel.types import canonical, digest
 
@@ -121,13 +123,37 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
                 "package_id": "opening",
                 **data,
                 "balance_fen": amount,
-                **({"cash_account_id": "new-cash"} if kind == "opening_cash" else {}),
             },
             evidence=(proof,),
             expected_revision=1,
             recording_error_confirmed=True,
             request_id="correct-" + subject,
         )
+    account = Entities(engine).register_entity(
+        "fund_account", {}, account_type="cash", source="synthetic correction", request_id="account"
+    )["entity_id"]
+    correction = IdentityCorrections(engine)
+    kwargs = dict(
+        changes=[
+            dict(
+                subject_id="cash",
+                expected_revision=2,
+                action="reassign",
+                data=dict(
+                    period="2026-01",
+                    package_id="opening",
+                    cash_account_id=account,
+                    balance_fen=amount,
+                ),
+            )
+        ],
+        evidence=[proof],
+        reason="confirmed account attribution",
+    )
+    preview = correction.preview_identity_correction(**kwargs)
+    correction.confirm_identity_correction(
+        **kwargs, preview_digest=preview["digest"], epochs=preview["epochs"], request_id="reassign"
+    )
     publish("opening", "cash", "equity")
     _close_without_current_business(engine, "2026-01", proof)
     assert verify(engine)["status"] == "verified"

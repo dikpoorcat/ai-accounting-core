@@ -29,7 +29,10 @@ def prepare_batch_assets(company):
     computer = company.save(
         ReimbursedAsset.model_validate_json(json.dumps(batch_card())), "computer"
     )
-    company.save(ReimbursedAsset.model_validate_json(json.dumps(batch_card(30000))), "chair")
+    company.save(
+        ReimbursedAsset.model_validate_json(json.dumps(batch_card(30000, asset_id="chair"))),
+        "chair",
+    )
     company.publish("batch", "computer", "chair")
     with company.engine.store.connection(read_only=True) as connection:
         evidence = company.engine.store.fact(connection, computer["fact_id"]).evidence
@@ -58,7 +61,7 @@ def prepare_batch_assets(company):
 def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counting(book):
     engine, save, publish = book
     proof = save("reimbursed_asset", "computer", asset())["fact_id"]
-    save("reimbursed_asset", "printer", asset())
+    save("reimbursed_asset", "printer", asset(asset_id="printer"))
     publish("computer", "printer")
     with engine.store.connection(read_only=True) as connection:
         evidence = engine.store.fact(connection, proof).evidence

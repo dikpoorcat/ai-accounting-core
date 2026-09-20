@@ -3,6 +3,7 @@
 from typing import ClassVar
 
 import pytest
+from entity_fixture import seed_fact_entities
 from schema_fixture import test_bundle
 from test_materials import Company, codes
 
@@ -35,6 +36,7 @@ def company_with_evaluator(tmp_path, evaluator):
 
 
 def publish(company, fact):
+    seed_fact_entities(company.engine, fact)
     saved = company.engine.save_fact(
         fact.kind,
         "business",
@@ -70,7 +72,7 @@ def publish(company, fact):
                 bank_account_id="bank",
                 amount_fen=1000,
                 income_kind="bank_interest",
-                counterparty_id="bank",
+                counterparty_id="interest-bank",
                 entitlement_confirmed=True,
             ),
             "result.amount_fen",

@@ -227,9 +227,7 @@ def test_close_directly_adopts_latest_no_entry_result(state_review_engine):
     assert [item["calculation_id"] for item in accounting["state_results"]] == [
         second["results"][0]["calculation_id"]
     ]
-    assert result["frozen_adoption"]["calculation_id"] == second["results"][0][
-        "calculation_id"
-    ]
+    assert result["frozen_adoption"]["calculation_id"] == second["results"][0]["calculation_id"]
     assert result["frozen_adoption"]["selection_proof"]["basis"] == "direct_adoption"
     assert result["settlements"]["status"] == "established"
     assert result["settlements"]["obligations"][0]["source_amount_fen"] == 100
@@ -290,9 +288,7 @@ def test_closed_single_no_entry_dependency_cannot_prove_adoption(
                 "SELECT manifest FROM period_close WHERE period=?", (YearMonth("2026-01").ordinal,)
             ).fetchone()[0]
         )
-        directly_adopted = {
-            item["calculation_id"] for item in manifest["adopted_results"]
-        }
+        directly_adopted = {item["calculation_id"] for item in manifest["adopted_results"]}
         assert directly_adopted == (
             {reference_id} if move_before_close else {first_id, reference_id}
         )
@@ -343,9 +339,9 @@ def test_closed_independent_no_entry_root_remains_established(state_review_engin
     state = through["state_results"][0]
     assert state["calculation_id"] == calculation_id
     assert state["selection_proof"]["basis"] == "direct_adoption"
-    assert state["opening"] == result["current_business_result"]["calculation"]["outcome"][
-        "opening"
-    ]
+    assert (
+        state["opening"] == result["current_business_result"]["calculation"]["outcome"]["opening"]
+    )
     assert result["frozen_adoption"]["calculation_id"] == calculation_id
     assert len(result["settlements"]["obligations"]) == 1
     assert result["settlements"]["obligations"][0]["source_amount_fen"] == 100
@@ -418,17 +414,13 @@ def test_period_cutoff_keeps_frozen_original_and_later_correction_events(engine)
         original["results"][0]["calculation_id"]
     ]
     march_events = [
-        item
-        for item in march["as_posted"]["voucher_events"]
-        if item["posting_period"] == "2026-03"
+        item for item in march["as_posted"]["voucher_events"] if item["posting_period"] == "2026-03"
     ]
     assert [item["role"] for item in march_events] == [
         "reversal",
         "replacement",
     ]
-    through_roles = [
-        item["role"] for item in march["as_posted"]["voucher_events"]
-    ]
+    through_roles = [item["role"] for item in march["as_posted"]["voucher_events"]]
     assert through_roles == [
         "original",
         "reversal",
@@ -487,9 +479,7 @@ def test_closed_correction_to_no_entry_has_original_reversal_and_new_state(
         if item["posting_period"] == "2026-03"
     )
     state = next(
-        item
-        for item in result["as_posted"]["state_results"]
-        if item["posting_period"] == "2026-03"
+        item for item in result["as_posted"]["state_results"] if item["posting_period"] == "2026-03"
     )
 
     assert reversal["role"] == "reversal"
@@ -620,8 +610,11 @@ def test_close_contract_rejects_adoptions_copied_to_another_period(engine):
         duplicate = {**january, "period": "2026-02"}
         connection.execute(
             "INSERT INTO period_close(period,manifest,digest) VALUES(?,?,?)",
-            (YearMonth("2026-02").ordinal, json.dumps(duplicate),
-             hashlib.sha256(json.dumps(duplicate).encode()).digest()),
+            (
+                YearMonth("2026-02").ordinal,
+                json.dumps(duplicate),
+                hashlib.sha256(json.dumps(duplicate).encode()).digest(),
+            ),
         )
         with pytest.raises(KernelError) as failure:
             sync_close(connection, YearMonth("2026-02").ordinal)
@@ -911,26 +904,22 @@ def test_period_readiness_external_followups_exclude_other_months(domain_book):
     full = queries.period_readiness("2026-01", as_of="2026-03-25")
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        summary = queries._period_readiness(
-            connection, "2026-01", as_of="2026-03-25", summary=True
-        )
+        summary = queries._period_readiness(connection, "2026-01", as_of="2026-03-25", summary=True)
 
     for external in (
         full["current_followups"]["external"],
         summary["current_followups"]["external"],
     ):
         assert external["scope_period"] == "2026-01"
-        assert external["scope_semantics"] == (
-            "obligation_interval_includes_selected_period"
-        )
+        assert external["scope_semantics"] == ("obligation_interval_includes_selected_period")
     assert full["current_followups"]["external"]["obligations"] == []
     assert summary["current_followups"]["external"]["obligation_count"] == 0
     assert summary["current_followups"]["external"]["completion_status_counts"] == {}
 
     february = queries.period_readiness("2026-02", as_of="2026-03-25")
-    assert [
-        item["id"] for item in february["current_followups"]["external"]["obligations"]
-    ] == ["february-obligation"]
+    assert [item["id"] for item in february["current_followups"]["external"]["obligations"]] == [
+        "february-obligation"
+    ]
 
 
 def test_period_readiness_rejects_incomplete_close_contract(engine):
@@ -938,8 +927,11 @@ def test_period_readiness_rejects_incomplete_close_contract(engine):
         connection.execute("BEGIN")
         connection.execute(
             "INSERT INTO period_close(period,manifest,digest) VALUES(?,?,?)",
-            (YearMonth("2026-01").ordinal, json.dumps({"period": "2026-01"}),
-             hashlib.sha256(json.dumps({"period": "2026-01"}).encode()).digest()),
+            (
+                YearMonth("2026-01").ordinal,
+                json.dumps({"period": "2026-01"}),
+                hashlib.sha256(json.dumps({"period": "2026-01"}).encode()).digest(),
+            ),
         )
         with pytest.raises(KernelError) as failure:
             sync_close(connection, YearMonth("2026-01").ordinal)
@@ -1054,6 +1046,16 @@ def test_service_routes_read_only_business_status_with_company_isolation(tmp_pat
         {"taxpayer_id": "91310000123456789B", "name": "乙公司"},
     )["id"]
     item = records(service.engine(first))[0]
+    item["data"]["counterparty_id"] = dispatch(
+        "register_entity",
+        {
+            "company_id": first,
+            "kind": "organization",
+            "data": {},
+            "source": "synthetic supplier",
+            "request_id": "supplier",
+        },
+    )["entity_id"]
     dispatch("save_fact", {**item, "company_id": first, "request_id": "save"})
     with service.engine(first).store.connection(read_only=True) as connection:
         audit_before = connection.execute("SELECT count(*) FROM audit").fetchone()[0]

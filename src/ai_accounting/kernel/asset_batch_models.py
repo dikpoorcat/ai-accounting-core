@@ -14,6 +14,7 @@ LIFECYCLE_KINDS = (
     "asset",
     "reimbursed_asset",
     "opening_asset",
+    "opening_identity_binding",
     "asset_activation",
     "asset_disposal",
 )

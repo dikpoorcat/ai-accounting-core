@@ -43,10 +43,7 @@ def company_call(dispatch, company_id):
 
 def replay_sources(call, prefix):
     """The private stable references are resolved before sending typed requests."""
-    references = {
-        key: f"{prefix}-{key}"
-        for key in ("owner", "supplier", "cash", "funding", "expense", "payment")
-    }
+    references = {key: f"{prefix}-{key}" for key in ("funding", "expense", "payment")}
     evidence = call(
         "evidence",
         content_base64=base64.b64encode(SOURCE_TEXT.encode("utf-8")).decode("ascii"),
@@ -54,27 +51,21 @@ def replay_sources(call, prefix):
         media_type="text/plain",
         request_id="source:original:v1",
     )["digest"]
-    for key, kind, name in (
-        ("owner", "counterparty", "甲出资人"),
-        ("supplier", "counterparty", "合成办公用品商店"),
-        ("cash", "fund_account", "办公室现金"),
-        ("expense", "business", "一月办公支出"),
+    for key, kind, name, account_type in (
+        ("owner", "person", "甲出资人", None),
+        ("supplier", "organization", "合成办公用品商店", None),
+        ("cash", "fund_account", "办公室现金", "cash"),
     ):
-        profile = {
-            "kind": kind,
-            "entity_id": references[key],
-            "display_name": name,
-            "source": "合成原件中的明确名称",
-            "evidence_digest": evidence,
-        }
-        if key == "expense":
-            profile.update(purpose="日常办公", note="原件明确为一月办公支出")
-        call(
-            "save_display_profile",
-            profile=profile,
-            expected_revision=0,
-            request_id=f"profile:{key}:v1",
+        result = call(
+            "register_entity",
+            kind=kind,
+            data={"display_name": name},
+            source="合成原件中的明确名称",
+            evidence_digest=evidence,
+            account_type=account_type,
+            request_id=f"entity:{key}:v1",
         )
+        references[key] = result["entity_id"]
     call(
         "update_company_note",
         text=COMPANY_NOTE,
@@ -112,6 +103,20 @@ def replay_sources(call, prefix):
         },
     ]
     saved = call("save_facts", facts=facts, request_id="facts:initial:v1")
+    call(
+        "save_display_profile",
+        profile={
+            "kind": "business",
+            "entity_id": references["expense"],
+            "display_name": "一月办公支出",
+            "source": "合成原件中的明确名称",
+            "evidence_digest": evidence,
+            "purpose": "日常办公",
+            "note": "原件明确为一月办公支出",
+        },
+        expected_revision=0,
+        request_id="profile:expense:v1",
+    )
     return references, evidence, saved
 
 

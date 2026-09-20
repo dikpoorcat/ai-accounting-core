@@ -4,6 +4,7 @@ import itertools
 import json
 
 import pytest
+from entity_fixture import seed_registration_entities
 from test_banking import consume_assets
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -32,6 +33,7 @@ def book(tmp_path):
     counter = itertools.count()
 
     def save(kind, subject, data, *, revision=0, proof=evidence):
+        seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,
             subject,
@@ -107,6 +109,7 @@ def complete_members(save):
             "opening_asset",
             "machine",
             {
+                "asset_id": "machine",
                 "asset_type": "fixed",
                 "cost_fen": 120000,
                 "accumulated_fen": 20000,

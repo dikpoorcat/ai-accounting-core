@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 import pytest
+from entity_fixture import seed_entities
 from test_opening_continuation import book as opening_fixture
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll
 from test_payroll import profile as employee_profile
@@ -36,6 +37,16 @@ def accepted(creditors=(("alice", 60000), ("bob", 60000))):
 
 def setup(book, creditors=(("alice", 60000), ("bob", 60000))):
     engine, save, publish, _ = book
+    seed_entities(
+        engine,
+        (
+            ("alice", "person", None),
+            ("bob", "person", None),
+            ("computer", "asset", None),
+            ("bank", "fund_account", "bank"),
+            ("bank-batch-provider", "organization", None),
+        ),
+    )
     profile(save, publish)
     cit(save, publish)
     data = accepted(creditors)
@@ -45,6 +56,7 @@ def setup(book, creditors=(("alice", 60000), ("bob", 60000))):
         "computer",
         {
             "period": "2026-01",
+            "asset_id": "computer",
             "cost_fen": data["cost_fen"],
             "asset_type": "fixed",
             "company_acceptance_confirmed": True,
@@ -343,6 +355,14 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
     book, via_acceptance
 ):
     engine, save, publish, _ = book
+    seed_entities(
+        engine,
+        (
+            ("alice", "person", None),
+            ("bob", "person", None),
+            ("social-collection-agency", "organization", None),
+        ),
+    )
     profile(save, publish)
     cit(save, publish)
     save(

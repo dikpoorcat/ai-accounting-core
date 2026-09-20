@@ -919,6 +919,16 @@ class Allocation(BaseModel):
         return f"payment:{self.source_kind}:{self.source_id}:{self.obligation}"
 
 
+def _opening_allocation_reads(source_kind, source_id):
+    from ..identity_corrections import opening_binding_reads
+
+    return (
+        opening_binding_reads("opening-binding:" + source_id)
+        if source_kind.startswith("opening_")
+        else ()
+    )
+
+
 class Payment(Fact):
     kind: ClassVar[str] = "payment"
     actual_payment: ClassVar[bool] = True
@@ -992,6 +1002,7 @@ class Payment(Fact):
             reads.extend(
                 (
                     Read("calculation", allocation.source_kind, f"@{allocation.source_id}"),
+                    *_opening_allocation_reads(allocation.source_kind, allocation.source_id),
                     _through_month("fact", "overpayment", allocation.scope, self.period),
                     _through_month("fact", "*", allocation.scope, self.period),
                 )
@@ -1020,12 +1031,35 @@ def _source_obligation(ctx: Context, allocation: Allocation) -> tuple[object, di
             "allocations.source_id", "需要当前有效的核销来源", sources=(allocation.source_id,)
         )
     source = calculations[0]
-    candidates = [
-        o for o in source.values.get("obligations", ()) if o["name"] == allocation.obligation
-    ]
+    values = source.values
+    binding_id = None
+    if allocation.source_kind.startswith("opening_"):
+        from ..identity_corrections import opening_bindings
+
+        bindings = opening_bindings(
+            ctx, allocation.source_kind, "opening-binding:" + allocation.source_id
+        )
+        if len(bindings) > 1:
+            raise KernelError("opening_identity_conflict", "期初义务存在不唯一的当前采用绑定")
+        if bindings:
+            _, binding = bindings[0]
+            if binding.values.get("superseded"):
+                raise NeedsInformation(
+                    "allocations.source_id",
+                    "原期初已由明确保留依据取代，须将核销改指保留业务",
+                    sources=(binding.values["replacement_source_subject_id"],),
+                )
+            if binding.values["source_calculation_id"] != source.id:
+                raise KernelError("opening_binding_source", "期初义务绑定与当前来源不一致")
+            values = binding.values["basis_values"]
+            binding_id = binding.id
+    candidates = [o for o in values.get("obligations", ()) if o["name"] == allocation.obligation]
     if len(candidates) != 1:
         raise KernelError("unknown_obligation", "来源没有该项应收应付义务")
-    return source, candidates[0]
+    return source, {
+        **candidates[0],
+        **({"binding_calculation_id": binding_id} if binding_id else {}),
+    }
 
 
 def calculate_payment(version: FactVersion, ctx: Context) -> Outcome:
@@ -1118,7 +1152,16 @@ def calculate_payment(version: FactVersion, ctx: Context) -> Outcome:
             )
         balances.append(BalanceEffect(item["key"], -amount, item["category"]))
         settlements.append(
-            {"source_calculation": source.id, "obligation": item["key"], "amount_fen": amount}
+            {
+                "source_calculation": source.id,
+                "obligation": item["key"],
+                "amount_fen": amount,
+                **(
+                    {"binding_calculation_id": item["binding_calculation_id"]}
+                    if "binding_calculation_id" in item
+                    else {}
+                ),
+            }
         )
     balances.append(
         BalanceEffect(
@@ -1342,6 +1385,7 @@ class Settlement(Fact):
                     for item in (self.first, self.second)
                     for read in (
                         Read("calculation", item.source_kind, f"@{item.source_id}"),
+                        *_opening_allocation_reads(item.source_kind, item.source_id),
                         _through_month("fact", "*", item.scope, self.period),
                     )
                 }
@@ -1693,6 +1737,7 @@ class Overpayment(Fact):
     def reads(self):
         return (
             Read("calculation", self.source_kind, f"@{self.source_id}"),
+            *_opening_allocation_reads(self.source_kind, self.source_id),
             Read("fact", "*", self.payment_scope),
         )
 

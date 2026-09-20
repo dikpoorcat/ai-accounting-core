@@ -68,7 +68,7 @@ export namespace DashboardContextContract {
 }
 
 export namespace DashboardFundsContract {
-  export type SchemaVersion = 3;
+  export type SchemaVersion = 4;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -111,6 +111,7 @@ export namespace DashboardFundsContract {
   export type InflowFen1 = string;
   export type OutflowFen1 = string;
   export type NetChangeFen1 = string;
+  export type AttributionAdjustmentFen = string | null;
   export type ClosingFen = string | null;
   export type MovementCount1 = number;
   export type LastActivityDate = string | null;
@@ -314,6 +315,23 @@ export namespace DashboardFundsContract {
   export type Column = string;
   export type Dimension = "bank" | "platform";
   export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type Code2 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature";
+  export type MatchedFields = string[];
+  export type Evidence1 = string[];
+  export type EvidenceDigest2 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
   export type FactIssues = ReadinessIssue[];
   export type CompanyId = string;
   export type DatabaseId = string;
@@ -338,7 +356,7 @@ export namespace DashboardFundsContract {
   export type Status3 = "unavailable";
   export type Reason1 = "no_exact_period_manifest";
   export type Period3 = string;
-  export type Code2 = "already_closed" | "earlier_period_open";
+  export type Code3 = "already_closed" | "earlier_period_open";
   export type Message2 = string;
   export type Period4 = string;
   export type Issues = ReadinessIssue[];
@@ -438,6 +456,7 @@ export namespace DashboardFundsContract {
     inflow_fen: InflowFen1;
     outflow_fen: OutflowFen1;
     net_change_fen: NetChangeFen1;
+    attribution_adjustment_fen: AttributionAdjustmentFen;
     closing_fen: ClosingFen;
     movement_count: MovementCount1;
     last_activity_date: LastActivityDate;
@@ -726,6 +745,10 @@ export namespace DashboardFundsContract {
     column?: Column;
     dimension?: Dimension;
     expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    signals?: Signals;
   }
   export interface SelectionCandidate {
     calculation_id: CalculationId2;
@@ -737,6 +760,17 @@ export namespace DashboardFundsContract {
   }
   export interface CalculationTarget {
     calculation_id: CalculationId3;
+  }
+  export interface DuplicateSignal {
+    code: Code2;
+    matched_fields: MatchedFields;
+    evidence?: Evidence1;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest2;
+    location: Location1;
   }
   export interface PeriodPreparation {
     company_id: CompanyId;
@@ -789,7 +823,7 @@ export namespace DashboardFundsContract {
     issues: Issues;
   }
   export interface OrderFailure {
-    code: Code2;
+    code: Code3;
     message: Message2;
     details: OrderDetails;
   }

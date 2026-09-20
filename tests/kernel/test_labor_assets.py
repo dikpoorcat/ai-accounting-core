@@ -71,6 +71,7 @@ def payment(day, allocation_value, **changes):
 def asset(cost_fen=1_600_000, **changes):
     return {
         "period": "2026-11",
+        "asset_id": "asset",
         "asset_type": "intangible",
         "acquisition_date": "2026-11-30",
         "cost_fen": cost_fen,
@@ -259,7 +260,7 @@ def test_public_types_do_not_accept_free_journals_or_implicit_business_dates(mod
 def test_same_labor_cost_cannot_create_another_asset_or_be_released_twice(book):
     engine, save, _ = book
     chain(book)
-    save("asset", "duplicate", asset())
+    save("asset", "duplicate", asset(asset_id="duplicate"))
     before = engine.ledger("2026-11")
     with engine.store.connection(read_only=True) as connection:
         evidence = engine.store.current_fact(connection, "asset").evidence
@@ -375,6 +376,7 @@ def test_supplier_and_labor_costs_combine_once_for_the_same_project(book):
             "asset",
             {
                 "period": "2026-11",
+                "asset_id": "other-cost",
                 "asset_type": "fixed",
                 "supplier_id": "designer",
                 "acquisition_date": "2026-11-30",

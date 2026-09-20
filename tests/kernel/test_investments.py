@@ -3,6 +3,7 @@
 import itertools
 
 import pytest
+from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -38,6 +39,7 @@ def book(tmp_path):
     counter = itertools.count()
 
     def save(kind, subject, data, *, revision=0, evidence=True):
+        seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,
             subject,

@@ -3,9 +3,10 @@
 import json
 
 import pytest
+from entity_fixture import seed_entities
 from test_workflow import confirmation_clock, obligation, setup_company
 
-from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.provenance import recorded_times
@@ -24,14 +25,14 @@ def test_batch_uses_exact_profile_payee_and_fact_versions_and_keeps_management_u
         engine.audit_actor = {"kind": "test", "id": "owner"}
     confirmation_clock(monkeypatch, engine, RECORDED)
     fact = company.save(obligation(), "obligation")
-    profile = Display(engine).save_display_profile(
+    seed_entities(engine, [("person", "person", None)])
+    profile = Entities(engine).update_entity_profile(
+        "person",
         {
-            "kind": "employee",
-            "entity_id": "person",
             "display_name": "确认的姓名",
-            "source": "负责人提供",
         },
-        expected_revision=0,
+        source="负责人提供",
+        expected_revision=1,
         request_id=company.request(),
     )
     payee = Exports(engine).save_payee(
@@ -54,13 +55,13 @@ def test_batch_uses_exact_profile_payee_and_fact_versions_and_keeps_management_u
         management = connection.execute("SELECT id FROM management_revision").fetchone()[0]
         expected = {
             ("fact", fact["fact_id"]): RECORDED,
-            ("display_profile", profile["id"]): RECORDED,
+            ("display_profile", profile["profile_id"]): RECORDED,
             ("payee", payee["payee_revision_id"]): RECORDED,
         }
         references = [
             *expected,
             ("management", str(management)),
-            ("fact", profile["id"]),
+            ("fact", profile["profile_id"]),
             ("fact", "retained-without-confirmation"),
         ]
         queries = []

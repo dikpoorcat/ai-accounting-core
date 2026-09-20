@@ -3,6 +3,7 @@
 import itertools
 
 import pytest
+from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 from test_payroll import labor, labor_policy
 
@@ -31,6 +32,7 @@ def book(tmp_path):
     requests = itertools.count()
 
     def save(kind, subject, data, revision=0):
+        seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,
             subject,

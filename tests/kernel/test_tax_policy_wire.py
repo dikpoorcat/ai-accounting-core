@@ -97,7 +97,7 @@ def test_public_save_variants_preserve_policy_wire_and_stored_fact_hash(company)
         "save_facts",
         {"company_id": "company", "request_id": "batch", "facts": records},
     )
-    assert wire["facts"] == records
+    assert wire["facts"] == [dict(record, review=None, source_locations=[]) for record in records]
     result = engine.save_facts(wire["facts"], request_id=wire["request_id"])
     assert len(result["results"]) == 3
     with engine.store.connection(read_only=True) as connection:

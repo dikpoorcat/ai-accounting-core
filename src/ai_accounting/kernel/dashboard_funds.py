@@ -73,6 +73,7 @@ class FundsRead:
         self.opening_ids = [ident for ident, item in self.states.items() if item["opening"]]
         self.issues = list(self.selected["unestablished_state_selections"])
         self.account_rows = {}
+        self.omitted_account_rows = {}
         self.product_rows = {}
         self.profiles = {}
         self.event_queries = {}
@@ -143,6 +144,7 @@ class FundsRead:
                 "inflow_fen": 0,
                 "outflow_fen": 0,
                 "net_change_fen": 0,
+                "attribution_adjustment_fen": 0,
                 "closing_fen": 0,
                 "movement_count": 0,
                 "last_activity_date": None,
@@ -168,22 +170,16 @@ class FundsRead:
 
         categories = {"bank", "cash", "platform"}
         projected_closing = {}
-        for row in balance_totals(
-            self.connection, self.snap.month, reads=self.snap.reads
-        ):
+        for row in balance_totals(self.connection, self.snap.month, reads=self.snap.reads):
             if row["category"] in categories:
                 self.base_account(row["category"], row["key"])
                 projected_closing[row["category"], row["key"]] = row["amount"]
         current_activity = {}
-        for row in balance_movements(
-            self.connection, self.snap.month, reads=self.snap.reads
-        ):
+        for row in balance_movements(self.connection, self.snap.month, reads=self.snap.reads):
             if row["category"] in categories:
                 current_activity[row["category"], row["key"]] = row["amount"]
         for key, amount in projected_closing.items():
-            self.base_account(*key)["opening_fen"] = checked(
-                amount - current_activity.get(key, 0)
-            )
+            self.base_account(*key)["opening_fen"] = checked(amount - current_activity.get(key, 0))
         source, parameters = self.movements()
         for row in self.connection.execute(
             "SELECT category,balance_key,sum(max(signed_amount,0)) inflow_fen,"
@@ -241,6 +237,11 @@ class FundsRead:
             item["closing_fen"] = (
                 projected_closing.get(key, 0) if item["opening_fen"] is not None else None
             )
+            item["attribution_adjustment_fen"] = (
+                checked(item["closing_fen"] - item["opening_fen"] - item["net_change_fen"])
+                if item["closing_fen"] is not None and item["opening_fen"] is not None
+                else None
+            )
             item["negative_balance"] = item["closing_fen"] is not None and item["closing_fen"] < 0
             item["statement"] = {
                 "inflow_fen": None,
@@ -256,6 +257,7 @@ class FundsRead:
                 "state": "pending" if key[0] == "bank" else "not_applicable",
                 "label": "本月尚未完成银行对账" if key[0] == "bank" else "不适用银行对账",
             }
+        self._omit_retired_opening_accounts()
         return dict(
             self.connection.execute(
                 "SELECT coalesce(sum(CASE WHEN NOT internal_transfer THEN max(signed_amount,0) "
@@ -268,6 +270,47 @@ class FundsRead:
                 parameters,
             ).fetchone()
         )
+
+    def _omit_retired_opening_accounts(self):
+        """Hide an old identity whose only current-period effect is reassignment."""
+        if self.snap.close is not None:
+            return
+        from .identity_corrections import current_opening_bindings
+
+        fields = {
+            "opening_bank": ("bank", "bank_account_id"),
+            "opening_cash": ("cash", "cash_account_id"),
+        }
+        bindings = current_opening_bindings(self.connection)
+        for binding in bindings.values():
+            mapped = fields.get(binding["source_kind"])
+            if mapped is None:
+                continue
+            category, field = mapped
+            source = self.snap.store.fact(self.connection, binding["source_fact_id"])
+            original_id = getattr(source.fact, field)
+            if original_id == binding["basis_data"].get(field):
+                continue
+            if self.connection.execute(
+                "SELECT 1 FROM entity_reference_current r JOIN fact_current c "
+                "ON c.fact_id=r.fact_id WHERE r.entity_id=? LIMIT 1",
+                (original_id,),
+            ).fetchone():
+                continue
+            item = self.account_rows.get((category, original_id))
+            if item is None:
+                continue
+            if (
+                item["opening_fen"] is not None
+                and item["closing_fen"] == 0
+                and item["inflow_fen"] == 0
+                and item["outflow_fen"] == 0
+                and item["net_change_fen"] == 0
+                and item["movement_count"] == 0
+                and item["attribution_adjustment_fen"] == -item["opening_fen"]
+            ):
+                self.omitted_account_rows[category, original_id] = item
+                del self.account_rows[category, original_id]
 
     def profile(self, kind, ident):
         key = kind, ident
@@ -310,9 +353,7 @@ class FundsRead:
             if data.get(field) and data[field] != "payroll-group"
         }
         parties.update(
-            item["party_id"]
-            for item in self.snap.voucher_relations(calc, sign)
-            if item["party_id"]
+            item["party_id"] for item in self.snap.voucher_relations(calc, sign) if item["party_id"]
         )
         if data.get("payment_method") == "bank_batch":
             parties.discard(data.get("counterparty_id"))
@@ -637,9 +678,7 @@ class FundsRead:
                 and (not self.snap.close or source is not None and source_error is None)
             )
             if self.snap.close and valid:
-                self._closed_bank_issue_sources(
-                    result, parents_by_result[result["id"]]
-                )
+                self._closed_bank_issue_sources(result, parents_by_result[result["id"]])
             review = bool(
                 not confirmed
                 or not unique_reconciliation
@@ -837,9 +876,7 @@ class FundsRead:
             (canonical(requests),),
         ).fetchall()
         selected = {
-            row["page_key"]: row["calculation_id"]
-            for row in matches
-            if row["candidate_count"] == 1
+            row["page_key"]: row["calculation_id"] for row in matches if row["candidate_count"] == 1
         }
         self.snap.reads.metadata(selected.values())
         self.bank_match_calculations.update(
@@ -868,11 +905,7 @@ class FundsRead:
         for allocation in allocations:
             recipient_id = allocation.get("recipient_id")
             details = self.snap.party_details(recipient_id)
-            name = (
-                details["name"]
-                if details.get("source")
-                else "收款人名称未提供"
-            )
+            name = details["name"] if details.get("source") else "收款人名称未提供"
             items.append({"party": name, "amount_fen": allocation["amount_fen"]})
             if recipient_id and recipient_id not in seen_parties:
                 party_sources.append({"party_id": recipient_id, **details})
@@ -1100,19 +1133,20 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
     bank = read.bank_summary()
     investments = read.investment_summary()
     accounts = list(read.account_rows.values())
-    bank_accounts = [item for item in accounts if item["type"] == "bank"]
-    totals = {key: _sum(accounts, key) for key in ("opening_fen", "net_change_fen")}
+    complete_accounts = [*accounts, *read.omitted_account_rows.values()]
+    complete_bank_accounts = [item for item in complete_accounts if item["type"] == "bank"]
+    totals = {key: _sum(complete_accounts, key) for key in ("opening_fen", "net_change_fen")}
     data = (
         totals
         | movement_totals
         | {
-            "total_fen": _sum(accounts, "closing_fen"),
-            "bank_opening_fen": _sum(bank_accounts, "opening_fen"),
-            "bank_inflow_fen": _sum(bank_accounts, "inflow_fen"),
-            "bank_outflow_fen": _sum(bank_accounts, "outflow_fen"),
+            "total_fen": _sum(complete_accounts, "closing_fen"),
+            "bank_opening_fen": _sum(complete_bank_accounts, "opening_fen"),
+            "bank_inflow_fen": _sum(complete_bank_accounts, "inflow_fen"),
+            "bank_outflow_fen": _sum(complete_bank_accounts, "outflow_fen"),
             **{
                 FUND_TYPES[category] + "_fen": _sum(
-                    [item for item in accounts if item["type"] == FUND_TYPES[category]],
+                    [item for item in complete_accounts if item["type"] == FUND_TYPES[category]],
                     "closing_fen",
                 )
                 for category in FUND_TYPES

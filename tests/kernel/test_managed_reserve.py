@@ -46,7 +46,7 @@ def bank_cost(book, amount=1000):
         "reserve-cost",
         dict(
             period="2026-09",
-            counterparty_id="platform",
+            counterparty_id="platform-provider",
             creditor_kind="supplier",
             amount_fen=amount,
             expense_class="administration",
@@ -55,7 +55,9 @@ def bank_cost(book, amount=1000):
     save(
         "payment",
         "reserve-paid",
-        payment_data(kind="payment", source="reserve-cost", amount=amount, party="platform"),
+        payment_data(
+            kind="payment", source="reserve-cost", amount=amount, party="platform-provider"
+        ),
     )
     publish("reserve-cost", "reserve-paid")
     scope = scope_data(
@@ -123,7 +125,7 @@ def recover(save, amount, *, period="2026-09", sid="recovery"):
         dict(
             period=period,
             source_expense_id="reserve-cost",
-            counterparty_id="platform",
+            counterparty_id="platform-provider",
             amount_fen=amount,
             recovery_right_confirmed=True,
         ),

@@ -97,7 +97,7 @@ test("context and funds request and validate with the company-complete final URL
   assert.equal(context.calls[0], `/api/dashboard/context?company_id=${samples.company_with_period.response.current_company.company_id}`);
 
   const funds = await clientHarness(samples.bank_funds.response);
-  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 3);
+  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 4);
   assert.equal(funds.calls[0], "/api/dashboard/funds?period=2026-09&company_id=company-from-location");
 
   const malformed = await clientHarness(changedField(samples.bank_funds.response, (key, value) => key.endsWith("_fen") && typeof value === "string", 100));
@@ -153,7 +153,7 @@ test("generated requests reject responses from a different selection or inconsis
   const filteredHarness = await clientHarness(filteredAlias);
   assert.equal(
     (await filteredHarness.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version,
-    3,
+    4,
   );
 });
 
@@ -167,6 +167,7 @@ test("current backend samples also satisfy request-dependent context and paginat
     assert.equal(harness.calls[0], path, name);
   }
 
+  const filteredAccountId = samples.filtered_bank_funds.response.data.movements[0].account_id;
   const fundsRequests = {
     funds_without_period: "/api/dashboard/funds",
     cash_funds: "/api/dashboard/funds?period=2026-01",
@@ -178,12 +179,18 @@ test("current backend samples also satisfy request-dependent context and paginat
     page_investment_events: "/api/dashboard/funds?period=2026-01&section=investment_events",
     account_filter: "/api/dashboard/funds?period=2026-01",
     bank_funds: "/api/dashboard/funds?period=2026-09",
-    filtered_bank_funds: "/api/dashboard/funds?period=2026-09&movement_account_type=bank&movement_account_id=bank-b&statement_account_id=bank-b&limit=1",
+    filtered_bank_funds: `/api/dashboard/funds?period=2026-09&movement_account_type=bank&movement_account_id=${filteredAccountId}&statement_account_id=${filteredAccountId}&limit=1`,
     frozen_funds: "/api/dashboard/funds?period=2026-09",
   };
   for (const [name, path] of Object.entries(fundsRequests)) {
     const harness = await clientHarness(samples[name].response, "");
-    assert.equal((await harness.client.requestDashboardFunds(path)).schema_version, 3, name);
+    let response;
+    try {
+      response = await harness.client.requestDashboardFunds(path);
+    } catch (error) {
+      assert.fail(`${name}: ${error.code ?? error}`);
+    }
+    assert.equal(response.schema_version, 4, name);
     assert.equal(harness.calls[0], path, name);
   }
 });
@@ -217,6 +224,7 @@ test("current funds samples pass the API consumer and render bank, filter, and e
   try {
     const { requestDashboardFunds } = await server.ssrLoadModule("/src/api/client.ts");
     const { default: FundsView } = await server.ssrLoadModule("/src/views/FundsView.vue");
+    const filteredAccountId = samples.filtered_bank_funds.response.data.movements[0].account_id;
     const cases = [
       {
         name: "bank_funds",
@@ -226,8 +234,8 @@ test("current funds samples pass the API consumer and render bank, filter, and e
       },
       {
         name: "filtered_bank_funds",
-        request: "/api/dashboard/funds?period=2026-09&movement_account_type=bank&movement_account_id=bank-b&statement_account_id=bank-b&limit=1",
-        route: "/?period=2026-09&funds_view=bank&statement_account_id=bank-b",
+        request: `/api/dashboard/funds?period=2026-09&movement_account_type=bank&movement_account_id=${filteredAccountId}&statement_account_id=${filteredAccountId}&limit=1`,
+        route: `/?period=2026-09&funds_view=bank&statement_account_id=${filteredAccountId}`,
         expected: [/other-row/, /所选银行账户（名称尚未加载）/, /账户 2/],
       },
       {
@@ -239,7 +247,12 @@ test("current funds samples pass the API consumer and render bank, filter, and e
     ];
     for (const current of cases) {
       globalThis.fetch = async () => new Response(JSON.stringify(samples[current.name].response));
-      const accepted = await requestDashboardFunds(current.request);
+      let accepted;
+      try {
+        accepted = await requestDashboardFunds(current.request);
+      } catch (error) {
+        assert.fail(`${current.name}: ${error.code ?? error}`);
+      }
       globalThis.currentFundsData = accepted.data;
       globalThis.currentFundsPeriod = accepted.selected_period?.key ?? "";
       const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] });

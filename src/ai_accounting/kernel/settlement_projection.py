@@ -120,13 +120,17 @@ def expected_settlement_projection(
     }
     reads = QueryReads(engine, connection)
     calculations = (
-        reads.prime_raw_calculations(
-            calculation_ids, verified_calculations=verified_calculations
-        )
+        reads.prime_raw_calculations(calculation_ids, verified_calculations=verified_calculations)
         if calculation_ids
         else {}
     )
     relations = reads.relations_many(calculation_ids, raw=True) if calculation_ids else {}
+    binding_source_ids = {
+        calculation["outcome"]["values"]["source_calculation_id"]
+        for calculation in calculations.values()
+        if calculation["kind"] == "opening_identity_binding"
+    }
+    binding_sources = reads.raw_calculations(binding_source_ids) if binding_source_ids else {}
     rows = []
     for tranche in tranches:
         contributions = []
@@ -135,6 +139,37 @@ def expected_settlement_projection(
             if ident is None:
                 continue
             calculation = calculations[ident]
+            if calculation["kind"] == "opening_identity_binding":
+                values = calculation["outcome"]["values"]
+                original = binding_sources[values["source_calculation_id"]]["outcome"]["values"]
+                selected_values = [(original, -sign)]
+                if not values.get("superseded"):
+                    selected_values.append((values["basis_values"], sign))
+                for source_values, direction in selected_values:
+                    for obligation in source_values.get("obligations", ()):
+                        amount = obligation.get("amount_fen")
+                        contributions.append(
+                            (
+                                {
+                                    "obligation_key": obligation["key"],
+                                    "source_subject_id": values["source_subject_id"],
+                                    "category": obligation.get("category"),
+                                    "account": obligation.get("account"),
+                                    "counterparty_id": obligation.get("counterparty_id"),
+                                    "component": obligation.get("name"),
+                                    "change_kind": "source",
+                                    "amount": checked(direction * amount)
+                                    if type(amount) is int
+                                    else None,
+                                    "state": "resolved"
+                                    if obligation.get("counterparty_id")
+                                    else "unresolved",
+                                },
+                                ident,
+                                bytes.fromhex(calculation["result_digest"]),
+                            )
+                        )
+                continue
             contributions.extend(
                 (
                     item,
@@ -392,9 +427,7 @@ def verify_settlement_periods(connection, periods, *, reads=None):
         )
 
 
-def settlement_summary(
-    connection, period, *, subject_ids=None, current=False, reads=None
-):
+def settlement_summary(connection, period, *, subject_ids=None, current=False, reads=None):
     """Aggregate obligations through a posting cutoff from normalized rows."""
 
     cutoff = YearMonth(period).ordinal
@@ -503,9 +536,7 @@ def settlement_summary(
                 "paid_fen": paid,
                 "other_settled_fen": other,
                 "period_paid_fen": None if row["bad_paid"] else row["period_paid"],
-                "period_other_settled_fen": None
-                if row["bad_other"]
-                else row["period_other"],
+                "period_other_settled_fen": None if row["bad_other"] else row["period_other"],
                 "remaining_fen": remaining,
                 "settlement_status": (
                     "unestablished"
@@ -527,17 +558,11 @@ def settlement_summary(
         if subject_ids is not None
         else ""
     )
-    outer_parameters = (
-        [json.dumps(sorted(set(subject_ids)))] if subject_ids is not None else []
-    )
+    outer_parameters = [json.dumps(sorted(set(subject_ids)))] if subject_ids is not None else []
     movement_count = connection.execute(
-        "WITH scoped_keys AS ("
-        + source_keys
-        + ") SELECT count(*) FROM settlement_change s "
+        "WITH scoped_keys AS (" + source_keys + ") SELECT count(*) FROM settlement_change s "
         "LEFT JOIN scoped_keys k USING(obligation_key) WHERE s.posting_period<=? "
-        "AND s.change_kind!='source' AND (k.obligation_key IS NOT NULL"
-        + subject_scope
-        + ")",
+        "AND s.change_kind!='source' AND (k.obligation_key IS NOT NULL" + subject_scope + ")",
         [*scope_parameters, through, *outer_parameters],
     ).fetchone()[0]
     scoped_unresolved = connection.execute(
@@ -545,9 +570,7 @@ def settlement_summary(
         + source_keys
         + ") SELECT 1 FROM settlement_change s LEFT JOIN scoped_keys k USING(obligation_key) "
         "WHERE s.posting_period<=? AND s.change_kind!='source' AND s.state='unresolved' "
-        "AND (k.obligation_key IS NOT NULL"
-        + subject_scope
-        + ") LIMIT 1",
+        "AND (k.obligation_key IS NOT NULL" + subject_scope + ") LIMIT 1",
         [*scope_parameters, through, *outer_parameters],
     ).fetchone()
     unresolved = unresolved or scoped_unresolved is not None
@@ -556,28 +579,20 @@ def settlement_summary(
         + source_keys
         + ") SELECT count(DISTINCT s.publication_id) FROM settlement_change s "
         "LEFT JOIN scoped_keys k USING(obligation_key) WHERE s.posting_period<=? "
-        "AND (k.obligation_key IS NOT NULL"
-        + subject_scope
-        + ")",
+        "AND (k.obligation_key IS NOT NULL" + subject_scope + ")",
         [*scope_parameters, through, *outer_parameters],
     ).fetchone()[0]
     return {
         "cutoff_period": str(YearMonth.from_ordinal(through)),
         "status": (
-            "partially_established"
-            if unresolved
-            else "established"
-            if rows
-            else "not_established"
+            "partially_established" if unresolved else "established" if rows else "not_established"
         ),
         "business": [],
         "obligations": obligations,
         "movements": [],
         "line_relations": [],
         "issues": (
-            [{"field": "settlements", "message": "存在尚未确立的清偿关系"}]
-            if unresolved
-            else []
+            [{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unresolved else []
         ),
         "business_count": business_count,
         "movement_count": movement_count,

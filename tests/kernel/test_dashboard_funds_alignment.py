@@ -1,18 +1,21 @@
 """Funds presentation follows published money boundaries and documented investments."""
 
+import hashlib
+
 import pytest
 import test_banking as banking
 import test_investments as investments
 import test_opening_continuation as openings
 import test_payroll_reserve_payment as reserve_payroll
 import test_platforms as platforms
+from entity_fixture import seed_entities
 from test_dashboard_transport import authenticated
 from test_managed_reserve import scope_data
 from test_resident_service import resident as resident_fixture
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.entities import Entities
 
 bank_book = banking.book
 investment_book = investments.book
@@ -23,26 +26,45 @@ resident = resident_fixture
 
 
 def _publish_filter_funding(engine, accounts, *, period="2026-09"):
-    proof = engine.register_evidence(
-        b"Synthetic funds filter evidence", "text/plain", "fixture", request_id="filter-proof"
-    )["digest"]
+    contents = [
+        f"Synthetic funds filter evidence {period} {index}".encode()
+        for index in range(len(accounts))
+    ]
+    proofs = [hashlib.sha256(content).hexdigest() for content in contents]
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.executemany(
+            "INSERT INTO evidence VALUES(?,?,?,?)",
+            [
+                (bytes.fromhex(proof), content, "text/plain", "fixture")
+                for proof, content in zip(proofs, contents, strict=True)
+            ],
+        )
+        connection.commit()
     facts = [
         {
             "kind": "funding",
             "subject_id": f"filter-{period}-{index:04}",
             "data": {
                 "period": period,
-                "owner_id": "owner",
+                "owner_id": f"filter-owner-{period}-{index:04}",
                 "amount_fen": 1,
                 "funding_kind": "capital",
                 "actual_date": f"{period}-02",
                 "bank_account_id": account,
             },
-            "evidence": [proof],
+            "evidence": [proofs[index]],
             "expected_revision": 0,
         }
         for index, account in enumerate(accounts)
     ]
+    seed_entities(
+        engine,
+        [
+            *((account, "fund_account", "bank") for account in sorted(set(accounts))),
+            *((fact["data"]["owner_id"], "person", None) for fact in facts),
+        ],
+    )
     engine.save_facts(facts, request_id=f"filter-facts-{period}")
     subjects = [fact["subject_id"] for fact in facts]
     preview = engine.preview(subjects)
@@ -120,7 +142,7 @@ def test_bank_filter_covers_all_provided_statement_rows(bank_book):
     assert empty["bank_statement"]["transaction_count"] == 503
 
 
-def test_movement_filter_keeps_account_type_and_identifier_together(bank_book):
+def test_movement_filter_requires_matching_account_type_and_identifier(bank_book):
     engine, save, publish, _ = bank_book
     banking.funding(save, publish, bank="shared-id", amount=100)
     save(
@@ -129,7 +151,7 @@ def test_movement_filter_keeps_account_type_and_identifier_together(bank_book):
         {
             "period": "2026-09",
             "actual_date": "2026-09-02",
-            "cash_account_id": "shared-id",
+            "cash_account_id": "cash-id",
             "owner_id": "owner",
             "funding_kind": "capital",
             "amount_fen": 200,
@@ -137,10 +159,10 @@ def test_movement_filter_keeps_account_type_and_identifier_together(bank_book):
     )
     publish("cash")
     dashboard = Dashboard(engine)
-    for kind, amount in (("bank", 100), ("cash", 200)):
-        data = dashboard.funds(
-            "2026-09", movement_account_type=kind, movement_account_id="shared-id"
-        )["data"]
+    for kind, ident, amount in (("bank", "shared-id", 100), ("cash", "cash-id", 200)):
+        data = dashboard.funds("2026-09", movement_account_type=kind, movement_account_id=ident)[
+            "data"
+        ]
         assert data["total_fen"] == 300
         assert data["movement_page"]["total_count"] == 1
         assert data["movements"][0]["amount_fen"] == amount
@@ -302,14 +324,11 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
     banking.funding(save, publish, subject="second", bank="bank-b", amount=500)
     banking.funding(save, publish, subject="draft", bank="draft-bank", posted=False)
     for ident in ("bank-a", "bank-b"):
-        Display(engine).save_display_profile(
-            {
-                "kind": "fund_account",
-                "entity_id": ident,
-                "display_number": "001",
-                "source": "synthetic explicit display number",
-            },
-            expected_revision=0,
+        Entities(engine).update_entity_profile(
+            ident,
+            {"display_number": "001"},
+            source="synthetic explicit display number",
+            expected_revision=1,
             request_id=ident,
         )
     data = Dashboard(engine).funds("2026-09")["data"]
@@ -459,14 +478,11 @@ def test_investment_detail_pages_preserve_totals_and_require_same_snapshot(inves
     )
     assert second["data"]["investments"]["events"][0]["id"] != details["events"][0]["id"]
     assert second["data"]["investments"]["subscription_cost_fen"] == 20200
-    Display(engine).save_display_profile(
-        {
-            "kind": "asset",
-            "entity_id": "fund-A",
-            "display_name": "明确基金名称",
-            "source": "synthetic confirmed product name",
-        },
-        expected_revision=0,
+    Entities(engine).update_entity_profile(
+        "fund-A",
+        {"display_name": "明确基金名称"},
+        source="synthetic confirmed product name",
+        expected_revision=1,
         request_id="fund-name",
     )
     with pytest.raises(KernelError) as failure:
@@ -481,14 +497,11 @@ def test_payroll_batch_is_one_real_bank_exit_and_names_actual_recipients(payroll
     fact = reserve_payroll.prepare(company)
     company.publish("scope", "gross-batch")
     for person in ("one", "two"):
-        Display(company.engine).save_display_profile(
-            {
-                "kind": "employee",
-                "entity_id": person,
-                "display_name": "姓名-" + person,
-                "source": "synthetic recipient profile",
-            },
-            expected_revision=0,
+        Entities(company.engine).update_entity_profile(
+            person,
+            {"display_name": "姓名-" + person},
+            source="synthetic recipient profile",
+            expected_revision=1,
             request_id="person-" + person,
         )
     data = Dashboard(company.engine).funds("2026-02")["data"]

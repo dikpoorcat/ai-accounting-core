@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from types import MappingProxyType
 
 import pytest
+from entity_fixture import seed_registration_entities
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 
 import ai_accounting.kernel.dashboard as dashboard_module
@@ -38,6 +39,7 @@ def layered_book(tmp_path_factory):
     facts, calculations = {}, {}
 
     def save(kind, subject, data, revision=0):
+        seed_registration_entities(engine, kind, data)
         result = engine.save_fact(
             kind,
             subject,
@@ -78,6 +80,7 @@ def layered_book(tmp_path_factory):
             "opening_asset",
             "legacy-asset",
             {
+                "asset_id": "legacy-asset",
                 "asset_type": "fixed",
                 "cost_fen": 1000,
                 "accumulated_fen": 0,
@@ -130,9 +133,7 @@ def layered_book(tmp_path_factory):
         epochs=preview["epochs"],
         request_id="consume-legacy-assets",
     )
-    calculations.update(
-        {item["subject_id"]: item["calculation_id"] for item in result["results"]}
-    )
+    calculations.update({item["subject_id"]: item["calculation_id"] for item in result["results"]})
     save(
         "cash_payment",
         "legacy-payment",
@@ -166,7 +167,7 @@ def layered_book(tmp_path_factory):
                 "actual_date": month + "-01",
                 "cash_account_id": "cash",
                 "owner_id": "owner",
-                "amount_fen": 100,
+                "amount_fen": 100 + index,
                 "funding_kind": "capital",
             },
         )
@@ -190,6 +191,7 @@ def layered_book(tmp_path_factory):
             f"asset-{index}",
             {
                 "period": "2026-01",
+                "asset_id": f"asset-{index}",
                 "asset_type": "fixed",
                 "supplier_id": f"supplier-{index}",
                 "acquisition_date": "2026-01-02",
@@ -204,6 +206,7 @@ def layered_book(tmp_path_factory):
             "asset-0",
             {
                 "period": "2026-01",
+                "asset_id": "asset-0",
                 "asset_type": "fixed",
                 "supplier_id": "supplier-0",
                 "acquisition_date": "2026-01-02",

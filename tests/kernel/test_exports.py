@@ -6,6 +6,7 @@ import json
 from io import BytesIO
 
 import pytest
+from entity_fixture import seed_entities
 from openpyxl import Workbook, load_workbook
 from test_payroll import (
     actual,
@@ -65,6 +66,7 @@ def evidence(company, content, name="template"):
 @pytest.fixture
 def setup(tmp_path):
     company = Company(tmp_path / "exports.sqlite")
+    seed_entities(company.engine, (("employee", "person", None),))
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
@@ -344,9 +346,12 @@ def test_export_freezes_material_versions_and_new_allocation_expires_preview(set
         )
     assert stale.value.code == "preview_expired"
     with company.engine.store.connection(read_only=True) as connection:
-        assert connection.execute(
-            "SELECT payload FROM jobs WHERE id=?", (job["job_id"],)
-        ).fetchone()[0] == before
+        assert (
+            connection.execute("SELECT payload FROM jobs WHERE id=?", (job["job_id"],)).fetchone()[
+                0
+            ]
+            == before
+        )
 
 
 def test_files_published_before_crash_are_verified_and_reused(setup, tmp_path):

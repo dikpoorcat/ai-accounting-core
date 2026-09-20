@@ -23,6 +23,7 @@ from ai_accounting.kernel.build import calculator_build_id
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import PROGRAM_VERSION, Engine
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.http import create_server
 from ai_accounting.kernel.jobs import JobRunner
 from ai_accounting.kernel.materials import Column, Materials, Specification, inspect_bytes
@@ -141,7 +142,7 @@ def make_engine(root):
     return catalog, Engine(catalog.bind(company["id"]))
 
 
-def records(count, evidence):
+def records(count, evidence, *, owners, cash_account_id):
     return [
         {
             "kind": "cash_funding",
@@ -150,11 +151,11 @@ def records(count, evidence):
             "evidence": [evidence],
             "data": {
                 "period": "2026-03",
-                "owner_id": "synthetic-owner",
+                "owner_id": owners[index % len(owners)],
                 "amount_fen": 100,
                 "funding_kind": "capital",
                 "actual_date": "2026-03-01",
-                "cash_account_id": "cash",
+                "cash_account_id": cash_account_id,
             },
         }
         for index in range(count)
@@ -273,7 +274,26 @@ def material_rejection(raw, spec):
 
 
 def batch_boundary(engine, evidence, count):
-    batch = records(count, evidence)
+    # Distinct contributors make these equal cash receipts separate businesses.
+    # Directory setup is outside the measured registration/publication workload.
+    entities = Entities(engine)
+    cash_account = entities.register_entity(
+        "fund_account",
+        account_type="cash",
+        data={},
+        source="合成现金账户",
+        request_id="benchmark-cash-account",
+    )["entity_id"]
+    owners = [
+        entities.register_entity(
+            "person",
+            data={},
+            source=f"合成独立出资人 {index}",
+            request_id=f"benchmark-contributor-{index}",
+        )["entity_id"]
+        for index in range(count)
+    ]
+    batch = records(count, evidence, owners=owners, cash_account_id=cash_account)
     with SQLCounter(engine.store).installed() as counter:
         metrics, result = measure(lambda: engine.save_facts(batch, request_id="large-batch"))
     assert len(result["results"]) == count
@@ -286,7 +306,10 @@ def batch_boundary(engine, evidence, count):
     )
     before = engine.overview("2026-03")
     try:
-        engine.save_facts(records(5001, evidence), request_id="over-batch")
+        engine.save_facts(
+            records(5001, evidence, owners=owners, cash_account_id=cash_account),
+            request_id="over-batch",
+        )
     except ValueError:
         metrics["over_limit_rejected"] = True
     else:

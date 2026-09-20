@@ -39,7 +39,7 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, sum_fen
+from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, canonical, sum_fen
 from .money import ACTUAL_PAYMENT_KINDS
 from .taxes import round_fen
 from .transactions import (
@@ -58,7 +58,8 @@ def previous_month(period: YearMonth) -> YearMonth | None:
 
 class AssetAcquisition(Fact):
     kind: ClassVar[str] = "asset"
-    identity_fields: ClassVar[tuple[str, ...]] = ("asset_type",)
+    identity_fields: ClassVar[tuple[str, ...]] = ("asset_id", "asset_type")
+    asset_id: Identifier
     asset_type: Literal["fixed", "intangible"]
     supplier_id: Identifier | None = None
     acquisition_date: ActualDate
@@ -82,7 +83,11 @@ class AssetAcquisition(Fact):
         return self
 
     def scopes(self):
-        return (str(self.period), *(f"cost:{source.source_id}" for source in self.project_sources))
+        return (
+            str(self.period),
+            f"asset-source:{self.asset_id}",
+            *(f"cost:{source.source_id}" for source in self.project_sources),
+        )
 
     def reads(self):
         return project_cost_reads(self.project_sources)
@@ -90,14 +95,18 @@ class AssetAcquisition(Fact):
     def reads_for(self, subject_id):
         return (
             *self.reads(),
-            Read("fact", "reimbursed_asset_batch", f"accepted-asset:{subject_id}"),
+            Read("fact", "reimbursed_asset_batch", f"accepted-asset:{self.asset_id}"),
+            Read("fact", "asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "reimbursed_asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "opening_asset", f"asset-source:{self.asset_id}"),
         )
 
 
 def calculate_acquisition(version: FactVersion, ctx: Context) -> Outcome:
     fact: AssetAcquisition = version.fact
-    if ctx.facts("reimbursed_asset_batch", f"accepted-asset:{version.subject_id}"):
+    if ctx.facts("reimbursed_asset_batch", f"accepted-asset:{fact.asset_id}"):
         raise KernelError("duplicate_asset_acceptance", "同一资产不能重复验收或承接")
+    _unique_acquisition(version, ctx)
     pending = "1604" if fact.asset_type == "fixed" else "189901"
     if fact.acquisition_basis == "project_completion":
         credits, effects, projects = consume_project_costs(version, ctx, fact.project_sources)
@@ -108,7 +117,7 @@ def calculate_acquisition(version: FactVersion, ctx: Context) -> Outcome:
             {"cost_fen": fact.cost_fen, "asset_type": fact.asset_type, "obligations": []},
             (
                 *effects,
-                BalanceEffect(f"asset:{version.subject_id}:carrying", fact.cost_fen, "asset"),
+                BalanceEffect(f"asset:{fact.asset_id}:carrying", fact.cost_fen, "asset"),
             ),
         )
     if fact.supplier_id is None:
@@ -131,8 +140,7 @@ def calculate_acquisition(version: FactVersion, ctx: Context) -> Outcome:
     return Outcome(
         base.lines,
         base.values,
-        base.balances
-        + (BalanceEffect(f"asset:{version.subject_id}:carrying", fact.cost_fen, "asset"),),
+        base.balances + (BalanceEffect(f"asset:{fact.asset_id}:carrying", fact.cost_fen, "asset"),),
     )
 
 
@@ -183,8 +191,8 @@ class ReimbursedAssetBatch(Fact):
             for read in (
                 Read("fact", self.kind, f"accepted-asset:{row.asset_id}"),
                 Read("fact", "reimbursed_asset", f"direct-accepted-asset:{row.asset_id}"),
-                Read("fact", "asset", f"@{row.asset_id}"),
-                Read("fact", "opening_asset", f"@{row.asset_id}"),
+                Read("fact", "asset", f"asset-source:{row.asset_id}"),
+                Read("fact", "opening_asset", f"asset-source:{row.asset_id}"),
             )
         )
 
@@ -197,9 +205,9 @@ def calculate_reimbursed_asset_batch(version: FactVersion, ctx: Context) -> Outc
                 peer.subject_id != version.subject_id
                 for peer in ctx.facts(fact.kind, f"accepted-asset:{row.asset_id}")
             )
-            or ctx.facts("asset", f"@{row.asset_id}")
+            or ctx.facts("asset", f"asset-source:{row.asset_id}")
             or ctx.facts("reimbursed_asset", f"direct-accepted-asset:{row.asset_id}")
-            or ctx.facts("opening_asset", f"@{row.asset_id}")
+            or ctx.facts("opening_asset", f"asset-source:{row.asset_id}")
         ):
             raise KernelError("duplicate_asset_acceptance", "同一资产不能重复验收或承接")
     payables = [
@@ -241,7 +249,8 @@ class ReimbursedAsset(Fact):
     """
 
     kind: ClassVar[str] = "reimbursed_asset"
-    identity_fields: ClassVar[tuple[str, ...]] = ("asset_type",)
+    identity_fields: ClassVar[tuple[str, ...]] = ("asset_id", "asset_type")
+    asset_id: Identifier
     asset_type: Literal["fixed", "intangible"]
     cost_fen: PositiveFen
     company_acceptance_confirmed: Literal[True]
@@ -282,19 +291,24 @@ class ReimbursedAsset(Fact):
     def reads_for(self, subject_id):
         return (
             *self.reads(),
-            Read("fact", "reimbursed_asset_batch", f"accepted-asset:{subject_id}"),
+            Read("fact", "reimbursed_asset_batch", f"accepted-asset:{self.asset_id}"),
+            Read("fact", "asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "reimbursed_asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "opening_asset", f"asset-source:{self.asset_id}"),
         )
 
     def scopes_for(self, subject_id):
         return (
             *self.scopes(),
-            *((f"direct-accepted-asset:{subject_id}",) if self.acceptance_id is None else ()),
+            f"asset-source:{self.asset_id}",
+            *((f"direct-accepted-asset:{self.asset_id}",) if self.acceptance_id is None else ()),
         )
 
 
 def calculate_reimbursed_asset(version: FactVersion, ctx: Context) -> Outcome:
     fact: ReimbursedAsset = version.fact
-    occupied = ctx.facts("reimbursed_asset_batch", f"accepted-asset:{version.subject_id}")
+    _unique_acquisition(version, ctx)
+    occupied = ctx.facts("reimbursed_asset_batch", f"accepted-asset:{fact.asset_id}")
     if fact.acceptance_id is None:
         if occupied:
             raise KernelError("duplicate_asset_acceptance", "同一资产不能重复验收或承接")
@@ -305,9 +319,7 @@ def calculate_reimbursed_asset(version: FactVersion, ctx: Context) -> Outcome:
         posted = ctx.calculations("reimbursed_asset_batch", f"@{fact.acceptance_id}")
         if len(posted) != 1 or posted[0].fact_id != accepted.id:
             raise NeedsInformation("acceptance_id", "需要已发布的资产验收批次")
-        row = next(
-            (item for item in accepted.fact.assets if item.asset_id == version.subject_id), None
-        )
+        row = next((item for item in accepted.fact.assets if item.asset_id == fact.asset_id), None)
         if row is None or (
             row.asset_type != fact.asset_type
             or row.cost_fen != fact.cost_fen
@@ -349,13 +361,26 @@ def calculate_reimbursed_asset(version: FactVersion, ctx: Context) -> Outcome:
         base.values,
         (
             *base.balances,
-            BalanceEffect(f"asset:{version.subject_id}:carrying", fact.cost_fen, "asset"),
+            BalanceEffect(f"asset:{fact.asset_id}:carrying", fact.cost_fen, "asset"),
         ),
     )
 
 
 def _acquisitions(ctx, asset_id):
-    return (*ctx.facts("asset", f"@{asset_id}"), *ctx.facts("reimbursed_asset", f"@{asset_id}"))
+    return (
+        *ctx.facts("asset", f"asset-source:{asset_id}"),
+        *ctx.facts("reimbursed_asset", f"asset-source:{asset_id}"),
+    )
+
+
+def _unique_acquisition(version, ctx):
+    key = f"asset-source:{version.fact.asset_id}"
+    if any(
+        item.subject_id != version.subject_id
+        for kind in ("asset", "reimbursed_asset", "opening_asset")
+        for item in ctx.facts(kind, key)
+    ):
+        raise KernelError("duplicate_asset_acquisition", "同一资产只能存在一份当前取得或期初来源")
 
 
 class AssetActivation(Fact):
@@ -380,10 +405,10 @@ class AssetActivation(Fact):
 
     def reads(self):
         return (
-            Read("fact", "asset", f"@{self.asset_id}"),
-            Read("calculation", "asset", f"@{self.asset_id}"),
-            Read("fact", "reimbursed_asset", f"@{self.asset_id}"),
-            Read("calculation", "reimbursed_asset", f"@{self.asset_id}"),
+            Read("fact", "asset", f"asset-source:{self.asset_id}"),
+            Read("calculation", "asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "reimbursed_asset", f"asset-source:{self.asset_id}"),
+            Read("calculation", "reimbursed_asset", f"asset-source:{self.asset_id}"),
             Read("fact", self.kind, f"asset:{self.asset_id}"),
         )
 
@@ -394,7 +419,7 @@ def calculate_activation(version: FactVersion, ctx: Context) -> Outcome:
     if len(sources) != 1:
         raise NeedsInformation("asset_id", "需要唯一已确认的资产取得来源")
     source = sources[0].fact
-    acquisition = ctx.calculations(source.kind, f"@{fact.asset_id}")
+    acquisition = ctx.calculations(source.kind, f"asset-source:{fact.asset_id}")
     if len(acquisition) != 1 or acquisition[0].fact_id != sources[0].id:
         raise NeedsInformation("asset_id", "需要已入账的资产取得来源")
     alternatives = ctx.facts("asset_activation", f"asset:{fact.asset_id}")
@@ -444,11 +469,14 @@ class AssetConsumption(Fact):
         return (str(self.period), f"asset:{self.asset_id}", f"asset:{self.asset_id}:{self.period}")
 
     def reads(self):
+        from ..identity_corrections import opening_binding_reads
+
         reads = [
-            Read("fact", "asset", f"@{self.asset_id}"),
-            Read("fact", "reimbursed_asset", f"@{self.asset_id}"),
-            Read("fact", "opening_asset", f"@{self.asset_id}"),
-            Read("calculation", "opening_asset", f"@{self.asset_id}"),
+            Read("fact", "asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "reimbursed_asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "opening_asset", f"asset-source:{self.asset_id}"),
+            Read("calculation", "opening_asset", f"asset-source:{self.asset_id}"),
+            *opening_binding_reads(f"asset-source:{self.asset_id}"),
             Read("fact", "asset_activation", f"asset:{self.asset_id}"),
             Read("calculation", "asset_activation", f"asset:{self.asset_id}"),
             Read("fact", "asset_disposal", f"asset:{self.asset_id}"),
@@ -461,13 +489,28 @@ class AssetConsumption(Fact):
 
 
 def _asset_basis(ctx, asset_id):
+    from ..identity_corrections import opening_bindings
+    from .opening import OpeningAsset
+
+    key = f"asset-source:{asset_id}"
+    bindings = opening_bindings(ctx, "opening_asset", key)
+    replaced = {v.fact.source_subject_id for v, _ in bindings}
+    adopted = [
+        c for v, c in bindings if key in v.fact.adopted_scopes and not c.values.get("superseded")
+    ]
     acquisitions = _acquisitions(ctx, asset_id)
-    openings = ctx.facts("opening_asset", f"@{asset_id}")
-    if len(acquisitions) + len(openings) != 1:
+    openings = [v for v in ctx.facts("opening_asset", key) if v.subject_id not in replaced]
+    if len(acquisitions) + len(openings) + len(adopted) != 1:
         raise NeedsInformation("asset_id", "需要唯一的资产取得或已核验接续卡片")
+    if adopted:
+        card = OpeningAsset.model_validate_json(canonical(adopted[0].values["basis_data"]))
+        if ctx.facts("asset_activation", f"asset:{asset_id}"):
+            raise KernelError("duplicate_asset_activation", "期初在用资产不得再次确认启用")
+        activation = SimpleNamespace(**(dict(card) | {"period": card.in_use_date.period}))
+        return card, activation, adopted[0].values["basis_values"], card
     if openings:
         card = openings[0]
-        calculated = ctx.calculations("opening_asset", f"@{asset_id}")
+        calculated = ctx.calculations("opening_asset", f"asset-source:{asset_id}")
         if len(calculated) != 1 or calculated[0].fact_id != card.id:
             raise NeedsInformation("opening_package", "期初资产卡片尚未由完整清单核验发布")
         if ctx.facts("asset_activation", f"asset:{asset_id}"):
@@ -553,7 +596,8 @@ def calculate_consumption(version: FactVersion, ctx: Context) -> Outcome:
         expenses = {"administration": "560202", "sales": "560102", "service": "540102"}
     return Outcome(
         (Line(expenses[activation.benefit_area], debit=amount), Line(accumulated, credit=amount))
-        if amount else (),
+        if amount
+        else (),
         {
             "asset_id": fact.asset_id,
             "consumption_fen": amount,
@@ -589,11 +633,14 @@ class AssetDisposal(Fact):
         return (str(self.period), f"asset:{self.asset_id}", f"tax:{self.period}")
 
     def reads(self):
+        from ..identity_corrections import opening_binding_reads
+
         reads = [
-            Read("fact", "asset", f"@{self.asset_id}"),
-            Read("fact", "reimbursed_asset", f"@{self.asset_id}"),
-            Read("fact", "opening_asset", f"@{self.asset_id}"),
-            Read("calculation", "opening_asset", f"@{self.asset_id}"),
+            Read("fact", "asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "reimbursed_asset", f"asset-source:{self.asset_id}"),
+            Read("fact", "opening_asset", f"asset-source:{self.asset_id}"),
+            Read("calculation", "opening_asset", f"asset-source:{self.asset_id}"),
+            *opening_binding_reads(f"asset-source:{self.asset_id}"),
             Read("fact", "asset_activation", f"asset:{self.asset_id}"),
             Read("calculation", "asset_activation", f"asset:{self.asset_id}"),
             Read(
@@ -822,6 +869,8 @@ class LoanInterest(Fact):
 
     def reads(self):
         repayment_scope = f"payment:loan_drawdown:{self.drawdown_id}:principal"
+        from ..identity_corrections import opening_binding_reads
+
         opening_scope = f"payment:opening_loan:{self.drawdown_id}:principal"
         before = YearMonth.from_ordinal(self.period.ordinal + 1)
         return (
@@ -830,6 +879,7 @@ class LoanInterest(Fact):
             Read("calculation", "loan_drawdown", f"@{self.drawdown_id}"),
             Read("fact", "opening_loan", f"@{self.drawdown_id}"),
             Read("calculation", "opening_loan", f"@{self.drawdown_id}"),
+            *opening_binding_reads("opening-binding:" + self.drawdown_id),
             *(Read("fact", kind, repayment_scope, before) for kind in ACTUAL_PAYMENT_KINDS),
             Read("fact", "employee_advance", repayment_scope, before),
             *(
@@ -854,6 +904,23 @@ def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
     results = ctx.calculations(drawdown.kind, f"@{fact.drawdown_id}")
     if len(results) != 1 or results[0].fact_id != source.id:
         raise NeedsInformation("drawdown_id", "本金来源当前版本尚未正式核验发布")
+    if drawdown.kind == "opening_loan":
+        from ..identity_corrections import opening_bindings
+
+        bindings = opening_bindings(ctx, "opening_loan", "opening-binding:" + fact.drawdown_id)
+        if len(bindings) > 1:
+            raise KernelError("opening_identity_conflict", "期初贷款采用绑定不唯一")
+        if bindings:
+            adopted = bindings[0][1]
+            if adopted.values.get("superseded"):
+                raise NeedsInformation(
+                    "drawdown_id",
+                    "原期初贷款已被替代，须明确改指保留本金来源",
+                    sources=(adopted.values["replacement_source_subject_id"],),
+                )
+            drawdown = type(drawdown).model_validate_json(canonical(adopted.values["basis_data"]))
+        if drawdown.lender_id != agreement.lender_id:
+            raise KernelError("loan_agreement_conflict", "期初贷款与计息合同须采用同一明确贷款方")
     principal_start = (
         drawdown.interest_start if drawdown.kind == "opening_loan" else drawdown.actual_date
     )
@@ -997,6 +1064,7 @@ def required_reads(period: YearMonth):
             "reimbursed_asset",
             "reimbursed_asset_batch",
             "opening_asset",
+            "opening_identity_binding",
             "asset_activation",
             "asset_consumption",
             "asset_disposal",
@@ -1021,7 +1089,7 @@ def required_work(period: YearMonth, context):
 
 def _required_asset_work(period, rows):
     assets = {
-        row.subject_id: row.fact
+        row.fact.asset_id: row.fact
         for kind in ("asset", "reimbursed_asset")
         for row in rows[("fact", kind)]
     }
@@ -1039,7 +1107,7 @@ def _required_asset_work(period, rows):
             consumed[asset_id] = result
     issues = []
     posted_cards = {row.fact_id for row in rows[("calculation", "reimbursed_asset")]}
-    card_facts = {row.subject_id: row for row in rows[("fact", "reimbursed_asset")]}
+    card_facts = {row.fact.asset_id: row for row in rows[("fact", "reimbursed_asset")]}
     for batch in rows[("fact", "reimbursed_asset_batch")]:
         for item in batch.fact.assets:
             card = card_facts.get(item.asset_id)
@@ -1088,29 +1156,39 @@ def _required_asset_work(period, rows):
                 }
             )
     posted_openings = {row.fact_id for row in rows[("calculation", "opening_asset")]}
+    from ..identity_corrections import _assignment_data
+
+    bindings = {
+        row.fact.source_subject_id: row
+        for row in rows[("fact", "opening_identity_binding")]
+        if row.fact.source_kind == "opening_asset"
+    }
     for card in rows[("fact", "opening_asset")]:
-        if card.subject_id in disposed:
+        binding = bindings.get(card.subject_id)
+        if binding and binding.fact.operation == "supersede":
+            continue
+        fact = _assignment_data(card, binding.fact.assignments) if binding else card.fact
+        if fact.asset_id in disposed:
             continue
         if card.id not in posted_openings:
             issues.append(
                 {
                     "field": "opening_package",
-                    "asset_id": card.subject_id,
+                    "asset_id": fact.asset_id,
                     "message": "期初资产卡片尚未由完整清单发布",
                 }
             )
             continue
-        fact = card.fact
         remaining = fact.useful_life_months - fact.completed_months
         if remaining <= 0:
             continue
         end = min(period.ordinal, fact.period.ordinal + remaining - 1)
-        latest = consumed.get(card.subject_id)
+        latest = consumed.get(fact.asset_id)
         if latest is None or latest.period.ordinal != end:
             issues.append(
                 {
                     "field": "asset_consumption",
-                    "asset_id": card.subject_id,
+                    "asset_id": fact.asset_id,
                     "period": str(YearMonth.from_ordinal(end)),
                     "message": "期初资产须从建账月连续确认摊折",
                 }
@@ -1125,6 +1203,22 @@ def _required_loan_work(period, rows):
         for kind in ("loan_drawdown", "opening_loan")
         for row in rows[("fact", kind)]
     }
+    from ..identity_corrections import _assignment_data
+
+    for binding in rows[("fact", "opening_identity_binding")]:
+        if binding.fact.source_kind != "opening_loan":
+            continue
+        source = drawdowns.get(binding.fact.source_subject_id)
+        if source is None:
+            continue
+        if binding.fact.operation == "supersede":
+            del drawdowns[source.subject_id]
+        else:
+            drawdowns[source.subject_id] = SimpleNamespace(
+                id=source.id,
+                subject_id=source.subject_id,
+                fact=_assignment_data(source, binding.fact.assignments),
+            )
     posted_drawdowns = {
         row.fact_id
         for kind in ("loan_drawdown", "opening_loan")

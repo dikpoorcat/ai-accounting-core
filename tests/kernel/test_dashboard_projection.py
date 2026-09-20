@@ -4,6 +4,7 @@ import json
 from typing import ClassVar
 
 import pytest
+from entity_fixture import save_entity_display_profile, seed_registration_entities
 from schema_fixture import test_bundle
 from test_banking import book as _bank_book
 from test_banking import entry, funding, opening, reconciliation, statement
@@ -24,7 +25,6 @@ from test_reports import profile as report_profile
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import Fact, Line, Outcome, Registry
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.assets import AssetAcquisition, AssetActivation
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.http import wire_money
@@ -45,7 +45,7 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
             "subject_id": f"receipt-{i:04}",
             "data": {
                 "period": "2026-09",
-                "owner_id": "owner",
+                "owner_id": f"owner-{i:04}",
                 "amount_fen": 1,
                 "funding_kind": "capital",
                 "actual_date": "2026-09-02",
@@ -56,6 +56,8 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
         }
         for i in range(501)
     ]
+    for item in facts:
+        seed_registration_entities(book, item["kind"], item["data"])
     book.save_facts(facts, request_id="501-sources")
     subjects = [item["subject_id"] for item in facts]
     preview = book.preview(subjects)
@@ -107,7 +109,8 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
             {"reference": "second", "source_kind": "funding", "source_id": "funding"},
         ],
     )
-    Display(book).save_display_profile(
+    save_entity_display_profile(
+        book,
         {
             "kind": "counterparty",
             "entity_id": "owner",
@@ -124,7 +127,7 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
     assert len(data["bank_statement"]["rows"]) == 1
     assert data["bank_statement"]["rows"][0]["party"] == "明确出资人"
     assert data["accounts"][0]["reconciliation"]["state"] == "complete"
-    assert data["accounts"][0]["active"] is None
+    assert data["accounts"][0]["active"] is True
     second = dashboard.funds(
         "2026-09",
         after_statement=data["bank_statement"]["page"]["next_cursor"],
@@ -218,7 +221,8 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     company.save(actual(), "observed-tax")
     company.save(wage.fact, wage.subject_id)
     company.publish(wage.subject_id)
-    Display(company.engine).save_display_profile(
+    save_entity_display_profile(
+        company.engine,
         {
             "kind": "employee",
             "entity_id": "employee",
@@ -250,7 +254,8 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
 def test_payroll_open_items_show_the_employee_for_every_payroll_component(payroll_company):
     company = payroll_company
     company.publish("january")
-    profile = Display(company.engine).save_display_profile(
+    profile = save_entity_display_profile(
+        company.engine,
         {
             "kind": "employee",
             "entity_id": "employee",
@@ -262,9 +267,7 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
     )
 
     categories = Dashboard(company.engine).brief("2026-01")["data"]["open_items"]["categories"]
-    payroll_items = next(item for item in categories if item["key"] == "payroll_payables")[
-        "items"
-    ]
+    payroll_items = next(item for item in categories if item["key"] == "payroll_payables")["items"]
     by_component = {item["name"]: item for item in payroll_items}
 
     assert set(by_component) == {"net", "tax", "employee_social", "employer_social"}
@@ -363,6 +366,7 @@ def test_closed_actual_declaration_shows_existing_correction_without_reposting(p
 def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path):
     company = Company(tmp_path / "corrected-asset.sqlite")
     asset = AssetAcquisition(
+        asset_id="computer",
         period="2026-01",
         asset_type="fixed",
         supplier_id="supplier",
@@ -392,9 +396,7 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
         }
     ]
     options = {"evidence": evidence, "expected_revision": 0}
-    preview = batches.prepare_activation_batch(
-        "activation-batch", "2026-01", members, **options
-    )
+    preview = batches.prepare_activation_batch("activation-batch", "2026-01", members, **options)
     batches.confirm_activation_batch(
         "activation-batch",
         "2026-01",
@@ -440,7 +442,7 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     book, store, commit, proof = bank_book
     store("reimbursed_asset_batch", "batch", accepted_batch())
     store("reimbursed_asset", "computer", batch_card())
-    store("reimbursed_asset", "chair", batch_card(30000))
+    store("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     commit("batch", "computer", "chair")
     batches = AssetBatches(book)
     members = [
@@ -452,9 +454,7 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
         },
     ]
     options = {"evidence": (proof,), "expected_revision": 0}
-    preview = batches.prepare_activation_batch(
-        "activation-batch", "2026-02", members, **options
-    )
+    preview = batches.prepare_activation_batch("activation-batch", "2026-02", members, **options)
     batches.confirm_activation_batch(
         "activation-batch",
         "2026-02",

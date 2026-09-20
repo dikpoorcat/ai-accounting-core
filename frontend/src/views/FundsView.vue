@@ -292,7 +292,7 @@ async function loadFunds(periodKey: string) {
   requestError.value = "";
   try {
     const response = await fetchFundsDashboard(periodKey, controller.signal, filters);
-    if (response.schema_version !== 3) {
+    if (response.schema_version !== 4) {
       throw new Error("FUNDS_SCHEMA_MISMATCH");
     }
     const data = response.data;
@@ -827,6 +827,9 @@ onBeforeUnmount(() => {
                     <small :class="{ loss: fen(account.net_change_fen) < 0n }">
                       {{ accountChangeLabel(account.net_change_fen) }}
                       <template v-if="fen(account.net_change_fen) !== 0n"> {{ formatSigned(account.net_change_fen) }}</template>
+                    </small>
+                    <small v-if="account.attribution_adjustment_fen !== null && fen(account.attribution_adjustment_fen) !== 0n">
+                      身份归属调整 {{ formatSigned(account.attribution_adjustment_fen) }}
                     </small>
                   </div>
                 </div>

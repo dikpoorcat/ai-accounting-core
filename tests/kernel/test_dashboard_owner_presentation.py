@@ -5,6 +5,7 @@ import test_banking as banking
 import test_payroll_corrections as payroll_corrections
 import test_platforms as platforms
 import test_reimbursement_assets as reimbursement_assets
+from entity_fixture import seed_entities
 from test_opening_continuation import book as _opening_book
 from test_payroll import payroll
 from test_payroll_corrections import payment
@@ -13,6 +14,7 @@ from test_reimbursement_assets import accepted_batch, batch_card
 
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.entities import Entities
 
 bank_book = banking.book
 payroll_book = payroll_corrections.company
@@ -22,10 +24,29 @@ opening_book = _opening_book
 
 
 def display_profile(engine, kind, entity_id, **fields):
-    return Display(engine).save_display_profile(
-        {"kind": kind, "entity_id": entity_id, "source": "合成展示资料", **fields},
-        expected_revision=0,
-        request_id=f"display-{kind}-{entity_id}",
+    if kind == "business":
+        return Display(engine).save_display_profile(
+            {"kind": kind, "entity_id": entity_id, "source": "合成展示资料", **fields},
+            expected_revision=0,
+            request_id=f"display-{kind}-{entity_id}",
+        )
+    entity_kind, account_type = {
+        "employee": ("person", None),
+        "counterparty": ("organization", None),
+        "asset": ("asset", None),
+    }[kind]
+    with engine.store.connection(read_only=True) as connection:
+        exists = connection.execute("SELECT 1 FROM entity WHERE id=?", (entity_id,)).fetchone()
+    if exists is None:
+        seed_entities(engine, ((entity_id, entity_kind, account_type),))
+    evidence_digest = fields.pop("evidence_digest", None)
+    return Entities(engine).update_entity_profile(
+        entity_id,
+        fields,
+        source="合成展示资料",
+        expected_revision=1,
+        request_id=f"entity-profile:{kind}:{entity_id}",
+        evidence_digest=evidence_digest,
     )
 
 
@@ -249,7 +270,7 @@ def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_bo
         display_profile(engine, "asset", ident, display_name=name, display_number=code)
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     row = voucher(engine, "2026-02", "batch")
     credit = next(line for line in row["lines"] if line["code"] == "224101")

@@ -25,6 +25,12 @@ def batch_book(tmp_path):
     proof = engine.register_evidence(
         b"synthetic asset confirmation", "text/plain", "source", request_id="evidence"
     )["digest"]
+    from entity_fixture import seed_entities
+
+    seed_entities(
+        engine,
+        [("card-a", "asset", None), ("card-b", "asset", None), ("supplier", "organization", None)],
+    )
     members = []
     for asset, amount in (("card-a", 1200), ("card-b", 2400)):
         engine.save_fact(
@@ -32,6 +38,7 @@ def batch_book(tmp_path):
             asset,
             {
                 "period": "2026-01",
+                "asset_id": asset,
                 "asset_type": "fixed",
                 "supplier_id": "supplier",
                 "acquisition_date": "2026-01-02",

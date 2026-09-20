@@ -1,6 +1,6 @@
 {
   "employees": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",
@@ -333,7 +333,7 @@
     }
   },
   "assets": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",

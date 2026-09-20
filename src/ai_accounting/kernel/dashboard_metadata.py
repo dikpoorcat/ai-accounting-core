@@ -9,7 +9,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Set
 
 from .display import _KINDS, Display
-from .read_indexes import CLOSE_MANAGEMENT, CLOSE_PAYEES, CLOSE_PROFILES, verify_close_references
+from .read_indexes import (
+    CLOSE_ENTITY_PROFILES,
+    CLOSE_MANAGEMENT,
+    CLOSE_PAYEES,
+    CLOSE_PROFILES,
+    verify_close_references,
+)
 from .types import canonical
 
 _REFERENCE_FIELDS = (
@@ -22,6 +28,12 @@ _REFERENCE_FIELDS = (
 )
 _RECORDS = {
     "profile": ("display_profile_revision", "entity_id", CLOSE_PROFILES, "display_profile"),
+    "entity_profile": (
+        "entity_profile_revision",
+        "entity_id",
+        CLOSE_ENTITY_PROFILES,
+        "entity_profile",
+    ),
     "payee": ("payee_revision", "party_id", CLOSE_PAYEES, "payee"),
     "management": ("management_revision", "subject_id", CLOSE_MANAGEMENT, "management"),
 }
@@ -32,6 +44,8 @@ class Records(Mapping):
 
     def __init__(self, snapshot, record_type, *, kind=None, frozen=False):
         self.snapshot, self.connection = snapshot, snapshot.connection
+        if record_type == "profile" and kind != "business":
+            record_type = "entity_profile"
         self.record_type, self.kind, self.frozen = record_type, kind, frozen
         self.table, self.identity, self.path, self.reference_type = _RECORDS[record_type]
         self.cache, self.missing = {}, set()
@@ -43,6 +57,8 @@ class Records(Mapping):
         if self.frozen:
             query += "," + ",".join("r." + field for field in _REFERENCE_FIELDS)
         query += f" FROM {self.table} p"
+        if self.record_type == "entity_profile":
+            query += " JOIN entity e ON e.id=p.entity_id"
         if self.frozen:
             query += (
                 " JOIN close_reference r ON r.reference_id=p.id "
@@ -50,7 +66,26 @@ class Records(Mapping):
             )
             parameters.extend((self.snapshot.month, self.path, self.reference_type))
         query += " WHERE 1=1"
-        if self.kind is not None:
+        if self.record_type == "entity_profile":
+            kinds = {
+                "employee": ("person",),
+                "counterparty": ("person", "organization"),
+                "fund_account": ("fund_account",),
+                "asset": ("asset",),
+            }[self.kind]
+            query += " AND e.kind IN(SELECT value FROM json_each(?))"
+            parameters.append(canonical(kinds))
+            if self.kind == "employee":
+                from .entities import employee_entities
+
+                identities = (
+                    self.snapshot.close["management_snapshot"]["employee_entities"]
+                    if self.frozen
+                    else employee_entities(self.connection, self.snapshot.period)
+                )
+                query += " AND p.entity_id IN(SELECT value FROM json_each(?))"
+                parameters.append(canonical(identities))
+        elif self.kind is not None:
             query += " AND p.kind=?"
             parameters.append(self.kind)
         if identifiers is not None:
@@ -60,7 +95,11 @@ class Records(Mapping):
             query += (
                 f" AND p.revision=(SELECT max(q.revision) FROM {self.table} q "
                 f"WHERE q.{self.identity}=p.{self.identity}"
-                + (" AND q.kind=p.kind" if self.kind is not None else "")
+                + (
+                    " AND q.kind=p.kind"
+                    if self.kind is not None and self.record_type != "entity_profile"
+                    else ""
+                )
                 + ")"
             )
         query += f" ORDER BY p.{self.identity},p.revision"
@@ -80,9 +119,13 @@ class Records(Mapping):
                 for key in row.keys()
                 if not self.frozen or key not in _REFERENCE_FIELDS
             }
-            self.cache[row[self.identity]] = (
-                Display._record(record) if self.record_type == "profile" else record
-            )
+            if self.record_type == "entity_profile":
+                from .entities import _profile_record, display_profile
+
+                record = display_profile(_profile_record(record), self.kind)
+            elif self.record_type == "profile":
+                record = Display._record(record)
+            self.cache[row[self.identity]] = record
         self.missing.update(missing - self.cache.keys())
 
     def __getitem__(self, key):

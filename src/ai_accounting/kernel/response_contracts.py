@@ -52,6 +52,7 @@ def _boolean_literal(value):
 
 Version2 = Annotated[Literal[2], BeforeValidator(_integer_literal)]
 Version3 = Annotated[Literal[3], BeforeValidator(_integer_literal)]
+Version4 = Annotated[Literal[4], BeforeValidator(_integer_literal)]
 FalseValue = Annotated[Literal[False], BeforeValidator(_boolean_literal)]
 TrueValue = Annotated[Literal[True], BeforeValidator(_boolean_literal)]
 
@@ -164,6 +165,26 @@ class SelectionCandidate(ResponseObject):
     trace_only: TrueValue
 
 
+class DuplicateSourceLocation(ResponseObject):
+    evidence_digest: str
+    location: str
+
+
+class DuplicateSignal(ResponseObject):
+    code: Literal[
+        "same_exact_material_location",
+        "same_complete_signature_and_evidence",
+        "same_complete_actual_money",
+        "same_complete_signature",
+        "shared_evidence",
+        "same_material_location_different_signature",
+    ]
+    matched_fields: list[str]
+    evidence: NotRequired[list[str]]
+    source_locations: NotRequired[list[DuplicateSourceLocation]]
+    distinct_locations_proven: NotRequired[bool]
+
+
 class ReadinessIssue(ResponseObject):
     """Fields emitted by material, accounting, report and close checkers.
 
@@ -217,6 +238,10 @@ class ReadinessIssue(ResponseObject):
     column: NotRequired[str]
     dimension: NotRequired[Literal["bank", "platform"]]
     expected_direction: NotRequired[Literal["inflow", "outflow"]]
+    candidate_subject_id: NotRequired[str]
+    pair_digest: NotRequired[str]
+    review_period: NotRequired[Month]
+    signals: NotRequired[list[DuplicateSignal]]
 
 
 class CalculationTarget(ResponseObject):
@@ -417,6 +442,7 @@ class FundAccount(ResponseObject):
     inflow_fen: WireFen
     outflow_fen: WireFen
     net_change_fen: WireFen
+    attribution_adjustment_fen: WireFen | None
     closing_fen: WireFen | None
     movement_count: Count
     last_activity_date: Day | None
@@ -582,7 +608,7 @@ class FundsData(ResponseObject):
 
 
 class FundsDashboardResponse(ResponseObject):
-    schema_version: Version3
+    schema_version: Version4
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

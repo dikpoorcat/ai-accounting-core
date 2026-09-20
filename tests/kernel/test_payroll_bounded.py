@@ -368,6 +368,10 @@ def test_48_month_real_engine_chain_keeps_uncertainty_with_exact_yearly_resets(t
         "synthetic confirmed source records",
         request_id=instance.request(),
     )["digest"]
+    from entity_fixture import seed_fact_entities
+
+    for fact, _ in records:
+        seed_fact_entities(instance.engine, fact)
     instance.engine.save_facts(
         [
             {

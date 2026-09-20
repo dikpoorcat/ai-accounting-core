@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from test_display import database_state, profile, save_commentary
+from test_display import database_state, register_employee, save_commentary
 from test_exports import setup as setup  # noqa: F401
 from test_opening_continuation import book as book  # noqa: F401
 from test_payroll import payroll
@@ -57,7 +57,13 @@ def test_future_write_preserves_content_but_not_submission_and_relevant_sources_
             request_id="old-preview",
         )
     assert stale.value.code == "preview_expired" and database_state(engine) == before
-    save("expense", "current", expense("2026-01"))
+    distinct_proof = engine.register_evidence(
+        b"a separate current-month expense",
+        "text/plain",
+        "current expense",
+        request_id="current-proof",
+    )["digest"]
+    save("expense", "current", expense("2026-01"), proof=distinct_proof)
     assert display.preview_period_commentary("2026-01")["status"] == "stale"
     save_commentary(display, request_id="review-pending")
     publish("current")
@@ -79,7 +85,7 @@ def test_cross_month_pending_cause_is_not_filtered_out(book):
     engine, save, publish, _, _ = book
     agreement = {
         "period": "2026-01",
-        "lender_id": "bank",
+        "lender_id": "lender",
         "lender_is_licensed": True,
         "currency": "CNY",
         "annual_rate_percent": "3",
@@ -166,9 +172,7 @@ def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatc
     )
     frozen = periods.closed_report("2026-01")
     supplement = save_commentary(display, text="后来核对的说明", request_id="supplement")
-    display.save_display_profile(
-        profile(employment_start="2026-01"), expected_revision=0, request_id="profile"
-    )
+    register_employee(engine, data={"employment_start": "2026-01"}, proof=proof)
     current = display.preview_period_commentary("2026-01")
     assert current["current"]["id"] == original["id"]
     assert current["frozen"]["content_validity"]["status"] == "frozen"

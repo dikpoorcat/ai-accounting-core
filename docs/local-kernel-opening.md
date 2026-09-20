@@ -36,6 +36,10 @@
 
 `company_context` 返回绑定公司的身份、公司业务说明及版本、可检索类型。说明是管理背景，不能替代核算事实。`update_company_note` 要求 `expected_revision` 和 `request_id`；并发修改返回当前版本，调用者合并后重试，不能直接覆盖另一会话的说明。内容与可选证据按版本只追加，只递增管理版本。
 
-`find_facts` 可按 `kind`、`person_id`、起止月份及 `current`／`pending`／`published`／`history`／`deleted` 状态检索。人员筛选适用于明确声明 `employee_id` 或 `person_id` 的类型。结果包含事实内容、稳定业务身份、事实版本、证据和发布状态；`after_id` 游标每页最多 500 项。查询始终绑定一个公司数据库，不借用聊天记忆或另一公司的事实。
+`find_entities` 查找当前公司的全部对象，包括停用及曾被纠正的身份；精确编号优先，同名只作为候选。人员、机构、公司资金账户、资产、项目及基金产品先明确复用或登记，期初业务引用这些对象，资产的 `asset_id` 与取得或期初业务编号分开。姓名和账号没有明确资料时不补造；付款指令不当作公司账户。
+
+`find_facts` 可按 `kind`、`entity_id`、可选 `role`、起止月份及 `current`／`pending`／`published`／`history`／`deleted`／`superseded` 状态检索。`identity_match` 默认 `current`，按当前确认归属匹配；`recorded` 按原记录身份匹配，返回载荷始终保持原样。响应版本为 2，按月份及事实编号倒序；`cursor` 每页最多 500 项，筛选、公司或资料版本变化后必须从首页重查，不再使用 `person_id`／`after_id`。
+
+已冻结期初指错对象，使用专用身份纠错指定精确来源和正确对象，在开放期调整归属。原期初事实、金额及包不回写；工资累计、资产摊折和清偿读取明确的采用绑定。不能用改名代替账务纠错。
 
 验收在隔离空库进行：`tests/kernel/test_opening_continuation.py` 覆盖期初平衡、收付接续、资产、贷款、工资累计、银行对账、闭期边界和补充报表；`tests/kernel/test_discovery.py` 覆盖说明 CAS、管理版本、证据保护、分页和跨公司隔离。

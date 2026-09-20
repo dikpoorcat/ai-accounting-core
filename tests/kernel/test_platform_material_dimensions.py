@@ -1,6 +1,7 @@
 """Original signed bank and platform rows cover two sides of one conserved transfer."""
 
 import pytest
+from entity_fixture import seed_registration_entities
 from test_banking import entry, match, opening, reconciliation, statement
 from test_deletion_boundaries import book as book
 from test_materials import Company, codes
@@ -14,6 +15,7 @@ def save(company, kind, subject, data, revision=0):
     evidence = tuple(
         dict.fromkeys((company.proof, data.get("source_evidence_digest", company.proof)))
     )
+    seed_registration_entities(company.engine, kind, data)
     return company.engine.save_fact(
         kind,
         subject,

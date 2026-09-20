@@ -47,6 +47,17 @@ class Prepared:
 
 
 class Engine:
+    _allows_asset_graph = False
+
+    def _reads(self, version):
+        return version.fact.reads_for(version.subject_id)
+
+    def _explicit_roots(self, subjects):
+        return set(subjects)
+
+    def _selection_enabled(self, subject_id):
+        return True
+
     def __init__(self, store: Store, *, fault=None, commit_guard=None, audit_actor=None):
         self.store = store
         self.fault = fault or (lambda stage, connection: None)
@@ -157,7 +168,11 @@ class Engine:
         *,
         evidence: tuple[str, ...],
         expected_revision: int,
+        review=None,
+        source_locations=(),
     ):
+        from .duplicates import DuplicateReview, SourceLocation
+
         if kind not in self.store.registry.models:
             raise KernelError("unknown_fact_type", f"unknown business fact {kind}")
         if not subject_id or len(subject_id) > 200:
@@ -183,16 +198,27 @@ class Engine:
             raise NeedsInformation("evidence", "已确认事实必须引用不可变依据")
         if any(len(bytes.fromhex(e)) != 32 for e in evidence):
             raise ValueError("evidence digest must be 32 bytes")
+        locations = tuple(SourceLocation.model_validate(item) for item in source_locations)
+        review = (
+            DuplicateReview.model_validate_json(canonical(review)) if review is not None else None
+        )
         payload = [
             kind,
             subject_id,
             fact.model_dump(mode="json"),
             sorted(set(evidence)),
             expected_revision,
+            [item.model_dump(mode="json") for item in locations],
+            review.model_dump(mode="json") if review is not None else None,
         ]
         request_hash = digest(["save_fact", payload])
 
-        def operation(connection):
+        def operation(
+            connection,
+            *,
+            duplicate_prepared=None,
+            fact_ids_by_subject=None,
+        ):
             row = connection.execute(
                 "SELECT s.kind,f.fact_id FROM subject s LEFT JOIN fact_current f "
                 "ON f.subject_id=s.id WHERE s.id=?",
@@ -230,6 +256,62 @@ class Engine:
             revision = old.revision if old else 0
             if type(expected_revision) is not int or expected_revision != revision:
                 raise KernelError("fact_version_conflict", "已确认事实版本发生变化")
+            from .duplicates import DuplicateCandidates
+            from .entity_references import references_for, validate_entity_references
+
+            references = validate_entity_references(connection, fact, subject_id)
+            if old:
+                previous_entities = {
+                    item["path"]: item["entity_id"]
+                    for item in references_for(old.fact, subject_id)
+                    if item["reference_type"] == "entity"
+                }
+                changed_entities = [
+                    item["path"]
+                    for item in references
+                    if item["reference_type"] == "entity"
+                    and item["path"] in previous_entities
+                    and previous_entities[item["path"]] != item["entity_id"]
+                ]
+                if changed_entities:
+                    raise KernelError(
+                        "identity_correction_required",
+                        "对象身份变化须先预览并确认身份纠错，不能通过普通事实修改绕过",
+                        fields=sorted(changed_entities),
+                    )
+            duplicates = DuplicateCandidates(self.store)
+            duplicate_prepared = duplicate_prepared or duplicates.prepare(
+                connection,
+                subject_id=subject_id,
+                revision=revision + 1,
+                fact=fact,
+                evidence=evidence,
+                source_locations=locations,
+            )
+            disposition = duplicates.require_review(duplicate_prepared, review)
+            if disposition is not None and disposition.action == "reuse_existing":
+                if old is not None:
+                    raise KernelError(
+                        "duplicate_reuse_requires_new_business",
+                        "既有业务的录入纠错不能改为复用另一业务，请使用受控替代流程",
+                    )
+                checked = duplicates.record_check(
+                    connection,
+                    prepared=duplicate_prepared,
+                    result_fact_id=None,
+                    review=disposition,
+                    fact_ids_by_subject=fact_ids_by_subject,
+                )
+                selected = self.store.fact(connection, checked["selected_fact_id"])
+                return {
+                    "status": "reused",
+                    "subject_id": selected.subject_id,
+                    "fact_id": selected.id,
+                    "revision": selected.revision,
+                    "requested_subject_id": subject_id,
+                    "duplicate_check_id": checked["check_id"],
+                    "pending": [],
+                }
             version = FactVersion(
                 uuid.uuid4().hex, subject_id, revision + 1, fact, tuple(sorted(set(evidence)))
             )
@@ -256,13 +338,32 @@ class Engine:
                 "INSERT INTO pending VALUES(?,?) ON CONFLICT DO NOTHING",
                 [(sid, version.id) for sid in sorted(affected)],
             )
+            checked = None
+            if duplicates.eligible(kind):
+                checked = duplicates.record_check(
+                    connection,
+                    prepared=duplicate_prepared,
+                    result_fact_id=version.id,
+                    review=disposition,
+                    fact_ids_by_subject=fact_ids_by_subject,
+                )
             return {
                 "status": "confirmed",
                 "subject_id": subject_id,
                 "fact_id": version.id,
                 "revision": version.revision,
                 "pending": sorted(affected),
+                **({"duplicate_check_id": checked["check_id"]} if checked is not None else {}),
             }
+
+        operation.duplicate_proposal = {
+            "subject_id": subject_id,
+            "revision": expected_revision + 1,
+            "fact": fact,
+            "evidence": tuple(sorted(set(evidence))),
+            "source_locations": locations,
+        }
+        operation.duplicate_review = review
 
         return request_hash, operation
 
@@ -284,10 +385,19 @@ class Engine:
         evidence: tuple[str, ...],
         expected_revision: int,
         request_id: str,
+        review=None,
+        source_locations=(),
     ):
         self._require_direct_registration(kind)
         request_hash, operation = self._registration(
-            False, kind, subject_id, data, evidence=evidence, expected_revision=expected_revision
+            False,
+            kind,
+            subject_id,
+            data,
+            evidence=evidence,
+            expected_revision=expected_revision,
+            review=review,
+            source_locations=source_locations,
         )
         return self._write(
             request_id,
@@ -308,13 +418,22 @@ class Engine:
         expected_revision: int,
         recording_error_confirmed: bool,
         request_id: str,
+        review=None,
+        source_locations=(),
     ):
         """Explicitly correct recorded facts; preserve every original revision and evidence."""
         self._require_direct_registration(kind)
         if recording_error_confirmed is not True:
             raise NeedsInformation("recording_error_confirmed", "需要确认这是原记录的录入错误")
         request_hash, operation = self._registration(
-            True, kind, subject_id, data, evidence=evidence, expected_revision=expected_revision
+            True,
+            kind,
+            subject_id,
+            data,
+            evidence=evidence,
+            expected_revision=expected_revision,
+            review=review,
+            source_locations=source_locations,
         )
         return self._write(
             request_id,
@@ -337,7 +456,23 @@ class Engine:
         request_hash = digest(["confirm_facts", [hashed.hex() for hashed, _ in registrations]])
 
         def operation(connection):
-            results = [save(connection) for _, save in registrations]
+            from .duplicates import DuplicateCandidates
+
+            duplicates = DuplicateCandidates(self.store)
+            prepared = duplicates.prepare_batch(
+                connection, [save.duplicate_proposal for _, save in registrations]
+            )
+            results = []
+            fact_ids_by_subject = {}
+            for (_, save), candidate in zip(registrations, prepared, strict=True):
+                result = save(
+                    connection,
+                    duplicate_prepared=candidate,
+                    fact_ids_by_subject=fact_ids_by_subject,
+                )
+                results.append(result)
+                if result["status"] == "confirmed":
+                    fact_ids_by_subject[save.duplicate_proposal["subject_id"]] = result["fact_id"]
             return {"status": "confirmed", "results": results}
 
         return self._write(
@@ -418,15 +553,13 @@ class Engine:
             }
             from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
 
-            if any(v.fact.kind in MEMBER_KINDS | OWNER_KINDS for v in facts.values()):
+            if not self._allows_asset_graph and any(
+                v.fact.kind in MEMBER_KINDS | OWNER_KINDS for v in facts.values()
+            ):
                 raise KernelError(
                     "asset_batch_command_required", "包含资产卡片或汇总的变更须通过资产专用编排预览"
                 )
-            reads = {
-                read
-                for version in facts.values()
-                for read in version.fact.reads_for(version.subject_id)
-            }
+            reads = {read for version in facts.values() for read in self._reads(version)}
             selections = self.store.select_many(connection, sorted(reads, key=repr))
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
@@ -452,11 +585,7 @@ class Engine:
             for version in facts.values():
                 if version.fact.kind in self.store.registry.accounting_consumers:
                     selector = self.store.registry.accounting_consumers[version.fact.kind]
-                    required = (
-                        selector(version)
-                        if selector is not None
-                        else version.fact.reads_for(version.subject_id)
-                    )
+                    required = selector(version) if selector is not None else self._reads(version)
                     comparison_ids.update(
                         calc.id
                         for read in required
@@ -467,6 +596,11 @@ class Engine:
             from .publication import heads
 
             publications = heads(connection, facts)
+            from .duplicates import DuplicateCandidates
+
+            duplicate_subjects = self._explicit_roots(facts)
+            if duplicate_subjects:
+                DuplicateCandidates(self.store).require_publishable(connection, duplicate_subjects)
             connection.commit()
         return epochs, facts, selections, pending, closed, previous, accounting, publications
 
@@ -485,7 +619,7 @@ class Engine:
                 period.ordinal not in closed for period in version.fact.required_closed_periods()
             ):
                 raise KernelError("awaiting_close", "该业务须等待所依据期间关账")
-            for read in version.fact.reads_for(version.subject_id):
+            for read in self._reads(version):
                 if read.source != "calculation" or read.key.startswith("#"):
                     continue
                 for other, upstream in facts.items():
@@ -522,13 +656,15 @@ class Engine:
         for sid in ordered:
             version = facts[sid]
             selected = {}
-            for read in version.fact.reads_for(version.subject_id):
+            for read in self._reads(version):
                 values = list(selections[read])
                 if read.source == "calculation" and not read.key.startswith("#"):
                     values = [v for v in values if v.subject_id not in overlays]
                     for upstream_id, calc in overlays.items():
                         upstream = facts[upstream_id]
-                        if calculation_matches(read, calc, upstream.fact):
+                        if self._selection_enabled(upstream_id) and calculation_matches(
+                            read, calc, upstream.fact
+                        ):
                             values.append(calc)
                     values.sort(key=lambda item: (item.period.ordinal, item.subject_id))
                 selected[read] = tuple(values)
@@ -636,7 +772,7 @@ class Engine:
         from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
         from .publication import route
 
-        requested = set(subjects)
+        requested = self._explicit_roots(subjects)
         has_changes = any(
             item.impact not in {"review_no_impact", "compatibility_required"}
             and item.version.fact.kind not in MEMBER_KINDS
@@ -674,6 +810,10 @@ class Engine:
             self.store.registry,
             ((item.version, item.context.trace()) for item in prepared),
         )
+        from .duplicates import DuplicateCandidates
+
+        if any(DuplicateCandidates.eligible(item.version.fact.kind) for item in prepared):
+            checked = tuple(sorted({*checked, "accounting", "material"}))
         public = {
             "subjects": sorted(facts),
             "epochs": epochs,
@@ -757,9 +897,13 @@ class Engine:
                         or item.calculation_id,
                         item.compatibility_issue.get("reason", "comparison_unavailable"),
                     )
+            from .duplicates import DuplicateCandidates
             from .integrity import verify_prepared_sources, verify_publication
             from .projections import prepare_projection_check, verify_projection_change
 
+            duplicate_subjects = self._explicit_roots(item.version.subject_id for item in prepared)
+            if duplicate_subjects:
+                DuplicateCandidates(self.store).require_publishable(connection, duplicate_subjects)
             verify_prepared_sources(self, connection, prepared)
             self._check_publication_projections(connection, prepared)
             projection_check = prepare_projection_check(
@@ -1802,6 +1946,9 @@ class Engine:
             )
             if removed.rowcount != 1:
                 raise KernelError("preview_expired", "当前事实版本与已审阅预览不一致")
+            from .discovery_indexes import sync_discovery_subjects
+
+            sync_discovery_subjects(connection, {subject_id})
             return {
                 "status": "withdrawn",
                 "subject_id": subject_id,

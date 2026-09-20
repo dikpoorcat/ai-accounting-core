@@ -42,6 +42,13 @@ const collectionStates = ref<Record<string, { loading: boolean; error: string; n
 const collectionControllers = new Map<string, AbortController>();
 let controller: AbortController | null = null, generation = 0, mounted = true;
 const currentFollowupSettlements = computed(() => data.value?.current_followups?.settlements || null);
+const duplicateChecks = computed(() => data.value?.duplicate_checks ?? {
+  status: "clear" as const,
+  strong_candidates: [], weak_candidates: [], unresolved: [], checks: [],
+  check_count: 0, checks_truncated: false,
+});
+const identityCorrections = computed(() => data.value?.identity_corrections ?? []);
+const entityReferences = computed(() => data.value?.entity_references ?? []);
 const showCurrentFollowups = computed(() => {
   const selected = data.value?.settlements;
   const current = currentFollowupSettlements.value;
@@ -56,6 +63,7 @@ const showCurrentFollowups = computed(() => {
 const compactWarnings = computed(() => {
   if (!data.value) return [];
   const warnings: string[] = [];
+  warnings.push(...duplicateChecks.value.unresolved.map((item) => item.message));
   const accounting = data.value.as_posted;
   if (accounting.unestablished_state_selections.length) {
     warnings.push(`${accounting.unestablished_state_selections.length} 组核算依据尚待确认`);
@@ -202,6 +210,22 @@ function periodLabel(value: string | null | undefined) {
   return matched ? `${matched[1]} 年 ${Number(matched[2])} 月` : value;
 }
 function label(section: string) { return ({ events: "核算历史", settlement_events: props.settlementView === "historical" ? "相关历史清偿（含关联来源，截至所选月末）" : "当前后续清偿事件", source_history: "来源历史", file_jobs: "文件任务" } as Record<string, string>)[section] ?? "业务详情"; }
+function duplicateSignalLabel(code: string) {
+  return ({
+    same_exact_material_location: "指向同一份原件的同一位置",
+    same_complete_signature_and_evidence: "核算内容完全相同并共用业务依据",
+    same_complete_actual_money: "实际资金日期、账户、对象及金额完全相同",
+    same_complete_signature: "核算内容相同，但没有共同业务原件",
+    shared_evidence: "引用了同一份资料",
+    same_material_location_different_signature: "原件位置相同，但核算内容不同",
+  } as Record<string, string>)[code] ?? "存在需要核对的相似线索";
+}
+function duplicateActionLabel(action: string) {
+  return ({ clear: "未发现强疑点", reuse_existing: "已复用既有业务", create_separate: "已有依据，确认为不同业务" } as Record<string, string>)[action] ?? "已核对";
+}
+function referenceChanged(item: BusinessStatusData["entity_references"][number]) {
+  return item.recorded_entity_id !== item.current_entity_id;
+}
 watch(selection, invalidate, { flush: "sync" });
 onBeforeUnmount(() => { mounted = false; invalidate(); });
 </script>
@@ -364,6 +388,49 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <h4>当前业务结果</h4>
       <DashboardBusinessRecords v-if="data.current_business_result" :items="[data.current_business_result]" :period="period" :show-business="false" />
       <p v-else>当前没有正式采用的业务结果。</p>
+      <h4>重复业务核对</h4>
+      <p v-if="duplicateChecks.unresolved.length" class="incomplete-status" role="status">发现 {{ duplicateChecks.unresolved.length }} 项明显疑似重复，AI 会计须先核对已有资料；仍无法判断时再请负责人确认。</p>
+      <p v-else>当前没有尚待核对的明显重复疑点。</p>
+      <ul v-if="duplicateChecks.strong_candidates.length" class="business-review-list">
+        <li v-for="candidate in duplicateChecks.strong_candidates" :key="candidate.subject_id">
+          <strong>{{ candidate.period }} 的同类业务</strong>
+          <span>{{ candidate.signals.map(item => duplicateSignalLabel(item.code)).join("；") }}</span>
+        </li>
+      </ul>
+      <details v-if="duplicateChecks.weak_candidates.length">
+        <summary>查看 {{ duplicateChecks.weak_candidates.length }} 项弱线索（不影响入账）</summary>
+        <ul class="business-review-list">
+          <li v-for="candidate in duplicateChecks.weak_candidates" :key="candidate.subject_id">
+            <strong>{{ candidate.period }} 的相似业务</strong>
+            <span>{{ candidate.signals.map(item => duplicateSignalLabel(item.code)).join("；") }}</span>
+          </li>
+        </ul>
+      </details>
+      <details v-if="duplicateChecks.checks.length">
+        <summary>查看已有核对处置（{{ duplicateChecks.check_count }} 项）</summary>
+        <ul class="business-review-list">
+          <li v-for="check in duplicateChecks.checks" :key="check.check_id">
+            <strong>{{ duplicateActionLabel(check.action) }}</strong>
+            <span>{{ check.explanation }}</span>
+          </li>
+        </ul>
+        <p v-if="duplicateChecks.checks_truncated">这里只显示最近的核对处置，完整记录保留在内核中。</p>
+      </details>
+      <template v-if="identityCorrections.length || entityReferences.some(referenceChanged)">
+        <h4>对象身份与纠错</h4>
+        <p v-if="identityCorrections.length">这项业务有 {{ identityCorrections.length }} 次有依据的身份纠错；当前名单按纠错后对象展示，旧引用仍保留。</p>
+        <p v-else>对象引用未发现身份纠错。</p>
+        <details>
+          <summary>查看旧身份、当前归属与纠错依据</summary>
+          <ul class="business-review-list">
+            <li v-for="reference in entityReferences" :key="`${reference.fact_id}:${reference.path}`">
+              <strong>{{ reference.role }}</strong>
+              <span>{{ referenceChanged(reference) ? `${reference.recorded_entity_id} → ${reference.current_entity_id}` : reference.current_entity_id }}</span>
+            </li>
+          </ul>
+          <pre v-if="identityCorrections.length">{{ JSON.stringify(identityCorrections, null, 2) }}</pre>
+        </details>
+      </template>
       <h4>当时冻结采用</h4>
       <DashboardBusinessRecords v-if="data.frozen_adoption" :items="[data.frozen_adoption]" :period="period" :show-business="false" />
       <p v-else-if="data.closure.state === 'covered_by_later_close'">所选月份被后续关账覆盖，但没有本月独立冻结内容。</p>
@@ -445,6 +512,26 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
   border-left: 3px solid var(--warning);
   background: var(--warning-soft);
   font-weight: 650;
+}
+
+.business-review-list {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.business-review-list li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.business-review-list span {
+  color: var(--muted);
 }
 
 .compact-status-details {

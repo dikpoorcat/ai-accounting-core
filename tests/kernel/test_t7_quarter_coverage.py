@@ -83,7 +83,10 @@ def insert_closes(engine, rows):
                 "inventories": {},
                 "owner_confirmation": proof,
                 "readiness": {"financial_reports": {"facts": facts, "calculations": []}},
-                "management_snapshot": {},
+                "management_snapshot": {
+                    "entity_profiles": [],
+                    "employee_entities": [],
+                },
                 "material_coverage": {"fact_ids": []},
                 "trial_balance": [],
                 "report_classification": {},

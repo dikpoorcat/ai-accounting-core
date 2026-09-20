@@ -3,6 +3,7 @@
 import itertools
 
 import pytest
+from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 
 from ai_accounting.kernel.contracts import KernelError
@@ -27,6 +28,7 @@ def book(tmp_path):
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0, *, amend=False):
+        seed_registration_entities(engine, kind, data)
         args = {
             "evidence": (proof,),
             "expected_revision": revision,
@@ -239,10 +241,15 @@ def test_open_business_without_dependents_deletes_idempotently_and_retains_histo
             connection.execute(
                 "SELECT count(*) FROM fact_current c JOIN subject s ON s.id=c.subject_id "
                 "WHERE s.kind IN (SELECT value FROM json_each(?))",
-                (canonical([
-                    kind for kind, model in engine.store.registry.models.items()
-                    if model.lane == "accounting"
-                ]),),
+                (
+                    canonical(
+                        [
+                            kind
+                            for kind, model in engine.store.registry.models.items()
+                            if model.lane == "accounting"
+                        ]
+                    ),
+                ),
             ).fetchone()[0]
             == 0
         )

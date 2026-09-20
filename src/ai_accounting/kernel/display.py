@@ -6,32 +6,14 @@ import json
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, WithJsonSchema, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .contracts import KernelError, NeedsInformation
-from .types import ActualDate, YearMonth, canonical, digest
+from .types import YearMonth, canonical, digest
 
 CONTENT_CONTRACT = "commentary-content-v1"
 LEGACY_CONTRACT = "legacy-context-v8"
 
-DisplayDate = Annotated[
-    YearMonth | ActualDate,
-    WithJsonSchema(
-        {
-            "type": "string",
-            "anyOf": [
-                {"pattern": r"^[0-9]{4}-(0[1-9]|1[0-2])$"},
-                {"pattern": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
-            ],
-            "x-accounting-fact": {
-                "role": "management",
-                "meaning": "explicitly_provided_employment_date",
-                "allowed_precision": ["month", "day"],
-                "reusable_sources": ["owner_confirmation", "employment_document"],
-            },
-        }
-    ),
-]
 ShortText = Annotated[str, Field(min_length=1, max_length=200)]
 NoteText = Annotated[str, Field(max_length=50000)]
 EvidenceDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -59,37 +41,6 @@ class _Profile(BaseModel):
     evidence_digest: EvidenceDigest | None = None
 
 
-class EmployeeProfile(_Profile):
-    kind: Literal["employee"]
-    employment_start: DisplayDate | None = None
-    employment_end: DisplayDate | None = None
-    employment_status: Literal["active", "inactive", "unknown"] = "unknown"
-
-    @model_validator(mode="after")
-    def ordered_employment(self):
-        if self.employment_start and self.employment_end:
-            start, end = self.employment_start, self.employment_end
-            if start[:7] > end[:7] or (len(start) == len(end) == 10 and start > end):
-                raise ValueError("employment end cannot precede employment start")
-        return self
-
-
-class CounterpartyProfile(_Profile):
-    kind: Literal["counterparty"]
-
-
-class FundAccountProfile(_Profile):
-    kind: Literal["fund_account"]
-    active: bool | None = None
-
-
-class AssetProfile(_Profile):
-    kind: Literal["asset"]
-    category_label: ShortText | None = None
-    rights_description: NoteText | None = None
-    useful_life_basis: NoteText | None = None
-
-
 class BusinessProfile(_Profile):
     kind: Literal["business"]
     counterparty_id: ShortText | None = None
@@ -97,29 +48,19 @@ class BusinessProfile(_Profile):
     handler_id: ShortText | None = None
 
 
-DisplayProfile = Annotated[
-    EmployeeProfile | CounterpartyProfile | FundAccountProfile | AssetProfile | BusinessProfile,
-    Field(discriminator="kind"),
-]
+DisplayProfile = BusinessProfile
 _PROFILE_ADAPTER = TypeAdapter(DisplayProfile)
 _KINDS = ("employee", "counterparty", "fund_account", "asset", "business")
 
 DISPLAY_DDL = """
 CREATE TABLE display_profile_revision(id TEXT PRIMARY KEY, kind TEXT NOT NULL
- CHECK(kind IN('employee','counterparty','fund_account','asset','business')),
+ CHECK(kind='business'),
  entity_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
  display_name TEXT,display_number TEXT,purpose TEXT,note TEXT,
- employment_start TEXT,employment_end TEXT,employment_status TEXT
- CHECK(employment_status IN('active','inactive','unknown')),
- active INTEGER CHECK(active IN(0,1)),category_label TEXT,rights_description TEXT,
- useful_life_basis TEXT,counterparty_id TEXT,beneficiary_id TEXT,handler_id TEXT,
+ counterparty_id TEXT,beneficiary_id TEXT,handler_id TEXT,
  source TEXT NOT NULL,evidence_digest BLOB REFERENCES evidence(digest),
  digest BLOB NOT NULL CHECK(length(digest)=32),
- CHECK(kind='employee' OR (employment_start IS NULL AND employment_end IS NULL
- AND employment_status IS NULL)),CHECK(kind='fund_account' OR active IS NULL),
- CHECK(kind='asset' OR (category_label IS NULL AND rights_description IS NULL
- AND useful_life_basis IS NULL)),CHECK(kind='business' OR (counterparty_id IS NULL
- AND beneficiary_id IS NULL AND handler_id IS NULL)),UNIQUE(kind,entity_id,revision)) STRICT;
+ UNIQUE(kind,entity_id,revision)) STRICT;
 CREATE TABLE period_commentary_revision(id TEXT PRIMARY KEY,
  period INTEGER NOT NULL CHECK(period BETWEEN 0 AND 119987),
  revision INTEGER NOT NULL CHECK(revision>0),text TEXT NOT NULL,
@@ -193,6 +134,21 @@ class Display:
         result = {kind: {} for kind in _KINDS}
         for row in rows:
             result[row["kind"]][row["entity_id"]] = Display._record(row)
+        from .entities import display_profile
+        from .entities import profiles as entity_profiles
+
+        profile_ids = None
+        if closed is not None:
+            profile_ids = [item["id"] for item in snapshot["entity_profiles"]]
+        for entity_id, profile in entity_profiles(connection, profile_ids=profile_ids).items():
+            groups = {
+                "person": ("employee", "counterparty"),
+                "organization": ("counterparty",),
+                "fund_account": ("fund_account",),
+                "asset": ("asset",),
+            }.get(profile["entity_kind"], ())
+            for kind in groups:
+                result[kind][entity_id] = display_profile(profile, kind)
         return result
 
     @staticmethod
@@ -205,7 +161,15 @@ class Display:
             kind for kind, model in registry.models.items() if model.lane == "management"
         )
         profiles = Display.profiles(connection)
+        from .entities import employee_entities
+        from .entities import profiles as entity_profiles
+
         return {
+            "employee_entities": employee_entities(connection, period),
+            "entity_profiles": [
+                {key: item[key] for key in ("id", "entity_id", "revision", "digest")}
+                for item in entity_profiles(connection).values()
+            ],
             "typed_facts": [
                 Display._record(row)
                 for row in connection.execute(
@@ -217,7 +181,7 @@ class Display:
             ],
             "profiles": [
                 {key: item[key] for key in ("id", "kind", "entity_id", "revision", "digest")}
-                for kind in _KINDS
+                for kind in ("business",)
                 for item in profiles[kind].values()
             ],
             "management": [
@@ -466,7 +430,8 @@ class Display:
             owners = connection.execute(
                 "SELECT c.id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
                 "WHERE c.kind IN ('asset_activation_batch','asset_consumption_month') "
-                "ORDER BY c.id", (canonical(sorted(calculations)),),
+                "ORDER BY c.id",
+                (canonical(sorted(calculations)),),
             ).fetchall()
             for owner in owners:
                 asset_members.extend(
@@ -486,7 +451,8 @@ class Display:
         for row in calculation_rows:
             row["posting_period"] = (
                 str(YearMonth.from_ordinal(row["posting_period"]))
-                if row["posting_period"] is not None else None
+                if row["posting_period"] is not None
+                else None
             )
         fact_ids.update(row["fact_id"] for row in calculation_rows)
         dependencies = [
@@ -790,6 +756,18 @@ class Display:
         data = _PROFILE_ADAPTER.validate_python(profile).model_dump(mode="json")
 
         def operation(connection):
+            from .entities import require_entity
+
+            if (
+                connection.execute(
+                    "SELECT 1 FROM subject WHERE id=?", (data["entity_id"],)
+                ).fetchone()
+                is None
+            ):
+                raise KernelError("unknown_subject", "业务说明必须指向已登记业务")
+            for key in ("counterparty_id", "beneficiary_id", "handler_id"):
+                if data.get(key) is not None:
+                    require_entity(connection, data[key], kinds=("person", "organization"))
             current = connection.execute(
                 "SELECT coalesce(max(revision),0) FROM display_profile_revision "
                 "WHERE kind=? AND entity_id=?",
@@ -804,13 +782,6 @@ class Display:
                 "display_number",
                 "purpose",
                 "note",
-                "employment_start",
-                "employment_end",
-                "employment_status",
-                "active",
-                "category_label",
-                "rights_description",
-                "useful_life_basis",
                 "counterparty_id",
                 "beneficiary_id",
                 "handler_id",
@@ -824,12 +795,7 @@ class Display:
                     data["kind"],
                     data["entity_id"],
                     current + 1,
-                    *(
-                        int(data[field])
-                        if field == "active" and data.get(field) is not None
-                        else data.get(field)
-                        for field in fields
-                    ),
+                    *(data.get(field) for field in fields),
                     data["source"],
                     evidence,
                     digest(data),

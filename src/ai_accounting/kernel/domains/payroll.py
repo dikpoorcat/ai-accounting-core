@@ -62,7 +62,7 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, checked, sum_fen
+from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, canonical, checked, sum_fen
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 Rate = Annotated[str, Field(pattern=r"^(?:0(?:\.[0-9]{1,18})?|1(?:\.0{1,18})?)$")]
@@ -382,6 +382,8 @@ class Payroll(Fact):
         return (employee_month(self.employee_id, self.period),)
 
     def reads(self) -> tuple[Read, ...]:
+        from ..identity_corrections import opening_binding_reads
+
         current_scope = employee_month(self.employee_id, self.period)
         year_scope = employee_year(self.employee_id, self.period)
         prior = tuple(
@@ -398,6 +400,7 @@ class Payroll(Fact):
             Read("fact", PayrollOpeningState.kind, year_scope),
             Read("fact", "opening_payroll_state", year_scope),
             Read("calculation", "opening_payroll_state", year_scope),
+            *opening_binding_reads(year_scope),
             Read("fact", PayrollFirstWageTreatment.kind, year_scope),
             Read("fact", PayrollWithholdingActual.kind, current_scope),
             *prior,
@@ -578,8 +581,31 @@ def _withholding_upper_bound(policy, taxable_upper, relief_lower, withheld):
 
 
 def _continuation_state(context, scope):
-    source = _optional_one(context, "opening_payroll_state", scope)
-    results = context.calculations("opening_payroll_state", scope)
+    from types import SimpleNamespace
+
+    from ..identity_corrections import opening_bindings
+    from .opening import OpeningPayrollState
+
+    bindings = opening_bindings(context, "opening_payroll_state", scope)
+    replaced = {v.fact.source_subject_id for v, _ in bindings}
+    sources = [
+        v for v in context.facts("opening_payroll_state", scope) if v.subject_id not in replaced
+    ]
+    adopted = [
+        c for v, c in bindings if scope in v.fact.adopted_scopes and not c.values.get("superseded")
+    ]
+    if len(sources) + len(adopted) > 1:
+        raise KernelError("ambiguous_source", "纠错后仍存在冲突人员累计期初，不能自动合计")
+    if adopted:
+        return SimpleNamespace(
+            fact=OpeningPayrollState.model_validate_json(canonical(adopted[0].values["basis_data"]))
+        )
+    source = sources[0] if sources else None
+    results = [
+        c
+        for c in context.calculations("opening_payroll_state", scope)
+        if c.subject_id not in replaced
+    ]
     if source is not None and (len(results) != 1 or results[0].fact_id != source.id):
         raise NeedsInformation("opening_package", "人员累计期初尚未由完整接续清单核验发布")
     return source
@@ -1121,6 +1147,8 @@ class AnnualBonus(Fact):
         )
 
     def reads(self) -> tuple[Read, ...]:
+        from ..identity_corrections import opening_binding_reads
+
         result = (
             Read("fact", AnnualBonusPolicy.kind, f"@{self.bonus_policy_id}"),
             Read("fact", PayrollIncomeTaxPolicy.kind, f"@{self.income_tax_policy_id}"),
@@ -1128,6 +1156,7 @@ class AnnualBonus(Fact):
                 "fact", AnnualBonusOpeningUsage.kind, employee_year(self.employee_id, self.period)
             ),
             Read("fact", "opening_payroll_state", employee_year(self.employee_id, self.period)),
+            *opening_binding_reads(employee_year(self.employee_id, self.period)),
             Read(
                 "calculation", "opening_payroll_state", employee_year(self.employee_id, self.period)
             ),

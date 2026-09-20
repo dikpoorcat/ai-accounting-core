@@ -3,6 +3,7 @@
 from io import BytesIO
 
 import pytest
+from entity_fixture import seed_fact_entities
 from openpyxl import Workbook
 
 from ai_accounting.kernel.domains.transactions import Expense
@@ -72,6 +73,7 @@ class Company:
             expense_class="administration",
             creditor_kind="supplier",
         )
+        seed_fact_entities(self.engine, fact)
         result = self.engine.save_fact(
             fact.kind,
             subject,

@@ -48,6 +48,15 @@ class Maintenance:
                 settlements = repair_settlement_projection(self.engine, connection)
                 result["changed"] = result["changed"] or settlements["changed"]
                 result["settlements"] = settlements
+            else:
+                from .discovery_indexes import rebuild_discovery_indexes
+                from .entity_references import rebuild_entity_references
+
+                references_changed = rebuild_entity_references(
+                    connection, registry=self.store.registry
+                )
+                discovery_changed = rebuild_discovery_indexes(connection)
+                result["changed"] = result["changed"] or references_changed or discovery_changed
             self.engine.fault("repair_applied", connection)
             coverage = verify_integrity(
                 self.engine,

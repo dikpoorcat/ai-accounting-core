@@ -84,6 +84,7 @@ class Store:
     @classmethod
     def create(cls, path, bundle, company_id, taxpayer_id, database_id):
         path = require_local_database(path)
+
         def validate(connection):
             verify_schema(connection, bundle=bundle)
             identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
@@ -91,7 +92,8 @@ class Store:
                 raise KernelError("company_mismatch", "新建数据库身份不匹配")
 
         initialize_file(
-            path, lambda conn: initialize(conn, bundle, company_id, taxpayer_id, database_id),
+            path,
+            lambda conn: initialize(conn, bundle, company_id, taxpayer_id, database_id),
             validate,
         )
         return cls(path, bundle, company_id, database_id)
@@ -148,8 +150,7 @@ class Store:
     def fact_data(self, connection, fact_id) -> dict:
         """Decode the exact stored fact shape without applying today's model defaults."""
         row = connection.execute(
-            "SELECT s.kind FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
-            "WHERE f.id=?",
+            "SELECT s.kind FROM fact_revision f JOIN subject s ON s.id=f.subject_id WHERE f.id=?",
             (fact_id,),
         ).fetchone()
         if row is None:
@@ -218,8 +219,7 @@ class Store:
             item = sequence_model(info.annotation)
             if item is not None:
                 rows = connection.execute(
-                    f"SELECT * FROM {table_name(kind)}_{name} "
-                    "WHERE revision_id=? ORDER BY item_no",
+                    f"SELECT * FROM {table_name(kind)}_{name} WHERE revision_id=? ORDER BY item_no",
                     (fact_id,),
                 )
                 data[name] = [
@@ -297,7 +297,11 @@ class Store:
         return self.fact(connection, row[0])
 
     def write_fact(self, connection, version: FactVersion, hashed: bytes):
+        from .discovery_indexes import sync_discovery_fact
+        from .entity_references import sync_entity_references, validate_entity_references
+
         fact = version.fact
+        validate_entity_references(connection, fact, version.subject_id)
         connection.execute(
             "INSERT INTO subject VALUES(?,?) ON CONFLICT(id) DO NOTHING",
             (version.subject_id, fact.kind),
@@ -330,9 +334,7 @@ class Store:
             "INSERT INTO fact_scope VALUES(?,?,?)",
             [
                 (version.id, fact.kind, key)
-                for key in sorted(
-                    scope_keys("fact", fact, version.subject_id)
-                )
+                for key in sorted(scope_keys("fact", fact, version.subject_id))
             ],
         )
         connection.executemany(
@@ -345,6 +347,8 @@ class Store:
             "DO UPDATE SET fact_id=excluded.fact_id",
             (version.subject_id, version.id),
         )
+        sync_entity_references(connection, version, hashed)
+        sync_discovery_fact(connection, version.id)
 
     @staticmethod
     def calculation(row):
@@ -419,6 +423,22 @@ class Store:
                     "JOIN calculation c ON c.id=ids.id ORDER BY ids.slot,c.period,c.subject_id"
                 )
             rows = list(connection.execute(query, (canonical(specifications),)))
+            superseded = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT i.subject_id FROM identity_correction_item i "
+                    "WHERE i.action='supersede' "
+                    "AND i.subject_id IN(SELECT value FROM json_each(?)) "
+                    "AND i.rowid=(SELECT max(j.rowid) FROM identity_correction_item j "
+                    "WHERE j.subject_id=i.subject_id)",
+                    (canonical(sorted({row["subject_id"] for row in rows})),),
+                )
+            }
+            rows = [
+                row
+                for row in rows
+                if group[row["slot"]].key.startswith("#") or row["subject_id"] not in superseded
+            ]
             if source == "fact":
                 identifiers = {row["id"] for row in rows}
                 objects = (
@@ -431,9 +451,7 @@ class Store:
             grouped = [[] for _ in group]
             for row in rows:
                 grouped[row["slot"]].append(objects[row["id"]])
-            selected.update(
-                (read, tuple(grouped[index])) for index, read in enumerate(group)
-            )
+            selected.update((read, tuple(grouped[index])) for index, read in enumerate(group))
         return selected
 
     @staticmethod

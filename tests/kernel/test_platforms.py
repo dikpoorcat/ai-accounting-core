@@ -4,6 +4,7 @@ import itertools
 from collections import defaultdict
 
 import pytest
+from entity_fixture import seed_entities, seed_registration_entities
 from pydantic import ValidationError
 from test_banking import entry, match, opening, reconciliation, statement
 from test_business_domains import surtax_policy, vat_policy
@@ -51,6 +52,7 @@ def book(tmp_path):
             direction = {"bank_to_platform": "inflow", "platform_to_bank": "outflow"}.get(
                 direction, direction
             )
+            seed_entities(engine, [(data["platform_account_id"], "fund_account", "platform")])
             engine.save_fact(
                 "platform_movement",
                 source,
@@ -68,6 +70,7 @@ def book(tmp_path):
                 expected_revision=0,
                 request_id="source-" + str(next(counter)),
             )
+        seed_registration_entities(engine, kind, data)
         validate_command(
             wire,
             "save_fact",

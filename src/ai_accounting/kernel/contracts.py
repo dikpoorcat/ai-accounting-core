@@ -279,8 +279,10 @@ class Context:
             raise KernelError("undeclared_read", "核算比较须先选择对应计算来源")
         if self.accounting is None:
             raise KernelError(
-                "accounting_compatibility_required", "核算比较上下文未建立",
-                calculation_id=calculation.id, reason="comparison_context_missing",
+                "accounting_compatibility_required",
+                "核算比较上下文未建立",
+                calculation_id=calculation.id,
+                reason="comparison_context_missing",
             )
         return self.accounting(calculation.id)
 
@@ -298,7 +300,12 @@ class Registry:
         self.accounting_consumers: dict[str, Callable | None] = {}
 
     def register_accounting(
-        self, kind: str, projector=None, references=None, *, compares_calculations=False,
+        self,
+        kind: str,
+        projector=None,
+        references=None,
+        *,
+        compares_calculations=False,
         comparison_reads=None,
     ):
         """Declare a pure comparison policy; ordinary reads do not acquire one."""
@@ -328,8 +335,11 @@ class Registry:
             self.evaluators[model.kind] = evaluator
 
     def schemas(self) -> dict:
+        from .entity_references import declarations_for
+
         return {
             kind: model.model_json_schema()
+            | {"x-references": list(declarations_for(kind))}
             | (
                 {"x-registration-command": model.registration_command}
                 if model.registration_command

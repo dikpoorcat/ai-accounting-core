@@ -3,6 +3,7 @@
 import sqlite3
 
 import pytest
+from entity_fixture import save_entity_display_profile
 from test_engine import close, evidence, publish, save
 from test_engine import engine as engine  # noqa: F401
 
@@ -62,7 +63,8 @@ def test_source_transactions_sync_fact_profile_payee_close_and_replay(engine):
     saved = save(engine)
     assert save(engine) == saved
     publish(engine)
-    profile = Display(engine).save_display_profile(
+    profile = save_entity_display_profile(
+        engine,
         {"kind": "employee", "entity_id": "person", "display_name": "姓名", "source": "确认"},
         expected_revision=0,
         request_id="profile",

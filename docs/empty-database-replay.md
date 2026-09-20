@@ -150,7 +150,8 @@ Base64 是字节传输格式，不是脱敏；不要打印真实内容。单份�
 | 内容 | 当前命令与关键字段 | 使用顺序 |
 | --- | --- | --- |
 | 公司业务背景 | `update_company_note`：`text`、`expected_revision`、`request_id`，可附 `evidence_digest` | 先 `company_context` 取得当前版本，按原件保存 |
-| 人员、往来方、资金账户、资产、业务展示档案 | `save_display_profile`：`profile`、`expected_revision`、`request_id` | `profile.kind` 为 `employee` / `counterparty` / `fund_account` / `asset` / `business`，`entity_id` 使用新映射 |
+| 对象身份与档案 | `find_entities` / `register_entity` / `update_entity_profile` | 人员、机构、资金账户、资产、项目和基金产品使用内核生成对象编号；业务编号独立，不能按名称自动关联 |
+| 单笔业务说明 | `save_display_profile`：`profile`、`expected_revision`、`request_id` | `profile.kind` 仅为 `business`，`entity_id` 指该单笔业务 |
 | 名称、用途和说明 | 档案中的 `display_name`、`display_number`、`purpose`、`note`、`source`，可附 `evidence_digest` | 使用已提供资料；员工入离职精度与状态只按明确来源填写 |
 | 既有业务归集说明 | `management`：`subject_id`、`note`、`payment_period`、`payment_category`、`expected_revision`、`request_id` | 业务先存在；归集月份不改变入账月份 |
 | 实际收款人姓名与账户 | `save_payee`：`party_id`、`name`、`account`、`evidence_digest`、`expected_revision`、`request_id` | 只有确有收款账户依据时保存，不为填姓名编造账号 |

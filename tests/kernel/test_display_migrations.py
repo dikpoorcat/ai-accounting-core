@@ -3,9 +3,11 @@
 import sqlite3
 
 import pytest
+from entity_fixture import save_entity_display_profile
 from test_opening_continuation import book as book  # noqa: F401
 
 from ai_accounting.kernel.backup import create_portable, restore_portable, verify_portable
+from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical, digest
@@ -90,7 +92,8 @@ def test_new_commentary_requires_immutable_basis_in_the_same_transaction(book):
 def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(book, tmp_path):
     engine, *_ = book
     display = Display(engine)
-    display.save_display_profile(
+    save_entity_display_profile(
+        engine,
         {
             "kind": "asset",
             "entity_id": "asset-1",
@@ -100,6 +103,19 @@ def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(b
         expected_revision=0,
         request_id="asset-profile",
     )
+    with pytest.raises(KernelError) as stale:
+        save_entity_display_profile(
+            engine,
+            {
+                "kind": "asset",
+                "entity_id": "asset-1",
+                "purpose": "过期修改",
+                "source": "负责人确认",
+            },
+            expected_revision=0,
+            request_id="stale-asset-profile",
+        )
+    assert stale.value.code == "entity_profile_version_conflict"
     preview = display.preview_period_commentary("2026-01")
     display.update_period_commentary(
         "2026-01",
@@ -109,9 +125,7 @@ def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(b
         expected_revision=0,
         request_id="commentary",
     )
-    package = create_portable(
-        engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle
-    )
+    package = create_portable(engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle)
     verify_portable(package["path"], _bundle=engine.store.bundle)
     restored_path = tmp_path / "restored.sqlite"
     restore_portable(package["path"], restored_path, _bundle=engine.store.bundle)
@@ -123,6 +137,8 @@ def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(b
         restored.connection(read_only=True) as target,
     ):
         for table in (
+            "entity",
+            "entity_profile_revision",
             "display_profile_revision",
             "period_commentary_revision",
             "period_commentary_basis",

@@ -1,6 +1,7 @@
 """The restored Vue routes share one authenticated SQLite service."""
 
 import test_resident_service as resident_cases
+from entity_fixture import seed_entities
 from test_resident_service import PASSWORD, cookie_header
 
 from ai_accounting.kernel.http import wire_money
@@ -40,6 +41,7 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
     headers, token = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "金额合同测试企业")["id"]
     engine = service.engine(company)
+    seed_entities(engine, [("supplier", "organization", None)])
     proof = engine.register_evidence(
         b"synthetic amount proof", "text/plain", "fixture", request_id="proof"
     )["digest"]
@@ -109,6 +111,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     headers, _ = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "T4 合成业务查询企业")["id"]
     engine = service.engine(company)
+    seed_entities(engine, [("supplier", "organization", None)])
     evidence = engine.register_evidence(
         b"T4 synthetic business page", "text/plain", "fixture", request_id="t4-proof"
     )["digest"]
@@ -137,7 +140,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 2
+    assert response["schema_version"] == 3
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
     assert response["data"]["collections"]["events"]["page"]["returned_count"] == 1
@@ -217,6 +220,7 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
 
 
 def _publish_expense(engine, subject, amount, revision=0):
+    seed_entities(engine, [(subject + "-supplier", "organization", None)])
     proof = engine.register_evidence(
         b"synthetic HTTP adapter evidence", "text/plain", "fixture", request_id="adapter-proof"
     )["digest"]

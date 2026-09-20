@@ -25,7 +25,7 @@ def test_batch_cost_correction_recalculates_activation_and_consumption_without_c
     engine, save, publish = book
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     accepted = publish("batch", "computer", "chair")
     evidence = fact_evidence(engine, "batch")
     activated = activate_assets(
@@ -106,6 +106,7 @@ def test_unpublished_direct_purchase_cannot_replace_a_published_batch_asset(book
         "computer",
         {
             "period": "2026-02",
+            "asset_id": "computer",
             "asset_type": "fixed",
             "supplier_id": "supplier",
             "acquisition_date": "2026-02-28",
@@ -144,7 +145,7 @@ def test_unactivated_unpaid_batch_can_be_withdrawn_in_dependency_order(book):
     engine, save, publish = book
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
-    save("reimbursed_asset", "chair", batch_card(30000))
+    save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     with pytest.raises(KernelError) as error:
         engine.preview_delete("batch")
@@ -164,7 +165,7 @@ def test_unactivated_unpaid_batch_can_be_withdrawn_in_dependency_order(book):
 
 def test_batch_narrow_source_scope_does_not_make_unrelated_direct_card_a_consumer(book):
     engine, save, publish = book
-    save("reimbursed_asset", "unrelated", asset())
+    save("reimbursed_asset", "unrelated", asset(asset_id="unrelated"))
     publish("unrelated")
     save("reimbursed_asset_batch", "batch", accepted_batch())
     publish("batch")

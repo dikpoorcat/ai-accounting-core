@@ -589,6 +589,7 @@ def _check_snapshot_references(connection, source, manifest, period):
     groups = (
         ("typed_facts", "fact_revision"),
         ("profiles", "display_profile_revision"),
+        ("entity_profiles", "entity_profile_revision"),
         ("management", "management_revision"),
         ("payees", "payee_revision"),
         ("company_note", "company_note_revision"),
@@ -947,6 +948,14 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
             ignored_tables.update(
                 ("read_index_source", "close_reference", "job_reference", "audit_reference")
             )
+            ignored_tables.update(
+                (
+                    "entity_reference_recorded",
+                    "entity_reference_current",
+                    "discovery_fact_history",
+                    "discovery_fact_current",
+                )
+            )
         if not include_projections:
             ignored_tables.update(
                 (
@@ -976,6 +985,13 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
         close_count, limitations = _check_closes(engine, connection, source)
         _check_job_sources(engine, connection, source)
         _check_audit_sources(connection)
+        from .duplicates import verify_duplicate_checks
+        from .entities import verify_entities
+        from .identity_corrections import verify_identity_corrections
+
+        verify_entities(connection)
+        verify_identity_corrections(engine, connection)
+        verify_duplicate_checks(connection)
         if include_projections:
             from .settlement_projection import require_settlement_projection
 
@@ -984,7 +1000,12 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
                 engine, connection, verified_calculations=source["calculations"]
             )
         if include_indexes:
+            from .discovery_indexes import verify_discovery_indexes
+            from .entity_references import verify_entity_references
             from .read_indexes import verify_read_indexes
+
+            verify_entity_references(connection, registry=engine.store.registry)
+            verify_discovery_indexes(connection)
 
             if connection.execute(
                 "SELECT 1 FROM sqlite_schema WHERE name='read_index_source'"

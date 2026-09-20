@@ -141,7 +141,7 @@ def test_public_save_schemas_and_validation_exclude_compiled_kind(book, command)
     assert kind_literals(adapter.json_schema()) == {OrdinaryFact.kind}
 
     def payload(kind):
-        item = record(evidence, kind)
+        item = {**record(evidence, kind), "review": None, "source_locations": []}
         shared = {"company_id": "company", "request_id": "wire-save"}
         if command == "save_facts":
             return {**shared, "facts": [item]}

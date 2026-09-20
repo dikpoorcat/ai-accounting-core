@@ -11,7 +11,7 @@ from sqlite3 import Connection
 
 _ACTIONS = {
     "fact": ("confirm_fact", "confirm_facts", "recording_correction"),
-    "display_profile": ("save_display_profile",),
+    "display_profile": ("save_display_profile", "register_entity", "update_entity_profile"),
     "payee": ("payee",),
     # This result only contains a revision number, shared by many subjects. It
     # cannot identify a management_revision row without inventing an association.
@@ -38,7 +38,11 @@ def _result(payload):
 def _fact_reference(entry):
     if (
         isinstance(entry, dict)
-        and set(entry) == {"status", "subject_id", "fact_id", "revision", "pending"}
+        and set(entry)
+        in (
+            {"status", "subject_id", "fact_id", "revision", "pending"},
+            {"status", "subject_id", "fact_id", "revision", "pending", "duplicate_check_id"},
+        )
         and entry["status"] == "confirmed"
         and _nonempty_string(entry["subject_id"])
         and _nonempty_string(entry["fact_id"])
@@ -52,6 +56,16 @@ def _fact_reference(entry):
 
 def _references(action, result):
     if not isinstance(result, dict):
+        return ()
+    if action in {"register_entity", "update_entity_profile"}:
+        if (
+            set(result) == {"status", "entity_id", "profile_id", "revision"}
+            and result["status"] == "registered"
+            and _positive_revision(result["revision"])
+            and _nonempty_string(result["profile_id"])
+            and _nonempty_string(result["entity_id"])
+        ):
+            return (("display_profile", result["profile_id"]),)
         return ()
     if action in {"confirm_fact", "recording_correction"}:
         return (_fact_reference(result),)

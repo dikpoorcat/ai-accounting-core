@@ -322,13 +322,13 @@ def calculate_scope(version, context):
             if cost.source_kind == "expense":
                 if not cost.bank_payment_id:
                     raise KernelError(
-                        "reserve_cost_payment", "新增备用金费用须引用向范围账户的完整实际银行付款"
+                        "reserve_cost_payment", "新增备用金费用须引用向费用交易方的完整实际银行付款"
                     )
                 payment, _ = published(context, "payment", cost.bank_payment_id)
                 p = payment.fact
                 if (
                     p.direction != "outflow"
-                    or p.counterparty_id not in accounts
+                    or p.counterparty_id != original.fact.counterparty_id
                     or p.period != original.fact.period
                     or len(p.allocations) != 1
                     or p.allocations[0].source_kind != "expense"

@@ -34,7 +34,7 @@ function preparation(period = "2026-02", context = readContext()) {
   } };
 }
 function brief(period = "2026-02", context = readContext()) {
-  return { schema_version: 3, projection: "dashboard_brief_deferred", read_context: context, snapshot_version: "page-v1", selected_period: { key: period, status: "open" }, data: {
+  return { schema_version: 4, projection: "dashboard_brief_deferred", read_context: context, snapshot_version: "page-v1", selected_period: { key: period, status: "open" }, data: {
     period_preparation: null, material_completeness: null, collections: { vouchers: page() },
     validation: { state: "pending", title: "账务核对", summary: "准备检查尚未完成", integrity_valid: true, attention_count: 0, issues: [], items: [{ key: "balance", label: "平衡", state: "pass", text: "平衡" }, ...items(true)] },
     total_debit_fen: "120", total_credit_fen: "120", vouchers: [], activity_groups: [], workforce_cost: { has_activity: false },
@@ -113,21 +113,21 @@ test("deferred request projections remain distinct from complete and unrelated p
   for (const value of [-1, NaN, 1.5, undefined]) { const malformed = brief(); malformed.data.validation.attention_count = value; assert(!valid(deferred, malformed)); }
   for (const value of [undefined, "true", 0]) { const malformed = brief(); malformed.data.validation.integrity_valid = value; assert(!valid(deferred, malformed)); }
   const missing = brief(); missing.data.validation.items = []; assert(!valid(deferred, missing));
-  assert(valid(deferred, { schema_version: 3, projection: "dashboard_brief_deferred", data: null, read_context: null }));
-  assert(!valid(deferred, { schema_version: 3, data: null, read_context: null }));
+  assert(valid(deferred, { schema_version: 4, projection: "dashboard_brief_deferred", data: null, read_context: null }));
+  assert(!valid(deferred, { schema_version: 4, data: null, read_context: null }));
   assert(!valid("/api/dashboard/funds?preparation=deferred", { ...brief(), data: { collections: { movements: page() }, period_preparation: null } }));
   const fundsDeferred = "/api/dashboard/funds?preparation=deferred";
   const fundsData = { collections: { movements: page() }, period_preparation: null };
-  assert(valid(fundsDeferred, { schema_version: 3, selected_period: null, data: fundsData }));
-  assert(!valid(fundsDeferred, { schema_version: 3, data: { ...fundsData, period_preparation: preparation().data.period_preparation } }));
-  assert(!valid("/api/dashboard/funds", { schema_version: 3, data: fundsData }));
-  assert(!valid(fundsDeferred, { schema_version: 3, projection: "dashboard_brief_deferred", data: fundsData }));
+  assert(valid(fundsDeferred, { schema_version: 4, selected_period: null, data: fundsData }));
+  assert(!valid(fundsDeferred, { schema_version: 4, data: { ...fundsData, period_preparation: preparation().data.period_preparation } }));
+  assert(!valid("/api/dashboard/funds", { schema_version: 4, data: fundsData }));
+  assert(!valid(fundsDeferred, { schema_version: 4, projection: "dashboard_brief_deferred", data: fundsData }));
   const employeesDeferred = "/api/dashboard/employees?preparation=deferred";
-  assert(valid(employeesDeferred, { schema_version: 3, data: { collections: { employees: page() }, period_preparation: null } }));
-  assert(!valid(employeesDeferred, { schema_version: 3, data: { collections: { employees: page() }, period_preparation: preparation().data.period_preparation } }));
+  assert(valid(employeesDeferred, { schema_version: 4, data: { collections: { employees: page() }, period_preparation: null } }));
+  assert(!valid(employeesDeferred, { schema_version: 4, data: { collections: { employees: page() }, period_preparation: preparation().data.period_preparation } }));
   const assetsDeferred = "/api/dashboard/assets?preparation=deferred";
-  assert(valid(assetsDeferred, { schema_version: 3, data: { collections: { assets: page() }, period_preparation: null } }));
-  assert(!valid("/api/dashboard/assets", { schema_version: 3, data: { collections: { assets: page() }, period_preparation: null } }));
+  assert(valid(assetsDeferred, { schema_version: 4, data: { collections: { assets: page() }, period_preparation: null } }));
+  assert(!valid("/api/dashboard/assets", { schema_version: 4, data: { collections: { assets: page() }, period_preparation: null } }));
   const quarterly = "/api/dashboard/quarterly-report?company_id=a&year=2026&quarter=1&preparation=deferred";
   assert(valid(quarterly, report())); assert(!valid(quarterly, { ...report(), period_preparations: [] }));
   assert(!valid("/api/dashboard/quarterly-report", report()));

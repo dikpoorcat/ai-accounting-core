@@ -1,6 +1,5 @@
 """Focused end-to-end accounting ownership checks for asset batch publication."""
 
-
 import pytest
 
 from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
@@ -24,6 +23,16 @@ def asset_engine(tmp_path):
     evidence = engine.register_evidence(
         b"asset acceptance", "text/plain", "acceptance", request_id="evidence"
     )["digest"]
+    from entity_fixture import seed_entities
+
+    seed_entities(
+        engine,
+        [
+            ("fixed-a", "asset", None),
+            ("intangible-b", "asset", None),
+            ("supplier", "organization", None),
+        ],
+    )
     for asset_id, kind, amount in (
         ("fixed-a", "fixed", 10001),
         ("intangible-b", "intangible", 20003),
@@ -33,6 +42,7 @@ def asset_engine(tmp_path):
             asset_id,
             {
                 "period": "2026-01",
+                "asset_id": asset_id,
                 "asset_type": kind,
                 "acquisition_date": "2026-01-02",
                 "supplier_id": "supplier",
@@ -108,9 +118,9 @@ def test_batch_one_voucher_card_lines_and_balances(asset_engine):
         assert [m["line_start"] for m in members] == [1, 3]
         assert (
             connection.execute(
-            "SELECT count(*) FROM calculation_publication p "
-            "JOIN calculation c ON c.id=p.calculation_id "
-            "WHERE c.kind='asset_activation'"
+                "SELECT count(*) FROM calculation_publication p "
+                "JOIN calculation c ON c.id=p.calculation_id "
+                "WHERE c.kind='asset_activation'"
             ).fetchone()[0]
             == 0
         )
@@ -124,9 +134,7 @@ def test_batch_one_voucher_card_lines_and_balances(asset_engine):
         "intangible-b",
     ]
     member_trace = engine.trace(calculation_id=members[0]["member_calculation_id"])
-    assert member_trace["asset_batch_owners"][0]["owner_calculation_id"] == owner[
-        "calculation_id"
-    ]
+    assert member_trace["asset_batch_owners"][0]["owner_calculation_id"] == owner["calculation_id"]
     month(engine, evidence, "2026-01", "january")
     preview, result = month(engine, evidence, "2026-02", "february")
     owner = next(r for r in preview["results"] if r["kind"] == "asset_consumption_month")

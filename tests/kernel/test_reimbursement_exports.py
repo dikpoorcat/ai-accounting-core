@@ -24,10 +24,10 @@ def parse(model, data):
 def reimbursement_company(tmp_path):
     company = Company(tmp_path / "reimbursements.sqlite")
     for fact, subject in (
-        (parse(ReimbursedAsset, asset()), "direct"),
+        (parse(ReimbursedAsset, asset(asset_id="direct")), "direct"),
         (parse(ReimbursedAssetBatch, accepted_batch()), "batch"),
         (parse(ReimbursedAsset, batch_card()), "computer"),
-        (parse(ReimbursedAsset, batch_card(30000)), "chair"),
+        (parse(ReimbursedAsset, batch_card(30000, asset_id="chair")), "chair"),
         (
             ReimbursedDeposit(
                 period="2026-02",

@@ -96,8 +96,8 @@ export interface DashboardPageQuery {
 }
 
 const versions: Record<string, number> = {
-  context: 2, brief: 3, funds: 3, employees: 3, assets: 3,
-  "quarterly-report": 2, "business-status": 2, "period-preparation": 2,
+  context: 2, brief: 4, funds: 4, employees: 4, assets: 4,
+  "quarterly-report": 2, "business-status": 3, "period-preparation": 2,
 };
 const primaryCollections: Record<string, string> = {
   brief: "vouchers", funds: "movements", employees: "employees", assets: "assets",

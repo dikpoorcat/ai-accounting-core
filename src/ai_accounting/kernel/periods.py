@@ -455,6 +455,11 @@ class Periods:
                 accounting_issues.append(issue)
                 issues.append(issue)
         snapshot_issues = []
+        from .duplicates import DuplicateCandidates
+
+        duplicate_issues = DuplicateCandidates(self.store).close_readiness(connection, period)
+        snapshot_issues.extend(duplicate_issues)
+        issues.extend(duplicate_issues)
         for checker in self.store.registry.snapshot_readiness.values():
             found = list(checker(self.store, connection, YearMonth(period)))
             snapshot_issues.extend(found)

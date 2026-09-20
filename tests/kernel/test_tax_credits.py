@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 import pytest
+from entity_fixture import seed_fact_entities
 from material_fixture import supporting_text
 from pydantic import ValidationError
 from test_business_domains import surtax_policy, vat_policy
@@ -42,6 +43,7 @@ class Company:
 
     def save(self, model, subject, **fields):
         fact = model.model_validate_json(json.dumps(fields))
+        seed_fact_entities(self.engine, fact)
         result = self.engine.save_fact(
             fact.kind,
             subject,

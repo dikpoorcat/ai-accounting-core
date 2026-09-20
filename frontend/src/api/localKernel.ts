@@ -148,6 +148,8 @@ export const localBusinessNames: Record<string, string> = {
   opening_payroll_state: "人员薪酬累计接续",
   opening_equity: "权益明细期初",
   opening_package: "期初接续总清单",
+  opening_identity_binding: "期初身份归属纠正",
+  opening_basis_correction: "期初依据更正",
   company_workflow_scope_v2: "公司月度业务范围",
   filing_calendar_policy_v2: "申报期限日历",
   material_source_v2: "原始资料逐项核对来源",

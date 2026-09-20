@@ -62,7 +62,7 @@
     "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
   },
   "brief": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -1676,7 +1676,7 @@
     }
   },
   "funds": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -2146,7 +2146,7 @@
     }
   },
   "employees": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -3035,7 +3035,7 @@
     }
   },
   "assets": {
-    "schema_version": 3,
+    "schema_version": 4,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -5664,7 +5664,7 @@
     ]
   },
   "business-status": {
-    "schema_version": 2,
+    "schema_version": 3,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",

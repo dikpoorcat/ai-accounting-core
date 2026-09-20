@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import ClassVar, Literal
 
 import pytest
+from entity_fixture import seed_registration_entities
 from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import Fact, KernelError, Outcome
@@ -58,6 +59,7 @@ def book(tmp_path):
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
+        seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,
             subject,

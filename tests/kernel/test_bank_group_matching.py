@@ -6,7 +6,7 @@ from test_banking import entry, funding, match, opening, reconciliation, stateme
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.entities import Entities
 
 
 def batch_payment(save, publish, *, bank="bank-a", posted=True):
@@ -97,16 +97,13 @@ def test_one_published_batch_matches_original_rows_without_recipient_subrow_mapp
 def test_dashboard_keeps_original_bank_rows_and_nests_whole_batch_recipients(book):
     engine, save, publish, _ = book
     batch_payment(save, publish)
-    display = Display(engine)
+    entities = Entities(engine)
     for index, (entity_id, name) in enumerate((("alice", "张三"), ("bob", "李四"))):
-        display.save_display_profile(
-            {
-                "kind": "employee",
-                "entity_id": entity_id,
-                "display_name": name,
-                "source": "合成人员资料",
-            },
-            expected_revision=0,
+        entities.update_entity_profile(
+            entity_id,
+            {"display_name": name},
+            source="合成人员资料",
+            expected_revision=1,
             request_id=f"batch-party-{index}",
         )
     statement(save, publish, group_entries())

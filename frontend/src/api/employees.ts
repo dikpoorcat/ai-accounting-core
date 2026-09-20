@@ -203,7 +203,7 @@ export interface EmployeesDashboardData {
 }
 
 export interface EmployeesDashboardResponse {
-  schema_version: 3;
+  schema_version: 4;
   snapshot_version: string;
   selected_period: DashboardPeriod | null;
   data: EmployeesDashboardData | null;

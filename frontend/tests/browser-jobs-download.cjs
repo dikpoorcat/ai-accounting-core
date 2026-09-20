@@ -18,7 +18,7 @@ async page => {
       const current = companies.find(company => company.company_id === query.company_id) || companies[0];
       return reply({ schema_version: 2, company: current.name, companies, current_company: current, periods: [], quarters: [], default_period: null, default_quarter: null });
     }
-    if (path === "/api/dashboard/brief") return reply({ schema_version: 3, selected_period: null, data: null });
+    if (path === "/api/dashboard/brief") return reply({ schema_version: 4, selected_period: null, data: null });
     if (path === "/api/local/jobs") return reply([
       { id: "browser-report", kind: "report_export", status: "succeeded", attempts: 1, last_error: null, result: {}, download_available: true, download_file_name: "经过校验的季度报表.xlsx" },
       { id: "cli-report", kind: "report_export", status: "succeeded", attempts: 1, last_error: null, result: { path: "C:/untrusted.xlsx" }, download_available: false, download_file_name: null },
