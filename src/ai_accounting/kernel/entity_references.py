@@ -43,7 +43,7 @@ _declare("payroll_plan_v2 payroll_plan_bounded", "payroll.employee_id", "employe
 _declare("labor labor_accrual labor_project_cost", "person_id", "worker", ("person",))
 _declare(
     "funding payment bank_income loan_drawdown bank_opening bank_statement bank_reconciliation "
-    "cash_bank_transfer bank_platform_transfer managed_reserve_bank_expense "
+    "cash_bank_transfer bank_platform_transfer managed_reserve_expense managed_reserve_refund "
     "payroll_reserve_payment "
     "opening_bank",
     "bank_account_id",
@@ -66,7 +66,8 @@ _declare(
     account_type="bank",
 )
 _declare(
-    "cash_payment cash_funding cash_bank_transfer opening_cash",
+    "cash_payment cash_funding cash_bank_transfer opening_cash "
+    "managed_reserve_expense managed_reserve_refund",
     "cash_account_id",
     "cash_account",
     ("fund_account",),
@@ -74,15 +75,8 @@ _declare(
 )
 _declare(
     "platform_movement platform_expense_confirmation platform_payment platform_funding "
-    "bank_platform_transfer platform_boundary_disposition payroll_reserve_payment",
+    "bank_platform_transfer managed_reserve_expense managed_reserve_refund",
     "platform_account_id",
-    "platform_account",
-    ("fund_account",),
-    account_type="platform",
-)
-_declare(
-    "managed_reserve_scope",
-    "platform_account_ids.*",
     "platform_account",
     ("fund_account",),
     account_type="platform",
@@ -90,7 +84,7 @@ _declare(
 _declare(
     "expense expense_recovery advance payment overpayment bank_income refundable_deposit "
     "reimbursed_deposit asset_advance cash_payment platform_payment money_fund_subscription "
-    "money_fund_redemption opening_obligation",
+    "money_fund_redemption opening_obligation managed_reserve_expense managed_reserve_refund",
     "counterparty_id",
     "counterparty",
     ("person", "organization"),
@@ -108,7 +102,7 @@ _declare(
 _declare("pass_through", "beneficiary_id", "beneficiary", ("person", "organization"))
 _declare("asset_disposal", "buyer_id", "buyer", ("person", "organization"))
 _declare(
-    "managed_reserve_obligation_settlement opening_payroll_payable",
+    "opening_payroll_payable",
     "recipient_id",
     "recipient",
     ("person", "organization"),
@@ -120,7 +114,7 @@ _declare(
     ("person", "organization"),
 )
 _declare(
-    "employee_advance reimbursement_acceptance managed_reserve_obligation_settlement",
+    "employee_advance reimbursement_acceptance",
     "sources.*.recipient_id",
     "recipient",
     ("person", "organization"),
@@ -184,7 +178,7 @@ BUSINESS_PATHS = {
     "payment": "allocations.*.source_id",
     "cash_payment": "allocations.*.source_id",
     "platform_payment": "movement_ids.* allocations.*.source_id",
-    "payroll_reserve_payment": "allocations.*.source_id scope_id",
+    "payroll_reserve_payment": "allocations.*.source_id",
     "service_tax_point": "sale_id payment_id",
     "overpayment": "source_id",
     "settlement": "first.source_id second.source_id",
@@ -201,14 +195,8 @@ BUSINESS_PATHS = {
     "platform_expense_confirmation": "outgoing_movement_ids.* returned_movement_ids.*",
     "platform_funding": "movement_ids.*",
     "bank_platform_transfer": "movement_ids.*",
-    "platform_boundary_disposition": "movement_ids.* scope_id",
-    "managed_reserve_bank_expense": "scope_id",
-    "managed_reserve_scope": (
-        "predecessor_scope_id cost_sources.*.source_id cost_sources.*.bank_payment_id "
-        "transfer_treatments.*.transfer_id transfer_treatments.*.expense_ids.* "
-        "transfer_treatments.*.payment_ids.* transfer_treatments.*.funding_id"
-    ),
-    "managed_reserve_obligation_settlement": "scope_id sources.*.source_id cost_claims.*.source_id",
+    "managed_reserve_expense": "movement_ids.*",
+    "managed_reserve_refund": "movement_ids.*",
     "money_fund_redemption": "costs.*.source_id",
     "continuation_report_profile": "opening_package_id",
     "report_carry_forward": "opening_package_id",

@@ -18,7 +18,7 @@ from .contracts import Fact, KernelError, NeedsInformation
 from .types import YearMonth, canonical, digest
 
 DUPLICATE_CONTRACT = "ai-accounting-kernel/2/business-duplicate"
-DUPLICATE_CONTRACT_VERSION = 1
+DUPLICATE_CONTRACT_VERSION = 2
 
 # These are business-origin or actual-money facts without an existing hard
 # real-world uniqueness key.  Source-consuming corrections and settlements
@@ -47,12 +47,18 @@ ACTUAL_MONEY_KINDS = frozenset(
     {
         "payment",
         "cash_payment",
+        "platform_payment",
         "funding",
         "cash_funding",
+        "platform_funding",
         "funds_transfer",
         "cash_bank_transfer",
+        "bank_platform_transfer",
         "bank_income",
         "loan_drawdown",
+        "managed_reserve_expense",
+        "managed_reserve_refund",
+        "payroll_reserve_payment",
     }
 )
 ELIGIBLE_KINDS = ORIGIN_KINDS | ACTUAL_MONEY_KINDS
@@ -206,8 +212,26 @@ SIGNATURE_FIELDS = {
         "amount_fen",
         "allocations",
     ),
+    "platform_payment": (
+        "actual_date",
+        "direction",
+        "platform_account_id",
+        "counterparty_id",
+        "payment_method",
+        "amount_fen",
+        "movement_ids",
+        "allocations",
+    ),
     "funding": ("actual_date", "bank_account_id", "owner_id", "amount_fen", "funding_kind"),
     "cash_funding": ("actual_date", "cash_account_id", "owner_id", "amount_fen", "funding_kind"),
+    "platform_funding": (
+        "actual_date",
+        "platform_account_id",
+        "owner_id",
+        "amount_fen",
+        "funding_kind",
+        "movement_ids",
+    ),
     "funds_transfer": (
         "actual_date",
         "source_bank_account_id",
@@ -221,6 +245,14 @@ SIGNATURE_FIELDS = {
         "cash_account_id",
         "amount_fen",
     ),
+    "bank_platform_transfer": (
+        "actual_date",
+        "direction",
+        "bank_account_id",
+        "platform_account_id",
+        "amount_fen",
+        "movement_ids",
+    ),
     "bank_income": (
         "actual_date",
         "bank_account_id",
@@ -230,6 +262,35 @@ SIGNATURE_FIELDS = {
         "entitlement_confirmed",
     ),
     "loan_drawdown": ("actual_date", "agreement_id", "bank_account_id", "principal_fen"),
+    "managed_reserve_expense": (
+        "actual_date",
+        "bank_account_id",
+        "cash_account_id",
+        "platform_account_id",
+        "movement_ids",
+        "counterparty_id",
+        "amount_fen",
+    ),
+    "managed_reserve_refund": (
+        "actual_date",
+        "bank_account_id",
+        "cash_account_id",
+        "platform_account_id",
+        "movement_ids",
+        "counterparty_id",
+        "amount_fen",
+    ),
+    "payroll_reserve_payment": (
+        "actual_date",
+        "bank_account_id",
+        "amount_fen",
+        "allocations",
+        "reserve_expense_fen",
+        "return_period",
+        "actual_return_date",
+        "return_confirmed",
+        "complete_group_confirmed",
+    ),
 }
 
 # A verified original position is a strong signal only with the same business
@@ -256,12 +317,43 @@ CORE_FIELDS = {
     ),
     "payment": (("direction", "bank_account_id", "counterparty_id"), ("amount_fen",)),
     "cash_payment": (("direction", "cash_account_id", "counterparty_id"), ("amount_fen",)),
+    "platform_payment": (
+        ("direction", "platform_account_id", "counterparty_id"),
+        ("amount_fen",),
+    ),
     "funding": (("bank_account_id", "owner_id", "funding_kind"), ("amount_fen",)),
     "cash_funding": (("cash_account_id", "owner_id", "funding_kind"), ("amount_fen",)),
+    "platform_funding": (
+        ("platform_account_id", "owner_id", "funding_kind"),
+        ("amount_fen",),
+    ),
     "funds_transfer": (("source_bank_account_id", "destination_bank_account_id"), ("amount_fen",)),
     "cash_bank_transfer": (("direction", "bank_account_id", "cash_account_id"), ("amount_fen",)),
+    "bank_platform_transfer": (
+        ("direction", "bank_account_id", "platform_account_id"),
+        ("amount_fen",),
+    ),
     "bank_income": (("bank_account_id", "counterparty_id", "income_kind"), ("amount_fen",)),
     "loan_drawdown": (("agreement_id", "bank_account_id"), ("principal_fen",)),
+    "managed_reserve_expense": (
+        (
+            "bank_account_id",
+            "cash_account_id",
+            "platform_account_id",
+            "counterparty_id",
+        ),
+        ("amount_fen",),
+    ),
+    "managed_reserve_refund": (
+        (
+            "bank_account_id",
+            "cash_account_id",
+            "platform_account_id",
+            "counterparty_id",
+        ),
+        ("amount_fen",),
+    ),
+    "payroll_reserve_payment": (("bank_account_id",), ("amount_fen",)),
 }
 
 DUPLICATE_ROLES = {kind: kind for kind in ELIGIBLE_KINDS}
@@ -270,11 +362,207 @@ if set(SIGNATURE_FIELDS) != ELIGIBLE_KINDS or not set(CORE_FIELDS) <= ELIGIBLE_K
     raise RuntimeError("duplicate comparison fields must cover the declared allowlist")
 
 
+def _money_leg(
+    category: str,
+    account_id: str,
+    actual_date: str,
+    direction: str,
+    amount_fen: int,
+    object_id: str | None,
+    movement_ids: Sequence[str] = (),
+) -> dict[str, Any]:
+    return {
+        "category": category,
+        "account_id": account_id,
+        "actual_date": actual_date,
+        "direction": direction,
+        "amount_fen": amount_fen,
+        "object_id": object_id,
+        "movement_ids": sorted(set(movement_ids)),
+    }
+
+
+def _actual_money_legs(fact: Fact) -> tuple[dict[str, Any], ...]:
+    """Return each real company-funds side without its accounting treatment."""
+
+    if fact.kind not in ACTUAL_MONEY_KINDS:
+        return ()
+    data = _fact_data(fact)
+    actual_date = str(data["actual_date"])
+    amount_fen = data.get("amount_fen", data.get("principal_fen"))
+    movements = data.get("movement_ids", ())
+    if fact.kind in {"payment", "cash_payment", "platform_payment"}:
+        category = {
+            "payment": "bank",
+            "cash_payment": "cash",
+            "platform_payment": "platform",
+        }[fact.kind]
+        return (
+            _money_leg(
+                category,
+                data[f"{category}_account_id"],
+                actual_date,
+                data["direction"],
+                amount_fen,
+                data["counterparty_id"],
+                movements,
+            ),
+        )
+    if fact.kind in {"funding", "cash_funding", "platform_funding"}:
+        category = {
+            "funding": "bank",
+            "cash_funding": "cash",
+            "platform_funding": "platform",
+        }[fact.kind]
+        return (
+            _money_leg(
+                category,
+                data[f"{category}_account_id"],
+                actual_date,
+                "inflow",
+                amount_fen,
+                data["owner_id"],
+                movements,
+            ),
+        )
+    if fact.kind in {"managed_reserve_expense", "managed_reserve_refund"}:
+        category = next(
+            category
+            for category in ("bank", "cash", "platform")
+            if data.get(f"{category}_account_id") is not None
+        )
+        return (
+            _money_leg(
+                category,
+                data[f"{category}_account_id"],
+                actual_date,
+                "outflow" if fact.kind == "managed_reserve_expense" else "inflow",
+                amount_fen,
+                data.get("counterparty_id"),
+                movements,
+            ),
+        )
+    if fact.kind == "payroll_reserve_payment":
+        return (
+            _money_leg(
+                "bank",
+                data["bank_account_id"],
+                actual_date,
+                "outflow",
+                amount_fen,
+                data.get("counterparty_id", "payroll-group"),
+            ),
+        )
+    if fact.kind == "bank_income":
+        return (
+            _money_leg(
+                "bank",
+                data["bank_account_id"],
+                actual_date,
+                "inflow",
+                amount_fen,
+                data["counterparty_id"],
+            ),
+        )
+    if fact.kind == "loan_drawdown":
+        return (
+            _money_leg(
+                "bank",
+                data["bank_account_id"],
+                actual_date,
+                "inflow",
+                amount_fen,
+                "loan-agreement:" + data["agreement_id"],
+            ),
+        )
+    if fact.kind == "funds_transfer":
+        source, destination = data["source_bank_account_id"], data["destination_bank_account_id"]
+        return (
+            _money_leg(
+                "bank",
+                source,
+                actual_date,
+                "outflow",
+                amount_fen,
+                "funds-account:bank:" + destination,
+            ),
+            _money_leg(
+                "bank",
+                destination,
+                actual_date,
+                "inflow",
+                amount_fen,
+                "funds-account:bank:" + source,
+            ),
+        )
+    if fact.kind == "cash_bank_transfer":
+        bank, cash = data["bank_account_id"], data["cash_account_id"]
+        withdrawal = data["direction"] == "withdrawal"
+        return (
+            _money_leg(
+                "bank",
+                bank,
+                actual_date,
+                "outflow" if withdrawal else "inflow",
+                amount_fen,
+                "funds-account:cash:" + cash,
+            ),
+            _money_leg(
+                "cash",
+                cash,
+                actual_date,
+                "inflow" if withdrawal else "outflow",
+                amount_fen,
+                "funds-account:bank:" + bank,
+            ),
+        )
+    if fact.kind == "bank_platform_transfer":
+        bank, platform = data["bank_account_id"], data["platform_account_id"]
+        to_platform = data["direction"] == "bank_to_platform"
+        return (
+            _money_leg(
+                "bank",
+                bank,
+                actual_date,
+                "outflow" if to_platform else "inflow",
+                amount_fen,
+                "funds-account:platform:" + platform,
+            ),
+            _money_leg(
+                "platform",
+                platform,
+                actual_date,
+                "inflow" if to_platform else "outflow",
+                amount_fen,
+                "funds-account:bank:" + bank,
+                movements,
+            ),
+        )
+    raise RuntimeError(f"missing actual-money duplicate normalization for {fact.kind}")
+
+
+def _money_key(leg: Mapping[str, Any]) -> tuple[Any, ...]:
+    return tuple(
+        leg[key] for key in ("category", "account_id", "actual_date", "direction", "amount_fen")
+    )
+
+
+def _money_matches(proposed: Fact, candidate: Fact) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    candidate_by_key: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for leg in _actual_money_legs(candidate):
+        candidate_by_key.setdefault(_money_key(leg), []).append(leg)
+    return [
+        (left, right)
+        for left in _actual_money_legs(proposed)
+        for right in candidate_by_key.get(_money_key(left), ())
+    ]
+
+
 DUPLICATE_DDL = """
 CREATE TABLE business_duplicate_check(
  id TEXT PRIMARY KEY,
  contract TEXT NOT NULL CHECK(contract='ai-accounting-kernel/2/business-duplicate'),
- contract_version INTEGER NOT NULL CHECK(contract_version=1),
+ contract_version INTEGER NOT NULL CHECK(contract_version=2),
  proposed_subject_id TEXT NOT NULL,
  proposed_revision INTEGER NOT NULL CHECK(proposed_revision>0),
  proposed_digest BLOB NOT NULL CHECK(length(proposed_digest)=32),
@@ -707,11 +995,14 @@ def _candidate_signals(
     candidate_locations: Sequence[Mapping[str, Any]],
     supporting: set[str],
 ) -> tuple[str | None, list[dict]]:
-    if proposed.kind != candidate.kind:
+    same_kind = proposed.kind == candidate.kind
+    actual_money_pair = proposed.kind in ACTUAL_MONEY_KINDS and candidate.kind in ACTUAL_MONEY_KINDS
+    if not same_kind and not actual_money_pair:
         return None, []
-    exact = _signature(proposed) == _signature(candidate)
-    proposed_core = _core_signature(proposed)
+    exact = same_kind and _signature(proposed) == _signature(candidate)
+    proposed_core = _core_signature(proposed) if same_kind else None
     same_core = proposed_core is not None and proposed_core == _core_signature(candidate)
+    money_matches = _money_matches(proposed, candidate) if actual_money_pair else []
     shared_evidence = sorted(set(proposed_evidence) & set(candidate_evidence))
     shared_business_evidence = [item for item in shared_evidence if item not in supporting]
     proposed_by_evidence = _locations_by_evidence(proposed_locations)
@@ -721,14 +1012,56 @@ def _candidate_signals(
         for item in _location_keys(proposed_locations) & _location_keys(candidate_locations)
         if item[0] not in supporting
     )
-    distinct_proof = any(
+    distinct_material_proof = any(
         proposed_by_evidence.get(item)
         and candidate_by_evidence.get(item)
         and proposed_by_evidence[item].isdisjoint(candidate_by_evidence[item])
         for item in shared_evidence
     )
+    common_movements = sorted(
+        {
+            movement
+            for left, right in money_matches
+            for movement in set(left["movement_ids"]) & set(right["movement_ids"])
+        }
+    )
+    distinct_platform_proof = any(
+        left["category"] == "platform"
+        and left["movement_ids"]
+        and right["movement_ids"]
+        and set(left["movement_ids"]).isdisjoint(right["movement_ids"])
+        for left, right in money_matches
+    )
+    distinct_proof = distinct_material_proof or distinct_platform_proof
+    same_money_object = any(
+        left["object_id"] is not None and left["object_id"] == right["object_id"]
+        for left, right in money_matches
+    )
+    exact_money_source = bool(money_matches) and bool(
+        common_movements or (common_locations and not distinct_platform_proof)
+    )
     signals = []
-    if common_locations and same_core:
+    if exact_money_source:
+        signal = {
+            "code": (
+                "same_exact_material_location" if common_locations else "same_complete_actual_money"
+            ),
+            "matched_fields": [
+                "funds_category",
+                "funds_account_id",
+                "actual_date",
+                "direction",
+                "amount_fen",
+                *(("movement_ids",) if common_movements else ()),
+            ],
+        }
+        if common_locations:
+            signal["source_locations"] = [
+                {"evidence_digest": evidence, "location": location}
+                for evidence, location in common_locations
+            ]
+        signals.append(signal)
+    elif common_locations and same_core:
         signals.append(
             {
                 "code": "same_exact_material_location",
@@ -739,7 +1072,7 @@ def _candidate_signals(
                 ],
             }
         )
-    if exact and shared_business_evidence and not distinct_proof:
+    if proposed.kind in ORIGIN_KINDS and exact and shared_business_evidence and not distinct_proof:
         signals.append(
             {
                 "code": "same_complete_signature_and_evidence",
@@ -748,14 +1081,24 @@ def _candidate_signals(
             }
         )
     if (
-        proposed.kind in ACTUAL_MONEY_KINDS
-        and _signature(proposed) == _signature(candidate)
+        same_kind
+        and exact
+        and money_matches
+        and same_money_object
         and not distinct_proof
+        and not exact_money_source
     ):
         signals.append(
             {
                 "code": "same_complete_actual_money",
-                "matched_fields": ["duplicate_role", "complete_actual_money_signature"],
+                "matched_fields": [
+                    "funds_category",
+                    "funds_account_id",
+                    "actual_date",
+                    "direction",
+                    "amount_fen",
+                    "business_object",
+                ],
             }
         )
     if signals:
@@ -766,6 +1109,20 @@ def _candidate_signals(
             {
                 "code": "same_complete_signature",
                 "matched_fields": ["duplicate_role", "complete_business_signature"],
+            }
+        )
+    if money_matches:
+        weak.append(
+            {
+                "code": "same_actual_money_coordinates",
+                "matched_fields": [
+                    "funds_category",
+                    "funds_account_id",
+                    "actual_date",
+                    "direction",
+                    "amount_fen",
+                ],
+                "distinct_locations_proven": distinct_proof,
             }
         )
     if shared_evidence:
@@ -843,6 +1200,19 @@ def _candidate_digest(
     ).hex()
 
 
+def _reuse_compatible(proposed: Mapping[str, Any], candidate: Mapping[str, Any]) -> bool:
+    if proposed["kind"] == candidate["kind"]:
+        return True
+    return (
+        proposed["kind"] in ACTUAL_MONEY_KINDS
+        and candidate["kind"] in ACTUAL_MONEY_KINDS
+        and any(
+            signal.get("code") in {"same_exact_material_location", "same_complete_actual_money"}
+            for signal in candidate.get("signals", ())
+        )
+    )
+
+
 class DuplicateCandidates:
     """Candidate preparation and immutable disposition hooks for Engine/Periods."""
 
@@ -863,17 +1233,17 @@ class DuplicateCandidates:
         through_period: int | None = None,
         strong_only: bool = False,
     ):
-        # Exact fact rows cover complete-signature/money matching.  Shared
-        # evidence is queried across periods and catches a period copied wrongly.
+        # Exact fact rows cover complete same-kind signatures. Actual-money
+        # rows use their indexed real date across all supported money kinds.
+        # Shared evidence remains cross-period so a copied-wrong period is seen.
         source_evidence = sorted({item.evidence_digest for item in source_locations})
         fact_digest = digest(fact.model_dump(mode="json"))
-        # The full fact digest is exact within a business kind.  Actual-money
-        # models require actual_date to belong to period, so their complete
-        # comparison tuple cannot repeat across different periods either.
         scope_sql = "f.digest=?"
         scope_values: tuple[Any, ...] = (fact_digest,)
         scopes: list[str] = []
-        parameters: list[Any] = [fact.kind, subject_id]
+        candidate_kinds = ACTUAL_MONEY_KINDS if fact.kind in ACTUAL_MONEY_KINDS else {fact.kind}
+        candidate_kinds = candidate_kinds & self.store.registry.models.keys()
+        parameters: list[Any] = [canonical(sorted(candidate_kinds)), subject_id]
 
         def add_scope(sql, *values):
             if through_period is not None:
@@ -883,6 +1253,18 @@ class DuplicateCandidates:
             parameters.extend(values)
 
         add_scope(scope_sql, *scope_values)
+        if fact.kind in ACTUAL_MONEY_KINDS:
+            actual_tables = sorted(candidate_kinds)
+            add_scope(
+                "("
+                + " OR ".join(
+                    f"EXISTS(SELECT 1 FROM fact_{kind} actual "
+                    "WHERE actual.revision_id=f.id AND actual.actual_date=?)"
+                    for kind in actual_tables
+                )
+                + ")",
+                *(str(fact.actual_date) for _kind in actual_tables),
+            )
         evidence_scope = (
             "EXISTS(SELECT 1 FROM fact_evidence e WHERE e.fact_id=f.id "
             "AND hex(e.evidence_digest) IN (SELECT upper(value) FROM json_each(?)))"
@@ -920,7 +1302,8 @@ class DuplicateCandidates:
                 "ON cc.calculation_id=c.id WHERE cc.subject_id=f.subject_id "
                 "AND c.fact_id=f.id) published_current "
                 "FROM fact_current fc JOIN fact_revision f ON f.id=fc.fact_id "
-                "JOIN subject s ON s.id=f.subject_id WHERE s.kind=? AND f.subject_id<>? "
+                "JOIN subject s ON s.id=f.subject_id WHERE "
+                "s.kind IN (SELECT value FROM json_each(?)) AND f.subject_id<>? "
                 "AND (" + " OR ".join(scopes) + ") ORDER BY f.period DESC,f.id DESC",
                 parameters,
             )
@@ -1100,6 +1483,7 @@ class DuplicateCandidates:
             for proposal in proposals
         ]
         by_signature: dict[tuple[str, str], list[int]] = {}
+        by_money: dict[tuple[Any, ...], list[int]] = {}
         by_location: dict[tuple[str, str, str], list[int]] = {}
         # Compare the proposed rows with each other.  No row is written until
         # the caller has reviewed every result, so a failure remains atomic.
@@ -1109,9 +1493,15 @@ class DuplicateCandidates:
                 continue
             signature_key = (left_fact.kind, signatures[index])
             candidate_indexes = set(by_signature.get(signature_key, ()))
+            money_keys = {_money_key(leg) for leg in _actual_money_legs(left_fact)}
+            for key in money_keys:
+                candidate_indexes.update(by_money.get(key, ()))
+            location_role = (
+                "actual_money" if left_fact.kind in ACTUAL_MONEY_KINDS else left_fact.kind
+            )
             for item in locations[index]:
                 candidate_indexes.update(
-                    by_location.get((left_fact.kind, item["evidence_digest"], item["location"]), ())
+                    by_location.get((location_role, item["evidence_digest"], item["location"]), ())
                 )
             for right_index in sorted(candidate_indexes):
                 right = proposals[right_index]
@@ -1141,9 +1531,11 @@ class DuplicateCandidates:
                 )
                 prepared[index]["strong_candidates"].append(candidate)
             by_signature.setdefault(signature_key, []).append(index)
+            for key in money_keys:
+                by_money.setdefault(key, []).append(index)
             for item in locations[index]:
                 by_location.setdefault(
-                    (left_fact.kind, item["evidence_digest"], item["location"]), []
+                    (location_role, item["evidence_digest"], item["location"]), []
                 ).append(index)
         for item in prepared:
             item["strong_candidates"].sort(
@@ -1278,11 +1670,25 @@ class DuplicateCandidates:
                 for item in prepared["strong_candidates"]
                 if item["subject_id"] == value.candidate_subject_id
             )
+            if not _reuse_compatible(prepared["proposed"], selected_candidate):
+                raise KernelError(
+                    "duplicate_candidate_invalid",
+                    "跨类型复用只适用于同一实际资金的强候选",
+                )
             selected = selected_candidate["fact_id"]
             if selected is None and fact_ids_by_subject is not None:
                 selected = fact_ids_by_subject.get(selected_candidate["subject_id"])
             if selected is None:
                 raise KernelError("duplicate_candidate_invalid", "批内拟登记业务不能作为复用目标")
+            current = connection.execute(
+                "SELECT 1 FROM fact_current WHERE subject_id=? AND fact_id=?",
+                (selected_candidate["subject_id"], selected),
+            ).fetchone()
+            if current is None:
+                raise KernelError(
+                    "duplicate_candidate_expired",
+                    "复用对象的当前事实版本已变化，请重新核对",
+                )
             result_fact_id = None
         if action != "reuse_existing" and result_fact_id is None:
             raise ValueError("a saved duplicate check requires its exact fact revision")
@@ -1772,6 +2178,11 @@ def verify_duplicate_checks(connection) -> None:
                     item["subject_id"] for item in strong
                 }:
                     raise ValueError("selected candidate")
+                selected_candidate = next(
+                    item for item in strong if item.get("fact_id") == row["selected_fact_id"]
+                )
+                if not _reuse_compatible(proposed, selected_candidate):
+                    raise ValueError("incompatible reused candidate")
             if row["action"] == "create_separate" and not any(
                 item.kind
                 in {

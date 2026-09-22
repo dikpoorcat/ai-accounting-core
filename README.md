@@ -10,7 +10,7 @@
 
 当前代码已采用新系统 `ai-accounting-kernel/2`：目录库、公司库均为严格核验的 `draft / 0`，公司备份格式为 2。旧系统数据库和备份明确拒绝，不能通过改版本、补标识或重建文件绕过。
 
-本轮按全新开发、全新库推进，不安排真实换库或重录。未来正式版本的迁移能力已建立，正常事实历史和更正能力保留；开发库只接受当前精确结构，不跨开发基线升级，第 9 阶段才冻结正式 v1。期间、身份、备用金等业务改造仍按[整体架构](docs/kernel-refactor-architecture.md)和[路线图](docs/kernel-refactor-roadmap.md)推进。
+本轮按全新开发、全新库推进，不安排真实换库或重录。未来正式版本的迁移能力已建立，正常事实历史和更正能力保留；开发库只接受当前精确结构，不跨开发基线升级，第 9 阶段才冻结正式 v1。各阶段的边界和实际验收以[整体架构](docs/kernel-refactor-architecture.md)及[路线图](docs/kernel-refactor-roadmap.md)为准。
 
 ## 开发页面手动重启
 
@@ -59,6 +59,10 @@ npm run dev
 `save_fact`、`amend_fact` 和批量登记自动检查强重复候选；AI 先查原件，仍不能判断才问负责人。复用既有业务或确认另建都留下绑定版本的核对依据。弱线索不打断登记，原有唯一性和防重复核销不能被核对绕过。
 
 对象名称与档案通过 `update_entity_profile` 更新，只影响管理资料。指错对象使用 `preview_identity_correction`／`confirm_identity_correction`，一次提交完成受影响事实及账务更正；闭期明确指定开放入账月，原冻结内容保留。`find_facts` 使用 `entity_id`、角色、`identity_match=current|recorded` 和不透明 `cursor`，默认按月份及事实编号倒序，每页最多 500 条。
+
+备用金用 `managed_reserve_expense` 登记实际支出、`managed_reserve_refund` 登记实际退回公司，支持银行、现金和公司平台账户，沿用通用预览和发布流程。平台收付必须引用核验过的原行。备用金本身不建账户、不管余额或退款额度，退款不要求原支出编号；内部消费、退款权利和债务结清不能当成公司实际退款。
+
+工资混合付款用 `payroll_reserve_payment`：净薪分配加 `reserve_expense_fen` 必须等于真实银行全额，同时保留完整工资组及实际退入备用金的确认。差额不能证明钱已经退入；具体日期未知时不补造。实际退入备用金与实际退回公司分开处理，不使用旧范围或专用结清命令。
 
 ## 看板
 

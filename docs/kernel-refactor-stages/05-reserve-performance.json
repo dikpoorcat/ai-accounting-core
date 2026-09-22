@@ -1,0 +1,25 @@
+{
+  "measured_at": "2026-09-22",
+  "environment": {
+    "python": "3.12.13",
+    "database": "temporary synthetic SQLite company"
+  },
+  "scenario": {
+    "facts": 120,
+    "months": 120,
+    "channels": ["bank", "cash"],
+    "checkpoints_months": [12, 48, 120],
+    "publish_batches": 1
+  },
+  "result": {
+    "pytest_elapsed_seconds": 40.60,
+    "current_refund_counts": [12, 48, 120],
+    "non_own_fact_dependencies": 0,
+    "calculation_dependencies": 0,
+    "scope_dependencies": 0,
+    "bank_balance_fen": 6000,
+    "cash_balance_fen": 6000
+  },
+  "interpretation": "发布结果未记录任何历史成本或备用金范围依赖；耗时为端到端合成测试记录，不代表恒定复杂度或性能基准。",
+  "test": "tests/kernel/test_managed_reserve_continuation.py::test_120_month_refunds_have_no_historical_cost_dependencies"
+}

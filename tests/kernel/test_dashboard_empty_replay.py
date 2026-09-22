@@ -6,6 +6,7 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from entity_fixture import save_entity_display_profile
 from test_close_range import ready
 
 from ai_accounting.kernel.backup import verify_portable
@@ -341,8 +342,8 @@ def test_replay_preserves_preclose_commentary_and_later_supplement_order(tmp_pat
             "source": "原始时点明确提供的资料",
             "evidence_digest": proof,
         }
-        first_profile = display.save_display_profile(
-            known_profile, expected_revision=0, request_id="profile:before-close:v1"
+        first_profile = save_entity_display_profile(
+            engine, known_profile, expected_revision=0, request_id="profile:before-close:v1"
         )
         current = display.preview_period_commentary(PERIOD)
         if target == "new-empty-target":
@@ -377,7 +378,8 @@ def test_replay_preserves_preclose_commentary_and_later_supplement_order(tmp_pat
             request_id="close:2026-01:v1",
         )
         frozen = periods.closed_report(PERIOD)
-        later_profile = display.save_display_profile(
+        later_profile = save_entity_display_profile(
+            engine,
             known_profile | {"display_name": "后来明确补齐的名称", "source": "关账后补充资料"},
             expected_revision=1,
             request_id="profile:after-close:v2",
@@ -394,7 +396,9 @@ def test_replay_preserves_preclose_commentary_and_later_supplement_order(tmp_pat
         assert preclose["supplementary"] is False
         assert supplement["supplementary"] is True
         assert periods.closed_report(PERIOD) == frozen
-        assert frozen["management_snapshot"]["profiles"][0]["id"] == first_profile["id"]
+        assert first_profile["id"] in {
+            item["id"] for item in frozen["management_snapshot"]["entity_profiles"]
+        }
         assert frozen["management_snapshot"]["commentary"]["id"] == preclose["id"]
         assert later_profile["id"] not in json.dumps(frozen)
         assert supplement["id"] not in json.dumps(frozen)

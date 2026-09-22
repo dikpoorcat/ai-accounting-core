@@ -30,7 +30,6 @@ from .materials import (
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
 from .reports import Reports
-from .reserves import Reserves
 from .tax_import import TaxImport
 from .types import canonical
 from .workflow import Workflow
@@ -127,8 +126,6 @@ def command_models(registry):
         "confirm_asset_activation_batch": AssetBatches.confirm_activation_batch,
         "prepare_asset_consumption_month": AssetBatches.prepare_consumption_month,
         "confirm_asset_consumption_month": AssetBatches.confirm_consumption_month,
-        "preview_managed_reserve_settlement": Reserves.preview_settlement,
-        "confirm_managed_reserve_settlement": Reserves.confirm_settlement,
         "preview_tax_import": TaxImport.preview,
         "confirm_tax_import": TaxImport.confirm,
     }

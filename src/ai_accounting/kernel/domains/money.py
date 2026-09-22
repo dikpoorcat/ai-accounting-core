@@ -2,11 +2,16 @@
 
 ACTUAL_PAYMENT_KINDS = ("payment", "cash_payment", "platform_payment")
 SETTLEMENT_PAYMENT_KINDS = (*ACTUAL_PAYMENT_KINDS, "payroll_reserve_payment")
+FUNDS_ACCOUNT_BY_BALANCE_CATEGORY = {
+    "bank": "1002",
+    "cash": "1001",
+    "platform": "1012",
+}
 PAYMENT_FUNDS_ACCOUNT_BY_KIND = {
-    "payment": "1002",
-    "cash_payment": "1001",
-    "platform_payment": "1012",
-    "payroll_reserve_payment": "1002",
+    "payment": FUNDS_ACCOUNT_BY_BALANCE_CATEGORY["bank"],
+    "cash_payment": FUNDS_ACCOUNT_BY_BALANCE_CATEGORY["cash"],
+    "platform_payment": FUNDS_ACCOUNT_BY_BALANCE_CATEGORY["platform"],
+    "payroll_reserve_payment": FUNDS_ACCOUNT_BY_BALANCE_CATEGORY["bank"],
 }
 FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY = {
     "bank": "bank",

@@ -85,7 +85,7 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         )
     if reserve:
         prepare(company)
-        company.publish("scope", "gross-batch")
+        company.publish("gross-batch")
         payment_id = "gross-batch"
     else:
         allocations = [

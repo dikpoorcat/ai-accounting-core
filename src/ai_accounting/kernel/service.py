@@ -22,7 +22,6 @@ from .materials import Materials
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
 from .reports import Reports, run_report_jobs
-from .reserves import Reserves
 from .security import SecurityService, consume_close_approval
 from .tax_import import TaxImport
 from .workflow import Workflow
@@ -49,6 +48,13 @@ OPERATING_PROTOCOL = {
         "身份指错用preview_identity_correction/confirm_identity_correction，明确事实范围与依据；"
         "名单、累计、清偿和资产影响一起处理，不能先合并显示再留下未处理账务。"
         "不能通过改名称掩盖实际付错人；已冻结内容保留，闭期归属更正在指定开放月承接。"
+    ),
+    "managed_reserve": (
+        "备用金用managed_reserve_expense登记实际支出、managed_reserve_refund登记实际退回公司；"
+        "支持银行、现金和公司平台账户，备用金本身不建账户，不询问余额、成本来源或可退额度。"
+        "退款只凭实际收款及业务性质，不把退款权利、原债结清或备用金内部消费当成实际退款。"
+        "工资混合付款用reserve_expense_fen明确备用金部分；全额银行流水、完整净薪和实际退入依据分别核对。"
+        "备用金内部原件保留并作有依据的不入账处置，公司平台原行仍须完整且唯一处理。"
     ),
     "missing_information": "根据fact_issues核对可复用来源后再补充，不把错误码直接变成负责人追问。",
     "publication": (
@@ -144,7 +150,6 @@ def default_registry():
                     "payment",
                     "cash_bank_transfer",
                     "bank_platform_transfer",
-                    "managed_reserve_bank_expense",
                     "payroll_reserve_payment",
                 }
                 else ("financing" if kind.startswith(("loan", "borrowing")) else category)
@@ -426,7 +431,6 @@ class LocalService:
         payroll_preparation = PayrollPreparation(engine)
         asset_batches = AssetBatches(engine)
         tax_import = TaxImport(engine)
-        reserves = Reserves(engine)
         from .maintenance import Maintenance
 
         maintenance = Maintenance(engine)
@@ -495,8 +499,6 @@ class LocalService:
             "confirm_asset_activation_batch": asset_batches.confirm_activation_batch,
             "prepare_asset_consumption_month": asset_batches.prepare_consumption_month,
             "confirm_asset_consumption_month": asset_batches.confirm_consumption_month,
-            "preview_managed_reserve_settlement": reserves.preview_settlement,
-            "confirm_managed_reserve_settlement": reserves.confirm_settlement,
             "preview_tax_import": tax_import.preview,
             "confirm_tax_import": tax_import.confirm,
         }

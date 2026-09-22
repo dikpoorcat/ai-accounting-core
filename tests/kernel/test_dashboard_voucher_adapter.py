@@ -87,7 +87,7 @@ def test_batch_recipients_and_individual_obligation_lines_use_exact_relationship
 def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
     company = reserve_payroll.company.__wrapped__(tmp_path)
     reserve_payroll.prepare(company)
-    company.publish("scope", "gross-batch")
+    company.publish("gross-batch")
     for ident, name in (("one", "甲员工"), ("two", "乙员工")):
         save_entity_display_profile(
             company.engine,

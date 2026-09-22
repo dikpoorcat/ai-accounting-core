@@ -178,6 +178,7 @@ class DuplicateSignal(ResponseObject):
         "same_complete_signature",
         "shared_evidence",
         "same_material_location_different_signature",
+        "same_actual_money_coordinates",
     ]
     matched_fields: list[str]
     evidence: NotRequired[list[str]]
@@ -198,6 +199,7 @@ class ReadinessIssue(ResponseObject):
     location: NotRequired[str | None]
     semantics: NotRequired[str]
     domain: NotRequired[str]
+    category: NotRequired[str]
     subject_id: NotRequired[str]
     fact_id: NotRequired[str]
     source_id: NotRequired[str]

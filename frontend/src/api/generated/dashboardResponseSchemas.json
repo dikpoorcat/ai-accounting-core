@@ -1162,7 +1162,8 @@
               "same_complete_actual_money",
               "same_complete_signature",
               "shared_evidence",
-              "same_material_location_different_signature"
+              "same_material_location_different_signature",
+              "same_actual_money_coordinates"
             ],
             "title": "Code",
             "type": "string"
@@ -2597,6 +2598,10 @@
           },
           "domain": {
             "title": "Domain",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
             "type": "string"
           },
           "subject_id": {

@@ -27,6 +27,435 @@ _RUNNERS = {}
 _PRIVATE_NATIVE = {}
 
 
+def verify_reserve_business(call, approve_close, wait_for_backup, validation):
+    """Exercise the reserve contract through packaged public commands, using synthetic facts."""
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES
+    from ai_accounting.payroll import CumulativeIncomeTaxPolicy
+
+    company = call(
+        "create_company", {"taxpayer_id": "91310000123456789C", "name": "运行包备用金合成企业"}
+    )
+    cid, month = company["id"], "2026-01"
+    sequence = 0
+
+    def execute(command, payload, **options):
+        return call(command, {"company_id": cid, **payload}, **options)
+
+    def request():
+        nonlocal sequence
+        sequence += 1
+        return f"reserve-package-{sequence}"
+
+    accounts = {
+        channel: execute(
+            "register_entity",
+            {
+                "kind": "fund_account",
+                "account_type": channel,
+                "data": {"display_name": f"合成{channel}账户"},
+                "source": "独立包合成资料",
+                "request_id": request(),
+            },
+        )["entity_id"]
+        for channel in ("bank", "cash", "platform")
+    }
+    employee = execute(
+        "register_entity",
+        {
+            "kind": "person",
+            "data": {"display_name": "合成员工"},
+            "source": "独立包合成资料",
+            "request_id": request(),
+        },
+    )["entity_id"]
+    tax = CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
+    facts = {
+        "reserve-profile": (
+            "payroll_profile",
+            {
+                "employee_id": employee,
+                "effective_from": month,
+                "effective_to": month,
+                "withholding_start_date": "2026-01-01",
+                "social_insurance_base_fen": 1000000,
+                "housing_fund_base_fen": None,
+                "social_insurance_participating": True,
+                "housing_fund_participating": False,
+                "contribution_shortfall": "reject",
+            },
+        ),
+        "reserve-contributions": (
+            "payroll_contribution_policy",
+            {
+                "version": "synthetic-reserve-contributions",
+                "jurisdiction": "synthetic",
+                "effective_from": "2026-01-01",
+                "effective_to": "2026-12-31",
+                "primary_source_url": "https://www.mof.gov.cn/",
+                "rules": [
+                    {
+                        "code": "pension",
+                        "base_kind": "social_insurance",
+                        "employee_rate": "0.08",
+                        "employer_rate": "0.16",
+                        "minimum_base_fen": 0,
+                        "maximum_base_fen": 10000000,
+                        "rounding": "half_up",
+                        "enabled": True,
+                    }
+                ],
+            },
+        ),
+        "reserve-income-tax": (
+            "payroll_income_tax_policy",
+            {
+                "version": tax.version,
+                "effective_from": tax.effective_from.isoformat(),
+                "effective_to": None,
+                "primary_source_url": tax.primary_source_url,
+                "legal_basis_source_url": tax.legal_basis_source_url,
+                "monthly_standard_deduction_fen": tax.monthly_standard_deduction_fen,
+                "brackets": [
+                    {
+                        "upper_bound_fen": x.upper_bound_fen,
+                        "rate": str(x.rate),
+                        "quick_deduction_fen": x.quick_deduction_fen,
+                    }
+                    for x in tax.brackets
+                ],
+            },
+        ),
+        "reserve-payroll-opening": (
+            "payroll_opening_state",
+            {
+                "employee_id": employee,
+                "through_period": None,
+                **dict.fromkeys(
+                    (
+                        "cumulative_income_fen",
+                        "cumulative_tax_exempt_income_fen",
+                        "cumulative_standard_deduction_fen",
+                        "cumulative_employee_contributions_fen",
+                        "cumulative_special_additional_deduction_fen",
+                        "cumulative_other_legal_deduction_fen",
+                        "cumulative_tax_relief_fen",
+                        "cumulative_withheld_tax_fen",
+                    ),
+                    0,
+                ),
+            },
+        ),
+        "reserve-wage": (
+            "payroll",
+            {
+                "employee_id": employee,
+                "profile_id": "reserve-profile",
+                "contribution_policy_id": "reserve-contributions",
+                "income_tax_policy_id": "reserve-income-tax",
+                "accounting_gross_salary_fen": 500000,
+                "tax_reported_salary_fen": 500000,
+                "tax_exempt_income_fen": 0,
+                "special_additional_deduction_fen": 0,
+                "other_legal_deduction_fen": 0,
+                "tax_relief_fen": 0,
+                "expense_class": "management",
+                "contribution_basis": "policy_until_actual",
+            },
+        ),
+        "reserve-bank-opening": (
+            "bank_opening",
+            {
+                "bank_account_id": accounts["bank"],
+                "opening_fen": 0,
+                "basis": "new_account",
+            },
+        ),
+    }
+    for index, channel in enumerate(accounts):
+        for action, amount, day in (
+            ("expense", 1000 + index * 200, "03"),
+            ("refund", 1600 + index * 200, "04"),
+        ):
+            facts[f"reserve-{channel}-{action}"] = (
+                f"managed_reserve_{action}",
+                {
+                    "actual_date": f"2026-01-{day}",
+                    f"{channel}_account_id": accounts[channel],
+                    "amount_fen": amount,
+                    **(
+                        {"movement_ids": [f"reserve-platform-{action}-row"]}
+                        if channel == "platform"
+                        else {}
+                    ),
+                },
+            )
+    facts["reserve-batch"] = (
+        "payroll_reserve_payment",
+        {
+            "actual_date": "2026-01-10",
+            "bank_account_id": accounts["bank"],
+            "amount_fen": 500000,
+            "reserve_expense_fen": 80000,
+            "return_period": month,
+            "actual_return_date": None,
+            "return_confirmed": True,
+            "complete_group_confirmed": True,
+            "allocations": [
+                {
+                    "source_kind": "payroll",
+                    "source_id": "reserve-wage",
+                    "recipient_id": employee,
+                    "amount_fen": 420000,
+                }
+            ],
+        },
+    )
+    text = json.dumps({"synthetic_confirmed_business": facts}, ensure_ascii=False)
+    proof = execute(
+        "evidence",
+        {
+            "content_base64": base64.b64encode(text.encode()).decode(),
+            "media_type": "text/plain",
+            "name": "独立包备用金明确合成依据",
+            "request_id": request(),
+        },
+    )["digest"]
+
+    def save(subject, kind, data, *, revision=0, evidence=proof, amend=False):
+        command = {
+            "material_source_v2": "receive_material",
+            "material_resolution_v2": "resolve_material",
+        }.get(kind)
+        return execute(
+            command or ("amend_fact" if amend else "save_fact"),
+            {
+                "subject_id": subject,
+                **({} if command else {"kind": kind}),
+                "data": {"period": month, **data},
+                "evidence": [evidence],
+                "expected_revision": revision,
+                "request_id": request(),
+                **({"recording_error_confirmed": True} if amend else {}),
+            },
+        )
+
+    def publish(subjects, posting_period=None):
+        args = {
+            "subjects": subjects,
+            **({"posting_period": posting_period} if posting_period else {}),
+        }
+        preview = execute("preview", args)
+        result = execute(
+            "confirm",
+            {
+                **args,
+                "preview_digest": preview["digest"],
+                "epochs": preview["epochs"],
+                "request_id": request(),
+            },
+        )
+        assert result["status"] == "published"
+        return preview
+
+    material = save(
+        "reserve-source",
+        "material_source_v2",
+        {
+            "evidence_digest": proof,
+            "category": "transactions",
+            "purpose": "supporting",
+            "supporting_purpose": "合成明确业务事实确认，不冒充额外流水",
+            "specification": {
+                "format": "text",
+                "all_pages_reviewed": True,
+                "passages": [{"location": "facts", "page": 1, "excerpt": text}],
+            },
+        },
+    )
+    save(
+        "reserve-source-resolution",
+        "material_resolution_v2",
+        {
+            "source_id": "reserve-source",
+            "source_fact_id": material["fact_id"],
+            "location": "facts",
+            "treatment": "supporting",
+            "reason": "保留合成事实的确认依据",
+        },
+    )
+    for action, direction, amount, day in (
+        ("expense", "outflow", 1400, "03"),
+        ("refund", "inflow", 2000, "04"),
+    ):
+        save(
+            f"reserve-platform-{action}-row",
+            "platform_movement",
+            {
+                "platform_account_id": accounts["platform"],
+                "actual_date": f"2026-01-{day}",
+                "direction": direction,
+                "amount_fen": amount,
+                "source_evidence_digest": proof,
+                "source_location": f"platform-{action}",
+            },
+        )
+    for subject, (kind, data) in facts.items():
+        save(subject, kind, data)
+    publish(
+        [
+            "reserve-wage",
+            "reserve-bank-opening",
+            "reserve-platform-expense-row",
+            "reserve-platform-refund-row",
+        ]
+    )
+    publish(
+        [
+            subject
+            for subject in facts
+            if subject.startswith(
+                ("reserve-bank-e", "reserve-bank-r", "reserve-cash-", "reserve-platform-")
+            )
+        ]
+        + ["reserve-batch"]
+    )
+    save(
+        "reserve-statement",
+        "bank_statement",
+        {
+            "bank_account_id": accounts["bank"],
+            "opening_fen": 0,
+            "closing_fen": -499400,
+            "entries": [
+                {"reference": action, "actual_date": f"2026-01-{day}", "signed_fen": amount}
+                for action, day, amount in (
+                    ("expense", "03", -1000),
+                    ("refund", "04", 1600),
+                    ("batch", "10", -500000),
+                )
+            ],
+        },
+    )
+    save(
+        "reserve-reconciliation",
+        "bank_reconciliation",
+        {
+            "bank_account_id": accounts["bank"],
+            "statement_id": "reserve-statement",
+            "matches": [
+                {"reference": action, "source_kind": kind, "source_id": subject}
+                for action, kind, subject in (
+                    ("expense", "managed_reserve_expense", "reserve-bank-expense"),
+                    ("refund", "managed_reserve_refund", "reserve-bank-refund"),
+                    ("batch", "payroll_reserve_payment", "reserve-batch"),
+                )
+            ],
+        },
+    )
+    publish(["reserve-statement", "reserve-reconciliation"])
+    overview = execute("overview", {"period": month})
+    nets = {row["account"]: row["debit"] - row["credit"] for row in overview["accounts"]}
+    assert {key: nets[key] for key in ("1002", "1001", "1012")} == {
+        "1002": -499400,
+        "1001": 600,
+        "1012": 600,
+    }
+    # Payroll keeps its own exact management-expense account. The direct reserve
+    # expense is 80000, less net actual refunds 1800; neither overwrites payroll.
+    assert nets["560201"] == 660000
+    assert nets["5602"] == 78200
+    funds = execute("dashboard_funds", {"period": month})
+    assert funds["schema_version"] == 4
+    for category in MATERIAL_CATEGORIES:
+        busy = category in {"bank", "payroll", "transactions"}
+        execute(
+            "inventory",
+            {
+                "period": month,
+                "category": category,
+                "evidence": [proof] if busy else [],
+                "expected": int(busy),
+                "no_business": not busy,
+                "confirmation_evidence": proof,
+                "request_id": request(),
+            },
+        )
+    preview = execute("preview_close", {"period": month, "owner_confirmation": proof})
+    approval = approve_close(company, month, preview)
+    execute(
+        "close",
+        {
+            "period": month,
+            "owner_confirmation": proof,
+            "approval_id": approval,
+            "preview_digest": preview["digest"],
+            "epochs": preview["epochs"],
+            "request_id": request(),
+        },
+    )
+    frozen = execute("closed_report", {"period": month})
+    correction_proof = execute(
+        "evidence",
+        {
+            "content_base64": base64.b64encode(
+                "合成纠错：现金退款实际为1900分，原录1800分。".encode()
+            ).decode(),
+            "media_type": "text/plain",
+            "name": "合成现金退款录入更正",
+            "request_id": request(),
+        },
+    )["digest"]
+    kind, data = facts["reserve-cash-refund"]
+    save(
+        "reserve-cash-refund",
+        kind,
+        {**data, "amount_fen": 1900},
+        revision=1,
+        evidence=correction_proof,
+        amend=True,
+    )
+    correction = publish(["reserve-cash-refund"], "2026-02")
+    assert correction["results"][0]["mode"] == "closed_correction"
+    assert execute("closed_report", {"period": month}) == frozen
+    corrected_month = execute("overview", {"period": "2026-02"})
+    assert {
+        row["account"]: row["debit"] - row["credit"] for row in corrected_month["accounts"]
+    } == {"1001": 100, "5602": -100}
+    assert execute("verify_integrity", {})["status"] == "verified"
+    queued = execute(
+        "backup", {"directory": str(validation / "reserve-backups"), "request_id": request()}
+    )
+    archive = wait_for_backup(cid, queued)
+    restored_root = validation / "reserve-restored"
+    restored = call(
+        "restore_company",
+        {
+            "archive": archive["path"],
+            "taxpayer_id": company["taxpayer_id"],
+            "name": "独立包备用金恢复企业",
+        },
+        root=restored_root,
+    )
+    assert restored["database_id"] == company["database_id"]
+    assert execute("closed_report", {"period": month}, root=restored_root) == frozen
+    for period in (month, "2026-02"):
+        assert execute("overview", {"period": period}, root=restored_root) == execute(
+            "overview", {"period": period}
+        )
+    assert execute("verify_integrity", {}, root=restored_root)["status"] == "verified"
+    return cid, {
+        "channels": ["bank", "cash", "platform"],
+        "direct_expenses_and_refunds": 6,
+        "bank_reconciliation_verified": True,
+        "payroll_bank_outflow_fen": facts["reserve-batch"][1]["amount_fen"],
+        "payroll_reserve_expense_fen": facts["reserve-batch"][1]["reserve_expense_fen"],
+        "management_expense_net_fen": nets["5602"] + nets["560201"],
+        "closed_correction_fen": 100,
+        "frozen_snapshot_unchanged": True,
+        "backup_restored_and_integrity_verified": True,
+    }
+
+
 def assert_current_formats(app, company_id):
     """Check installed contracts and real synthetic database formats together."""
     from ai_accounting.kernel.runtime import connect
@@ -389,7 +818,28 @@ def main():
         return approved["approval_id"]
 
     schema = call("schema", {})
-    assert {"expense", "cash_payment", "cash_funding", "labor"} <= schema["facts"].keys()
+    assert {
+        "expense",
+        "cash_payment",
+        "cash_funding",
+        "labor",
+        "managed_reserve_expense",
+        "managed_reserve_refund",
+        "payroll_reserve_payment",
+    } <= schema["facts"].keys()
+    assert (
+        not {
+            "managed_reserve_scope",
+            "managed_reserve_bank_expense",
+            "managed_reserve_obligation_settlement",
+            "platform_boundary_disposition",
+        }
+        & schema["facts"].keys()
+    )
+    assert (
+        not {"preview_managed_reserve_settlement", "confirm_managed_reserve_settlement"}
+        & schema["command_schemas"].keys()
+    )
     assert {"business_status", "period_readiness"} <= schema["command_schemas"].keys()
     for command in (
         "preview",
@@ -839,6 +1289,9 @@ def main():
         == "verified"
     )
 
+    reserve_company_id, reserve_validation = verify_reserve_business(
+        call, approve_close, wait_for_backup, validation
+    )
     for launcher in (
         [str(package / "finance-local.cmd")],
         [
@@ -862,6 +1315,7 @@ def main():
         assert {item["id"] for item in json.loads(result.stdout)} == {
             company_id,
             close_company_id,
+            reserve_company_id,
         }
 
     default_environment = {
@@ -1067,6 +1521,7 @@ def main():
                 "fact_kinds": len(schema["facts"]),
                 "entity_registration_and_atomic_identity_correction": True,
                 "corrected_entity_fact_discovery_v2": True,
+                "managed_reserve": reserve_validation,
                 "published_vouchers": len(published["results"]),
                 "debit_fen": 123456,
                 "credit_fen": 123456,

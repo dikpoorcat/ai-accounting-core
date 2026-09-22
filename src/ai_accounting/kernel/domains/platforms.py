@@ -46,7 +46,8 @@ MOVEMENT_CONSUMER_KINDS = (
     "platform_funding",
     "bank_platform_transfer",
     "platform_expense_confirmation",
-    "platform_boundary_disposition",
+    "managed_reserve_expense",
+    "managed_reserve_refund",
 )
 
 
@@ -473,13 +474,6 @@ class BankPlatformTransfer(MovementConsumption):
             *(movement_scope(s) for s in self.movement_ids),
         )
 
-    def reads_for(self, subject_id):
-        return (
-            *self.reads(),
-            Read("fact", "managed_reserve_scope", "reserve-transfer:" + subject_id),
-            Read("calculation", "managed_reserve_scope", "reserve-transfer:" + subject_id),
-        )
-
 
 def calculate_bank_platform_transfer(version, context):
     fact: BankPlatformTransfer = version.fact
@@ -488,38 +482,6 @@ def calculate_bank_platform_transfer(version, context):
     )
     bank_amount = fact.amount_fen if fact.direction == "platform_to_bank" else -fact.amount_fen
     debit, credit = ("1002", "1012") if bank_amount > 0 else ("1012", "1002")
-    scope_key = "reserve-transfer:" + version.subject_id
-    scopes = context.facts("managed_reserve_scope", scope_key)
-    decisions = context.calculations("managed_reserve_scope", scope_key)
-    if scopes:
-        if len(scopes) != 1 or len(decisions) != 1 or decisions[0].fact_id != scopes[0].id:
-            raise NeedsInformation("managed_reserve_scope", "需要唯一且正式核验的备用金边界")
-        treatment = decisions[0].values["transfers"].get(version.subject_id)
-        if treatment == "expense_on_boundary":
-            if fact.direction != "bank_to_platform":
-                raise KernelError("reserve_transfer_direction", "只有银行退出边界可确认备用金费用")
-            return Outcome(
-                (
-                    Line("5602", debit=fact.amount_fen),
-                    Line("1002", credit=fact.amount_fen, cashflow="managed_reserve_outflow"),
-                ),
-                dict(
-                    actual_date=str(fact.actual_date),
-                    amount_fen=fact.amount_fen,
-                    direction=fact.direction,
-                    bank_account_id=fact.bank_account_id,
-                    platform_account_id=fact.platform_account_id,
-                    bank_amount_fen=fact.amount_fen,
-                    platform_amount_fen=fact.amount_fen,
-                    bank_direction="outflow",
-                    platform_direction="inflow",
-                    accounting_treatment="reserve_expense",
-                    reserve_scope_id=scopes[0].subject_id,
-                    managed_reserve_cost_fen=fact.amount_fen,
-                    expense_class="administration",
-                ),
-                (BalanceEffect(fact.bank_account_id, bank_amount, "bank"),),
-            )
     return Outcome(
         (Line(debit, debit=fact.amount_fen), Line(credit, credit=fact.amount_fen)),
         {
@@ -550,74 +512,10 @@ def calculate_platform_funding(version, context):
     return calculate_funding(version, context)
 
 
-class PlatformBoundaryDisposition(MovementConsumption):
-    kind: ClassVar[str] = "platform_boundary_disposition"
-    business_activity: ClassVar[bool] = False
-    scope_id: Identifier
-    platform_account_id: Identifier
-
-    def scopes(self):
-        return (
-            *platform_scopes(self.period, self.platform_account_id),
-            *(movement_scope(source) for source in self.movement_ids),
-        )
-
-    def reads(self):
-        return (
-            *movement_reads(self.movement_ids, self.period),
-            Read("fact", "managed_reserve_scope", "@" + self.scope_id),
-            Read("calculation", "managed_reserve_scope", "@" + self.scope_id),
-        )
-
-    def validate_material_amount(
-        self, amount_field, amount_fen, *, source_amounts, source_directions=()
-    ):
-        if amount_field not in {"result.inflow_fen", "result.outflow_fen"}:
-            raise KernelError("boundary_material_amount", "边界原行须按明确的收支维度引用")
-        expected = "inflow" if amount_field == "result.inflow_fen" else "outflow"
-        for amount, direction in zip(
-            source_amounts, source_directions or (None,) * len(source_amounts), strict=True
-        ):
-            actual = (
-                ("inflow" if amount > 0 else "outflow")
-                if direction in {None, "signed_net"}
-                else direction
-            )
-            if actual != expected or (direction in {"inflow", "outflow"} and amount < 0):
-                raise KernelError("material_funds_direction_mismatch", "边界处置与原行收支方向不符")
-
-
-def calculate_boundary_disposition(version, context):
-    from .managed_reserve import scope_result
-
-    fact = version.fact
-    scope = scope_result(context, fact.scope_id, fact.period)
-    if fact.platform_account_id not in scope.values["platform_account_ids"] or not version.evidence:
-        raise NeedsInformation("scope_id", "平台原行需要明确采用的公司核算边界依据")
-    totals = dict(inflow=0, outflow=0)
-    for sid in fact.movement_ids:
-        movement = context.one("platform_movement", "@" + sid)
-        amount = validate_movements(version, context, (sid,), direction=movement.fact.direction)
-        totals[movement.fact.direction] = sum_fen((totals[movement.fact.direction], amount))
-    return Outcome(
-        (),
-        dict(
-            scope_id=fact.scope_id,
-            platform_account_id=fact.platform_account_id,
-            inflow_fen=totals["inflow"],
-            outflow_fen=totals["outflow"],
-            disposition="company_source_outside_expensed_reserve_accounting_boundary",
-            movement_ids=fact.movement_ids,
-        ),
-    )
-
-
 def register(registry):
     registry.register(PlatformMovement, calculate_movement)
     registry.register(PlatformExpenseConfirmation, calculate_platform_expense)
     registry.register(PlatformPayment, calculate_platform_payment)
     registry.register(PlatformFunding, calculate_platform_funding)
     registry.register(BankPlatformTransfer, calculate_bank_platform_transfer)
-    registry.register(PlatformBoundaryDisposition, calculate_boundary_disposition)
-
     registry.register_readiness("platform_movements", required_reads, required_work)

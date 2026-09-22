@@ -14,7 +14,6 @@ from ai_accounting.kernel.domains.banking import (
     BankStatement,
     Match,
 )
-from ai_accounting.kernel.domains.managed_reserve import ManagedReserveScope, ReserveCost
 from ai_accounting.kernel.domains.payroll_reserve_payment import (
     PayrollNetAllocation,
     PayrollReservePayment,
@@ -46,9 +45,7 @@ def batch(company, **changes):
                 actual_date="2026-02-10",
                 bank_account_id="bank",
                 amount_fen=gross,
-                scope_id="scope",
-                platform_account_id="pocket",
-                reserve_return_fen=gross - net,
+                reserve_expense_fen=gross - net,
                 return_period="2026-02",
                 actual_return_date=None,
                 return_confirmed=True,
@@ -68,18 +65,9 @@ def batch(company, **changes):
     )
 
 
-def prepare(company, fact=None, *, sid="gross-batch", scope_changes=None):
+def prepare(company, fact=None, *, sid="gross-batch"):
     fact = fact or batch(company)
     company.save(fact, sid)
-    data = dict(
-        period="2026-02",
-        platform_account_ids=("pocket",),
-        effective_from="2026-02",
-        effective_through="2026-02",
-        treatment_confirmed=True,
-        cost_sources=(ReserveCost(source_kind=fact.kind, source_id=sid),),
-    )
-    company.save(ManagedReserveScope(**(data | (scope_changes or {}))), "scope")
     return fact
 
 
@@ -93,23 +81,22 @@ def balances(company):
 def test_real_batch_single_bank_projection_no_new_debt_or_return_date_and_rebuild(company):
     fact = prepare(company)
     before = balances(company)
-    preview = company.engine.preview(["scope", "gross-batch"])
+    preview = company.engine.preview(["gross-batch"])
     options = dict(
         preview_digest=preview["digest"], epochs=preview["epochs"], request_id=company.request()
     )
-    result = company.engine.confirm(["scope", "gross-batch"], **options)
-    assert company.engine.confirm(["scope", "gross-batch"], **options) == result
+    result = company.engine.confirm(["gross-batch"], **options)
+    assert company.engine.confirm(["gross-batch"], **options) == result
     current = company.current("gross-batch", fact.kind)
     assert current.values["actual_return_date"] is None
     assert current.values["return_period"] == "2026-02"
-    assert current.values["managed_reserve_cost_fen"] == fact.reserve_return_fen
-    assert current.values["net_settled_fen"] + fact.reserve_return_fen == fact.amount_fen
+    assert current.values["reserve_expense_fen"] == fact.reserve_expense_fen
+    assert current.values["net_settled_fen"] + fact.reserve_expense_fen == fact.amount_fen
     assert len(current.values["settlements"]) == 2
     after = balances(company)
     assert after["bank"] == -fact.amount_fen
     assert all(after.get("payroll:wage-" + p + ":net", 0) == 0 for p in ("one", "two"))
     assert all(after[k] == amount for k, amount in before.items() if not k.endswith(":net"))
-    assert "pocket" not in after
     with company.engine.store.connection(read_only=True) as connection:
         lines = list(
             connection.execute(
@@ -119,7 +106,7 @@ def test_real_batch_single_bank_projection_no_new_debt_or_return_date_and_rebuil
             )
         )
     assert sum(row[2] for row in lines if row[0] == "1002") == fact.amount_fen
-    assert sum(row[1] for row in lines if row[0] == "5602") == fact.reserve_return_fen
+    assert sum(row[1] for row in lines if row[0] == "5602") == fact.reserve_expense_fen
     assert not any(row[0] in {"1221", "224101", "2241"} for row in lines)
     assert sum(row[2] for row in lines if row[3] == "payroll") == current.values["net_settled_fen"]
     company.engine.rebuild_projections(request_id=company.request())
@@ -140,7 +127,7 @@ def test_missing_or_unsupported_boundaries_fail_atomically(company, changes, fie
     prepare(company, batch(company, **changes))
     before = company.count("calculation"), company.count("voucher_version"), balances(company)
     with pytest.raises(NeedsInformation) as caught:
-        company.engine.preview(["scope", "gross-batch"])
+        company.engine.preview(["gross-batch"])
     assert caught.value.issues[0]["field"] == field
     assert (
         company.count("calculation"),
@@ -153,7 +140,7 @@ def test_missing_or_unsupported_boundaries_fail_atomically(company, changes, fie
 def test_known_return_day_cannot_precede_bank_or_cross_month(company, day):
     prepare(company, batch(company, actual_return_date=day))
     with pytest.raises(KernelError, match="返款实际日"):
-        company.engine.preview(["scope", "gross-batch"])
+        company.engine.preview(["gross-batch"])
 
 
 def ordinary_payment(company, amount, *, publish=True):
@@ -182,12 +169,12 @@ def test_prior_payment_or_confirmed_unpublished_payment_cannot_be_hidden(company
     ordinary_payment(company, 100, publish=published)
     prepare(company)
     with pytest.raises(NeedsInformation):
-        company.engine.preview(["scope", "gross-batch"])
+        company.engine.preview(["gross-batch"])
 
 
 def test_later_ordinary_payment_cannot_reuse_settled_net(company):
     prepare(company)
-    company.publish("scope", "gross-batch")
+    company.publish("gross-batch")
     ordinary_payment(company, 100, publish=False)
     with pytest.raises(KernelError):
         company.engine.preview(["other-payment"])
@@ -196,7 +183,7 @@ def test_later_ordinary_payment_cannot_reuse_settled_net(company):
 
 def test_wage_amendment_expiry_and_current_net_must_still_match(company):
     prepare(company)
-    preview = company.engine.preview(["scope", "gross-batch"])
+    preview = company.engine.preview(["gross-batch"])
     company.save(
         payroll(employee_id="one", profile_id="profile-one", accounting_gross_salary_fen=1100000),
         "wage-one",
@@ -204,13 +191,13 @@ def test_wage_amendment_expiry_and_current_net_must_still_match(company):
     )
     with pytest.raises(KernelError):
         company.engine.confirm(
-            ["scope", "gross-batch"],
+            ["gross-batch"],
             preview_digest=preview["digest"],
             epochs=preview["epochs"],
             request_id=company.request(),
         )
     with pytest.raises(NeedsInformation):
-        company.engine.preview(["scope", "gross-batch", "wage-one"])
+        company.engine.preview(["gross-batch", "wage-one"])
 
 
 def test_public_schema_rejects_arbitrary_obligation_duplicate_and_inexact_total(company):
@@ -245,7 +232,7 @@ def test_public_schema_rejects_arbitrary_obligation_duplicate_and_inexact_total(
 
 def test_two_real_bank_rows_match_one_whole_source_and_invalid_group_fails(company):
     fact = prepare(company)
-    company.publish("scope", "gross-batch")
+    company.publish("gross-batch")
     company.save(
         BankOpening(period="2026-02", bank_account_id="bank", opening_fen=0, basis="new_account"),
         "bank-opening",
@@ -295,9 +282,7 @@ def test_two_real_bank_rows_match_one_whole_source_and_invalid_group_fails(compa
     closed = company.close("2026-02")
     adopted = {item["subject_id"]: item for item in closed["adopted_results"]}
     assert adopted["bank-reconciliation"]["role"] == "state_only"
-    assert adopted["gross-batch"]["calculation_id"] == company.current(
-        "gross-batch", fact.kind
-    ).id
+    assert adopted["gross-batch"]["calculation_id"] == company.current("gross-batch", fact.kind).id
     assert adopted["gross-batch"]["posting_period"] == "2026-02"
 
 
@@ -318,23 +303,16 @@ def test_bank_material_uses_full_amount_and_preserves_unsigned_outflow(company):
         )
     with pytest.raises(KernelError):
         fact.validate_material_amount(
-            "result.managed_reserve_cost_fen",
-            fact.reserve_return_fen,
-            source_amounts=(fact.reserve_return_fen,),
+            "result.reserve_expense_fen",
+            fact.reserve_expense_fen,
+            source_amounts=(fact.reserve_expense_fen,),
             source_directions=("outflow",),
         )
 
 
-def test_wrong_platform_or_unadopted_cost_cannot_use_scope(company):
-    prepare(company, batch(company, platform_account_id="other-pocket"))
-    with pytest.raises(KernelError) as caught:
-        company.engine.preview(["scope", "gross-batch"])
-    assert caught.value.code == "reserve_cost_scope"
-
-
-def test_commit_failure_rolls_back_scope_wages_and_expense_together(company):
+def test_commit_failure_rolls_back_wages_and_expense_together(company):
     prepare(company)
-    preview = company.engine.preview(["scope", "gross-batch"])
+    preview = company.engine.preview(["gross-batch"])
     before = balances(company), company.count("calculation"), company.count("voucher_version")
 
     def fail(point, connection):
@@ -346,14 +324,14 @@ def test_commit_failure_rolls_back_scope_wages_and_expense_together(company):
         preview_digest=preview["digest"], epochs=preview["epochs"], request_id=company.request()
     )
     with pytest.raises(RuntimeError, match="synthetic fail"):
-        company.engine.confirm(["scope", "gross-batch"], **options)
+        company.engine.confirm(["gross-batch"], **options)
     assert (
         balances(company),
         company.count("calculation"),
         company.count("voucher_version"),
     ) == before
     company.engine.fault = lambda point, connection: None
-    company.engine.confirm(["scope", "gross-batch"], **options)
+    company.engine.confirm(["gross-batch"], **options)
     assert balances(company)["bank"] == -batch(company).amount_fen
 
 
@@ -362,15 +340,15 @@ def test_group_total_and_recipient_are_checked_against_current_wage_sources(comp
     altered = fact.model_copy(
         update={
             "amount_fen": fact.amount_fen + 1,
-            "reserve_return_fen": fact.reserve_return_fen + 1,
+            "reserve_expense_fen": fact.reserve_expense_fen + 1,
         }
     )
     prepare(company, altered)
     with pytest.raises(NeedsInformation, match="毛额合计"):
-        company.engine.preview(["scope", "gross-batch"])
+        company.engine.preview(["gross-batch"])
 
 
 def test_actual_return_date_is_preserved_if_known(company):
     fact = prepare(company, batch(company, actual_return_date="2026-02-18"))
-    company.publish("scope", "gross-batch")
+    company.publish("gross-batch")
     assert company.current("gross-batch", fact.kind).values["actual_return_date"] == "2026-02-18"

@@ -271,12 +271,7 @@ def calculate_expense_recovery(version: FactVersion, ctx: Context) -> Outcome:
     posted = ctx.calculations("*", f"@{fact.source_expense_id}")
     if len(posted) != 1 or posted[0].fact_id != original.id:
         raise NeedsInformation("source_expense_id", "需要原费用的当前正式核算结果")
-    if original.fact.kind in {"managed_reserve_bank_expense", "bank_platform_transfer"}:
-        if posted[0].values.get("accounting_treatment") != "reserve_expense":
-            raise KernelError("unsupported_expense_source", "原银行退出尚未确认为费用")
-        original_cost = posted[0].values["managed_reserve_cost_fen"]
-        expense_class = "administration"
-    elif original.fact.kind in {"expense", "platform_expense_confirmation"}:
+    if original.fact.kind in {"expense", "platform_expense_confirmation"}:
         original_cost = (
             original.fact.amount_fen
             if original.fact.kind == "expense"

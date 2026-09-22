@@ -127,9 +127,7 @@ class FundsRead:
             "m.sign*m.amount signed_amount,json_extract(m.outcome,'$.values.actual_date') "
             "actual_date,"
             "printf('%012d:%s:%06d',m.number,m.calculation_id,m.local_index) page_key,"
-            "(m.kind IN ('funds_transfer','cash_bank_transfer','bank_platform_transfer') AND "
-            "coalesce(json_extract(m.outcome,'$.values.accounting_treatment'),'')"
-            "!='reserve_expense' "
+            "(m.kind IN ('funds_transfer','cash_bank_transfer','bank_platform_transfer') "
             "AND t.internal) internal_transfer FROM money m JOIN transfers t USING(event_id)"
         )
         return source, parameters
@@ -888,11 +886,7 @@ class FundsRead:
 
     @staticmethod
     def calculation_is_internal_transfer(calc):
-        if calc["kind"] in {"funds_transfer", "cash_bank_transfer"}:
-            return True
-        return calc["kind"] == "bank_platform_transfer" and (
-            calc["outcome"].get("values", {}).get("accounting_treatment") != "reserve_expense"
-        )
+        return calc["kind"] in {"funds_transfer", "cash_bank_transfer", "bank_platform_transfer"}
 
     def bank_batch_presentation(self, calc, row):
         """Describe a batch without assigning whole-batch recipients to one bank row."""
@@ -911,9 +905,9 @@ class FundsRead:
                 party_sources.append({"party_id": recipient_id, **details})
                 seen_parties.add(recipient_id)
 
-        reserve_return_fen = data.get("reserve_return_fen")
-        if reserve_return_fen:
-            items.append({"party": "备用金返池费用", "amount_fen": reserve_return_fen})
+        reserve_expense_fen = data.get("reserve_expense_fen")
+        if reserve_expense_fen:
+            items.append({"party": "备用金支出", "amount_fen": reserve_expense_fen})
 
         short, _ = self.snap.business_summary(calc, 1)
         title = {

@@ -268,6 +268,7 @@ export namespace DashboardFundsContract {
   export type Location = string | null;
   export type Semantics = string;
   export type Domain = string;
+  export type Category = string;
   export type SubjectId = string;
   export type FactId = string;
   export type SourceId = string;
@@ -324,7 +325,8 @@ export namespace DashboardFundsContract {
     | "same_complete_actual_money"
     | "same_complete_signature"
     | "shared_evidence"
-    | "same_material_location_different_signature";
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
   export type MatchedFields = string[];
   export type Evidence1 = string[];
   export type EvidenceDigest2 = string;
@@ -705,6 +707,7 @@ export namespace DashboardFundsContract {
     location?: Location;
     semantics?: Semantics;
     domain?: Domain;
+    category?: Category;
     subject_id?: SubjectId;
     fact_id?: FactId;
     source_id?: SourceId;

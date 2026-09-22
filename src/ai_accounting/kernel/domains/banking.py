@@ -16,7 +16,8 @@ CashKind = Literal[
     "bank_income",
     "cash_bank_transfer",
     "bank_platform_transfer",
-    "managed_reserve_bank_expense",
+    "managed_reserve_expense",
+    "managed_reserve_refund",
     "payroll_reserve_payment",
 ]
 CASH_KINDS = (
@@ -27,7 +28,8 @@ CASH_KINDS = (
     "bank_income",
     "cash_bank_transfer",
     "bank_platform_transfer",
-    "managed_reserve_bank_expense",
+    "managed_reserve_expense",
+    "managed_reserve_refund",
     "payroll_reserve_payment",
 )
 
@@ -43,8 +45,8 @@ def cash_amount(fact, bank_account_id: str) -> int:
         raise KernelError("bank_account_mismatch", "资金账户与流水不一致")
     if fact.kind == "cash_bank_transfer":
         return fact.amount_fen if fact.direction == "deposit" else -fact.amount_fen
-    if fact.kind == "managed_reserve_bank_expense":
-        return -fact.amount_fen
+    if fact.kind in {"managed_reserve_expense", "managed_reserve_refund"}:
+        return -fact.amount_fen if fact.kind == "managed_reserve_expense" else fact.amount_fen
     if fact.kind == "bank_platform_transfer":
         return fact.amount_fen if fact.direction == "platform_to_bank" else -fact.amount_fen
     amount = fact.principal_fen if fact.kind == "loan_drawdown" else fact.amount_fen

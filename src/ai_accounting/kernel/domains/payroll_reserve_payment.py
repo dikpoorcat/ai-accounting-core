@@ -10,7 +10,7 @@ from pydantic import Field, StrictBool, model_validator
 
 from ..contracts import KernelError, Line, NeedsInformation, Outcome, Read
 from ..types import ActualDate, PositiveFen, YearMonth, sum_fen
-from .managed_reserve import MANAGEMENT_ACCOUNT, scope_result, source_reads
+from .managed_reserve import MANAGEMENT_ACCOUNT
 from .transactions import (
     Allocation,
     Identifier,
@@ -32,8 +32,7 @@ class PayrollReservePayment(Payment):
     material_category: ClassVar[str] = "bank"
     material_amount_aliases: ClassVar[dict[str, str]] = {
         "fact.amount_fen": "result.amount_fen",
-        "fact.reserve_return_fen": "result.managed_reserve_cost_fen",
-        "result.reserve_return_fen": "result.managed_reserve_cost_fen",
+        "fact.reserve_expense_fen": "result.reserve_expense_fen",
     }
     immutable_fields: ClassVar[tuple[str, ...]] = (
         "period",
@@ -41,9 +40,7 @@ class PayrollReservePayment(Payment):
         "bank_account_id",
         "amount_fen",
         "allocations",
-        "scope_id",
-        "platform_account_id",
-        "reserve_return_fen",
+        "reserve_expense_fen",
         "return_period",
         "actual_return_date",
         "return_confirmed",
@@ -53,9 +50,19 @@ class PayrollReservePayment(Payment):
     payment_method: Literal["bank_batch"] = "bank_batch"
     counterparty_id: Literal["payroll-group"] = "payroll-group"
     allocations: tuple[PayrollNetAllocation, ...] = Field(min_length=1)
-    scope_id: Identifier
-    platform_account_id: Identifier
-    reserve_return_fen: PositiveFen
+    reserve_expense_fen: PositiveFen = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "confirmed_actual_return_to_managed_reserve_expensed_amount",
+                "reusable_sources": [
+                    "actual_return_evidence",
+                    "owner_confirmed_complete_wage_batch",
+                ],
+                "constraint": "不得由银行毛额与净薪差额自动推定已实际退入备用金",
+            }
+        }
+    )
     return_period: YearMonth | None
     actual_return_date: ActualDate | None = None
     return_confirmed: StrictBool | None
@@ -68,7 +75,7 @@ class PayrollReservePayment(Payment):
         if self.actual_date.period != self.period:
             raise ValueError("payment posting month must equal actual funds month")
         if (
-            sum_fen((*[a.amount_fen for a in self.allocations], self.reserve_return_fen))
+            sum_fen((*[a.amount_fen for a in self.allocations], self.reserve_expense_fen))
             != self.amount_fen
         ):
             raise ValueError(
@@ -85,7 +92,6 @@ class PayrollReservePayment(Payment):
             dict.fromkeys(
                 (
                     *super().reads(),
-                    *source_reads("managed_reserve_scope", self.scope_id),
                     *(Read("fact", a.source_kind, "@" + a.source_id) for a in self.allocations),
                 )
             )
@@ -96,11 +102,11 @@ class PayrollReservePayment(Payment):
     ):
         if amount_field not in {"fact.amount_fen", "result.amount_fen"}:
             # A bank original proves the whole exit; its partial expense meaning
-            # requires the separate owner's return/boundary confirmation.
+            # requires separate confirmation of the actual return to managed reserve.
             if any(d in {"inflow", "outflow", "signed_net"} for d in source_directions):
                 raise KernelError(
-                    "reserve_return_material_basis",
-                    "返池费用须用返款确认依据，不能把银行原行当返池原行",
+                    "reserve_expense_material_basis",
+                    "退入备用金须用实际退入确认依据，不能把银行原行当退入原行",
                 )
             return
         directions = source_directions or (None,) * len(source_amounts)
@@ -128,7 +134,7 @@ def calculate_payroll_reserve_payment(version, context):
     if not version.evidence or fact.complete_group_confirmed is not True:
         raise NeedsInformation("complete_group_confirmed", "需要完整工资组确已按毛额支付的原始依据")
     if fact.return_confirmed is not True:
-        raise NeedsInformation("return_confirmed", "需要确认差额已经返入明确采用的备用金范围")
+        raise NeedsInformation("return_confirmed", "需要确认备用金部分已经实际退入")
     if fact.return_period != fact.period:
         raise NeedsInformation(
             "return_period", "本处理仅支持已明确与银行付款同月发生的返款，不推定未知月份"
@@ -138,14 +144,6 @@ def calculate_payroll_reserve_payment(version, context):
         or fact.actual_return_date < fact.actual_date
     ):
         raise KernelError("reserve_return_date", "已知返款实际日须在银行付款之后且属于同月")
-    scope = scope_result(context, fact.scope_id, fact.period)
-    if fact.platform_account_id not in scope.values["platform_account_ids"] or not any(
-        x["source_kind"] == fact.kind
-        and x["source_id"] == version.subject_id
-        and x["amount_fen"] == fact.reserve_return_fen
-        for x in scope.values["cost_sources"]
-    ):
-        raise NeedsInformation("scope_id", "返款金额、平台及本完整工资组须由明确费用化范围逐项采用")
     sources = []
     for allocation in fact.allocations:
         source, item = _source_obligation(context, allocation)
@@ -187,10 +185,10 @@ def calculate_payroll_reserve_payment(version, context):
     return Outcome(
         (
             *payment.lines,
-            Line(MANAGEMENT_ACCOUNT, debit=fact.reserve_return_fen),
+            Line(MANAGEMENT_ACCOUNT, debit=fact.reserve_expense_fen),
             Line(
                 fact.funds_account,
-                credit=fact.reserve_return_fen,
+                credit=fact.reserve_expense_fen,
                 cashflow="managed_reserve_outflow",
             ),
         ),
@@ -199,13 +197,10 @@ def calculate_payroll_reserve_payment(version, context):
             payroll_period=str(sources[0].period),
             payroll_source_ids=[source.subject_id for source in sources],
             net_settled_fen=sum_fen(a.amount_fen for a in fact.allocations),
-            reserve_return_fen=fact.reserve_return_fen,
+            reserve_expense_fen=fact.reserve_expense_fen,
             return_period=str(fact.return_period),
             actual_return_date=str(fact.actual_return_date) if fact.actual_return_date else None,
             return_confirmed=True,
-            platform_account_id=fact.platform_account_id,
-            reserve_scope_id=fact.scope_id,
-            managed_reserve_cost_fen=fact.reserve_return_fen,
             accounting_treatment="reserve_expense",
             expense_class="administration",
             allocation_meaning="settlement_of_complete_wage_group_not_person_bank_row_or_return_mapping",

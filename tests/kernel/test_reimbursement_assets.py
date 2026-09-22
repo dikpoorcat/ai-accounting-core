@@ -251,18 +251,43 @@ def test_bank_promotion_reward_preserves_actual_receipt_and_requires_entitlement
         "income_kind": "bank_promotion_reward",
         "counterparty_id": "bank-provider",
     }
-    save("bank_income", "reward-unknown", data)
+    save("bank_income", "reward", data)
     with pytest.raises(KernelError, match="无返还义务"):
-        publish("reward-unknown")
-    save("bank_income", "reward-confirmed", {**data, "entitlement_confirmed": True})
-    publish("reward-confirmed")
-    receipt = result(engine, "reward-confirmed")
+        publish("reward")
+    confirmation = engine.register_evidence(
+        b"Synthetic confirmation: the recorded reward belongs to the company, no repayment due",
+        "text/plain",
+        "omitted entitlement confirmation",
+        request_id="reward-confirmation",
+    )["digest"]
+    engine.amend_fact(
+        "bank_income",
+        "reward",
+        {**data, "entitlement_confirmed": True},
+        evidence=(*fact_evidence(engine, "reward"), confirmation),
+        expected_revision=1,
+        request_id="reward-amend",
+        recording_error_confirmed=True,
+    )
+    publish("reward")
+    receipt = result(engine, "reward")
     assert receipt["values"]["income_kind"] == "bank_promotion_reward"
     assert receipt["values"]["actual_date"] == "2026-03-03"
     assert [(line["account"], line["credit"]) for line in receipt["lines"]] == [
         ("1002", 0),
         ("6301", 104),
     ]
+    with engine.store.connection(read_only=True) as connection:
+        assert (
+            connection.execute("SELECT amount FROM balance WHERE balance_key='bank'").fetchone()[0]
+            == 104
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_revision WHERE subject_id='reward'"
+            ).fetchone()[0]
+            == 2
+        )
 
 
 def accepted_batch(**changes):

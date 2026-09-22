@@ -51,9 +51,7 @@ from .types import ActualDate, YearMonth, digest
 
 KIND_NAMES = {
     "external_completion": "外部办理完成依据",
-    "managed_reserve_scope": "备用金核算范围确认",
     "payroll_disbursement_basis": "工资代发金额依据",
-    "platform_boundary_disposition": "平台原交易范围处置",
     "service_sale": "服务收入",
     "expense": "费用",
     "expense_recovery": "费用退回确认",
@@ -73,9 +71,9 @@ KIND_NAMES = {
     "bank_platform_transfer": "银行与支付平台转款",
     "platform_movement": "支付平台原始资金记录",
     "platform_expense_confirmation": "平台管理资金费用确认",
-    "managed_reserve_bank_expense": "银行转入备用金费用确认",
-    "managed_reserve_obligation_settlement": "备用金结清原应付款",
-    "payroll_reserve_payment": "毛额工资支付及返池费用确认",
+    "managed_reserve_expense": "备用金支出",
+    "managed_reserve_refund": "备用金退款",
+    "payroll_reserve_payment": "净薪及备用金支出付款",
     "settlement": "非现金核销",
     "sale_return": "销售退回",
     "funds_transfer": "资金调拨",
@@ -659,7 +657,7 @@ class _Snapshot:
                 item
                 for item in resolution["line_relations"]
                 if item["obligation_key"] == effect["key"]
-                and item["role"] not in {"funds", "tax_transfer", "reserve_return"}
+                and item["role"] not in {"funds", "tax_transfer", "reserve_expense"}
             ]
             recipients = {item["recipient_id"] for item in bindings if item["recipient_id"]}
             line_numbers = {item["line_no"] for item in bindings if item["state"] == "resolved"}
@@ -946,6 +944,8 @@ class _Snapshot:
             "labor_accrual": "确认劳务报酬",
             "labor_project_cost": "确认项目劳务",
             "project_cost": "确认项目投入",
+            "managed_reserve_expense": "支出备用金",
+            "managed_reserve_refund": "收到备用金退款",
         }.get(kind, _name(kind))
         periods = {
             r["source_period"] for r in relations if r["source_calculation_id"] != calc["id"]
@@ -1084,6 +1084,8 @@ class _Snapshot:
             "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
             "income_tax_assessment": ("change_fen", "本期所得税确认额"),
             "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
+            "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
+            "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
         }
         field, label = spec.get(calc["kind"], ("amount_fen", "业务确认金额"))
         amount = values.get(field, data.get(field))
@@ -1100,14 +1102,8 @@ class _Snapshot:
             label = "实际收付款"
         elif calc["kind"] in {"funding", "cash_funding", "platform_funding"}:
             label = "实际投入或借入金额"
-        elif calc["kind"] == "managed_reserve_obligation_settlement":
-            label = "备用金核销原应付款"
         elif calc["kind"] == "bank_platform_transfer":
-            label = (
-                "费用边界退出金额"
-                if values.get("accounting_treatment") == "reserve_expense"
-                else "内部划转金额"
-            )
+            label = "内部划转金额"
         return (amount if type(amount) is int else None), label
 
     def voucher(self, row):

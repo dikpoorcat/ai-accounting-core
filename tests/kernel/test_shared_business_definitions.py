@@ -95,9 +95,7 @@ def test_payment_models_take_their_ledger_account_from_the_shared_mapping():
         ("payroll_reserve_payment", "1002", "outflow"),
     ],
 )
-def test_settlement_query_accepts_each_typed_payment_funds_line(
-    kind, funds_account, direction
-):
+def test_settlement_query_accepts_each_typed_payment_funds_line(kind, funds_account, direction):
     outgoing = direction == "outflow"
     source = _calculation(
         "source",
@@ -139,7 +137,7 @@ def test_settlement_query_accepts_each_typed_payment_funds_line(
         ],
     }
     if kind == "payroll_reserve_payment":
-        values["reserve_return_fen"] = 10
+        values["reserve_expense_fen"] = 10
         lines.extend(
             (
                 {"account": "5602", "debit": 10, "credit": 0},
@@ -199,8 +197,7 @@ def test_obligation_definitions_are_ordered_immutable_and_drive_legacy_sources()
     )
     assert ObligationKind.__args__ == tuple(OBLIGATION_DEFINITIONS)
     assert SOURCES == {
-        kind: definition.basis_kinds
-        for kind, definition in OBLIGATION_DEFINITIONS.items()
+        kind: definition.basis_kinds for kind, definition in OBLIGATION_DEFINITIONS.items()
     }
     assert OBLIGATION_DEFINITIONS["contribution_declaration"].check_payroll_population
     income_tax = OBLIGATION_DEFINITIONS["individual_income_tax"]

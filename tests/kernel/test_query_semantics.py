@@ -493,60 +493,88 @@ def test_reimbursement_acceptance_preserves_and_rejects_wrong_frozen_declaration
     assert {item["field"] for item in resolved["issues"]} == {"query_source.accepted"}
 
 
-@pytest.mark.parametrize("error", ["amount", "source_fact_id"])
-def test_managed_reserve_acceptance_requires_fact_and_frozen_amount_to_match(error):
-    payable = calculation(
-        "payable",
-        kind="expense",
-        subject_id="expense",
+def payroll_reserve_relation_inputs():
+    payroll = calculation(
+        "payroll",
+        kind="payroll",
+        subject_id="wage",
         values={
             "obligations": [
                 {
-                    "key": "expense:primary",
-                    "name": "primary",
-                    "account": "2202",
+                    "key": "payroll:wage:net",
+                    "name": "net",
+                    "account": "2211",
                     "normal": "credit",
-                    "amount_fen": 100,
-                    "category": "payable",
-                    "counterparty_id": "supplier",
+                    "amount_fen": 80,
+                    "category": "payroll",
+                    "counterparty_id": "employee",
                 }
             ]
         },
     )
-    settlement = calculation(
-        "reserve-settlement",
-        kind="managed_reserve_obligation_settlement",
+    payment = calculation(
+        "payment",
+        kind="payroll_reserve_payment",
         fact={
-            "recipient_id": "supplier",
-            "sources": [
+            "payment_method": "bank_batch",
+            "allocations": [
                 {
-                    "source_kind": "expense",
-                    "source_id": "expense",
-                    "obligation": "primary",
-                    "amount_fen": 70 if error == "amount" else 80,
-                }
-            ],
-        },
-        lines=[
-            {"account": "2202", "debit": 80, "credit": 0},
-            {"account": "5602", "debit": 0, "credit": 80},
-        ],
-        values={
-            "accepted_sources": [
-                {
-                    "source_calculation_id": "payable",
-                    "obligation": "expense:primary",
+                    "source_kind": "payroll",
+                    "source_id": "wage",
+                    "obligation": "net",
+                    "recipient_id": "employee",
                     "amount_fen": 80,
                 }
-                | ({"source_fact_id": "wrong-fact-id"} if error == "source_fact_id" else {})
-            ]
+            ],
+            "reserve_expense_fen": 20,
+        },
+        lines=[
+            {"account": "2211", "debit": 80, "credit": 0},
+            {"account": "1002", "debit": 0, "credit": 80},
+            {"account": "5602", "debit": 20, "credit": 0},
+            {"account": "1002", "debit": 0, "credit": 20},
+        ],
+        values={
+            "direction": "outflow",
+            "settlements": [
+                {
+                    "source_calculation": "payroll",
+                    "obligation": "payroll:wage:net",
+                    "amount_fen": 80,
+                }
+            ],
+            "reserve_expense_fen": 20,
         },
     )
 
-    resolved = resolve_calculation_relations(settlement, **resolver({"payable": payable}))
+    return payroll, payment
 
-    assert resolved["settlements"][0]["state"] == "unresolved"
-    assert {item["field"] for item in resolved["issues"]} == {"query_source.accepted"}
+
+def test_payroll_reserve_expense_is_checked_without_creating_a_settlement():
+    payroll, payment = payroll_reserve_relation_inputs()
+    resolved = resolve_calculation_relations(payment, **resolver({"payroll": payroll}))
+
+    assert not resolved["issues"]
+    assert len(resolved["settlements"]) == 1
+    reserve = [item for item in resolved["line_relations"] if item["role"] == "reserve_expense"]
+    assert [(item["line_no"], item["amount_fen"]) for item in reserve] == [(3, 20), (4, -20)]
+    assert all(item["obligation_key"] is None and item["party_key"] is None for item in reserve)
+
+
+@pytest.mark.parametrize("line_no", [3, 4])
+def test_payroll_reserve_expense_rejects_a_wrong_expense_or_funds_line(line_no):
+    payroll, payment = payroll_reserve_relation_inputs()
+    payment["outcome"]["lines"][line_no - 1] = {
+        "account": "5602" if line_no == 3 else "1002",
+        "debit": 20 if line_no == 4 else 0,
+        "credit": 20 if line_no == 3 else 0,
+    }
+
+    resolved = resolve_calculation_relations(payment, **resolver({"payroll": payroll}))
+
+    reserve = [item for item in resolved["line_relations"] if item["role"] == "reserve_expense"]
+    assert reserve[line_no - 3]["state"] == "unresolved"
+    assert {item["field"] for item in resolved["issues"]} == {"query_source.reserve_expense"}
 
 
 def test_explicit_classification_cannot_collapse_an_exact_aggregate_split():

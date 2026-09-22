@@ -14,6 +14,15 @@ async function importTypeScript(relative) {
 const api = await importTypeScript("../src/api/localKernel.ts");
 const money = await importTypeScript("../src/utils/money.ts");
 
+test("reserve facts and mixed payroll use the current business labels", () => {
+  assert.equal(api.localBusinessName("managed_reserve_expense"), "备用金支出");
+  assert.equal(api.localBusinessName("managed_reserve_refund"), "备用金退款");
+  assert.equal(api.localBusinessName("payroll_reserve_payment"), "净薪及备用金支出付款");
+  for (const retired of ["managed_reserve_scope", "managed_reserve_bank_expense", "managed_reserve_obligation_settlement", "platform_boundary_disposition"]) {
+    assert.equal(api.localBusinessName(retired), "其他业务");
+  }
+});
+
 test("launch ticket is removed before one same-origin exchange and never reused on refresh", async () => {
   const events = [];
   globalThis.window = {

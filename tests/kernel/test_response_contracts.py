@@ -71,6 +71,32 @@ def test_native_and_http_int64_money_in_nested_issues(samples, amount):
     )
 
 
+def test_material_category_and_actual_money_candidate_diagnostics_are_typed(samples):
+    value = copy.deepcopy(samples["cash_funds"]["response"])
+    issue = {
+        "field": "materials.transactions",
+        "message": "原件需要归属核对",
+        "category": "transactions",
+        "code": "material_allocation_required",
+        "signals": [
+            {
+                "code": "same_actual_money_coordinates",
+                "matched_fields": ["account_id", "actual_date", "amount_fen"],
+                "distinct_locations_proven": False,
+            }
+        ],
+    }
+    value["data"]["period_preparation"]["readiness"]["issues"] = [issue]
+    assert validate_response("dashboard_funds", value) == value
+    assert http_response("dashboard_funds", value)["data"]["period_preparation"]["readiness"][
+        "issues"
+    ] == [issue]
+    issue["unexpected_amount_fen"] = 1
+    with pytest.raises(KernelError) as error:
+        validate_response("dashboard_funds", value)
+    assert error.value.code == "response_contract_mismatch"
+
+
 @pytest.mark.parametrize("bad", [1.0, True, False, "1", 2**63, -(2**63) - 1])
 def test_invalid_native_money_rejected_without_input_values(samples, bad):
     value = copy.deepcopy(samples["cash_funds"]["response"])

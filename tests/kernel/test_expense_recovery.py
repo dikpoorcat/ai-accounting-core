@@ -96,6 +96,60 @@ def test_closed_cost_return_is_open_period_reduction_and_separate_actual_receipt
 
 
 @pytest.mark.parametrize(
+    "payment_kind,account_field,balance_key",
+    [
+        ("payment", "bank_account_id", "bank"),
+        ("cash_payment", "cash_account_id", "cash"),
+        ("platform_payment", "platform_account_id", "platform"),
+    ],
+)
+def test_ordinary_expense_recovery_is_receivable_through_every_company_funds_channel(
+    book, payment_kind, account_field, balance_key
+):
+    engine, save, publish, _, _, proof = book
+    save("expense", "cost", expense())
+    save("expense_recovery", "refund", recovery())
+    publish("cost", "refund")
+    subjects = []
+    data = {
+        "period": "2026-02",
+        "actual_date": "2026-02-07",
+        "direction": "inflow",
+        account_field: balance_key,
+        "counterparty_id": "supplier",
+        "amount_fen": 40,
+        "allocations": [
+            {
+                "source_kind": "expense_recovery",
+                "source_id": "refund",
+                "obligation": "primary",
+                "amount_fen": 40,
+            }
+        ],
+    }
+    if payment_kind == "platform_payment":
+        data["movement_ids"] = ["recovery-movement"]
+        save(
+            "platform_movement",
+            "recovery-movement",
+            {
+                "period": "2026-02",
+                "actual_date": "2026-02-07",
+                "platform_account_id": "platform",
+                "direction": "inflow",
+                "amount_fen": 40,
+                "source_evidence_digest": proof,
+                "source_location": "synthetic-recovery-row",
+            },
+        )
+        subjects.append("recovery-movement")
+    save(payment_kind, "receipt", data)
+    publish(*subjects, "receipt")
+    assert balance(engine, "expense_recovery:refund:primary") == 0
+    assert balance(engine, balance_key) == 40
+
+
+@pytest.mark.parametrize(
     "changes,code",
     [
         ({"recovery_right_confirmed": None}, "needs_information"),

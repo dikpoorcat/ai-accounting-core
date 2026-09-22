@@ -656,7 +656,14 @@ def test_actual_money_tuple_is_strong_without_shared_evidence(company):
     assert prepared["strong_candidates"][0]["signals"] == [
         {
             "code": "same_complete_actual_money",
-            "matched_fields": ["duplicate_role", "complete_actual_money_signature"],
+            "matched_fields": [
+                "funds_category",
+                "funds_account_id",
+                "actual_date",
+                "direction",
+                "amount_fen",
+                "business_object",
+            ],
         }
     ]
 
@@ -754,7 +761,7 @@ def test_malformed_saved_location_manifest_is_rejected_not_ignored(company):
             "INSERT INTO business_duplicate_check(id,contract,contract_version,"
             "proposed_subject_id,proposed_revision,proposed_digest,candidate_digest,action,"
             "result_fact_id,selected_fact_id,manifest,review_basis,explanation,record_digest) "
-            "VALUES('damaged-check',?,1,'expense-a',1,?,?, 'clear',?,NULL,'{}','[]','clear',?)",
+            "VALUES('damaged-check',?,2,'expense-a',1,?,?, 'clear',?,NULL,'{}','[]','clear',?)",
             (
                 "ai-accounting-kernel/2/business-duplicate",
                 digest("proposal"),

@@ -21,7 +21,7 @@ from .account_definitions import (
 )
 from .domains.money import SETTLEMENT_PAYMENT_KINDS, payment_funds_account
 
-ACCEPTANCE_KINDS = {"reimbursement_acceptance", "managed_reserve_obligation_settlement"}
+ACCEPTANCE_KINDS = {"reimbursement_acceptance"}
 SETTLEMENT_SOURCE_SLOTS = {
     **{
         kind: ("allocations", "settlements", "source_calculation")
@@ -442,7 +442,7 @@ def resolve_calculation_relations(
                     tax_source_calculation_id=pointer,
                 )
         if kind == "payroll_reserve_payment":
-            amount = values.get("reserve_return_fen")
+            amount = values.get("reserve_expense_fen")
             for account, signed in (
                 ("5602", amount),
                 (funds_account, -amount if type(amount) is int else amount),
@@ -452,12 +452,15 @@ def resolve_calculation_relations(
                     type(amount) is int
                     and amount > 0
                     and validate_line(
-                        cursor, account=account, amount=signed, field="query_source.reserve_return"
+                        cursor,
+                        account=account,
+                        amount=signed,
+                        field="query_source.reserve_expense",
                     )
                 )
                 add_relation(
                     cursor,
-                    "reserve_return",
+                    "reserve_expense",
                     signed if type(signed) is int else 0,
                     None,
                     None,
@@ -538,8 +541,6 @@ def resolve_calculation_relations(
             )
             amount = frozen_item.get("amount_fen", reference.get("amount_fen"))
             recipient = frozen_item.get("recipient_id", reference.get("recipient_id"))
-            if kind == "managed_reserve_obligation_settlement":
-                recipient = fact.get("recipient_id")
             frozen_source_fact_id = frozen_item.get("source_fact_id")
             frozen_matches = not requires_frozen_acceptance or (
                 frozen_item.get("amount_fen") == reference.get("amount_fen")
@@ -701,7 +702,7 @@ def report_party_splits(
         relation
         for relation in resolution.get("line_relations", ())
         if relation.get("line_no") == row.get("line_no")
-        and relation.get("role") not in {"funds", "tax_transfer", "reserve_return"}
+        and relation.get("role") not in {"funds", "tax_transfer", "reserve_expense"}
     ]
     inferred = None
     if (

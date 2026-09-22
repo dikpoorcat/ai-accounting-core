@@ -10,7 +10,6 @@ import test_payroll_reserve_payment as reserve_payroll
 import test_platforms as platforms
 from entity_fixture import seed_entities
 from test_dashboard_transport import authenticated
-from test_managed_reserve import scope_data
 from test_resident_service import resident as resident_fixture
 
 from ai_accounting.kernel.contracts import KernelError
@@ -271,7 +270,7 @@ def test_external_funds_exclude_both_bank_transfer_sides(bank_book):
     assert sum(account["inflow_fen"] for account in data["accounts"]) == 1200
 
 
-def test_cash_transfer_is_internal_but_reserve_expense_exits_company(platform_book):
+def test_bank_platform_transfer_is_always_internal(platform_book):
     engine, save, publish, _ = platform_book
     save(
         "bank_platform_transfer", "transfer", platforms.transfer_data(direction="bank_to_platform")
@@ -280,21 +279,46 @@ def test_cash_transfer_is_internal_but_reserve_expense_exits_company(platform_bo
     before = Dashboard(engine).funds("2026-09")["data"]
     assert before["internal_transfer_fen"] == 1000
     assert before["outflow_fen"] == 0
+
+
+def test_reserve_expense_and_refund_follow_actual_funds_directions(bank_book):
+    engine, save, publish, _ = bank_book
+    banking.funding(save, publish, amount=1000)
     save(
-        "managed_reserve_scope",
-        "scope",
-        scope_data(
-            costs=[dict(source_kind="bank_platform_transfer", source_id="transfer")],
-            treatments=[dict(transfer_id="transfer", treatment="expense_on_boundary")],
-        ),
+        "managed_reserve_expense",
+        "reserve-expense",
+        {
+            "period": "2026-09",
+            "actual_date": "2026-09-02",
+            "bank_account_id": "bank-a",
+            "amount_fen": 300,
+        },
     )
-    publish("scope", "transfer")
-    after = Dashboard(engine).funds("2026-09")["data"]
-    assert after["outflow_fen"] == 1000
-    assert after["internal_transfer_fen"] == 0
-    assert after["payment_platform_account_count"] == 0
-    assert after["account_count"] == 1
-    assert not after["movements"][0]["internal_transfer"]
+    save(
+        "managed_reserve_refund",
+        "reserve-refund",
+        {
+            "period": "2026-09",
+            "actual_date": "2026-09-03",
+            "bank_account_id": "bank-a",
+            "amount_fen": 100,
+        },
+    )
+    publish("reserve-expense", "reserve-refund")
+
+    data = Dashboard(engine).funds("2026-09")["data"]
+    assert data["inflow_fen"] == 1100
+    assert data["outflow_fen"] == 300
+    assert data["internal_transfer_fen"] == 0
+    assert data["net_change_fen"] == data["total_fen"] == 800
+    reserve = {
+        row["component_kinds"][0]: row
+        for row in data["movements"]
+        if row["component_kinds"][0].startswith("managed_reserve_")
+    }
+    assert reserve["managed_reserve_expense"]["direction"] == "outflow"
+    assert reserve["managed_reserve_refund"]["direction"] == "inflow"
+    assert not any(row["internal_transfer"] for row in reserve.values())
 
 
 def test_cash_bank_transfer_uses_money_boundary(bank_book):
@@ -495,7 +519,7 @@ def test_investment_detail_pages_preserve_totals_and_require_same_snapshot(inves
 def test_payroll_batch_is_one_real_bank_exit_and_names_actual_recipients(payroll_book):
     company = payroll_book
     fact = reserve_payroll.prepare(company)
-    company.publish("scope", "gross-batch")
+    company.publish("gross-batch")
     for person in ("one", "two"):
         Entities(company.engine).update_entity_profile(
             person,

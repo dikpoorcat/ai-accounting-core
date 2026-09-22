@@ -212,9 +212,7 @@ def payment(kind="payment"):
         fact = PayrollReservePayment(
             **payload,
             bank_account_id="bank",
-            scope_id="reserve",
-            platform_account_id="platform",
-            reserve_return_fen=100,
+            reserve_expense_fen=100,
             return_period="2026-08",
             return_confirmed=True,
             complete_group_confirmed=True,

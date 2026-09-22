@@ -43,12 +43,22 @@ def book(tmp_path):
         # Existing media scenarios supply explicit actual money. Preserve each as a
         # separate synthetic original row; dedicated movement tests exercise mismatches.
         if (
-            kind in {"platform_payment", "platform_funding", "bank_platform_transfer"}
+            kind
+            in {
+                "platform_payment",
+                "platform_funding",
+                "bank_platform_transfer",
+                "managed_reserve_expense",
+                "managed_reserve_refund",
+            }
             and "movement_ids" not in data
+            and "platform_account_id" in data
         ):
             source = "movement-" + subject
             data["movement_ids"] = [source]
-            direction = data.get("direction", "inflow")
+            direction = data.get(
+                "direction", "outflow" if kind == "managed_reserve_expense" else "inflow"
+            )
             direction = {"bank_to_platform": "inflow", "platform_to_bank": "outflow"}.get(
                 direction, direction
             )

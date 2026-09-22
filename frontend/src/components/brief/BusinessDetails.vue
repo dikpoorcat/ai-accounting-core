@@ -10,7 +10,7 @@ const props = withDefaults(defineProps<{
 }>(), { plain: false });
 const kind = computed(() => props.components[0]?.kind || "");
 const payment = computed(() => ["payment", "cash_payment", "platform_payment", "payroll_reserve_payment"].includes(kind.value));
-const show = computed(() => ["employee_advance", "reimbursement_acceptance", "settlement", "reimbursed_asset_batch"].includes(kind.value)
+const show = computed(() => ["employee_advance", "reimbursement_acceptance", "settlement", "reimbursed_asset_batch", "payroll_reserve_payment"].includes(kind.value)
   || (payment.value && (props.settlements.length > 1 || props.settlements.some(row => row.source_period !== props.components[0]?.recognition?.period))));
 const heading = computed(() => kind.value === "reimbursed_asset_batch" ? "整批应付明细" : payment.value ? "付款对应事项" : "代付与抵销说明");
 </script>
@@ -22,7 +22,7 @@ const heading = computed(() => kind.value === "reimbursed_asset_batch" ? "整批
     <p v-else-if="kind === 'settlement'">本项通过款项抵销结清，不发生公司账户收付款。</p>
     <p v-else-if="['employee_advance', 'reimbursement_acceptance'].includes(kind)">原款项由个人代付，公司相应改为应付代付人。</p>
     <ul><li v-for="item in settlements" :key="item.id"><span>{{ item.source_label || `${item.source_period}相关款项` }}<template v-if="item.party"> · {{ item.party }}</template></span><strong>{{ formatFen(item.amount_fen) }}</strong></li></ul>
-    <p v-if="kind === 'payroll_reserve_payment'">工资分配、整笔银行付款与返还备用金分别按已确认依据记录。</p>
+    <p v-if="kind === 'payroll_reserve_payment'">整笔付款明确拆分为应付净薪和备用金支出；备用金部分不作为工资清偿。</p>
   </component>
 </template>
 <style scoped>
