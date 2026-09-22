@@ -1,9 +1,10 @@
 """Real publications, explicit entities and immutable identity correction receipts."""
 
 import pytest
+from payroll_plan_fixture import confirm_wage_inputs
 from schema_fixture import test_bundle
 
-from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.contracts import KernelError, Read
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.identity_corrections import IdentityCorrections
@@ -548,6 +549,12 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
             tax_reported_salary_fen=amount,
         )
         save_model(engine, evidence, subject, facts[subject])
+        confirm_wage_inputs(
+            engine,
+            subject,
+            evidence=(evidence,),
+            request_id="confirm-payroll-" + subject,
+        )
         publish_subjects(engine, [subject], "publish-" + subject)
     save_model(engine, evidence, "bonus-policy", bonus_policy())
     save_model(
@@ -572,6 +579,22 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
         frozen = close_calculated_payroll(engine, evidence, ["jan-a", "jan-b", "bonus"])
     corrected = facts["jan-b"].model_dump(mode="json") | dict(
         accounting_gross_salary_fen=1500000, tax_reported_salary_fen=1500000
+    )
+    with engine.store.connection(read_only=True) as connection:
+        plan_version = engine.store.select(
+            connection,
+            Read("fact", "payroll_plan_v2", f"employee:{second}:month:2026-01"),
+        )[0]
+    corrected_plan = plan_version.fact.model_copy(
+        update={"payroll": type(facts["jan-b"]).model_validate(corrected)}
+    )
+    engine.save_fact(
+        corrected_plan.kind,
+        plan_version.subject_id,
+        corrected_plan.model_dump(mode="json"),
+        evidence=(evidence,),
+        expected_revision=plan_version.revision,
+        request_id="confirm-corrected-jan-b",
     )
     kwargs = dict(
         changes=[
@@ -649,6 +672,114 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
         assert jan["mode"] == "closed_correction"
         assert jan["posting_period"] == "2026-03"
         assert Periods(engine).closed_report("2026-01") == frozen
+
+
+def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(identity_engine):
+    from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+
+    from ai_accounting.kernel.contracts import Read
+    from ai_accounting.kernel.payroll_confirmation import (
+        FactRevisionReference,
+        revision_reference,
+    )
+    from ai_accounting.kernel.payroll_preparation import PayrollChangeNotice, PayrollPlan
+
+    engine, evidence, first, second = identity_engine
+    for subject, fact in (
+        ("contributions", contribution_policy()),
+        ("income-tax", income_tax_policy()),
+        ("profile-first", profile(employee_id=first)),
+        ("profile-second", profile(employee_id=second)),
+        ("opening-first", opening(employee_id=first)),
+        ("opening-second", opening(employee_id=second)),
+    ):
+        save_model(engine, evidence, subject, fact)
+    wage = payroll(employee_id=first, profile_id="profile-first")
+    notice = PayrollChangeNotice(
+        period="2026-01", employee_id=first, changed_fields=("employment",)
+    )
+    save_model(engine, evidence, "notice", notice)
+    with engine.store.connection(read_only=True) as connection:
+        profile_first = engine.store.current_fact(connection, "profile-first")
+        contribution = engine.store.current_fact(connection, "contributions")
+        income_tax = engine.store.current_fact(connection, "income-tax")
+        notice_version = engine.store.current_fact(connection, "notice")
+    plan = PayrollPlan(
+        period="2026-01",
+        employee_id=first,
+        payroll=wage,
+        profile_revision=revision_reference(profile_first),
+        contribution_policy_revision=revision_reference(contribution),
+        income_tax_policy_revision=revision_reference(income_tax),
+        change_notice_revisions=(revision_reference(notice_version),),
+    )
+    save_model(engine, evidence, "plan", plan)
+    save_model(engine, evidence, "wage", wage)
+    publish_subjects(engine, ["wage"], "publish-wage")
+
+    corrected_wage = wage.model_copy(update={"employee_id": second, "profile_id": "profile-second"})
+    command = IdentityCorrections(engine)
+    with pytest.raises(KernelError) as missing_sources:
+        command.preview_identity_correction(
+            changes=[
+                dict(
+                    subject_id="wage",
+                    expected_revision=1,
+                    action="reassign",
+                    data=corrected_wage.model_dump(mode="json"),
+                )
+            ],
+            evidence=[evidence],
+            reason="confirmed corrected employee identity",
+        )
+    assert missing_sources.value.code == "needs_information"
+
+    corrected_notice = notice.model_copy(update={"employee_id": second})
+    with engine.store.connection(read_only=True) as connection:
+        profile_second = engine.store.current_fact(connection, "profile-second")
+    corrected_plan = plan.model_copy(
+        update={
+            "employee_id": second,
+            "payroll": corrected_wage,
+            "profile_revision": revision_reference(profile_second),
+            "change_notice_revisions": (FactRevisionReference(subject_id="notice", revision=2),),
+        }
+    )
+    kwargs = dict(
+        changes=[
+            dict(
+                subject_id="wage",
+                expected_revision=1,
+                action="reassign",
+                data=corrected_wage.model_dump(mode="json"),
+            ),
+            dict(
+                subject_id="notice",
+                expected_revision=1,
+                action="reassign",
+                data=corrected_notice.model_dump(mode="json"),
+            ),
+            dict(
+                subject_id="plan",
+                expected_revision=1,
+                action="reassign",
+                data=corrected_plan.model_dump(mode="json"),
+            ),
+        ],
+        evidence=[evidence],
+        reason="confirmed corrected employee identity with exact wage sources",
+    )
+    preview, _ = confirm(engine, kwargs, request="correct-wage-with-confirmation")
+    wage_result = next(item for item in preview["results"] if item["subject_id"] == "wage")
+    assert wage_result["values"]["employee_id"] == second
+    assert wage_result["values"]["payroll_confirmation"]["confirmation_revision"] == 2
+    with engine.store.connection(read_only=True) as connection:
+        current_notice = engine.store.current_fact(connection, "notice")
+        current_plan = engine.store.current_fact(connection, "plan")
+        current_wage = engine.store.current_fact(connection, "wage")
+        assert current_notice.revision == current_plan.revision == current_wage.revision == 2
+        stored_plan = engine.store.select(connection, Read("fact", "payroll_plan_v2", "@plan"))[0]
+        assert stored_plan.fact.change_notice_revisions[0].revision == 2
 
 
 def close_calculated_payroll(engine, evidence, subjects):
@@ -790,6 +921,12 @@ def test_frozen_payroll_opening_binding_feeds_new_person_cumulative(identity_eng
         ),
     )
     save_model(engine, evidence, "feb-payroll", payroll(employee_id=second, period="2026-02"))
+    confirm_wage_inputs(
+        engine,
+        "feb-payroll",
+        evidence=(evidence,),
+        request_id="confirm-feb-payroll",
+    )
     p = engine.preview(["feb-payroll"])
     assert p["results"][0]["values"]["employee_id"] == second
     assert p["results"][0]["values"]["tax_state"]["cumulative_income_fen"] == 1000000
@@ -1622,6 +1759,12 @@ def test_conflicting_frozen_payroll_bases_choose_one_without_adding_cumulative_a
     )
     save_model(
         engine, evidence, "late-april-payroll", payroll(employee_id=second, period="2026-04")
+    )
+    confirm_wage_inputs(
+        engine,
+        "late-april-payroll",
+        evidence=(evidence,),
+        request_id="confirm-late-april-payroll",
     )
     p = engine.preview(["late-april-payroll"], posting_period="2026-05")
     assert p["results"][0]["values"]["tax_state"]["cumulative_income_fen"] == 3000000

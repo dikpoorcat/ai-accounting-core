@@ -41,6 +41,8 @@ from ai_accounting.kernel.domains.payroll import (
     register,
 )
 from ai_accounting.kernel.domains.transactions import Allocation, Payment, calculate_payment
+from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
+from ai_accounting.kernel.payroll_preparation import BoundedPayrollPlan, PayrollPlan
 from ai_accounting.kernel.types import MAX_FEN
 from ai_accounting.payroll import AnnualBonusTaxPolicy, CumulativeIncomeTaxPolicy
 
@@ -59,20 +61,48 @@ def context_for(current, facts=(), calculations=()):
                 item
                 for item in facts
                 if (read.kind == "*" or item.fact.kind == read.kind)
-                and read.key in (f"@{item.subject_id}", *item.fact.scopes())
+                and (
+                    read.key == "*"
+                    or read.key == f"#{item.id}"
+                    or read.key in (f"@{item.subject_id}", *item.fact.scopes())
+                )
             )
         else:
             selections[read] = tuple(
                 item
                 for item in calculations
                 if item.kind == read.kind
-                and read.key
-                in (
-                    f"@{item.subject_id}",
-                    employee_month(item.values.get("employee_id", ""), item.period),
+                and (
+                    read.key == "*"
+                    or read.key == f"#{item.id}"
+                    or read.key
+                    in (
+                        f"@{item.subject_id}",
+                        employee_month(item.values.get("employee_id", ""), item.period),
+                    )
                 )
             )
     return Context(selections)
+
+
+def with_payroll_plan(current, facts):
+    """Add the explicit synthetic owner confirmation required by this wage scenario."""
+    wage = current.fact
+
+    def ref(subject):
+        return FactRevisionReference(subject_id=subject, revision=1)
+
+    model = BoundedPayrollPlan if wage.kind == "payroll_bounded" else PayrollPlan
+    plan = model(
+        period=wage.period,
+        employee_id=wage.employee_id,
+        payroll=wage,
+        profile_revision=ref(wage.profile_id),
+        contribution_policy_revision=ref(wage.contribution_policy_id),
+        income_tax_policy_revision=ref(wage.income_tax_policy_id),
+        change_notice_revisions=(),
+    )
+    return [*facts, version(plan, f"confirmation:{wage.employee_id}:{wage.period}")]
 
 
 def as_calculation(current, result):
@@ -300,7 +330,7 @@ def labor(**changes):
 
 def test_regular_payroll_produces_balanced_obligations_and_records_empty_actual_scope():
     current = version(payroll(), "january")
-    ctx = context_for(current, payroll_sources())
+    ctx = context_for(current, with_payroll_plan(current, payroll_sources()))
     result = calculate_payroll(current, ctx)
     assert result.values["tax_fen"] == 12_600
     assert result.values["net_fen"] == 907_400
@@ -322,27 +352,34 @@ def test_regular_payroll_produces_balanced_obligations_and_records_empty_actual_
     assert not any(item.account == "1002" for item in result.lines)
 
 
+def test_payroll_without_explicit_confirmation_is_blocked():
+    current = version(payroll(), "january")
+    with pytest.raises(NeedsInformation) as error:
+        calculate_payroll(current, context_for(current, payroll_sources()))
+    assert error.value.response()["fact_issues"][0]["field"] == "payroll_no_change"
+
+
 def test_later_actual_source_recalculates_current_and_following_cumulative_tax():
     sources = payroll_sources()
     january = version(payroll(), "january")
-    original = calculate_payroll(january, context_for(january, sources))
+    original = calculate_payroll(january, context_for(january, with_payroll_plan(january, sources)))
     february = version(payroll(period="2026-02"), "february")
     original_next = calculate_payroll(
         february,
         context_for(
             february,
-            sources,
+            with_payroll_plan(february, sources),
             [as_calculation(january, original)],
         ),
     )
     actual_source = version(actual(), "actual")
-    corrected_ctx = context_for(january, [*sources, actual_source])
+    corrected_ctx = context_for(january, with_payroll_plan(january, [*sources, actual_source]))
     corrected = calculate_payroll(january, corrected_ctx)
     corrected_next = calculate_payroll(
         february,
         context_for(
             february,
-            [*sources, actual_source],
+            with_payroll_plan(february, [*sources, actual_source]),
             [as_calculation(january, corrected)],
         ),
     )
@@ -358,7 +395,7 @@ def test_later_actual_source_recalculates_current_and_following_cumulative_tax()
 def test_corrected_payroll_never_changes_actual_payment_or_silently_absorbs_overpayment():
     sources = payroll_sources()
     january = version(payroll(), "january")
-    original = calculate_payroll(january, context_for(january, sources))
+    original = calculate_payroll(january, context_for(january, with_payroll_plan(january, sources)))
     payment = version(
         Payment(
             period="2026-02",
@@ -379,7 +416,8 @@ def test_corrected_payroll_never_changes_actual_payment_or_silently_absorbs_over
     paid = calculate_payment(payment, context_for(payment, (), [as_calculation(january, original)]))
     assert paid.values["amount_fen"] == 907_400
     corrected = calculate_payroll(
-        january, context_for(january, [*sources, version(actual(), "actual")])
+        january,
+        context_for(january, with_payroll_plan(january, [*sources, version(actual(), "actual")])),
     )
     with pytest.raises(NeedsInformation) as error:
         calculate_payment(payment, context_for(payment, (), [as_calculation(january, corrected)]))
@@ -395,7 +433,7 @@ def test_actual_amounts_remove_need_for_unknown_policy_estimation_base():
         version(profile(social_insurance_base_fen=None), "profile"),
         version(actual(), "actual"),
     ]
-    result = calculate_payroll(current, context_for(current, sources))
+    result = calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert result.values["net_fen"] == 888_000
     assert not any(x["step"] == "contribution_line" for x in result.explanation)
     assert any(x["step"] == "contribution_actual" for x in result.explanation)
@@ -406,7 +444,7 @@ def test_missing_required_source_returns_structured_needs_information(missing):
     current = version(payroll(), "january")
     sources = [x for x in payroll_sources() if x.subject_id != missing]
     with pytest.raises(NeedsInformation) as error:
-        calculate_payroll(current, context_for(current, sources))
+        calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert error.value.response()["status"] == "needs_information"
     assert error.value.response()["fact_issues"][0]["semantics"] == "accounting"
 
@@ -416,14 +454,16 @@ def test_missing_contribution_base_without_actual_is_not_zero():
     sources = [x for x in payroll_sources() if x.subject_id != "profile"]
     sources.append(version(profile(social_insurance_base_fen=None), "profile"))
     with pytest.raises(NeedsInformation) as error:
-        calculate_payroll(current, context_for(current, sources))
+        calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert error.value.response()["fact_issues"][0]["field"] == "social_insurance_base_fen"
 
 
 def test_actual_required_does_not_silently_fall_back_to_policy():
     current = version(payroll(contribution_basis="actual_required"), "january")
     with pytest.raises(NeedsInformation) as error:
-        calculate_payroll(current, context_for(current, payroll_sources()))
+        calculate_payroll(
+            current, context_for(current, with_payroll_plan(current, payroll_sources()))
+        )
     assert error.value.response()["fact_issues"][0]["field"] == "contribution_actual.items"
 
 
@@ -434,10 +474,13 @@ def test_contribution_actual_requires_evidence_and_unique_source():
             current,
             context_for(
                 current,
-                [
-                    *payroll_sources(),
-                    version(actual(), "actual", evidence=()),
-                ],
+                with_payroll_plan(
+                    current,
+                    [
+                        *payroll_sources(),
+                        version(actual(), "actual", evidence=()),
+                    ],
+                ),
             ),
         )
     with pytest.raises(KernelError) as error:
@@ -445,11 +488,14 @@ def test_contribution_actual_requires_evidence_and_unique_source():
             current,
             context_for(
                 current,
-                [
-                    *payroll_sources(),
-                    version(actual(), "actual"),
-                    version(actual(), "duplicate-actual"),
-                ],
+                with_payroll_plan(
+                    current,
+                    [
+                        *payroll_sources(),
+                        version(actual(), "actual"),
+                        version(actual(), "duplicate-actual"),
+                    ],
+                ),
             ),
         )
     assert error.value.code == "ambiguous_source"
@@ -459,7 +505,7 @@ def test_first_wage_source_is_tracked_and_recalculates_deduction():
     current = version(payroll(period="2026-06"), "june")
     sources = [x for x in payroll_sources() if x.subject_id != "profile"]
     sources.append(version(profile(withholding_start_date="2026-06-01"), "profile"))
-    before = calculate_payroll(current, context_for(current, sources))
+    before = calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     treatment = version(
         PayrollFirstWageTreatment(
             period="2026-06",
@@ -468,7 +514,7 @@ def test_first_wage_source_is_tracked_and_recalculates_deduction():
         ),
         "first-wage",
     )
-    ctx = context_for(current, [*sources, treatment])
+    ctx = context_for(current, with_payroll_plan(current, [*sources, treatment]))
     after = calculate_payroll(current, ctx)
     assert before.values["tax_fen"] == 12_600
     assert after.values["tax_fen"] == 0
@@ -478,7 +524,9 @@ def test_first_wage_source_is_tracked_and_recalculates_deduction():
 
 def test_accounting_salary_is_not_replaced_by_reported_tax_salary():
     current = version(payroll(accounting_gross_salary_fen=1_200_000), "january")
-    result = calculate_payroll(current, context_for(current, payroll_sources()))
+    result = calculate_payroll(
+        current, context_for(current, with_payroll_plan(current, payroll_sources()))
+    )
     assert result.values["gross_fen"] == 1_200_000
     assert result.values["tax_state"]["cumulative_income_fen"] == 1_000_000
     assert result.values["net_fen"] == 1_107_400
@@ -486,14 +534,16 @@ def test_accounting_salary_is_not_replaced_by_reported_tax_salary():
 
 def test_missing_month_in_cumulative_history_is_not_inferred_as_zero_income():
     january = version(payroll(), "january")
-    first = calculate_payroll(january, context_for(january, payroll_sources()))
+    first = calculate_payroll(
+        january, context_for(january, with_payroll_plan(january, payroll_sources()))
+    )
     march = version(payroll(period="2026-03"), "march")
     with pytest.raises(NeedsInformation) as error:
         calculate_payroll(
             march,
             context_for(
                 march,
-                payroll_sources(),
+                with_payroll_plan(march, payroll_sources()),
                 [as_calculation(january, first)],
             ),
         )
@@ -512,31 +562,39 @@ def test_duplicate_employee_month_and_wrong_profile_are_rejected():
     current = version(payroll(), "january")
     with pytest.raises(KernelError) as duplicate:
         calculate_payroll(
-            current, context_for(current, [*payroll_sources(), version(payroll(), "other")])
+            current,
+            context_for(
+                current,
+                with_payroll_plan(current, [*payroll_sources(), version(payroll(), "other")]),
+            ),
         )
     assert duplicate.value.code == "duplicate_remuneration"
     sources = [x for x in payroll_sources() if x.subject_id != "profile"]
     sources.append(version(profile(employee_id="someone-else"), "profile"))
     with pytest.raises(KernelError) as mismatch:
-        calculate_payroll(current, context_for(current, sources))
+        calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert mismatch.value.code == "payroll_profile_mismatch"
 
 
 def test_policy_effective_date_is_enforced():
     current = version(payroll(period="2027-01"), "later")
     with pytest.raises(KernelError) as error:
-        calculate_payroll(current, context_for(current, payroll_sources()))
+        calculate_payroll(
+            current, context_for(current, with_payroll_plan(current, payroll_sources()))
+        )
     assert error.value.code == "policy_not_effective"
 
 
 def test_zero_salary_requires_explicit_employer_burden_treatment():
     current = version(payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0), "january")
     with pytest.raises(KernelError) as error:
-        calculate_payroll(current, context_for(current, payroll_sources()))
+        calculate_payroll(
+            current, context_for(current, with_payroll_plan(current, payroll_sources()))
+        )
     assert error.value.code == "negative_net_pay"
     sources = [x for x in payroll_sources() if x.subject_id != "profile"]
     sources.append(version(profile(contribution_shortfall="employer_borne"), "profile"))
-    result = calculate_payroll(current, context_for(current, sources))
+    result = calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert result.values["net_fen"] == result.values["employee_contributions_fen"] == 0
     assert result.values["employer_contributions_fen"] == 240_000
 
@@ -568,7 +626,9 @@ def test_separate_bonus_preserves_wage_cumulative_state_and_annual_usage():
 
 def test_combined_bonus_feeds_next_month_tax_state():
     january = version(payroll(), "january")
-    wage_result = calculate_payroll(january, context_for(january, payroll_sources()))
+    wage_result = calculate_payroll(
+        january, context_for(january, with_payroll_plan(january, payroll_sources()))
+    )
     wage_calculation = as_calculation(january, wage_result)
     current = version(bonus(tax_method="combined", regular_payroll_id="january"), "bonus")
     result = calculate_annual_bonus(
@@ -581,7 +641,7 @@ def test_combined_bonus_feeds_next_month_tax_state():
         february,
         context_for(
             february,
-            payroll_sources(),
+            with_payroll_plan(february, payroll_sources()),
             [wage_calculation, as_calculation(current, result)],
         ),
     )
@@ -596,7 +656,9 @@ def test_combined_bonus_cannot_use_another_employee_or_missing_payroll():
     assert error.value.response()["fact_issues"][0]["field"] == "regular_payroll_id"
     current = version(bonus(tax_method="combined", regular_payroll_id="january"), "bonus")
     january = version(payroll(), "january")
-    wage_result = calculate_payroll(january, context_for(january, payroll_sources()))
+    wage_result = calculate_payroll(
+        january, context_for(january, with_payroll_plan(january, payroll_sources()))
+    )
     wrong = replace(
         as_calculation(january, wage_result), values=wage_result.values | {"employee_id": "other"}
     )
@@ -770,7 +832,7 @@ def test_calculators_ignore_callers_decimal_precision_rounding_and_traps():
     current_bonus = version(bonus(bonus_fen=3_000_001), "bonus")
     current_labor = version(labor(fixed_fee_fen=1_000_001), "labor")
     calculations = (
-        (calculate_payroll, current_payroll, payroll_sources()),
+        (calculate_payroll, current_payroll, with_payroll_plan(current_payroll, payroll_sources())),
         (calculate_annual_bonus, current_bonus, bonus_sources()),
         (calculate_labor, current_labor, [version(labor_policy(), "labor-policy")]),
     )

@@ -9,6 +9,7 @@ SHARED_SOURCE_FILES = (
     "intangible_assets.py",
     "fact_requirements.py",
     "mybank_export.py",
+    "policy_sources.py",
     "financial_statement_template.py",
     "bank_statements.py",
     "bank_statement_schemas.py",

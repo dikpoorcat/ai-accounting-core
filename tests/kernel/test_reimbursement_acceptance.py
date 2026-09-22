@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from payroll_plan_fixture import confirm_wage_inputs
 from test_banking import entry, funding, match, reconciliation, statement
 from test_banking import opening as bank_opening
 from test_deletion_boundaries import book as book
@@ -16,7 +17,7 @@ from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.periods import Periods
 
 
-def wage(save, publish, *, kind="payroll"):
+def wage(engine, save, publish, *, kind="payroll"):
     policy = contribution_policy().model_dump(mode="json")
     policy["rules"].append(
         {
@@ -55,6 +56,9 @@ def wage(save, publish, *, kind="payroll"):
             )
         )
     save(kind, "wage", data)
+    with engine.store.connection(read_only=True) as connection:
+        evidence = engine.store.current_fact(connection, "wage").evidence
+    confirm_wage_inputs(engine, "wage", evidence=evidence, request_id="confirm-wage")
     publish("wage")
 
 
@@ -131,7 +135,7 @@ def payment(
 @pytest.mark.parametrize("kind", ("payroll", "payroll_bounded"))
 def test_closed_wage_four_paid_contributions_transfer_without_date_expense_or_cash(book, kind):
     engine, save, publish, close, _, _ = book
-    wage(save, publish, kind=kind)
+    wage(engine, save, publish, kind=kind)
     close("2026-01")
     frozen = Periods(engine).closed_report("2026-01")
     parts = [
@@ -193,7 +197,7 @@ def test_acceptance_rejects_unknown_or_mixed_original_cashflow(book, changed_cas
 
     # An isolated future calculator output cannot silently change repayment classification.
     monkeypatch.setitem(engine.store.registry.evaluators, "payroll", changed_source)
-    wage(save, publish)
+    wage(engine, save, publish)
     save(
         "reimbursement_acceptance",
         "accepted",
@@ -218,7 +222,7 @@ def test_acceptance_rejects_unknown_or_mixed_original_cashflow(book, changed_cas
 )
 def test_missing_acceptance_or_paid_evidence_is_not_defaulted(book, change, field):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     save("reimbursement_acceptance", "accepted", acceptance(**change))
     with pytest.raises(NeedsInformation) as error:
         publish("accepted")
@@ -228,7 +232,7 @@ def test_missing_acceptance_or_paid_evidence_is_not_defaulted(book, change, fiel
 
 def test_public_acceptance_has_no_actual_payment_day_and_requires_retained_evidence(book):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     schema = ReimbursementAcceptance.model_json_schema()
     assert "actual_creditor_payment_date" not in schema["properties"]
     assert "actual_date" not in schema["properties"]
@@ -252,7 +256,7 @@ def test_public_acceptance_has_no_actual_payment_day_and_requires_retained_evide
 @pytest.mark.parametrize("name", ("net", "tax"))
 def test_payroll_obligation_without_explicit_timing_authority_cannot_use_acceptance(book, name):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     save("reimbursement_acceptance", "accepted", acceptance(sources=[source(name, 1)]))
     with pytest.raises(KernelError) as error:
         publish("accepted")
@@ -262,7 +266,7 @@ def test_payroll_obligation_without_explicit_timing_authority_cannot_use_accepta
 
 def test_expense_has_no_implicit_date_waiver_and_mixed_batch_fails_atomically(book):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     save(
         "expense",
         "cost",
@@ -335,7 +339,7 @@ def test_date_sensitive_loan_principal_cannot_use_recognition_month_acceptance(b
 @pytest.mark.parametrize("other_kind", ("payment", "employee_advance", "reimbursement_acceptance"))
 def test_same_claim_capacity_is_shared_with_actual_payment_and_personal_advance(book, other_kind):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     if other_kind == "payment":
         payment(save, publish, subject="prior", kind="payroll", amount=70000)
     elif other_kind == "employee_advance":
@@ -370,7 +374,7 @@ def test_same_claim_capacity_is_shared_with_actual_payment_and_personal_advance(
 @pytest.mark.parametrize("mode", ("duplicate", "before-source"))
 def test_duplicate_source_and_acceptance_before_source_month_are_rejected(book, mode):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     changes = {"sources": [source(), source()]} if mode == "duplicate" else {"period": "2025-12"}
     save("reimbursement_acceptance", "accepted", acceptance(**changes))
     with pytest.raises(KernelError) as error:
@@ -383,7 +387,7 @@ def test_duplicate_source_and_acceptance_before_source_month_are_rejected(book, 
 
 def test_later_actual_payment_cannot_spend_the_already_accepted_source_again(book):
     engine, save, publish, *_ = book
-    wage(save, publish)
+    wage(engine, save, publish)
     save("reimbursement_acceptance", "accepted", acceptance())
     publish("accepted")
     with pytest.raises(KernelError) as error:
@@ -395,7 +399,7 @@ def test_later_actual_payment_cannot_spend_the_already_accepted_source_again(boo
 
 def test_accepted_claim_exports_only_remaining_reimbursement_and_checks_payee(book):
     engine, save, publish, close, _, proof = book
-    wage(save, publish)
+    wage(engine, save, publish)
     save("reimbursement_acceptance", "accepted", acceptance())
     publish("accepted")
     bank_opening(save, publish, bank="bank", month="2026-02")

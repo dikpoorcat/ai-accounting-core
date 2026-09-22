@@ -18,9 +18,13 @@ from test_dashboard_empty_replay import (
     replay_sources,
     reviewed_confirmation,
 )
+from test_payroll import payroll
+from test_payroll_preparation import company as payroll_company
+from test_tax_import import contribution_rule, replace_contribution_policy
 
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.entities import Entities
+from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.response_contracts import http_response, validate_response
 
 
@@ -113,7 +117,7 @@ def native_samples(root):
 
     bank_path = root / "banks"
     bank_path.mkdir()
-    book, bank_ids = public_bank_book(bank_path)
+    book, _ = public_bank_book(bank_path)
     engine, save, publish, _ = book
     banking.opening(save, publish)
     banking.funding(save, publish)
@@ -127,15 +131,19 @@ def native_samples(root):
         subject="other-statement",
         bank="bank-b",
     )
-    add("bank_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
+    bank_response = Dashboard(engine).funds("2026-09")
+    add("bank_funds", "dashboard_funds", bank_response)
+    # Generated entity IDs are random; pick the account outside the first page
+    # from the actual ordered response, rather than assuming bank-b sorts last.
+    filtered_account = bank_response["data"]["accounts"][-1]["account_id"]
     add(
         "filtered_bank_funds",
         "dashboard_funds",
         Dashboard(engine).funds(
             "2026-09",
             movement_account_type="bank",
-            movement_account_id=bank_ids["bank-b"],
-            statement_account_id=bank_ids["bank-b"],
+            movement_account_id=filtered_account,
+            statement_account_id=filtered_account,
             limit=1,
         ),
     )
@@ -145,6 +153,39 @@ def native_samples(root):
     closed_book, _ = public_bank_book(closed_path)
     engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
+
+    wage_path = root / "wages"
+    wage_path.mkdir()
+    wage_book = payroll_company(wage_path)
+    add("wage_mapping_missing", "dashboard_funds", Dashboard(wage_book.engine).funds("2026-01"))
+    replace_contribution_policy(
+        wage_book,
+        tuple(contribution_rule(code) for code in ("pension", "medical", "unemployment", "injury")),
+    )
+    add(
+        "wage_mapping_unsupported",
+        "dashboard_funds",
+        Dashboard(wage_book.engine).funds("2026-01"),
+    )
+    wage_book.close("2026-01")
+    wage_book.save(payroll(period="2026-02"), "february")
+    received = sorted(
+        {proof for month, proof in wage_book.materials["payroll"] if month <= "2026-01"}
+    )
+    Periods(wage_book.engine).inventory(
+        "2026-01",
+        "payroll",
+        evidence=received,
+        expected=len(received) + 1,
+        no_business=False,
+        confirmation_evidence=wage_book.owner_confirmation,
+        request_id=wage_book.request(),
+    )
+    add(
+        "late_closed_missing_material",
+        "dashboard_funds",
+        Dashboard(wage_book.engine).funds("2026-02"),
+    )
     return samples
 
 

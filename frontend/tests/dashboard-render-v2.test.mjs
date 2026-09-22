@@ -281,12 +281,16 @@ test("R2 source movements stay in operating details and are omitted from owner a
 test("T6 preparation keeps owner-facing issue summaries without technical source navigation", async () => {
   const preparation = structuredClone(fixtures.employees.data.period_preparation);
   preparation.current_followups.materials.issues = [
-    { message: "同文资料问题", subject_id: "source-a" },
+    { message: "同文资料问题", subject_id: "source-a", responsibility: "closed_followup", origin_periods: ["2026-01"], review_period: "2026-11" },
     { message: "同文资料问题", subject_id: "source-b" },
   ];
   Object.assign(preparation.current_followups.settlements, { complete: false, paid_fen: "12345", remaining_fen: "30000" });
   Object.assign(preparation.current_followups.external, { obligation_count: 0, completion_status_counts: {} });
   preparation.current_followups.file_jobs.issue_count = 3;
+  preparation.current_followups.tax_import_mapping = {
+    status: "unsupported", blocking_scope: "tax_import_file", mapping_fact_ids: [], calculation_ids: [],
+    issues: [{ code: "tax_import_format_unsupported", category: "capability", field: "tax_import_mapping", message: "实际个人扣款项目超出文件列数" }],
+  };
   preparation.current_followups.accounting.pending_subject_id = "pending-correction";
   preparation.current_followups.accounting.issues = [
     { message: "另一业务尚未正式处理", field: "unpublished-other" },
@@ -307,6 +311,9 @@ test("T6 preparation keeps owner-facing issue summaries without technical source
     assert.match(html, new RegExp(`全公司 · 截至 ${preparation.as_of} 的相关后续事项`));
     assert.match(html, /尚未关账；以下事项会持续更新/);
     assert.match(html, /当前资料核对 · 2 条核对提示/);
+    assert.match(html, /已关账月份的资料问题，仍需在开放期处理/);
+    assert.match(html, /个税文件列对应（仅影响文件）/);
+    assert.match(html, /这项检查不阻止工资记账、付款或关账/);
     assert.doesNotMatch(html, /source-a|source-b/);
     assert.match(html, /class="needs-check"[^>]*>\s*当前款项金额尚不能完整建立/);
     assert.match(html, /收付款跟进<\/span><strong[^>]*>¥300\.00/);

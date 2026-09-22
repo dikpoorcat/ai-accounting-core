@@ -3,7 +3,7 @@ import type { BriefData, BriefValidationItem, BriefValidation } from "./brief";
 import type { DashboardReadContext, PeriodPreparation } from "./dashboardContracts";
 
 export interface PeriodPreparationResult {
-  schema_version: 2;
+  schema_version: 3;
   projection: "dashboard_period_preparation_result";
   read_context: DashboardReadContext;
   period: string;

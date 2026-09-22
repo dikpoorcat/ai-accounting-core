@@ -87,9 +87,8 @@ class Periods:
                 raise KernelError("received_material_omitted", "不能从清单撤去已接收资料")
             row = connection.execute(
                 "INSERT INTO "
-                "material_revision(period,category,expected,received,pro"
-                "cessed,no_business,evidence_digest) "
-                "VALUES(?,?,?,?,0,?,?) RETURNING id",
+                "material_revision(period,category,expected,received,no_business,evidence_digest) "
+                "VALUES(?,?,?,?,?,?) RETURNING id",
                 (
                     month,
                     category,
@@ -195,7 +194,13 @@ class Periods:
         return inventories, issues, unpublished
 
     def _manifest(
-        self, connection, period: str, owner_confirmation: str, *, previous_close=_CURRENT_CLOSE
+        self,
+        connection,
+        period: str,
+        owner_confirmation: str,
+        *,
+        previous_close=_CURRENT_CLOSE,
+        _inspection_cache=None,
     ):
         from .display import Display
 
@@ -207,7 +212,9 @@ class Periods:
         from .integrity import verify_close_integrity
 
         verify_close_integrity(self.engine, connection, month)
-        checked = self.check_readiness(connection, period, previous_close)
+        checked = self.check_readiness(
+            connection, period, previous_close, _inspection_cache=_inspection_cache
+        )
         if checked["order_failure"]:
             failure = checked["order_failure"]
             raise KernelError(failure["code"], failure["message"], **failure["details"])
@@ -356,7 +363,14 @@ class Periods:
 
         return require_close_contract(manifest)
 
-    def check_readiness(self, connection, period: str, previous_close=_CURRENT_CLOSE):
+    def check_readiness(
+        self,
+        connection,
+        period: str,
+        previous_close=_CURRENT_CLOSE,
+        *,
+        _inspection_cache=None,
+    ):
         """Collect the exact close checks without requiring owner authorization."""
 
         month = YearMonth(period).ordinal
@@ -406,7 +420,12 @@ class Periods:
                     "close_requirements": None,
                     "issues": [],
                 }
-        collected = self.collect_current_readiness(connection, period)
+        collected = self.collect_current_readiness(
+            connection,
+            period,
+            closed_through=previous_close["period"] if previous_close else None,
+            _inspection_cache=_inspection_cache,
+        )
         return {
             "period": period,
             "previous_close": previous_close,
@@ -417,7 +436,14 @@ class Periods:
             "issues": collected["issues"],
         }
 
-    def collect_current_readiness(self, connection, period: str):
+    def collect_current_readiness(
+        self,
+        connection,
+        period: str,
+        *,
+        closed_through=_CURRENT_CLOSE,
+        _inspection_cache=None,
+    ):
         """Collect current issues without interpreting a historical close boundary."""
 
         month = YearMonth(period).ordinal
@@ -428,7 +454,22 @@ class Periods:
         )
         from .materials import check_completeness
 
-        material_coverage = check_completeness(connection, month, self.store.registry)
+        material_coverage = (
+            check_completeness(
+                connection,
+                month,
+                self.store.registry,
+                _inspection_cache=_inspection_cache,
+            )
+            if closed_through is _CURRENT_CLOSE
+            else check_completeness(
+                connection,
+                month,
+                self.store.registry,
+                closed_through=closed_through,
+                _inspection_cache=_inspection_cache,
+            )
+        )
         inventories, material_issues, unpublished = self.completeness(
             connection, month, self.store.registry, material_coverage=material_coverage
         )
@@ -672,12 +713,19 @@ class Periods:
                 "digest": previous["digest"].hex(),
             }
         )
+        from .materials import _CompletenessInspectionCache
+
+        inspection_cache = _CompletenessInspectionCache(connection)
         manifests = []
         for ordinal in range(remaining, last.ordinal + 1):
             month = str(YearMonth.from_ordinal(ordinal))
             try:
                 manifest = self._manifest(
-                    connection, month, owner_confirmation, previous_close=previous
+                    connection,
+                    month,
+                    owner_confirmation,
+                    previous_close=previous,
+                    _inspection_cache=inspection_cache,
                 )
             except KernelError as error:
                 error.details["closing_period"] = month

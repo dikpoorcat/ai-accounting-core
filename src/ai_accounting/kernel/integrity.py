@@ -708,10 +708,47 @@ def _check_closes(engine, connection, source, *, through_period=None):
         closes.append((row, manifest))
     if not closes:
         return 0, []
-    inventory_ids = {ident for _, manifest in closes for ident in manifest["inventories"].values()}
+    coverage_inventory_references = []
+    for row, manifest in closes:
+        references = manifest["material_coverage"].get("inventory_versions")
+        if not isinstance(references, list):
+            _invalid("close", row["period"], "material_inventory_references_missing")
+        for reference in references:
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"inventory_id", "period", "category", "content_digest"}
+                or type(reference["inventory_id"]) is not int
+                or not isinstance(reference["period"], str)
+                or not isinstance(reference["category"], str)
+                or not isinstance(reference["content_digest"], str)
+            ):
+                _invalid("close", row["period"], "material_inventory_reference_invalid")
+            coverage_inventory_references.append((row["period"], reference))
+    inventory_ids = {
+        ident for _, manifest in closes for ident in manifest["inventories"].values()
+    } | {reference["inventory_id"] for _, reference in coverage_inventory_references}
     inventories = {
         item["id"]: item for item in _rows(connection, "material_revision", "id", inventory_ids)
     }
+    inventory_items = {ident: [] for ident in inventory_ids}
+    if inventory_ids:
+        for item in connection.execute(
+            "SELECT i.inventory_id,i.evidence_digest FROM json_each(?) ids "
+            "JOIN material_item i ON i.inventory_id=ids.value "
+            "ORDER BY i.inventory_id,i.evidence_digest",
+            (canonical(sorted(inventory_ids)),),
+        ):
+            inventory_items[item["inventory_id"]].append(item["evidence_digest"].hex())
+    from .materials import _inventory_reference
+
+    for period, reference in coverage_inventory_references:
+        inventory = inventories.get(reference["inventory_id"])
+        if (
+            inventory is None
+            or _inventory_reference(inventory, inventory_items[reference["inventory_id"]])
+            != reference
+        ):
+            _invalid("close", period, "material_inventory_reference_mismatch")
     evidence_ids = {bytes.fromhex(manifest["owner_confirmation"]) for _, manifest in closes} | {
         bytes(item["evidence_digest"]) for item in inventories.values()
     }

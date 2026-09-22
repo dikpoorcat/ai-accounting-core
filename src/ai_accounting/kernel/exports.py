@@ -306,16 +306,20 @@ class Exports:
                     "指定来源不属于本次可代发范围",
                     source_ids=sorted(set(requested) - eligible),
                 )
-            from .materials import check_completeness
+            from .materials import check_completeness_many
 
             inventory_versions, material_coverage_versions = {}, {}
+            coverage_by_month = check_completeness_many(
+                connection,
+                (YearMonth(source_period).ordinal for source_period in periods),
+                self.store.registry,
+            )
             for source_period in sorted(periods):
-                coverage = check_completeness(
-                    connection, YearMonth(source_period).ordinal, self.store.registry
-                )
+                source_month = YearMonth(source_period).ordinal
+                coverage = coverage_by_month[source_month]
                 inventories, issues, unpublished = Periods.completeness(
                     connection,
-                    YearMonth(source_period).ordinal,
+                    source_month,
                     self.store.registry,
                     material_coverage=coverage,
                 )

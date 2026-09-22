@@ -1463,7 +1463,7 @@ class Dashboard:
         if snapshot:
             snapshot.attach_recorded_times()
         return {
-            "schema_version": 4,
+            "schema_version": 5,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
@@ -1524,7 +1524,7 @@ class Dashboard:
                 reads.connection, period, as_of=as_of, summary=True
             )
             return {
-                "schema_version": 2,
+                "schema_version": 3,
                 "projection": "dashboard_period_preparation_result",
                 "read_context": context,
                 "period": period,
@@ -2115,7 +2115,12 @@ class Dashboard:
         with self._snapshot(period) as snap:
             self._check_page_version(snap, cursor, expected_version)
             data = snap.queries._business_status(
-                snap.connection, subject_id, period, as_of=as_of, summary=True
+                snap.connection,
+                subject_id,
+                period,
+                as_of=as_of,
+                summary=True,
+                include_payroll_confirmation=True,
             )
             snap.as_of = data["as_of"]
             filters = {
@@ -4360,7 +4365,7 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
         "cash_ending_year_to_date_fen": "累计现金余额勾稽",
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "close_state": details.get("close_state", "closed" if exportable else "open"),
         "readiness_state": "ready" if ready else "blocked",
         "carry_forward": {

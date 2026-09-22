@@ -16,6 +16,17 @@ function title(value: unknown) {
 function state(value: unknown) { const item = record(value); return text(item.settlement_status) || text(item.status) || text(item.selection_status) || text(item.completion_status) || text(record(item.review).status); }
 function issues(value: unknown) { const item = record(value); return ["issues", "fact_issues", "source_issues", "contract_issues"].flatMap(key => Array.isArray(item[key]) ? item[key] as unknown[] : []).concat(item.result_issue ? [item.result_issue] : []); }
 function candidates(value: unknown) { const item = record(value); return Array.isArray(item.candidate_selections) ? item.candidate_selections as unknown[] : []; }
+function payrollConfirmation(value: unknown) {
+  const confirmation = record(record(value).payroll_confirmation);
+  return text(confirmation.mode) ? confirmation : null;
+}
+function payrollConfirmationMode(value: unknown) {
+  return text(record(value).mode) === "explicit_no_change" ? "负责人确认全员无变化" : "负责人确认本月工资方案";
+}
+function evidence(value: unknown) {
+  const items = record(value).evidence;
+  return Array.isArray(items) ? items.filter((item): item is string => typeof item === "string") : [];
+}
 const amounts = [["source_amount_fen", "来源金额"], ["amount_fen", "金额"], ["paid_fen", "已付款"], ["other_settled_fen", "代付、抵销等"], ["remaining_fen", "未结金额"], ["cost_fen", "账面成本"], ["book_value_fen", "账面价值"], ["company_cost_fen", "公司成本"], ["gross_salary_fen", "应发工资"], ["net_salary_fen", "应付净薪"]] as const;
 function money(value: unknown) { return value === null || typeof value === "string" ? formatFen(value) : "未提供"; }
 </script>
@@ -42,6 +53,16 @@ function money(value: unknown) { return value === null || typeof value === "stri
       <p v-if="text(record(item).message)">{{ text(record(item).message) }}</p>
       <p v-for="(issue, issueIndex) in issues(item)" :key="`issue-${issueIndex}`">{{ text(record(issue).message) || "相关来源含局部问题，需要核对。" }}</p>
       <p v-for="[key, label] in amounts.filter(([key]) => key in record(item))" :key="key">{{ label }} {{ money(record(item)[key]) }}</p>
+      <details v-if="payrollConfirmation(item)" class="payroll-confirmation">
+        <summary>查看工资确认依据</summary>
+        <p><strong>{{ payrollConfirmationMode(payrollConfirmation(item)) }}</strong></p>
+        <p>确认事实：{{ text(record(payrollConfirmation(item)).confirmation_subject_id) }} · 第 {{ record(payrollConfirmation(item)).confirmation_revision }} 版</p>
+        <p>精确事实 ID：<code>{{ text(record(payrollConfirmation(item)).confirmation_fact_id) }}</code></p>
+        <template v-if="evidence(payrollConfirmation(item)).length">
+          <p>原始依据：</p>
+          <ul><li v-for="proof in evidence(payrollConfirmation(item))" :key="proof"><code>{{ proof }}</code></li></ul>
+        </template>
+      </details>
       <BusinessStatusDetails v-if="showBusiness !== false && subject(item)" :subject-id="subject(item)" :period="period" :snapshot-version="snapshotVersion" @changed="$emit('changed')" />
       <details><summary>查看精确来源与问题</summary><pre>{{ JSON.stringify(item, null, 2) }}</pre></details>
     </article>
@@ -50,5 +71,5 @@ function money(value: unknown) { return value === null || typeof value === "stri
 </template>
 
 <style scoped>
-article { padding: 12px 0; border-bottom: 1px solid var(--line, #dde5df); } p, details { font-size: 13px; line-height: 1.7; } pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+article { padding: 12px 0; border-bottom: 1px solid var(--line, #dde5df); } p, details { font-size: 13px; line-height: 1.7; } pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; } code { overflow-wrap: anywhere; }
 </style>

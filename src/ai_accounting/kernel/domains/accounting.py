@@ -1,10 +1,13 @@
 """Conservative accounting projections for the explicitly reviewed T1 paths.
 
-Only payroll/payroll_bounded actual-withholding fact IDs and evidence are
-normalized, including their copy in the actual_withholding_adopted trace and
-the one matching source_versions entry. The complete frozen withholding fact
-and stable business identity replace its revision ID. Other source and rule
-versions, contribution traces, unknown fields and tax states remain significant.
+For payroll/payroll_bounded, validated monthly-plan or no-change confirmation
+provenance is normalized to a stable confirmed marker; its exact facts remain
+recorded by the calculation dependency graph. Actual-withholding fact IDs and
+evidence are also normalized, including their copy in the
+actual_withholding_adopted trace and the one matching source_versions entry.
+The complete frozen withholding fact and stable business identity replace its
+revision ID. Other source and rule versions, contribution traces, unknown fields
+and tax states remain significant.
 
 Only wage allocations in payment/cash_payment/platform_payment/
 payroll_reserve_payment settlements normalize source_calculation, after checking
@@ -82,6 +85,37 @@ def payroll_references(version: FactVersion, outcome: dict) -> tuple[Read, ...]:
 
 
 def project_payroll(version: FactVersion, outcome: dict, refs) -> dict:
+    values = _mapping(outcome.get("values"), "payroll_values_missing")
+    if (
+        values.get("superseded") is True
+        and isinstance(values.get("identity_correction"), str)
+        and values.get("identity_correction")
+        and values.get("obligations") == []
+        and outcome.get("lines") == []
+        and outcome.get("balances") == []
+    ):
+        return outcome
+    confirmation = _mapping(values.get("payroll_confirmation"), "payroll_confirmation_missing")
+    if confirmation.get("mode") not in {"monthly_plan", "explicit_no_change"}:
+        _incompatible("payroll_confirmation_mode_invalid")
+    for field in (
+        "confirmation_fact_id",
+        "confirmation_subject_id",
+        "confirmation_revision",
+        "profile_fact_id",
+        "contribution_policy_fact_id",
+        "income_tax_policy_fact_id",
+    ):
+        value = confirmation.get(field)
+        if field == "income_tax_policy_fact_id" and value is None:
+            continue
+        if (field == "confirmation_revision" and (type(value) is not int or value < 1)) or (
+            field != "confirmation_revision" and (not isinstance(value, str) or not value)
+        ):
+            _incompatible("payroll_confirmation_invalid")
+    # Confirmation provenance is an indispensable publication gate and dependency,
+    # while changing only that provenance does not change the accounting result.
+    values["payroll_confirmation"] = {"confirmed": True}
     sections = _actual_sections(outcome)
     if not sections:
         return outcome
@@ -162,10 +196,13 @@ def payment_references(version: FactVersion, outcome: dict) -> tuple[Read, ...]:
 
 
 def payment_comparison_reads(version: FactVersion) -> tuple[Read, ...]:
-    return tuple(dict.fromkeys(
-        Read("calculation", allocation.source_kind, "@" + allocation.source_id)
-        for allocation in version.fact.allocations if allocation.source_kind in PAYROLL_KINDS
-    ))
+    return tuple(
+        dict.fromkeys(
+            Read("calculation", allocation.source_kind, "@" + allocation.source_id)
+            for allocation in version.fact.allocations
+            if allocation.source_kind in PAYROLL_KINDS
+        )
+    )
 
 
 def project_payment(version: FactVersion, outcome: dict, refs) -> dict:
@@ -242,6 +279,9 @@ def register(registry):
         registry.register_accounting(kind, project_payroll, payroll_references)
     for kind in SETTLEMENT_PAYMENT_KINDS:
         registry.register_accounting(
-            kind, project_payment, payment_references, compares_calculations=True,
+            kind,
+            project_payment,
+            payment_references,
+            compares_calculations=True,
             comparison_reads=payment_comparison_reads,
         )

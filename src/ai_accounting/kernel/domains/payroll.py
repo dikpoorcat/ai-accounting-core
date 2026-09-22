@@ -49,6 +49,7 @@ from ai_accounting.payroll import (
 from ai_accounting.payroll.annual_bonus import AnnualBonusBracket
 from ai_accounting.payroll.income_tax import TaxBracket
 from ai_accounting.payroll.types import TraceEntry
+from ai_accounting.policy_sources import OfficialPolicySourceURL
 
 from ..contracts import (
     BalanceEffect,
@@ -62,11 +63,12 @@ from ..contracts import (
     Read,
     Registry,
 )
+from ..payroll_confirmation import confirmation_reads, resolve_payroll_confirmation
 from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, canonical, checked, sum_fen
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 Rate = Annotated[str, Field(pattern=r"^(?:0(?:\.[0-9]{1,18})?|1(?:\.0{1,18})?)$")]
-SourceURL = Annotated[str, Field(pattern=r"^https?://[^/\s]+(?:/[^\s]*)?$")]
+SourceURL = OfficialPolicySourceURL
 ExpenseClass = Literal["management", "sales", "service"]
 PAYROLL_KINDS = ("payroll", "payroll_bounded")
 UNKNOWN_DEDUCTIONS = (
@@ -391,7 +393,7 @@ class Payroll(Fact):
             for m in range(1, int(self.period[5:]))
             for kind in (*PAYROLL_KINDS, "annual_bonus")
         )
-        return (
+        reads = (
             *(Read("fact", kind, current_scope) for kind in PAYROLL_KINDS),
             Read("fact", PayrollProfile.kind, f"@{self.profile_id}"),
             Read("fact", PayrollContributionPolicy.kind, f"@{self.contribution_policy_id}"),
@@ -405,6 +407,7 @@ class Payroll(Fact):
             Read("fact", PayrollWithholdingActual.kind, current_scope),
             *prior,
         )
+        return tuple(dict.fromkeys((*reads, *confirmation_reads(self))))
 
 
 UnknownDeduction = Annotated[
@@ -791,6 +794,12 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
     contribution_policy = context.one(
         PayrollContributionPolicy.kind, f"@{fact.contribution_policy_id}"
     )
+    confirmation = resolve_payroll_confirmation(
+        version,
+        context,
+        profile_version=profile_version,
+        contribution_policy_version=contribution_policy,
+    )
     period = _month(fact.period)
     income_day = period.end_date
     if isinstance(fact, PayrollBounded):
@@ -867,6 +876,7 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
                 "tax_input": None,
                 "rule_versions": [contribution_policy.id],
                 "source_versions": [profile_version.id, *([actual.id] if actual else [])],
+                "payroll_confirmation": confirmation,
             },
             _trace(contributions.trace, burden.trace)
             + (
@@ -1072,6 +1082,7 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
                 *([treatment.id] if treatment else []),
                 *([withholding.id] if withholding is not None else []),
             ],
+            "payroll_confirmation": confirmation,
         },
         tuple(
             entry

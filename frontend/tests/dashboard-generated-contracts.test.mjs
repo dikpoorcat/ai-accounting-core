@@ -41,7 +41,7 @@ function changedField(response, predicate, value) {
 }
 
 test("generated validators accept every current backend response branch", () => {
-  assert.equal(Object.keys(samples).length, 15);
+  assert.equal(Object.keys(samples).length, 18);
   for (const [name, sample] of Object.entries(samples)) {
     const validator = validators[sample.command];
     assert(validator, `${name}: missing validator`);
@@ -52,6 +52,18 @@ test("generated validators accept every current backend response branch", () => 
   assert.equal(samples.funds_without_period.response.data, null);
   assert.equal(samples.deferred_funds.response.data.period_preparation, null);
   assert.notEqual(samples.cash_funds.response.data.period_preparation, null);
+  const missing = samples.wage_mapping_missing.response.data.period_preparation.current_followups.tax_import_mapping;
+  const unsupported = samples.wage_mapping_unsupported.response.data.period_preparation.current_followups.tax_import_mapping;
+  assert.equal(missing.status, "needs_information");
+  assert.equal(unsupported.status, "unsupported");
+  assert.equal(unsupported.blocking_scope, "tax_import_file");
+  assert.equal(unsupported.issues[0].amount_fen, "40000");
+  const late = samples.late_closed_missing_material.response.data.period_preparation.current_followups.materials.issues.find(issue => issue.code === "material_expected_missing");
+  assert(late);
+  assert.equal(late.responsibility, "closed_followup");
+  assert.deepEqual(late.origin_periods, ["2026-01"]);
+  assert.equal(late.review_period, "2026-02");
+  assert.equal(typeof late.inventory_id, "number");
 });
 
 test("generated funds validator enforces canonical int64 strings without coercing counts", () => {
@@ -97,7 +109,7 @@ test("context and funds request and validate with the company-complete final URL
   assert.equal(context.calls[0], `/api/dashboard/context?company_id=${samples.company_with_period.response.current_company.company_id}`);
 
   const funds = await clientHarness(samples.bank_funds.response);
-  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 4);
+  assert.equal((await funds.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version, 5);
   assert.equal(funds.calls[0], "/api/dashboard/funds?period=2026-09&company_id=company-from-location");
 
   const malformed = await clientHarness(changedField(samples.bank_funds.response, (key, value) => key.endsWith("_fen") && typeof value === "string", 100));
@@ -153,7 +165,7 @@ test("generated requests reject responses from a different selection or inconsis
   const filteredHarness = await clientHarness(filteredAlias);
   assert.equal(
     (await filteredHarness.client.requestDashboardFunds("/api/dashboard/funds?period=2026-09")).schema_version,
-    4,
+    5,
   );
 });
 
@@ -190,7 +202,7 @@ test("current backend samples also satisfy request-dependent context and paginat
     } catch (error) {
       assert.fail(`${name}: ${error.code ?? error}`);
     }
-    assert.equal(response.schema_version, 4, name);
+    assert.equal(response.schema_version, 5, name);
     assert.equal(harness.calls[0], path, name);
   }
 });
@@ -236,7 +248,11 @@ test("current funds samples pass the API consumer and render bank, filter, and e
         name: "filtered_bank_funds",
         request: `/api/dashboard/funds?period=2026-09&movement_account_type=bank&movement_account_id=${filteredAccountId}&statement_account_id=${filteredAccountId}&limit=1`,
         route: `/?period=2026-09&funds_view=bank&statement_account_id=${filteredAccountId}`,
-        expected: [/other-row/, /所选银行账户（名称尚未加载）/, /账户 2/],
+        expected: [
+          new RegExp(samples.filtered_bank_funds.response.data.bank_statement.rows[0].reference),
+          /所选银行账户（名称尚未加载）/,
+          /账户 2/,
+        ],
       },
       {
         name: "funds_without_period",

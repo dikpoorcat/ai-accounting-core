@@ -174,10 +174,10 @@ CREATE TABLE payee_revision(id TEXT PRIMARY KEY,party_id TEXT NOT NULL,
  evidence_digest BLOB NOT NULL REFERENCES evidence(digest),UNIQUE(party_id,revision)) STRICT;
 CREATE TABLE material_revision(id INTEGER PRIMARY KEY,period INTEGER NOT NULL,
  category TEXT NOT NULL,expected INTEGER NOT NULL CHECK(expected>=0),
- received INTEGER NOT NULL CHECK(received>=0),processed INTEGER NOT NULL CHECK(processed>=0),
+ received INTEGER NOT NULL CHECK(received>=0),
  no_business INTEGER NOT NULL CHECK(no_business IN(0,1)), evidence_digest BLOB NOT NULL
  REFERENCES evidence,
- CHECK(processed<=received),CHECK(no_business=0 OR(expected=0 AND received=0))) STRICT;
+ CHECK(no_business=0 OR(expected=0 AND received=0))) STRICT;
 CREATE INDEX material_period ON material_revision(period,category,id);
 CREATE TABLE material_item(inventory_id INTEGER NOT NULL REFERENCES material_revision,
  evidence_digest BLOB NOT NULL REFERENCES evidence,PRIMARY KEY(inventory_id,evidence_digest))

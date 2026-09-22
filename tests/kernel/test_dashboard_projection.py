@@ -220,6 +220,7 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
         company.save(source.fact, source.subject_id)
     company.save(actual(), "observed-tax")
     company.save(wage.fact, wage.subject_id)
+    company.confirm_payroll(wage.subject_id)
     company.publish(wage.subject_id)
     save_entity_display_profile(
         company.engine,

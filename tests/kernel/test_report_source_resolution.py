@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 from entity_fixture import seed_entities
+from payroll_plan_fixture import confirm_wage_inputs
 from test_opening_continuation import book as opening_fixture
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll
 from test_payroll import profile as employee_profile
@@ -371,6 +372,12 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
         contribution_policy().model_dump(mode="json"),
     )
     save("payroll_income_tax_policy", "income-tax", income_tax_policy().model_dump(mode="json"))
+    wage_confirmation = engine.register_evidence(
+        b"Synthetic owner approval of each exact wage and current sources",
+        "text/plain",
+        "wage-confirmation",
+        request_id="wage-confirmation",
+    )["digest"]
     for person in ("alice", "bob"):
         save(
             "payroll_profile",
@@ -390,6 +397,12 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
                 payroll(
                     period=period, employee_id=person, profile_id="profile-" + person
                 ).model_dump(mode="json"),
+            )
+            confirm_wage_inputs(
+                engine,
+                subject,
+                evidence=(wage_confirmation,),
+                request_id="confirm-" + subject,
             )
             publish(subject)
     sources = [

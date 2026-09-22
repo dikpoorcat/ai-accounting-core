@@ -14,6 +14,7 @@ from test_payroll import (
     payroll,
     profile,
     version,
+    with_payroll_plan,
 )
 from test_payroll_tax_declarations import adopt, declare, pay, preview
 
@@ -72,10 +73,11 @@ def august_case():
 
 def test_actual_900_replaces_300_without_changing_relationship_or_policy():
     wage, sources = august_case()
-    computed = calculate_payroll(wage, context_for(wage, sources))
+    computed = calculate_payroll(wage, context_for(wage, with_payroll_plan(wage, sources)))
     assert computed.values["tax_fen"] == 30000
     observed = version(actual(), "actual")
-    adopted = calculate_payroll(wage, context_for(wage, [*sources, observed]))
+    adopted_sources = with_payroll_plan(wage, [*sources, observed])
+    adopted = calculate_payroll(wage, context_for(wage, adopted_sources))
     assert adopted.values["tax_fen"] == 90000
     assert adopted.values["net_fen"] == 3910000
     assert adopted.values["calculated_tax_fen"] == 30000
@@ -97,7 +99,12 @@ def test_actual_900_replaces_300_without_changing_relationship_or_policy():
         "september",
     )
     next_result = calculate_payroll(
-        september, context_for(september, sources, [as_calculation(wage, adopted)])
+        september,
+        context_for(
+            september,
+            with_payroll_plan(september, sources),
+            [as_calculation(wage, adopted)],
+        ),
     )
     assert next_result.values["prior_tax_state"]["cumulative_withheld_tax_fen"] == 90000
     assert next_result.values["tax_fen"] == 0
@@ -107,14 +114,25 @@ def test_actual_900_replaces_300_without_changing_relationship_or_policy():
 def test_actual_requires_evidence_and_unique_employee_month():
     wage, sources = august_case()
     with pytest.raises(NeedsInformation, match="需要依据"):
-        calculate_payroll(wage, context_for(wage, [*sources, version(actual(), evidence=())]))
+        facts = with_payroll_plan(wage, [*sources, version(actual(), evidence=())])
+        calculate_payroll(wage, context_for(wage, facts))
     with pytest.raises(KernelError, match="多个"):
         calculate_payroll(
-            wage, context_for(wage, [*sources, version(actual(), "one"), version(actual(), "two")])
+            wage,
+            context_for(
+                wage,
+                with_payroll_plan(
+                    wage,
+                    [*sources, version(actual(), "one"), version(actual(), "two")],
+                ),
+            ),
         )
     unrelated = version(actual(employee_id="other"), "other")
     assert (
-        calculate_payroll(wage, context_for(wage, [*sources, unrelated])).values["tax_fen"] == 30000
+        calculate_payroll(
+            wage, context_for(wage, with_payroll_plan(wage, [*sources, unrelated]))
+        ).values["tax_fen"]
+        == 30000
     )
 
 
@@ -127,7 +145,8 @@ def test_actual_amount_rejects_non_integer_or_overflow(amount):
 def test_actual_above_available_salary_never_invents_a_negative_payable():
     wage, sources = august_case()
     with pytest.raises(KernelError):
-        calculate_payroll(wage, context_for(wage, [*sources, version(actual(amount=4000001))]))
+        facts = with_payroll_plan(wage, [*sources, version(actual(amount=4000001))])
+        calculate_payroll(wage, context_for(wage, facts))
 
 
 def test_actual_tax_keeps_unknown_deductions_unknown():
@@ -135,8 +154,9 @@ def test_actual_tax_keeps_unknown_deductions_unknown():
     data = wage.fact.model_dump() | {"special_additional_deduction_fen": None}
     wage = replace(wage, fact=PayrollBounded(**data))
     with pytest.raises(NeedsInformation):
-        calculate_payroll(wage, context_for(wage, sources))
-    result = calculate_payroll(wage, context_for(wage, [*sources, version(actual())]))
+        calculate_payroll(wage, context_for(wage, with_payroll_plan(wage, sources)))
+    facts = with_payroll_plan(wage, [*sources, version(actual())])
+    result = calculate_payroll(wage, context_for(wage, facts))
     assert result.values["tax_fen"] == 90000
     assert result.values["tax_state"] is None
     assert result.values["tax_input"]["special_additional_deduction_fen"] is None

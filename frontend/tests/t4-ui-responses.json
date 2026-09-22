@@ -62,7 +62,7 @@
     "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
   },
   "brief": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -313,6 +313,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       },
@@ -1676,7 +1683,7 @@
     }
   },
   "funds": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -2133,6 +2140,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       },
@@ -2146,7 +2160,7 @@
     }
   },
   "employees": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -3029,13 +3043,20 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       }
     }
   },
   "assets": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "67a5823795958be6b922da6b6b25ca81cc4485d20e21b9207fa012ace33318c1",
     "selected_period": {
       "key": "2026-11",
@@ -3805,13 +3826,20 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       }
     }
   },
   "reports": {
-    "schema_version": 2,
+    "schema_version": 3,
     "close_state": "open",
     "readiness_state": "blocked",
     "carry_forward": {
@@ -5278,6 +5306,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       },
@@ -5467,6 +5502,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       },
@@ -5658,6 +5700,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       }

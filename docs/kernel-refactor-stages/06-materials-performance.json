@@ -1,0 +1,105 @@
+{
+  "fixture": "isolated synthetic companies; one cross-period CSV; one row per month",
+  "measurement": "Two open review months in one snapshot after the latest synthetic close boundary; SQL counters are application-issued calls and rows/bytes returned to Python",
+  "timing_context": "local Windows workstation during concurrent Stage 6 development; warm filesystem cache after synthetic setup",
+  "repeats": 3,
+  "results": [
+    {
+      "historical_months": 12,
+      "review_months": 2,
+      "source_files": 1,
+      "source_rows": 12,
+      "source_bytes": 250,
+      "sql_calls": 25,
+      "sql_read_calls": 24,
+      "returned_sql_rows": 133,
+      "returned_sql_value_bytes": 21265,
+      "parse_calls": 1,
+      "parsed_bytes": 250,
+      "coverage_rows": 24,
+      "fact_dependencies": 14,
+      "source_version": "e5c26150db0045de945ce1872d26a0b4",
+      "seconds": [
+        0.011873400071635842,
+        0.006798199960030615,
+        0.010298899956978858
+      ],
+      "median_seconds": 0.010298899956978858,
+      "database_bytes": 2461696
+    },
+    {
+      "historical_months": 48,
+      "review_months": 2,
+      "source_files": 1,
+      "source_rows": 48,
+      "source_bytes": 970,
+      "sql_calls": 25,
+      "sql_read_calls": 24,
+      "returned_sql_rows": 493,
+      "returned_sql_value_bytes": 81889,
+      "parse_calls": 1,
+      "parsed_bytes": 970,
+      "coverage_rows": 96,
+      "fact_dependencies": 50,
+      "source_version": "af7484a4524a4f92820bb88f01d87b02",
+      "seconds": [
+        0.025993800023570657,
+        0.03053699992597103,
+        0.026360100018791854
+      ],
+      "median_seconds": 0.026360100018791854,
+      "database_bytes": 3063808
+    },
+    {
+      "historical_months": 120,
+      "review_months": 2,
+      "source_files": 1,
+      "source_rows": 120,
+      "source_bytes": 2431,
+      "sql_calls": 25,
+      "sql_read_calls": 24,
+      "returned_sql_rows": 1213,
+      "returned_sql_value_bytes": 203327,
+      "parse_calls": 1,
+      "parsed_bytes": 2431,
+      "coverage_rows": 240,
+      "fact_dependencies": 122,
+      "source_version": "0ebfe061d9164b04884593171cef059f",
+      "seconds": [
+        0.05939650000073016,
+        0.048736499971710145,
+        0.0530179999768734
+      ],
+      "median_seconds": 0.0530179999768734,
+      "database_bytes": 4481024
+    }
+  ],
+  "large_file": {
+    "source_files": 1,
+    "source_rows": 6000,
+    "closed_rows": 3000,
+    "future_rows": 1500,
+    "unknown_rows": 1500,
+    "source_bytes": 137698,
+    "sql_calls": 16,
+    "sql_read_calls": 15,
+    "returned_sql_rows": 4514,
+    "returned_sql_value_bytes": 512419,
+    "parse_calls": 1,
+    "parsed_bytes": 137698,
+    "coverage_rows": 9000,
+    "issue_responsibilities": {
+      "closed_followup": 6000,
+      "unassigned": 6000
+    },
+    "fact_dependencies": 2,
+    "source_version": "0304494305844a1c8cffcee4219aad76",
+    "seconds": [
+      0.8810749999247491,
+      0.8270384999923408,
+      0.8935130999889225
+    ],
+    "median_seconds": 0.8810749999247491,
+    "database_bytes": 2367488
+  }
+}

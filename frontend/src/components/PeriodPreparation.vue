@@ -49,6 +49,11 @@ const groups = computed(() =>
       label: "外部办理依据",
       issues: props.preparation.current_followups.external.fact_issues ?? [],
     },
+    {
+      key: "tax-import-mapping",
+      label: "个税文件列对应（仅影响文件）",
+      issues: props.preparation.current_followups.tax_import_mapping.issues,
+    },
   ].filter((group) => group.issues.length),
 );
 const issueCount = computed(() =>
@@ -238,6 +243,12 @@ function focusSettlements() {
       }}
       项文件任务结果或引用依据待核对。
     </p>
+    <p
+      v-if="preparation.current_followups.tax_import_mapping.issues.length"
+      class="needs-check"
+    >
+      个税文件的扣款列还有问题需要处理；这项检查不阻止工资记账、付款或关账。
+    </p>
 
     <details v-if="groups.length" class="issue-summary" open>
       <summary>{{ issueCount }} 条事项需要核对</summary>
@@ -253,6 +264,9 @@ function focusSettlements() {
           <ol>
             <li v-for="(issue, index) in group.issues" :key="index">
               <p>{{ issue.message || "相关依据需要核对，见详细来源。" }}</p>
+              <p v-if="'responsibility' in issue && issue.responsibility === 'closed_followup'">
+                已关账月份的资料问题，仍需在开放期处理。
+              </p>
               <RouterLink
                 v-if="bank(issue)"
                 :to="{

@@ -98,6 +98,16 @@ def wage_outcome(source):
             "source_versions": ["profile-v1", source.id],
             "rule_versions": ["rule-v1"],
             "tax_state": {"cumulative_withheld_tax_fen": 100},
+            "payroll_confirmation": {
+                "mode": "monthly_plan",
+                "confirmation_fact_id": "plan-fact-v1",
+                "confirmation_subject_id": "plan",
+                "confirmation_revision": 1,
+                "notice_fact_ids": [],
+                "profile_fact_id": "profile-v1",
+                "contribution_policy_fact_id": "rule-v1",
+                "income_tax_policy_fact_id": "tax-rule-v1",
+            },
         },
         "explanation": [
             {"step": "contribution_burden_allocation", "values": {"code": "pension"}},
@@ -125,6 +135,17 @@ def test_actual_evidence_revision_has_equal_projection_with_exact_frozen_referen
     assert results[0] == results[1]
     assert results[0]["values"]["source_versions"][0] == "profile-v1"
     assert results[0]["values"]["rule_versions"] == ["rule-v1"]
+
+
+def test_payroll_confirmation_revision_is_not_an_accounting_difference():
+    source = withholding("actual-v1", ("a" * 64,))
+    original = wage_outcome(source)
+    changed = deepcopy(original)
+    changed["values"]["payroll_confirmation"].update(
+        confirmation_fact_id="plan-fact-v2", confirmation_revision=2
+    )
+    refs = References(facts=(source,))
+    assert project_payroll(wage(), original, refs) == project_payroll(wage(), changed, refs)
 
 
 @pytest.mark.parametrize(

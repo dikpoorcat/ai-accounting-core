@@ -26,6 +26,21 @@ export interface UnestablishedSelection {
   reason?: string;
   [key: string]: unknown;
 }
+export interface TaxImportMappingFollowup {
+  status: "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  blocking_scope: "tax_import_file";
+  mapping_fact_ids: string[];
+  calculation_ids: string[];
+  issues: Array<{
+    code: string;
+    category: "management_fact" | "capability" | "publication";
+    field: string;
+    message: string;
+    employee_id?: string;
+    component_codes?: string[];
+    amount_fen?: string;
+  }>;
+}
 export interface PeriodPreparation {
   company_id: string;
   database_id: string;
@@ -45,6 +60,7 @@ export interface PeriodPreparation {
     settlements: { status: string; cutoff_period?: string; current_cutoff_period?: string; complete?: boolean; unestablished_state_selection_count?: number; issues?: BusinessIssue[]; obligation_count: number; movement_count: number; source_amount_fen: string | null; paid_fen: string | null; other_settled_fen: string | null; remaining_fen: string | null };
     external: { status: string; scope_period?: string; scope_semantics?: string; obligation_count: number; completion_status_counts: Record<string, number>; fact_issues?: BusinessIssue[] };
     file_jobs: { total_count: number; status_counts: Record<string, number>; issue_count: number };
+    tax_import_mapping: TaxImportMappingFollowup;
   };
   read_semantics: Record<string, string>;
 }
@@ -74,6 +90,16 @@ export interface PublicationAdoption {
   result_digest: string;
   role: string;
   selection_proof: Record<string, unknown>;
+  payroll_confirmation?: PayrollConfirmationSource;
+}
+
+export interface PayrollConfirmationSource {
+  mode: "monthly_plan" | "explicit_no_change";
+  confirmation_fact_id: string;
+  confirmation_subject_id: string;
+  confirmation_revision: number;
+  confirmation_kind: string;
+  evidence: string[];
 }
 
 export function businessStateLabel(status: string | null | undefined) {
@@ -96,8 +122,8 @@ export interface DashboardPageQuery {
 }
 
 const versions: Record<string, number> = {
-  context: 2, brief: 4, funds: 4, employees: 4, assets: 4,
-  "quarterly-report": 2, "business-status": 3, "period-preparation": 2,
+  context: 2, brief: 5, funds: 5, employees: 5, assets: 5,
+  "quarterly-report": 3, "business-status": 3, "period-preparation": 3,
 };
 const primaryCollections: Record<string, string> = {
   brief: "vouchers", funds: "movements", employees: "employees", assets: "assets",
@@ -120,8 +146,22 @@ function validPreparation(value: unknown): boolean {
   const current = value.current_followups;
   return record(current) && current.affects_frozen_readiness === false
     && ["materials", "accounting", "close_requirements", "settlements", "external", "file_jobs"].every(key => record(current[key]))
+    && validTaxImportMapping(current.tax_import_mapping)
     && ["materials", "accounting", "close_requirements"].every(key => Array.isArray((current[key] as Record<string, unknown>).issues))
     && (value.frozen_readiness === null || record(value.frozen_readiness));
+}
+
+function validTaxImportMapping(value: unknown): boolean {
+  return record(value) && value.blocking_scope === "tax_import_file"
+    && ["ready", "needs_information", "unsupported", "pending_publication", "not_applicable"].includes(String(value.status))
+    && Array.isArray(value.mapping_fact_ids) && value.mapping_fact_ids.every(id => typeof id === "string")
+    && Array.isArray(value.calculation_ids) && value.calculation_ids.every(id => typeof id === "string")
+    && Array.isArray(value.issues) && value.issues.every(issue => record(issue)
+      && ["code", "field", "message"].every(key => typeof issue[key] === "string")
+      && ["management_fact", "capability", "publication"].includes(String(issue.category))
+      && (issue.employee_id === undefined || typeof issue.employee_id === "string")
+      && (issue.component_codes === undefined || (Array.isArray(issue.component_codes) && issue.component_codes.every(code => typeof code === "string")))
+      && (issue.amount_fen === undefined || typeof issue.amount_fen === "string"));
 }
 
 function validReadContext(value: unknown): value is DashboardReadContext & Record<string, unknown> {

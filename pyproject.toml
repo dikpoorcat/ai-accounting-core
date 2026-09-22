@@ -51,6 +51,7 @@ only-include = [
   "src/ai_accounting/intangible_assets.py",
   "src/ai_accounting/fact_requirements.py",
   "src/ai_accounting/mybank_export.py",
+  "src/ai_accounting/policy_sources.py",
   "src/ai_accounting/financial_statement_template.py",
   "src/ai_accounting/templates/financial_reports",
   "src/ai_accounting/static/dashboard",

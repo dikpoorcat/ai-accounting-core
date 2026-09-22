@@ -138,6 +138,7 @@ def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     company.save(payment(), "actual-pay")
     company.publish("actual-pay")
@@ -165,6 +166,7 @@ def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path
     changed = payroll().model_copy(update={"accounting_gross_salary_fen": 1100000})
     company.save(changed, "january", revision=1)
     assert "completion" in company.pending()
+    company.confirm_payroll("january")
     company.publish("january")
     revised_payment = company.current("actual-pay", "payment")
     assert revised_payment.fact_id == original_payment.fact_id
@@ -452,6 +454,7 @@ def test_completion_accepts_only_one_exact_calculation_set(tmp_path, invalid_bas
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     service = workflow.Workflow(company.engine)
     basis = service.obligation_basis("obligation")
@@ -487,6 +490,7 @@ def test_quarterly_basis_is_explicit_current_calculations_not_old_close_manifest
         (obligation("quarterly_tax_and_reports"), "quarter"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     frozen = company.close("2026-01")
     service = workflow.Workflow(company.engine)
@@ -498,6 +502,7 @@ def test_quarterly_basis_is_explicit_current_calculations_not_old_close_manifest
     company.save(
         payroll().model_copy(update={"accounting_gross_salary_fen": 1100000}), "january", 1
     )
+    company.confirm_payroll("january")
     company.publish("january", posting_period="2026-02")
     assert Periods(company.engine).closed_report("2026-01") == frozen
     assert company.current("completion", "external_completion").values["accepted_calculations"] == (
@@ -522,6 +527,7 @@ def test_explicit_zero_payroll_and_effective_end_satisfy_population_without_infe
         (payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0), "january"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     assert company.current("january").values["net_fen"] == 0
     company.close("2026-01")
@@ -539,6 +545,7 @@ def test_confirmed_submission_preserves_source_and_cannot_silently_lose_it(tmp_p
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     service = workflow.Workflow(company.engine)
     basis = service.obligation_basis("obligation")
@@ -569,6 +576,7 @@ def submitted_payroll(tmp_path, monkeypatch):
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
     with monkeypatch.context() as clock:
@@ -592,6 +600,7 @@ def test_equivalent_recalculation_preserves_actual_submission_after_published_re
     # New confirmed evidence and fact version, with exactly the same business data.
     company.save(payroll(), "january", revision=1)
     assert service.query("2026-01", as_of="2026-03-01")["obligations"][0]["status"] == "due"
+    company.confirm_payroll("january")
     company.publish("january")
     current_payroll = company.current("january")
     reviewed = company.current("completion", "external_completion")
@@ -651,8 +660,10 @@ def test_external_completion_rejects_unverifiable_or_foreign_history(submitted_p
             basis["accepted_calculations"][0]["subject_id"] = "completion"
         else:
             company.save(profile(), "profile", revision=1)
+            company.confirm_payroll("january")
             company.publish("profile")
             company.save(payroll(period="2026-02"), "february")
+            company.confirm_payroll("february")
             company.publish("february")
             accepted_id = company.current("february").id
             basis["accepted_calculations"][0]["subject_id"] = "february"
@@ -686,6 +697,7 @@ def test_quarter_review_excludes_monthly_submission_revisions_from_accounting_ba
         (obligation("quarterly_tax_and_reports"), "quarter"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january")
     company.publish("january")
     service = workflow.Workflow(company.engine)
     company.save(
@@ -702,6 +714,7 @@ def test_quarter_review_excludes_monthly_submission_revisions_from_accounting_ba
     company.publish("quarter-completion")
     old_monthly = company.current("monthly-completion", "external_completion")
     company.save(payroll(), "january", revision=1)
+    company.confirm_payroll("january")
     company.publish("january", posting_period="2026-02")
     assert (
         company.current("monthly-completion", "external_completion").result_digest

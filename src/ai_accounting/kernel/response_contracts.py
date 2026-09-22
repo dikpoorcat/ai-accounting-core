@@ -51,8 +51,7 @@ def _boolean_literal(value):
 
 
 Version2 = Annotated[Literal[2], BeforeValidator(_integer_literal)]
-Version3 = Annotated[Literal[3], BeforeValidator(_integer_literal)]
-Version4 = Annotated[Literal[4], BeforeValidator(_integer_literal)]
+Version5 = Annotated[Literal[5], BeforeValidator(_integer_literal)]
 FalseValue = Annotated[Literal[False], BeforeValidator(_boolean_literal)]
 TrueValue = Annotated[Literal[True], BeforeValidator(_boolean_literal)]
 
@@ -200,6 +199,7 @@ class ReadinessIssue(ResponseObject):
     semantics: NotRequired[str]
     domain: NotRequired[str]
     category: NotRequired[str]
+    inventory_id: NotRequired[Count]
     subject_id: NotRequired[str]
     fact_id: NotRequired[str]
     source_id: NotRequired[str]
@@ -243,6 +243,8 @@ class ReadinessIssue(ResponseObject):
     candidate_subject_id: NotRequired[str]
     pair_digest: NotRequired[str]
     review_period: NotRequired[Month]
+    origin_periods: NotRequired[list[Month]]
+    responsibility: NotRequired[Literal["direct", "closed_followup", "unassigned"]]
     signals: NotRequired[list[DuplicateSignal]]
 
 
@@ -351,6 +353,26 @@ class FileJobFollowup(ResponseObject):
     issue_count: Count
 
 
+class TaxImportMappingIssue(ResponseObject):
+    code: str
+    category: Literal["management_fact", "capability", "publication"]
+    field: str
+    message: str
+    employee_id: NotRequired[str]
+    component_codes: NotRequired[list[str]]
+    amount_fen: NotRequired[WireFen]
+
+
+class TaxImportMappingFollowup(ResponseObject):
+    status: Literal[
+        "ready", "needs_information", "unsupported", "pending_publication", "not_applicable"
+    ]
+    blocking_scope: Literal["tax_import_file"]
+    mapping_fact_ids: list[str]
+    calculation_ids: list[str]
+    issues: list[TaxImportMappingIssue]
+
+
 class CurrentFollowups(ResponseObject):
     knowledge: Literal["current_knowledge"]
     affects_frozen_readiness: FalseValue
@@ -360,6 +382,7 @@ class CurrentFollowups(ResponseObject):
     settlements: SettlementFollowup
     external: ExternalFollowup
     file_jobs: FileJobFollowup
+    tax_import_mapping: TaxImportMappingFollowup
 
 
 class PreparationReadSemantics(ResponseObject):
@@ -610,7 +633,7 @@ class FundsData(ResponseObject):
 
 
 class FundsDashboardResponse(ResponseObject):
-    schema_version: Version4
+    schema_version: Version5
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

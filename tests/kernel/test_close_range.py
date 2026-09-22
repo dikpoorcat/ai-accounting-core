@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections import Counter
 
 import pytest
 from test_new_company_reports import profile
@@ -117,6 +118,7 @@ def test_range_freezes_zero_formation_reports_once_and_leaves_august_open(book, 
             "adopted_results",
             "opening_calculation_id",
             "inventories",
+            "material_coverage",
             "readiness",
             "trial_balance",
         ):
@@ -341,7 +343,9 @@ def test_range_does_not_skip_earlier_unpublished_business(book):
     assert rejected.value.details["period"] == "2025-12"
 
 
-def test_range_freezes_same_business_and_reports_as_sequential_close(request, tmp_path):
+def test_range_freezes_same_business_and_reports_as_sequential_close(
+    request, tmp_path, monkeypatch
+):
     report_fixture = request.getfixturevalue("reporting_book")
     engine = report_fixture[0]
     reports = scenario(report_fixture)
@@ -377,8 +381,20 @@ def test_range_freezes_same_business_and_reports_as_sequential_close(request, tm
             epochs=preview["epochs"],
             request_id="sequential-" + month,
         )
+    from ai_accounting.kernel import materials
+
+    inspections = Counter()
+    original_inspect = materials.inspect_bytes
+
+    def counted_inspect(raw, specification):
+        inspections[raw] += 1
+        return original_inspect(raw, specification)
+
+    monkeypatch.setattr(materials, "inspect_bytes", counted_inspect)
     preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
+    assert inspections and set(inspections.values()) == {1}
     periods.close_range(**arguments(preview))
+    assert set(inspections.values()) == {2}
     for month in ("2026-01", "2026-02", "2026-03"):
         one, batch = reference.closed_report(month), periods.closed_report(month)
         assert batch["vouchers"]

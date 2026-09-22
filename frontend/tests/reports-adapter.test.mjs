@@ -41,7 +41,7 @@ function dashboardContext(companyId, periods = [["2026-01", "open"]]) {
 test("chosen immutable continuation source follows the company through preview and export", async () => {
   globalThis.window = { location: { origin: "http://127.0.0.1:7000", search: "?company_id=company-a" } };
   const report = {
-    schema_version: 2, period_preparations: [], period: { year: 2026, quarter: 3 },
+    schema_version: 3, period_preparations: [], period: { year: 2026, quarter: 3 },
     export: { available: true, preview_digest: "digest", epochs: { accounting: 1, material: 2, management: 3 } },
     carry_forward: { selected_fact_id: "immutable-source", options: [] },
   };

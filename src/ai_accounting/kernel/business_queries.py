@@ -35,6 +35,11 @@ _PROFILE_FIELDS = (
     "beneficiary_id",
     "handler_id",
 )
+_PAYROLL_KINDS = {"payroll", "payroll_bounded"}
+_PAYROLL_CONFIRMATION_KINDS = {
+    "monthly_plan": {"payroll_plan_v2", "payroll_plan_bounded"},
+    "explicit_no_change": {"payroll_no_change_v2"},
+}
 
 
 def _today_china() -> str:
@@ -87,6 +92,87 @@ class BusinessQueries:
 
     def _calculation(self, connection, calculation_id):
         return self._reads(connection).calculation(calculation_id)
+
+    def _payroll_confirmation_source(self, connection, calculation):
+        """Present the exact confirmation source retained by a published wage result."""
+
+        if calculation["kind"] not in _PAYROLL_KINDS:
+            return None
+        values = calculation["outcome"].get("values")
+        if not isinstance(values, dict):
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资计算缺少有效结果内容",
+                component="business_status",
+                calculation_id=calculation["id"],
+            )
+        if (
+            values.get("superseded") is True
+            and isinstance(values.get("identity_correction"), str)
+            and values.get("identity_correction")
+            and values.get("obligations") == []
+            and calculation["outcome"].get("lines") == []
+            and calculation["outcome"].get("balances") == []
+        ):
+            return None
+        confirmation = values.get("payroll_confirmation")
+        if not isinstance(confirmation, dict):
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资计算缺少工资确认来源",
+                component="business_status",
+                calculation_id=calculation["id"],
+            )
+        mode = confirmation.get("mode")
+        fact_id = confirmation.get("confirmation_fact_id")
+        subject_id = confirmation.get("confirmation_subject_id")
+        revision = confirmation.get("confirmation_revision")
+        if (
+            mode not in _PAYROLL_CONFIRMATION_KINDS
+            or not isinstance(fact_id, str)
+            or not fact_id
+            or not isinstance(subject_id, str)
+            or not subject_id
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资计算的工资确认来源无效",
+                component="business_status",
+                calculation_id=calculation["id"],
+            )
+        try:
+            source = self._fact(connection, fact_id)
+        except (KeyError, ValueError):
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资计算引用的确认事实不存在或无效",
+                component="business_status",
+                calculation_id=calculation["id"],
+                confirmation_fact_id=fact_id,
+            ) from None
+        if (
+            source["subject_id"] != subject_id
+            or source["revision"] != revision
+            or source["kind"] not in _PAYROLL_CONFIRMATION_KINDS[mode]
+            or not source["evidence"]
+        ):
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资计算引用的确认事实与保存来源不匹配",
+                component="business_status",
+                calculation_id=calculation["id"],
+                confirmation_fact_id=fact_id,
+            )
+        return {
+            "mode": mode,
+            "confirmation_fact_id": fact_id,
+            "confirmation_subject_id": subject_id,
+            "confirmation_revision": revision,
+            "confirmation_kind": source["kind"],
+            "evidence": list(source["evidence"]),
+        }
 
     def _parents(self, connection, calculation_id):
         return self._reads(connection).parents(calculation_id)
@@ -1517,6 +1603,7 @@ class BusinessQueries:
         *,
         as_of: str | None = None,
         summary=False,
+        include_payroll_confirmation=False,
     ):
         """Full public contract inside a caller-owned company read transaction."""
         period, as_of = str(YearMonth(period)), str(ActualDate(as_of or _today_china()))
@@ -1546,6 +1633,12 @@ class BusinessQueries:
             )
             latest["recorded_at"] = timestamp
         current_publication = self._current_publication(connection, subject_id)
+        if current_publication is not None and (not summary or include_payroll_confirmation):
+            confirmation = self._payroll_confirmation_source(
+                connection, current_publication["calculation"]
+            )
+            if confirmation is not None:
+                current_publication["payroll_confirmation"] = confirmation
         selected = self._selected_accounting(
             connection, subject_id, period, include_lines=not summary
         )
@@ -1679,6 +1772,13 @@ class BusinessQueries:
         else:
             closure = {"state": "open"}
             frozen_adoption = None
+        if frozen_adoption is not None and (not summary or include_payroll_confirmation):
+            confirmation = self._payroll_confirmation_source(
+                connection,
+                self._calculation(connection, frozen_adoption["calculation_id"]),
+            )
+            if confirmation is not None:
+                frozen_adoption["payroll_confirmation"] = confirmation
         asset_members = self._selected_asset_members(
             connection, period, kinds={subject["kind"]}, subjects={subject_id}
         )
@@ -2183,6 +2283,8 @@ class BusinessQueries:
         summary=False,
     ):
         """Compose readiness inside a caller-owned read snapshot."""
+        from .tax_import import assess_tax_import_mapping
+
         period, as_of = str(YearMonth(period)), str(ActualDate(as_of or _today_china()))
         month = YearMonth(period).ordinal
         reads = self._reads(connection)
@@ -2306,6 +2408,9 @@ class BusinessQueries:
             ),
             "external": external,
             "file_jobs": self._file_jobs(connection, None, period, summary=summary),
+            "tax_import_mapping": assess_tax_import_mapping(
+                self.store, connection, YearMonth(period)
+            ),
         }
         result = {
             "company_id": self.store.company_id,

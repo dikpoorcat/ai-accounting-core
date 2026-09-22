@@ -4,7 +4,7 @@ from .contracts import KernelError
 from .types import YearMonth
 
 CLOSE_FORMAT = "ai-accounting-kernel/2/period-close"
-CLOSE_FORMAT_VERSION = 2
+CLOSE_FORMAT_VERSION = 3
 ADOPTION_ROLES = frozenset({"journal_basis", "state_only", "opening_basis", "asset_batch_owner"})
 
 

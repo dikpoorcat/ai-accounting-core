@@ -958,7 +958,12 @@
     {
       "type": "table",
       "name": "fact_payroll_no_change_v2",
-      "sql": "CREATE TABLE fact_payroll_no_change_v2(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"prior_period\" INTEGER NOT NULL CHECK(\"prior_period\" BETWEEN 0 AND 119987),\"basis_digest\" TEXT NOT NULL,\"employee_roster_unchanged\" INTEGER NOT NULL CHECK(\"employee_roster_unchanged\" IN(0,1)),\"salary_and_deductions_unchanged\" INTEGER NOT NULL CHECK(\"salary_and_deductions_unchanged\" IN(0,1))) STRICT"
+      "sql": "CREATE TABLE fact_payroll_no_change_v2(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"prior_period\" INTEGER NOT NULL CHECK(\"prior_period\" BETWEEN 0 AND 119987),\"employee_roster_unchanged\" INTEGER NOT NULL CHECK(\"employee_roster_unchanged\" IN(0,1)),\"salary_and_deductions_unchanged\" INTEGER NOT NULL CHECK(\"salary_and_deductions_unchanged\" IN(0,1))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fact_payroll_no_change_v2_employees",
+      "sql": "CREATE TABLE fact_payroll_no_change_v2_employees(revision_id TEXT NOT NULL REFERENCES fact_payroll_no_change_v2(revision_id),item_no INTEGER NOT NULL CHECK(item_no>=0),\"employee_id\" TEXT NOT NULL,\"payroll_kind\" TEXT NOT NULL,\"payroll\" TEXT NOT NULL,\"prior_payroll_revision\" TEXT NOT NULL,\"profile_revision\" TEXT NOT NULL,\"contribution_policy_revision\" TEXT NOT NULL,\"income_tax_policy_revision\" TEXT,PRIMARY KEY(revision_id,item_no)) STRICT"
     },
     {
       "type": "table",
@@ -968,12 +973,22 @@
     {
       "type": "table",
       "name": "fact_payroll_plan_bounded",
-      "sql": "CREATE TABLE fact_payroll_plan_bounded(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"employee_id\" TEXT NOT NULL,\"payroll\" TEXT NOT NULL) STRICT"
+      "sql": "CREATE TABLE fact_payroll_plan_bounded(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"employee_id\" TEXT NOT NULL,\"payroll\" TEXT NOT NULL,\"profile_revision\" TEXT NOT NULL,\"contribution_policy_revision\" TEXT NOT NULL,\"income_tax_policy_revision\" TEXT) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fact_payroll_plan_bounded_change_notice_revisions",
+      "sql": "CREATE TABLE fact_payroll_plan_bounded_change_notice_revisions(revision_id TEXT NOT NULL REFERENCES fact_payroll_plan_bounded(revision_id),item_no INTEGER NOT NULL CHECK(item_no>=0),\"subject_id\" TEXT NOT NULL,\"revision\" INTEGER NOT NULL,PRIMARY KEY(revision_id,item_no)) STRICT"
     },
     {
       "type": "table",
       "name": "fact_payroll_plan_v2",
-      "sql": "CREATE TABLE fact_payroll_plan_v2(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"employee_id\" TEXT NOT NULL,\"payroll\" TEXT NOT NULL) STRICT"
+      "sql": "CREATE TABLE fact_payroll_plan_v2(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"employee_id\" TEXT NOT NULL,\"payroll\" TEXT NOT NULL,\"profile_revision\" TEXT NOT NULL,\"contribution_policy_revision\" TEXT NOT NULL,\"income_tax_policy_revision\" TEXT) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fact_payroll_plan_v2_change_notice_revisions",
+      "sql": "CREATE TABLE fact_payroll_plan_v2_change_notice_revisions(revision_id TEXT NOT NULL REFERENCES fact_payroll_plan_v2(revision_id),item_no INTEGER NOT NULL CHECK(item_no>=0),\"subject_id\" TEXT NOT NULL,\"revision\" INTEGER NOT NULL,PRIMARY KEY(revision_id,item_no)) STRICT"
     },
     {
       "type": "table",
@@ -1248,7 +1263,7 @@
     {
       "type": "table",
       "name": "material_revision",
-      "sql": "CREATE TABLE material_revision(id INTEGER PRIMARY KEY,period INTEGER NOT NULL,\n category TEXT NOT NULL,expected INTEGER NOT NULL CHECK(expected>=0),\n received INTEGER NOT NULL CHECK(received>=0),processed INTEGER NOT NULL CHECK(processed>=0),\n no_business INTEGER NOT NULL CHECK(no_business IN(0,1)), evidence_digest BLOB NOT NULL\n REFERENCES evidence,\n CHECK(processed<=received),CHECK(no_business=0 OR(expected=0 AND received=0))) STRICT"
+      "sql": "CREATE TABLE material_revision(id INTEGER PRIMARY KEY,period INTEGER NOT NULL,\n category TEXT NOT NULL,expected INTEGER NOT NULL CHECK(expected>=0),\n received INTEGER NOT NULL CHECK(received>=0),\n no_business INTEGER NOT NULL CHECK(no_business IN(0,1)), evidence_digest BLOB NOT NULL\n REFERENCES evidence,\n CHECK(no_business=0 OR(expected=0 AND received=0))) STRICT"
     },
     {
       "type": "table",
@@ -2652,6 +2667,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_fact_payroll_no_change_v2_employees_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_no_change_v2_employees_DELETE BEFORE DELETE ON fact_payroll_no_change_v2_employees BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_no_change_v2_employees'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_payroll_no_change_v2_employees_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_no_change_v2_employees_UPDATE BEFORE UPDATE ON fact_payroll_no_change_v2_employees BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_no_change_v2_employees'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_fact_payroll_opening_state_DELETE",
       "sql": "CREATE TRIGGER immutable_fact_payroll_opening_state_DELETE BEFORE DELETE ON fact_payroll_opening_state BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_opening_state'); END"
     },
@@ -2672,6 +2697,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_fact_payroll_plan_bounded_change_notice_revisions_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_plan_bounded_change_notice_revisions_DELETE BEFORE DELETE ON fact_payroll_plan_bounded_change_notice_revisions BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_bounded_change_notice_revisions'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_payroll_plan_bounded_change_notice_revisions_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_plan_bounded_change_notice_revisions_UPDATE BEFORE UPDATE ON fact_payroll_plan_bounded_change_notice_revisions BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_bounded_change_notice_revisions'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_fact_payroll_plan_v2_DELETE",
       "sql": "CREATE TRIGGER immutable_fact_payroll_plan_v2_DELETE BEFORE DELETE ON fact_payroll_plan_v2 BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_v2'); END"
     },
@@ -2679,6 +2714,16 @@
       "type": "trigger",
       "name": "immutable_fact_payroll_plan_v2_UPDATE",
       "sql": "CREATE TRIGGER immutable_fact_payroll_plan_v2_UPDATE BEFORE UPDATE ON fact_payroll_plan_v2 BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_v2'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_payroll_plan_v2_change_notice_revisions_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_plan_v2_change_notice_revisions_DELETE BEFORE DELETE ON fact_payroll_plan_v2_change_notice_revisions BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_v2_change_notice_revisions'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_payroll_plan_v2_change_notice_revisions_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_payroll_plan_v2_change_notice_revisions_UPDATE BEFORE UPDATE ON fact_payroll_plan_v2_change_notice_revisions BEGIN SELECT RAISE(ABORT,'immutable fact_payroll_plan_v2_change_notice_revisions'); END"
     },
     {
       "type": "trigger",
@@ -4397,6 +4442,11 @@
     },
     {
       "type": "trigger",
+      "name": "sealed_fact_payroll_no_change_v2_employees_insert",
+      "sql": "CREATE TRIGGER sealed_fact_payroll_no_change_v2_employees_insert BEFORE INSERT ON fact_payroll_no_change_v2_employees WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
       "name": "sealed_fact_payroll_no_change_v2_insert",
       "sql": "CREATE TRIGGER sealed_fact_payroll_no_change_v2_insert BEFORE INSERT ON fact_payroll_no_change_v2 WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
     },
@@ -4407,8 +4457,18 @@
     },
     {
       "type": "trigger",
+      "name": "sealed_fact_payroll_plan_bounded_change_notice_revisions_insert",
+      "sql": "CREATE TRIGGER sealed_fact_payroll_plan_bounded_change_notice_revisions_insert BEFORE INSERT ON fact_payroll_plan_bounded_change_notice_revisions WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
       "name": "sealed_fact_payroll_plan_bounded_insert",
       "sql": "CREATE TRIGGER sealed_fact_payroll_plan_bounded_insert BEFORE INSERT ON fact_payroll_plan_bounded WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "sealed_fact_payroll_plan_v2_change_notice_revisions_insert",
+      "sql": "CREATE TRIGGER sealed_fact_payroll_plan_v2_change_notice_revisions_insert BEFORE INSERT ON fact_payroll_plan_v2_change_notice_revisions WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
     },
     {
       "type": "trigger",
@@ -4671,5 +4731,5 @@
       "sql": "CREATE TRIGGER security_close_batch_receipt_no_update\n        BEFORE UPDATE ON security_close_batch_receipt\n        BEGIN SELECT RAISE(ABORT,'immutable close batch receipt'); END"
     }
   ],
-  "sha256": "b001d4b0eeac8a6bf85b1ba7444bbe1b2850e6cb7cbfc60742f9051d1c10f90d"
+  "sha256": "9346c33ee8b11b43c334befc1136c20210b4586321bccdd81469dfd6b1ffe3ab"
 }

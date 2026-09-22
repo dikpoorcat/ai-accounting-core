@@ -1,6 +1,7 @@
 """Real publication chains prove zero withholding without manufacturing deduction facts."""
 
 import pytest
+from payroll_plan_fixture import confirm_wage_inputs
 from test_payroll import (
     actual,
     bonus,
@@ -13,8 +14,10 @@ from test_payroll import (
     payroll_sources,
     profile,
     version,
+    with_payroll_plan,
 )
 from test_payroll_corrections import Company
+from test_payroll_preparation import plan_references
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
 from ai_accounting.kernel.domains.payroll import (
@@ -56,6 +59,7 @@ def company(tmp_path):
 def test_month_precision_preserves_nulls_and_known_payables(tmp_path):
     instance = company(tmp_path)
     saved = instance.save(bounded(), "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     calc = instance.current("january", "payroll_bounded")
     assert calc.values["tax_fen"] == 0
@@ -83,17 +87,20 @@ def test_month_precision_preserves_nulls_and_known_payables(tmp_path):
 def test_positive_future_tax_cannot_skip_unknown_history_and_failure_is_atomic(tmp_path, next_kind):
     instance = company(tmp_path)
     saved = instance.save(bounded(), "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     february = payroll(period="2026-02", tax_reported_salary_fen=2_000_000)
     if next_kind == "payroll_bounded":
         february = PayrollBounded(**february.model_dump(mode="json"))
     instance.save(february, "february")
+    instance.confirm_payroll("february")
     before = instance.count("calculation"), instance.count("voucher_version")
     with pytest.raises(NeedsInformation) as error:
         instance.publish("february")
     assert all(item["fact_id"] == saved["fact_id"] for item in error.value.issues)
     assert before == (instance.count("calculation"), instance.count("voucher_version"))
     instance.save(bounded(**dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)), "january", revision=1)
+    instance.confirm_payroll("january", "february")
     instance.publish("january", "february")
     assert instance.current("january", "payroll_bounded").values["tax_state"] is not None
     assert instance.current("february", next_kind).values["tax_fen"] == 40_200
@@ -128,12 +135,14 @@ def test_source_correction_rebuilds_only_employee_chain_and_keeps_actual_payment
         ),
     ):
         instance.save(fact, subject)
+    instance.confirm_payroll("january", "february", "other-january")
     _, initial = instance.publish("january", "february", "other-january", "payment")
     other = instance.current("other-january", "payroll_bounded")
     with instance.engine.store.connection(read_only=True) as connection:
         actual_payment = instance.engine.store.current_fact(connection, "payment")
     january = instance.save(bounded(**dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)), "january", revision=1)
     assert {"january", "february", "payment"} <= set(january["pending"])
+    instance.confirm_payroll("january")
     _, corrected = instance.publish("january")
     february = instance.current("february", "payroll_bounded")
     assert {item["period"] for item in february.values["tax_state_bounds"]["unknown_fields"]} == {
@@ -150,11 +159,13 @@ def test_source_correction_rebuilds_only_employee_chain_and_keeps_actual_payment
 def test_closed_month_keeps_frozen_proof_when_deductions_are_later_confirmed(tmp_path):
     instance = company(tmp_path)
     instance.save(bounded(), "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     frozen = instance.close("2026-01")
     ledger = instance.engine.ledger("2026-01")
     old = instance.current("january", "payroll_bounded")
     instance.save(bounded(**dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)), "january", revision=1)
+    instance.confirm_payroll("january")
     with pytest.raises(KernelError) as error:
         instance.publish("january")
     assert error.value.code == "posting_period_required"
@@ -170,6 +181,7 @@ def test_closed_month_keeps_frozen_proof_when_deductions_are_later_confirmed(tmp
 def test_cross_kind_same_employee_month_is_not_two_wages(tmp_path):
     instance = company(tmp_path)
     instance.save(bounded(), "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     instance.save(payroll(), "duplicate")
     with pytest.raises(KernelError) as error:
@@ -183,6 +195,7 @@ def test_complete_bounded_wage_still_supports_nonzero_tax(tmp_path):
         bounded(tax_reported_salary_fen=1_000_000, **dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)),
         "january",
     )
+    instance.confirm_payroll("january")
     instance.publish("january")
     values = instance.current("january", "payroll_bounded").values
     assert values["tax_fen"] == 12_600
@@ -199,10 +212,15 @@ def test_whole_month_policy_is_required_without_an_actual_income_day():
         version(policy, "income-tax")
     ]
     with pytest.raises(NeedsInformation) as error:
-        calculate_payroll(current, context_for(current, sources))
+        calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
     assert error.value.issues[0]["field"] == "tax_income_date"
     explicit = version(bounded(tax_income_date="2026-01-20"))
-    assert calculate_payroll(explicit, context_for(explicit, sources)).values["tax_fen"] == 0
+    assert (
+        calculate_payroll(
+            explicit, context_for(explicit, with_payroll_plan(explicit, sources))
+        ).values["tax_fen"]
+        == 0
+    )
 
 
 def test_zero_proof_checks_reachable_brackets_not_only_the_highest_income_endpoint():
@@ -219,7 +237,7 @@ def test_zero_proof_checks_reachable_brackets_not_only_the_highest_income_endpoi
         version(policy, "income-tax")
     ]
     with pytest.raises(NeedsInformation):
-        calculate_payroll(current, context_for(current, sources))
+        calculate_payroll(current, context_for(current, with_payroll_plan(current, sources)))
 
 
 @pytest.mark.parametrize("kind", ["payroll", "payroll_bounded"])
@@ -228,6 +246,7 @@ def test_profile_first_withholding_month_is_not_fabricated_as_an_actual_day(tmp_
     instance.save(profile(withholding_start_date="2026-01"), "profile", revision=1)
     fact = payroll() if kind == "payroll" else bounded()
     instance.save(fact, "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     calc = instance.current("january", kind)
     assert calc.values["tax_input"]["withholding_start_date"] == "2026-01"
@@ -248,6 +267,7 @@ def test_annual_bonus_requires_exact_state_from_bounded_wage(tmp_path):
         if source.subject_id in {"bonus-policy", "bonus-usage"}:
             instance.save(source.fact, source.subject_id)
     instance.save(bonus(regular_payroll_id="january", tax_method="combined"), "bonus")
+    instance.confirm_payroll("january")
     with pytest.raises(NeedsInformation) as error:
         instance.publish("january", "bonus")
     assert error.value.issues[0]["field"] in UNKNOWN_DEDUCTIONS
@@ -262,6 +282,7 @@ def test_combined_bonus_reuses_complete_month_precision_payroll_without_inventin
         if source.subject_id in {"bonus-policy", "bonus-usage"}:
             instance.save(source.fact, source.subject_id)
     instance.save(bonus(regular_payroll_id="january", tax_method="combined"), "bonus")
+    instance.confirm_payroll("january")
     instance.publish("january", "bonus")
     assert instance.current("bonus", "annual_bonus").values["tax_fen"] == 87_600
     wage = instance.current("january", "payroll_bounded")
@@ -272,6 +293,7 @@ def test_combined_bonus_reuses_complete_month_precision_payroll_without_inventin
 def test_preparation_preserves_unknown_deductions_but_never_copies_actual_day(tmp_path):
     instance = company(tmp_path)
     instance.save(bounded(tax_income_date="2026-01-20"), "january")
+    instance.confirm_payroll("january")
     instance.publish("january")
     service = PayrollPreparation(instance.engine)
     basis = service.reuse_basis("2026-02")
@@ -279,7 +301,7 @@ def test_preparation_preserves_unknown_deductions_but_never_copies_actual_day(tm
         PayrollNoChange(
             period="2026-02",
             prior_period="2026-01",
-            basis_digest=basis["basis_digest"],
+            employees=tuple(basis["employees"]),
             employee_roster_unchanged=True,
             salary_and_deductions_unchanged=True,
         ),
@@ -305,6 +327,7 @@ def test_preparation_preserves_unknown_deductions_but_never_copies_actual_day(tm
             period="2026-02",
             employee_id="employee",
             payroll=bounded(period="2026-02", tax_relief_fen=0),
+            **plan_references(instance),
         ),
         "plan",
     )
@@ -386,6 +409,13 @@ def test_48_month_real_engine_chain_keeps_uncertainty_with_exact_yearly_resets(t
         request_id=instance.request(),
     )
     subjects = [subject for fact, subject in records if fact.kind == "payroll_bounded"]
+    for subject in subjects:
+        confirm_wage_inputs(
+            instance.engine,
+            subject,
+            evidence=(evidence,),
+            request_id=instance.request(),
+        )
     instance.publish(*reversed(subjects))
     for subject in subjects:
         result = instance.current(subject, "payroll_bounded")

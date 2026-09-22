@@ -364,7 +364,7 @@ export interface BriefData {
 }
 
 export interface BriefResponse {
-  schema_version: 4;
+  schema_version: 5;
   snapshot_version: string | null;
   selected_period: DashboardPeriod | null;
   data: BriefData | null;

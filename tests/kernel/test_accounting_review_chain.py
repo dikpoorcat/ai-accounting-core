@@ -94,6 +94,7 @@ def review_chain(tmp_path):
         ),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january", "february")
     initial, _ = company.publish(
         "january", "february", "bank-opening", "funding", "payment", "statement", "reconciliation"
     )
@@ -202,11 +203,7 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     current_movements = settlement_response["data"]["collections"]["settlement_events"]["items"]
     assert len(current_movements) == (1 if basis_current else 3)
     assert sum(item["signed_amount_fen"] for item in current_movements) == 100_000
-    current_payment = [
-        item
-        for item in current_movements
-        if item["direction"] > 0
-    ]
+    current_payment = [item for item in current_movements if item["direction"] > 0]
     if basis_current:
         assert len(current_payment) == 1
         assert current_payment[0]["signed_amount_fen"] == 100_000

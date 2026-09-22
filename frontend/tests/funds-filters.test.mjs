@@ -67,7 +67,7 @@ function data(account = "bank-a", next = "next") {
 }
 
 function response(value, snapshot = "version") {
-  return { schema_version: 4, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
+  return { schema_version: 5, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
 }
 
 test("account clicks switch cached movement groups without a request or route change", async () => {

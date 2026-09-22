@@ -61,6 +61,18 @@ OPERATING_PROTOCOL = {
         "保存事实与发布结果分开；预览逐项核对source_period、posting_period和mode，"
         "再用同一摘要和相关版本确认，重试沿用同一请求键。"
     ),
+    "payroll_confirmation": (
+        "普通和bounded工资正式发布前必须有本月明确方案或有效的全员无变化确认及原始依据。"
+        "方案绑定完整工资输入、档案和政策修订及全部变更通知；无变化绑定完整人员范围和逐人上期输入。"
+        "prepare_payroll也检查已有工资；confirm_payroll_preparation只登记事实，不代表已发布。"
+        "累计或实际扣款重算不自动使工资输入确认失效；先处理明确的待重算来源，不补造负责人确认。"
+    ),
+    "tax_import_mapping": (
+        "工资准备和期间待办的tax_import_mapping只检查个税文件列对应。"
+        "缺失或错误映射按明确资料补正；tax_import_format_unsupported是文件能力限制，"
+        "不能变成负责人业务追问，也不阻止工资记账、真实付款、关账或有依据的外部完成。"
+        "正式个税文件仍须重新核对映射、人员和扣除明细，不能把映射就绪当成文件已完成。"
+    ),
     "asset_batches": (
         "资产启用通过prepare_asset_activation_batch/confirm_asset_activation_batch按确认批次处理；"
         "折旧摊销通过prepare_asset_consumption_month/confirm_asset_consumption_month由内核确定完整月度成员。"
@@ -93,6 +105,8 @@ OPERATING_PROTOCOL = {
     ),
     "material_allocation": (
         "跨月原件先核对逐项归属，再分别处理各月业务；归属不等于入账完成，未知归属不能默认接收月。"
+        "闭期资料新问题由后续开放月持续承接，直至真实处置完成；不能确认已知后忽略或挪到远期。"
+        "同一文件内未来行仅在所属月阻断，file_status仅供诊断，不作为所有月份的门禁。"
     ),
     "external_actions": "申报、付款和导出是不同事实；文件生成不能视为实际付款或外部提交完成。",
 }

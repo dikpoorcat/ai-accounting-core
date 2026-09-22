@@ -78,6 +78,9 @@ def test_material_category_and_actual_money_candidate_diagnostics_are_typed(samp
         "message": "原件需要归属核对",
         "category": "transactions",
         "code": "material_allocation_required",
+        "origin_periods": ["2026-01"],
+        "review_period": "2026-09",
+        "responsibility": "closed_followup",
         "signals": [
             {
                 "code": "same_actual_money_coordinates",
@@ -95,6 +98,39 @@ def test_material_category_and_actual_money_candidate_diagnostics_are_typed(samp
     with pytest.raises(KernelError) as error:
         validate_response("dashboard_funds", value)
     assert error.value.code == "response_contract_mismatch"
+
+
+@pytest.mark.parametrize("amount", [0, 2**53 + 1, 2**63 - 1])
+def test_tax_file_followup_has_explicit_money_and_never_changes_close_readiness(samples, amount):
+    value = copy.deepcopy(samples["cash_funds"]["response"])
+    preparation = value["data"]["period_preparation"]
+    readiness = copy.deepcopy(preparation["readiness"])
+    preparation["current_followups"]["tax_import_mapping"] = {
+        "status": "unsupported",
+        "blocking_scope": "tax_import_file",
+        "mapping_fact_ids": [],
+        "calculation_ids": ["synthetic-wage-result"],
+        "issues": [
+            {
+                "code": "tax_import_format_unsupported",
+                "category": "capability",
+                "field": "tax_import_mapping",
+                "message": "个税文件列无法容纳已发布的个人扣款项目",
+                "component_codes": ["a", "b", "c", "d"],
+                "amount_fen": amount,
+            }
+        ],
+    }
+    assert validate_response("dashboard_funds", value) == value
+    wire = http_response("dashboard_funds", value)
+    assert wire["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]["issues"][
+        0
+    ]["amount_fen"] == str(amount)
+    assert preparation["readiness"] == readiness
+    for invalid in (True, 1.0, 2**63, "1"):
+        preparation["current_followups"]["tax_import_mapping"]["issues"][0]["amount_fen"] = invalid
+        with pytest.raises(KernelError, match="读取结果不符合接口合同"):
+            validate_response("dashboard_funds", value)
 
 
 @pytest.mark.parametrize("bad", [1.0, True, False, "1", 2**63, -(2**63) - 1])

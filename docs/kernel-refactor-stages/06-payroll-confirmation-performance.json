@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-09-22T11:39:49.745741+00:00",
+  "timing_context": "Windows development host; normal concurrent Stage 6 test workload",
+  "workspace": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage6-payroll-confirmation-20260922-113449",
+  "results": [
+    {
+      "employees": 1,
+      "prepare": {
+        "seconds": [
+          0.06320870004128665,
+          0.0601487000240013,
+          0.06331589992623776
+        ],
+        "median_seconds": 0.06320870004128665
+      },
+      "preview": {
+        "seconds": [
+          0.0712121999822557,
+          0.06822020001709461,
+          0.06123769993428141
+        ],
+        "median_seconds": 0.06822020001709461
+      },
+      "published_calculations": 1,
+      "dependency_scope_rows": 23,
+      "dependency_fact_rows": 7,
+      "dependency_calculation_rows": 1,
+      "full_roster_scope_rows": 1,
+      "database_bytes": 2367488
+    },
+    {
+      "employees": 10,
+      "prepare": {
+        "seconds": [
+          0.14787049998994917,
+          0.14617249998264015,
+          0.1397245000116527
+        ],
+        "median_seconds": 0.14617249998264015
+      },
+      "preview": {
+        "seconds": [
+          0.1255337999900803,
+          0.11914610001258552,
+          0.11885590001475066
+        ],
+        "median_seconds": 0.11914610001258552
+      },
+      "published_calculations": 10,
+      "dependency_scope_rows": 230,
+      "dependency_fact_rows": 160,
+      "dependency_calculation_rows": 10,
+      "full_roster_scope_rows": 10,
+      "database_bytes": 3784704
+    },
+    {
+      "employees": 50,
+      "prepare": {
+        "seconds": [
+          1.0215964000672102,
+          1.0543401000322774,
+          1.0544765000231564
+        ],
+        "median_seconds": 1.0543401000322774
+      },
+      "preview": {
+        "seconds": [
+          0.5033338000066578,
+          0.48820010002236813,
+          0.4889710999559611
+        ],
+        "median_seconds": 0.4889710999559611
+      },
+      "published_calculations": 50,
+      "dependency_scope_rows": 1150,
+      "dependency_fact_rows": 2800,
+      "dependency_calculation_rows": 50,
+      "full_roster_scope_rows": 50,
+      "database_bytes": 9867264
+    }
+  ]
+}

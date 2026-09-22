@@ -68,7 +68,7 @@ export namespace DashboardContextContract {
 }
 
 export namespace DashboardFundsContract {
-  export type SchemaVersion = 4;
+  export type SchemaVersion = 5;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -269,6 +269,7 @@ export namespace DashboardFundsContract {
   export type Semantics = string;
   export type Domain = string;
   export type Category = string;
+  export type InventoryId = number;
   export type SubjectId = string;
   export type FactId = string;
   export type SourceId = string;
@@ -319,6 +320,8 @@ export namespace DashboardFundsContract {
   export type CandidateSubjectId = string;
   export type PairDigest = string;
   export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
   export type Code2 =
     | "same_exact_material_location"
     | "same_complete_signature_and_evidence"
@@ -394,6 +397,18 @@ export namespace DashboardFundsContract {
   export type FactIssues1 = ReadinessIssue[];
   export type TotalCount1 = number;
   export type IssueCount = number;
+  export type Status9 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code4 = string;
+  export type Category1 = "management_fact" | "capability" | "publication";
+  export type Field2 = string;
+  export type Message3 = string;
+  export type EmployeeId1 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen3 = string;
+  export type Issues5 = TaxImportMappingIssue[];
 
   export interface FundsDashboardResponse {
     schema_version: SchemaVersion;
@@ -708,6 +723,7 @@ export namespace DashboardFundsContract {
     semantics?: Semantics;
     domain?: Domain;
     category?: Category;
+    inventory_id?: InventoryId;
     subject_id?: SubjectId;
     fact_id?: FactId;
     source_id?: SourceId;
@@ -751,6 +767,8 @@ export namespace DashboardFundsContract {
     candidate_subject_id?: CandidateSubjectId;
     pair_digest?: PairDigest;
     review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
     signals?: Signals;
   }
   export interface SelectionCandidate {
@@ -842,6 +860,7 @@ export namespace DashboardFundsContract {
     settlements: SettlementFollowup;
     external: ExternalFollowup;
     file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
   }
   export interface MaterialFollowup {
     status: Status4;
@@ -892,6 +911,22 @@ export namespace DashboardFundsContract {
   }
   export interface StatusCounts {
     [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status9;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues5;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code4;
+    category: Category1;
+    field: Field2;
+    message: Message3;
+    employee_id?: EmployeeId1;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen3;
   }
 }
 

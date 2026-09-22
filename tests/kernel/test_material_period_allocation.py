@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from test_integrity_content import damage
 from test_materials import Company, codes, csv_spec
 
 from ai_accounting.kernel.contracts import KernelError
@@ -322,9 +323,322 @@ def test_closed_manifest_freezes_allocation_version_when_future_assignment_chang
     frozen = periods.closed_report("2026-01")
     allocate(company, (assignment(company, 3, 3, "2026-03"),))
     assert periods.closed_report("2026-01") == frozen
-    assert company.materials.check("2026-02")["coverage_count"] == 0
-    assert company.materials.check("2026-03")["coverage_count"] == 1
-    assert company.materials.check("2026-03")["allocation_versions"] != frozen_ids
+    february = company.materials.check("2026-02")
+    assert february["coverage_count"] == 1
+    assert february["coverage"][0]["origin_periods"] == ["2026-01"]
+    assert february["coverage"][0]["review_period"] == "2026-02"
+    assert february["coverage"][0]["responsibility"] == "closed_followup"
+    assert february["status"] == "complete"
+    march = company.materials.check("2026-03")
+    assert march["coverage_count"] == 2
+    assert {item["responsibility"] for item in march["coverage"]} == {
+        "direct",
+        "closed_followup",
+    }
+    assert march["allocation_versions"] != frozen_ids
+
+
+def test_supplementary_closed_period_source_is_carried_by_the_next_review_month(company):
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+
+    periods = Periods(company.engine)
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-01",
+            category,
+            evidence=(),
+            expected=0,
+            no_business=True,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    preview = periods.preview_close("2026-01", owner_confirmation=company.proof)
+    periods.close(
+        "2026-01",
+        owner_confirmation=company.proof,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
+    source, _ = company.source(b"name,amount,period\nsupplement,10,2026-01\n", "closed-supplement")
+    january = company.materials.check("2026-01")
+    february = company.materials.check("2026-02")
+    january_issue = next(
+        item for item in january["issues"] if item["code"] == "material_item_unresolved"
+    )
+    february_issue = next(
+        item for item in february["issues"] if item["code"] == "material_item_unresolved"
+    )
+    assert (
+        january_issue
+        | {
+            "origin_periods": ["2026-01"],
+            "review_period": "2026-01",
+            "responsibility": "direct",
+        }
+        == january_issue
+    )
+    assert (
+        february_issue
+        | {
+            "origin_periods": ["2026-01"],
+            "review_period": "2026-02",
+            "responsibility": "closed_followup",
+        }
+        == february_issue
+    )
+    assert january_issue["source_id"] == february_issue["source_id"] == source["subject_id"]
+
+
+def test_closed_inventory_without_registered_source_is_carried_forward(company):
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+
+    periods = Periods(company.engine)
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-01",
+            category,
+            evidence=(),
+            expected=0,
+            no_business=True,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    preview = periods.preview_close("2026-01", owner_confirmation=company.proof)
+    periods.close(
+        "2026-01",
+        owner_confirmation=company.proof,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
+    supplement = company.evidence(b"name,amount,period\nlate,10,2026-01\n")
+    periods.inventory(
+        "2026-01",
+        "transactions",
+        evidence=(supplement,),
+        expected=1,
+        no_business=False,
+        confirmation_evidence=company.proof,
+        request_id=company.request(),
+    )
+    result = company.materials.check("2026-02")
+    issue = next(
+        item for item in result["issues"] if item["code"] == "material_source_not_registered"
+    )
+    assert issue["evidence_digest"] == supplement
+    assert issue["origin_periods"] == ["2026-01"]
+    assert issue["review_period"] == "2026-02"
+    assert issue["responsibility"] == "closed_followup"
+
+
+def test_closed_expected_shortage_blocks_next_close_until_current_inventory_is_complete(company):
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+
+    periods = Periods(company.engine)
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-01",
+            category,
+            evidence=(),
+            expected=0,
+            no_business=True,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    january = periods.preview_close("2026-01", owner_confirmation=company.proof)
+    periods.close(
+        "2026-01",
+        owner_confirmation=company.proof,
+        preview_digest=january["digest"],
+        epochs=january["epochs"],
+        request_id=company.request(),
+    )
+    periods.inventory(
+        "2026-01",
+        "transactions",
+        evidence=(),
+        expected=1,
+        no_business=False,
+        confirmation_evidence=company.proof,
+        request_id=company.request(),
+    )
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-02",
+            category,
+            evidence=(),
+            expected=0,
+            no_business=True,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    missing = company.materials.check("2026-02")
+    issue = next(item for item in missing["issues"] if item["code"] == "material_expected_missing")
+    assert issue["field"] == "materials.transactions"
+    assert issue["origin_periods"] == ["2026-01"]
+    assert issue["responsibility"] == "closed_followup"
+    missing_reference = next(
+        item
+        for item in missing["inventory_versions"]
+        if item["period"] == "2026-01" and item["category"] == "transactions"
+    )
+    with pytest.raises(KernelError) as blocked:
+        periods.preview_close("2026-02", owner_confirmation=company.proof)
+    assert blocked.value.code == "period_not_ready"
+
+    supplement = company.evidence(b"name,amount,period\nnot-company,10,2026-01\n")
+    periods.inventory(
+        "2026-01",
+        "transactions",
+        evidence=(supplement,),
+        expected=1,
+        no_business=False,
+        confirmation_evidence=company.proof,
+        request_id=company.request(),
+    )
+    source = company.materials.receive(
+        "late-non-company-source",
+        {
+            "period": "2026-01",
+            "evidence_digest": supplement,
+            "category": "transactions",
+            "purpose": "business",
+            "specification": csv_spec(),
+        },
+        evidence=(supplement, company.proof),
+        expected_revision=0,
+        request_id=company.request(),
+    )
+    company.resolve(
+        source,
+        "CSV!B2",
+        treatment="no_accounting",
+        reason="负责人确认该行不属于公司业务",
+        non_accounting_reason="not_company_business",
+    )
+    complete = company.materials.check("2026-02")
+    assert "material_expected_missing" not in codes(complete)
+    current_reference = next(
+        item
+        for item in complete["inventory_versions"]
+        if item["period"] == "2026-01" and item["category"] == "transactions"
+    )
+    assert current_reference["inventory_id"] != missing_reference["inventory_id"]
+    assert current_reference["content_digest"] != missing_reference["content_digest"]
+    assert periods.preview_close("2026-02", owner_confirmation=company.proof)["status"] == "preview"
+
+
+def test_frozen_inventory_reference_detects_changed_source_version(company):
+    from ai_accounting.kernel.integrity import verify_close_integrity
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+    from ai_accounting.kernel.types import YearMonth
+
+    periods = Periods(company.engine)
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-01",
+            category,
+            evidence=(),
+            expected=0,
+            no_business=True,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    preview = periods.preview_close("2026-01", owner_confirmation=company.proof)
+    periods.close(
+        "2026-01",
+        owner_confirmation=company.proof,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
+    reference = next(
+        item
+        for item in preview["manifest"]["material_coverage"]["inventory_versions"]
+        if item["category"] == "transactions"
+    )
+    damage(
+        company.engine,
+        "material_revision",
+        "UPDATE material_revision SET expected=1,no_business=0 WHERE id=?",
+        (reference["inventory_id"],),
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as failed:
+            verify_close_integrity(company.engine, connection, YearMonth("2026-01").ordinal)
+    assert failed.value.code == "content_integrity_failed"
+    assert failed.value.details["reason"] == "material_inventory_reference_mismatch"
+
+
+def test_cross_file_competitors_keep_material_period_responsibility(company):
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+
+    first, first_evidence = company.source(
+        b"name,amount,period\nclosed,10,2026-01\n", "closed-source"
+    )
+    link = company.expense("shared-expense", 1000)
+    company.resolve(first, "CSV!B2", [link], subject="closed-resolution")
+    periods = Periods(company.engine)
+    for category in MATERIAL_CATEGORIES:
+        evidence = (first_evidence,) if category == "transactions" else ()
+        periods.inventory(
+            "2026-01",
+            category,
+            evidence=evidence,
+            expected=len(evidence),
+            no_business=not evidence,
+            confirmation_evidence=company.proof,
+            request_id=company.request(),
+        )
+    preview = periods.preview_close("2026-01", owner_confirmation=company.proof)
+    periods.close(
+        "2026-01",
+        owner_confirmation=company.proof,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
+
+    future, _ = company.source(
+        b"name,amount,period\nfuture,10,2026-03\n",
+        "future-source",
+        period="2026-03",
+    )
+    company.resolve(
+        future,
+        "CSV!B2",
+        [link | {"recognition_period": "2026-03"}],
+        subject="future-resolution",
+        period="2026-03",
+        recognition_period="2026-03",
+    )
+    february = company.materials.check("2026-02")
+    conflict = next(
+        item for item in february["issues"] if item["code"] == "material_business_overallocated"
+    )
+    assert conflict["origin_periods"] == ["2026-01", "2026-03"]
+    assert conflict["responsibility"] == "closed_followup"
+    assert future["fact_id"] in february["source_versions"]
+
+    unknown, _ = company.source(
+        b"name,amount,period\nunknown,10,\n", "unknown-source", period="2026-03"
+    )
+    company.resolve(
+        unknown,
+        "CSV!B2",
+        [link],
+        subject="unknown-resolution",
+        period="2026-03",
+    )
+    with_unknown = company.materials.check("2026-02")
+    conflict = next(
+        item for item in with_unknown["issues"] if item["code"] == "material_business_overallocated"
+    )
+    assert conflict["origin_periods"] == ["2026-01", "2026-03"]
+    assert conflict["responsibility"] == "unassigned"
+    assert unknown["fact_id"] in with_unknown["source_versions"]
 
 
 def test_withdrawn_source_releases_capacity_and_future_overallocation_keeps_file_pending(company):

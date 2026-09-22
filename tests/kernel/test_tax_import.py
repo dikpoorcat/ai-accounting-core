@@ -1,12 +1,17 @@
+import json
 from pathlib import Path
 
 import pytest
 import xlrd
-from test_payroll import payroll
+from payroll_plan_fixture import confirm_wage_inputs
+from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll_corrections import Company
 from test_payroll_preparation import company
 
 from ai_accounting.kernel import tax_import
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.domains.payroll import ContributionRuleFact, PayrollContributionPolicy
+from ai_accounting.kernel.types import YearMonth
 
 
 def complete_details(instance):
@@ -45,6 +50,178 @@ def complete_details(instance):
     return tax_import.TaxImport(instance.engine)
 
 
+def mapping_assessment(instance):
+    with instance.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        return tax_import.assess_tax_import_mapping(
+            instance.engine.store, connection, YearMonth("2026-01")
+        )
+
+
+def replace_contribution_policy(instance, rules):
+    source = contribution_policy().model_dump(mode="json")
+    source.update(version="four-components", rules=rules)
+    policy = PayrollContributionPolicy.model_validate(source)
+    instance.save(policy, "four-contributions")
+    instance.save(payroll(contribution_policy_id="four-contributions"), "january", revision=1)
+    confirm_wage_inputs(
+        instance.engine,
+        "january",
+        evidence=(instance.owner_confirmation,),
+        request_id=instance.request(),
+    )
+    instance.publish("january")
+
+
+def contribution_rule(code, *, employee_rate="0.01", employer_rate="0.01"):
+    return ContributionRuleFact(
+        code=code,
+        base_kind="social_insurance",
+        employee_rate=employee_rate,
+        employer_rate=employer_rate,
+        minimum_base_fen=0,
+        maximum_base_fen=10_000_000,
+        rounding="half_up",
+        enabled=True,
+    )
+
+
+def test_mapping_assessment_distinguishes_missing_management_fact_from_ready(tmp_path):
+    instance = company(tmp_path)
+    missing = mapping_assessment(instance)
+    assert missing["status"] == "needs_information"
+    assert missing["blocking_scope"] == "tax_import_file"
+    assert missing["mapping_fact_ids"] == []
+    assert len(missing["calculation_ids"]) == 1
+    assert missing["issues"] == [
+        {
+            "code": "tax_import_mapping_required",
+            "category": "management_fact",
+            "field": "tax_import_mapping",
+            "message": "需要本月唯一的险种与个税列对应关系",
+        }
+    ]
+
+    complete_details(instance)
+    ready = mapping_assessment(instance)
+    assert ready["status"] == "ready"
+    assert len(ready["mapping_fact_ids"]) == 1
+    assert ready["issues"] == []
+
+
+def test_unpublished_wage_is_pending_publication_without_inventing_a_mapping_question(tmp_path):
+    instance = Company(tmp_path / "pending.sqlite")
+    for fact, subject in (
+        (profile(), "profile"),
+        (contribution_policy(), "contributions"),
+        (income_tax_policy(), "income-tax"),
+        (opening(), "opening"),
+        (payroll(), "january"),
+    ):
+        instance.save(fact, subject)
+    assessment = mapping_assessment(instance)
+    assert assessment["status"] == "pending_publication"
+    assert assessment["calculation_ids"] == []
+    assert [issue["code"] for issue in assessment["issues"]] == ["tax_import_payroll_pending"]
+
+
+def test_mapping_assessment_reports_no_wage_as_pending_without_inventing_a_question(tmp_path):
+    assessment = mapping_assessment(Company(tmp_path / "empty.sqlite"))
+    assert assessment == {
+        "status": "pending_publication",
+        "blocking_scope": "tax_import_file",
+        "mapping_fact_ids": [],
+        "calculation_ids": [],
+        "issues": [],
+    }
+
+
+def test_four_nonzero_personal_components_are_a_template_capability_error(tmp_path):
+    instance = company(tmp_path)
+    replace_contribution_policy(
+        instance,
+        tuple(contribution_rule(code) for code in ("pension", "medical", "unemployment", "injury")),
+    )
+    service = complete_details(instance)
+    assessment = mapping_assessment(instance)
+    assert assessment["status"] == "unsupported"
+    assert assessment["issues"] == [
+        {
+            "code": "tax_import_format_unsupported",
+            "category": "capability",
+            "field": "tax_import_mapping",
+            "message": "本期实际非零个人社保扣款超过个税模板的三个固定险种列",
+            "component_codes": ["injury", "medical", "pension", "unemployment"],
+            "amount_fen": 40_000,
+        }
+    ]
+    preview = service.preview("2026-01")
+    assert preview["status"] == "unsupported"
+    assert all("semantics" not in issue for issue in preview["tax_import_mapping"]["issues"])
+    with pytest.raises(KernelError) as error:
+        service.confirm(
+            "2026-01",
+            preview_digest=preview["digest"],
+            output_directory=str(tmp_path / "unsupported"),
+            request_id=instance.request(),
+        )
+    assert error.value.code == "tax_import_format_unsupported"
+    assert instance.current("january").values["employee_contributions_fen"] == 40_000
+
+
+def test_zero_personal_component_does_not_consume_a_template_column(tmp_path):
+    instance = company(tmp_path)
+    replace_contribution_policy(
+        instance,
+        (
+            contribution_rule("pension"),
+            contribution_rule("employer-only", employee_rate="0", employer_rate="0.02"),
+            contribution_rule("zero", employee_rate="0", employer_rate="0"),
+            contribution_rule("another-zero", employee_rate="0", employer_rate="0"),
+        ),
+    )
+    complete_details(instance)
+    assessment = mapping_assessment(instance)
+    assert assessment["status"] == "ready"
+    assert assessment["issues"] == []
+
+
+def test_broken_published_contribution_trace_remains_a_kernel_error(tmp_path):
+    instance = company(tmp_path)
+    complete_details(instance)
+    calculation = instance.current("january")
+    with instance.engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        triggers = list(
+            connection.execute(
+                "SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name='calculation'"
+            )
+        )
+        for name, _sql in triggers:
+            connection.execute(f'DROP TRIGGER "{name}"')
+        row = connection.execute(
+            "SELECT outcome FROM calculation WHERE id=?", (calculation.id,)
+        ).fetchone()
+        outcome = json.loads(row[0])
+        item = next(
+            item
+            for item in outcome["explanation"]
+            if item["step"] == "contribution_burden_allocation"
+        )
+        item["values"]["code"] = "corrupted-code"
+        connection.execute(
+            "UPDATE calculation SET outcome=? WHERE id=?",
+            (json.dumps(outcome, ensure_ascii=False, separators=(",", ":")), calculation.id),
+        )
+        for _name, sql in triggers:
+            connection.execute(sql)
+        connection.commit()
+    with pytest.raises(KernelError) as error:
+        mapping_assessment(instance)
+    assert error.value.code == "content_integrity_failed"
+    assert error.value.details["component"] == "tax_import"
+
+
 def test_missing_identity_only_blocks_export_and_biff8_preserves_every_column(tmp_path):
     instance = company(tmp_path)
     assert tax_import.TaxImport(instance.engine).preview("2026-01")["status"] == "needs_information"
@@ -79,6 +256,7 @@ def test_export_deduction_breakdown_must_match_current_official_wage_result(tmp_
     instance = company(tmp_path)
     service = complete_details(instance)
     instance.save(payroll(special_additional_deduction_fen=100000), "january", revision=1)
+    instance.confirm_payroll("january")
     instance.publish("january")
     result = service.preview("2026-01")
     assert result["status"] == "needs_information"

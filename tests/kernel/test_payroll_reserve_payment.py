@@ -30,6 +30,7 @@ def company(tmp_path):
         company.save(profile(employee_id=person, effective_to="2026-01"), "profile-" + person)
         company.save(opening(employee_id=person), "opening-" + person)
         company.save(payroll(employee_id=person, profile_id="profile-" + person), "wage-" + person)
+    company.confirm_payroll("wage-one", "wage-two")
     company.publish("wage-one", "wage-two")
     return company
 
@@ -189,6 +190,7 @@ def test_wage_amendment_expiry_and_current_net_must_still_match(company):
         "wage-one",
         revision=1,
     )
+    company.confirm_payroll("wage-one")
     with pytest.raises(KernelError):
         company.engine.confirm(
             ["gross-batch"],

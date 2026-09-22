@@ -182,5 +182,6 @@ def preparation_view(value):
             },
             "external": followups["external"],
             "file_jobs": followups["file_jobs"],
+            "tax_import_mapping": followups["tax_import_mapping"],
         },
     }

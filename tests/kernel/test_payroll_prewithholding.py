@@ -44,6 +44,7 @@ def company(tmp_path, *, gross=42_500, shortfall="reject", kind="payroll_bounded
         contribution_basis="actual_required",
     )
     instance.save(fact, "july")
+    instance.confirm_payroll("july")
     return instance
 
 
@@ -89,6 +90,7 @@ def test_personal_contribution_shortfall_requires_explicit_company_burden(tmp_pa
         "profile",
         revision=1,
     )
+    instance.confirm_payroll("july")
     instance.publish("july")
     values = instance.current("july", "payroll_bounded").values
     assert values["gross_fen"] == values["employee_contributions_fen"] == 0
@@ -113,6 +115,7 @@ def test_prestart_branch_rejects_nonzero_tax_income_or_unclassified_net_wage(
         contribution_basis="actual_required",
     ).model_copy(update=change)
     instance.save(fact, "july", revision=1)
+    instance.confirm_payroll("july")
     with pytest.raises(NeedsInformation) as error:
         instance.publish("july")
     assert error.value.issues[0]["field"] == field
@@ -137,6 +140,7 @@ def test_august_starts_exactly_one_deduction_month_and_july_social_correction_ke
         ),
         "august",
     )
+    instance.confirm_payroll("august")
     instance.publish("august")
     august = instance.current("august", "payroll_bounded")
     assert august.values["tax_state"]["cumulative_income_fen"] == 52_500
@@ -272,6 +276,7 @@ def test_mixed_month_exports_only_started_wage_and_retains_contribution_acceptan
         ),
         "other-wage",
     )
+    instance.confirm_payroll("other-wage")
     instance.publish("july", "other-wage")
     other = instance.current("other-wage")
     instance.save(

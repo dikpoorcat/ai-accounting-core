@@ -27,7 +27,7 @@ _RUNNERS = {}
 _PRIVATE_NATIVE = {}
 
 
-def verify_reserve_business(call, approve_close, wait_for_backup, validation):
+def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup, validation):
     """Exercise the reserve contract through packaged public commands, using synthetic facts."""
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES
     from ai_accounting.payroll import CumulativeIncomeTaxPolicy
@@ -301,6 +301,30 @@ def verify_reserve_business(call, approve_close, wait_for_backup, validation):
         )
     for subject, (kind, data) in facts.items():
         save(subject, kind, data)
+    call_rejected(
+        "preview", {"company_id": cid, "subjects": ["reserve-wage"]}, code="needs_information"
+    )
+
+    def wage_confirmation(data, *, revision=0, evidence=proof):
+        return save(
+            "reserve-wage-confirmation",
+            "payroll_plan_v2",
+            {
+                "employee_id": employee,
+                "payroll": {"period": month, **data},
+                "profile_revision": {"subject_id": "reserve-profile", "revision": 1},
+                "contribution_policy_revision": {
+                    "subject_id": "reserve-contributions",
+                    "revision": 1,
+                },
+                "income_tax_policy_revision": {"subject_id": "reserve-income-tax", "revision": 1},
+                "change_notice_revisions": [],
+            },
+            revision=revision,
+            evidence=evidence,
+        )
+
+    wage_confirmation(facts["reserve-wage"][1])
     publish(
         [
             "reserve-wage",
@@ -365,7 +389,10 @@ def verify_reserve_business(call, approve_close, wait_for_backup, validation):
     assert nets["560201"] == 660000
     assert nets["5602"] == 78200
     funds = execute("dashboard_funds", {"period": month})
-    assert funds["schema_version"] == 4
+    assert funds["schema_version"] == 5
+    mapping_check = funds["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]
+    assert mapping_check["status"] == "needs_information"
+    assert mapping_check["blocking_scope"] == "tax_import_file"
     for category in MATERIAL_CATEGORIES:
         busy = category in {"bank", "payroll", "transactions"}
         execute(
@@ -421,6 +448,99 @@ def verify_reserve_business(call, approve_close, wait_for_backup, validation):
     assert {
         row["account"]: row["debit"] - row["credit"] for row in corrected_month["accounts"]
     } == {"1001": 100, "5602": -100}
+
+    # An explicit change to the approved wage input is corrected in an open month.
+    # It changes the expense classification, not the real payment or its net split.
+    wage_correction_text = (
+        "合成负责人确认：一月工资属于销售费用，原管理费用归类有误。工资金额及实际付款不变。"
+    )
+    wage_proof = execute(
+        "evidence",
+        {
+            "content_base64": base64.b64encode(wage_correction_text.encode()).decode(),
+            "media_type": "text/plain",
+            "name": "合成工资分类更正确认",
+            "request_id": request(),
+        },
+    )["digest"]
+    revised_wage = {**facts["reserve-wage"][1], "expense_class": "sales"}
+    save("reserve-wage", "payroll", revised_wage, revision=1, evidence=wage_proof, amend=True)
+    call_rejected(
+        "preview",
+        {"company_id": cid, "subjects": ["reserve-wage"], "posting_period": "2026-02"},
+        code="needs_information",
+    )
+    wage_confirmation(revised_wage, revision=1, evidence=wage_proof)
+    wage_correction = publish(["reserve-wage"], "2026-02")
+    assert (
+        next(row for row in wage_correction["results"] if row["subject_id"] == "reserve-wage")[
+            "mode"
+        ]
+        == "closed_correction"
+    )
+    assert execute("closed_report", {"period": month}) == frozen
+
+    # A newly received closed-period document remains an open-period follow-up.
+    wage_details = execute(
+        "dashboard_business_status",
+        {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"},
+    )
+    assert wage_details["schema_version"] == 3
+    current_confirmation = wage_details["data"]["current_business_result"]["payroll_confirmation"]
+    frozen_confirmation = wage_details["data"]["frozen_adoption"]["payroll_confirmation"]
+    assert current_confirmation["confirmation_revision"] == 2
+    assert current_confirmation["evidence"] == [wage_proof]
+    assert frozen_confirmation["confirmation_revision"] == 1
+    assert frozen_confirmation["evidence"] == [proof]
+
+    late_source = save(
+        "reserve-late-source",
+        "material_source_v2",
+        {
+            "evidence_digest": wage_proof,
+            "category": "payroll",
+            "purpose": "supporting",
+            "supporting_purpose": "合成后补工资分类更正确认",
+            "specification": {
+                "format": "text",
+                "all_pages_reviewed": True,
+                "passages": [
+                    {
+                        "location": "late-confirmation",
+                        "page": 1,
+                        "excerpt": wage_correction_text,
+                    }
+                ],
+            },
+        },
+        evidence=wage_proof,
+    )
+    followups = execute("period_readiness", {"period": "2026-02"})["current_followups"]
+    assert any(
+        item.get("source_id") == "reserve-late-source"
+        and item.get("responsibility") == "closed_followup"
+        and item.get("origin_periods") == [month]
+        for item in followups["materials"]["issues"]
+    )
+    save(
+        "reserve-late-resolution",
+        "material_resolution_v2",
+        {
+            "source_id": "reserve-late-source",
+            "source_fact_id": late_source["fact_id"],
+            "location": "late-confirmation",
+            "treatment": "supporting",
+            "reason": "已核对并保留负责人更正确认，工资分类已在开放月更正",
+        },
+        evidence=wage_proof,
+    )
+    assert not any(
+        item.get("source_id") == "reserve-late-source"
+        for item in execute("period_readiness", {"period": "2026-02"})["current_followups"][
+            "materials"
+        ]["issues"]
+    )
+    assert execute("closed_report", {"period": month}) == frozen
     assert execute("verify_integrity", {})["status"] == "verified"
     queued = execute(
         "backup", {"directory": str(validation / "reserve-backups"), "request_id": request()}
@@ -453,6 +573,10 @@ def verify_reserve_business(call, approve_close, wait_for_backup, validation):
         "closed_correction_fen": 100,
         "frozen_snapshot_unchanged": True,
         "backup_restored_and_integrity_verified": True,
+        "payroll_confirmation_required_and_closed_correction_verified": True,
+        "current_and_frozen_payroll_confirmation_sources_verified": True,
+        "late_closed_material_followup_resolved_without_rewriting_close": True,
+        "tax_mapping_issue_does_not_block_close": True,
     }
 
 
@@ -785,8 +909,12 @@ def main():
             encoding="utf-8",
         )
         response = json.loads(result.stdout)
-        assert result.returncode == 1 and response["status"] == "rejected", response
-        assert response["code"] == code, response
+        if code == "needs_information":
+            assert result.returncode == 0, response
+            assert response["status"] == "needs_information" and response["fact_issues"], response
+        else:
+            assert result.returncode == 1, response
+            assert response["status"] == "rejected" and response["code"] == code, response
         return response
 
     def wait_for_backup(company_id, queued, *, root=data_root):
@@ -1290,7 +1418,7 @@ def main():
     )
 
     reserve_company_id, reserve_validation = verify_reserve_business(
-        call, approve_close, wait_for_backup, validation
+        call, call_rejected, approve_close, wait_for_backup, validation
     )
     for launcher in (
         [str(package / "finance-local.cmd")],
@@ -1477,8 +1605,8 @@ def main():
             assert response.status == 200, (action, wire_dashboard)
             assert wire_dashboard["schema_version"] == (
                 2
-                if action in {"context", "quarterly-report"}
-                else (3 if action == "business-status" else 4)
+                if action == "context"
+                else (3 if action in {"business-status", "quarterly-report"} else 5)
             )
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 import pytest
+from payroll_plan_fixture import confirm_wage_inputs
 from test_payroll import actual, contribution_policy, income_tax_policy, opening, payroll, profile
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
@@ -105,6 +106,25 @@ class Company:
         )
         return result
 
+    def confirm_payroll(self, *subjects):
+        """Arrange explicit synthetic approval, separately from save and publish."""
+        for subject in subjects:
+            with self.engine.store.connection(read_only=True) as connection:
+                wage = self.engine.store.current_fact(connection, subject)
+            proof = self.engine.register_evidence(
+                canonical(
+                    {
+                        "confirmation": "合成负责人明确确认本月工资输入及当前来源",
+                        "subject_id": subject,
+                        "payroll": wage.fact.model_dump(mode="json"),
+                    }
+                ).encode(),
+                "application/json",
+                f"{subject}-owner-wage-confirmation",
+                request_id=self.request(),
+            )["digest"]
+            confirm_wage_inputs(self.engine, subject, evidence=(proof,), request_id=self.request())
+
     def publish(self, *subjects, posting_period=None):
         preview = self.engine.preview(list(subjects), posting_period=posting_period)
         result = self.engine.confirm(
@@ -165,6 +185,7 @@ def company(tmp_path):
         (payroll(period="2026-02"), "february"),
     ):
         result.save(fact, subject)
+    result.confirm_payroll("january", "february")
     return result
 
 
@@ -198,6 +219,7 @@ def test_sqlite_actual_backfill_recomputes_its_employee_chain_and_preserves_numb
     company.save(
         payroll(period="2026-02", employee_id="other", profile_id="other-profile"), "other-february"
     )
+    company.confirm_payroll("other-january", "other-february")
     _, first = company.publish("january", "february", "other-january", "other-february")
     before = {sid: company.current(sid) for sid in first}
     saved = company.save(actual(), "actual")

@@ -22,7 +22,7 @@ from pydantic import Field, model_validator
 from .backup import _worker_lock
 from .contracts import Context, Fact, KernelError, Read
 from .domains.payroll import PAYROLL_KINDS, employee_month
-from .types import NonNegativeFen, YearMonth, canonical, digest, sum_fen
+from .types import NonNegativeFen, YearMonth, canonical, checked, digest, sum_fen
 from .workflow import payroll_required_reads, payroll_required_work
 
 SPECIAL_COLUMNS = (
@@ -118,40 +118,267 @@ def register(registry):
         registry.register(model)
 
 
-def _contributions(connection, store, calculation, mapping):
+def _content_error(message, **details):
+    raise KernelError("content_integrity_failed", message, component="tax_import", **details)
+
+
+def _contribution_components(connection, store, calculation):
+    rule_versions = calculation.values.get("rule_versions")
+    if not isinstance(rule_versions, (tuple, list)) or not rule_versions:
+        _content_error(
+            "正式工资缺少可核对的社保政策版本",
+            calculation_id=calculation.id,
+        )
+    policy_id = rule_versions[0]
+    if not isinstance(policy_id, str) or not policy_id:
+        _content_error(
+            "正式工资的社保政策版本无效",
+            calculation_id=calculation.id,
+        )
     policy = store.select(
         connection,
-        Read("fact", "payroll_contribution_policy", "#" + calculation.values["rule_versions"][0]),
+        Read("fact", "payroll_contribution_policy", "#" + policy_id),
     )
     raw = connection.execute(
         "SELECT outcome FROM calculation WHERE id=?", (calculation.id,)
     ).fetchone()
-    trace = [
-        item["values"]
-        for item in json.loads(raw[0])["explanation"]
-        if item["step"] == "contribution_burden_allocation"
-    ]
-    if len(policy) != 1 or len(trace) != len(policy[0].fact.rules):
-        raise ValueError("published contribution breakdown is incomplete")
+    if len(policy) != 1 or raw is None:
+        _content_error(
+            "正式工资引用的社保政策或计算原文不存在",
+            calculation_id=calculation.id,
+            policy_fact_id=policy_id,
+        )
+    try:
+        outcome = json.loads(raw[0])
+        explanation = outcome["explanation"]
+        trace = [
+            item["values"]
+            for item in explanation
+            if item["step"] == "contribution_burden_allocation"
+        ]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise KernelError(
+            "content_integrity_failed",
+            "正式工资的社保扣款说明无法核对",
+            component="tax_import",
+            calculation_id=calculation.id,
+        ) from exc
+    if len(trace) != len(policy[0].fact.rules):
+        _content_error(
+            "正式工资的社保扣款明细不完整",
+            calculation_id=calculation.id,
+            policy_fact_id=policy_id,
+        )
     social, housing = {}, []
     for rule, item in zip(policy[0].fact.rules, trace, strict=True):
-        if item["code"] != rule.code:
-            raise ValueError("contribution component provenance differs")
-        amount = item["employee_deduction_fen"]
+        if not isinstance(item, dict) or item.get("code") != rule.code:
+            _content_error(
+                "正式工资的社保扣款成分与政策顺序不一致",
+                calculation_id=calculation.id,
+                policy_fact_id=policy_id,
+            )
+        amount = item.get("employee_deduction_fen")
+        try:
+            checked(amount)
+        except ValueError as exc:
+            raise KernelError(
+                "content_integrity_failed",
+                "正式工资的个人社保扣款金额无效",
+                component="tax_import",
+                calculation_id=calculation.id,
+                component_code=rule.code,
+            ) from exc
+        if amount < 0:
+            _content_error(
+                "正式工资的个人社保扣款不能为负数",
+                calculation_id=calculation.id,
+                component_code=rule.code,
+            )
         if rule.base_kind == "social_insurance":
             if rule.code in social:
-                raise ValueError("ambiguous social component")
+                _content_error(
+                    "正式工资的社会保险扣款成分重复",
+                    calculation_id=calculation.id,
+                    component_code=rule.code,
+                )
             social[rule.code] = amount
         else:
-            housing.append(amount)
+            housing.append((rule.code, amount))
+    total = sum_fen((*social.values(), *(amount for _code, amount in housing)))
+    if total != calculation.values.get("employee_contributions_fen"):
+        _content_error(
+            "正式工资的个人社保公积金明细与合计不一致",
+            calculation_id=calculation.id,
+        )
+    return {
+        "policy_fact_id": policy_id,
+        "social": social,
+        "housing": housing,
+    }
+
+
+def _assessment_issue(code, category, field, message, **details):
+    return {
+        "code": code,
+        "category": category,
+        "field": field,
+        "message": message,
+        **details,
+    }
+
+
+def assess_tax_import_mapping(store, connection, period: YearMonth):
+    """Assess the current published wage population inside the caller's read snapshot."""
+
+    month = YearMonth(str(period))
+    facts = [
+        item
+        for kind in PAYROLL_KINDS
+        for item in store.select(connection, Read("fact", kind, str(month)))
+    ]
+    calculations = {
+        item.subject_id: item
+        for kind in PAYROLL_KINDS
+        for item in store.select(connection, Read("calculation", kind, str(month)))
+    }
+    pending = {row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")}
+    mappings = store.select(connection, Read("fact", TaxImportMapping.kind, str(month)))
+    mapping_ids = sorted(item.id for item in mappings)
+    calculation_ids = sorted(item.id for item in calculations.values())
+    issues = []
+    applicable = []
+    for version in sorted(facts, key=lambda item: (item.fact.employee_id, item.subject_id)):
+        calculation = calculations.get(version.subject_id)
+        if (
+            calculation is None
+            or calculation.fact_id != version.id
+            or version.subject_id in pending
+        ):
+            issues.append(
+                _assessment_issue(
+                    "tax_import_payroll_pending",
+                    "publication",
+                    "payroll",
+                    "工资尚未正式发布或待更正，暂不能核对个税文件扣款映射",
+                    employee_id=version.fact.employee_id,
+                )
+            )
+            continue
+        if calculation.values.get("tax_status") == "not_started":
+            continue
+        applicable.append((version.fact.employee_id, calculation))
+
+    result = {
+        "status": "ready",
+        "blocking_scope": "tax_import_file",
+        "mapping_fact_ids": mapping_ids,
+        "calculation_ids": calculation_ids,
+        "issues": issues,
+    }
+    if not facts:
+        return {**result, "status": "pending_publication"}
+    if not applicable and not issues:
+        return {**result, "status": "not_applicable"}
+    extracted = []
+    nonzero_by_code = {}
+    for employee_id, calculation in applicable:
+        components = _contribution_components(connection, store, calculation)
+        extracted.append((employee_id, calculation, components))
+        for code, amount in components["social"].items():
+            if amount:
+                nonzero_by_code[code] = sum_fen((nonzero_by_code.get(code, 0), amount))
+    if len(nonzero_by_code) > 3:
+        issues.append(
+            _assessment_issue(
+                "tax_import_format_unsupported",
+                "capability",
+                "tax_import_mapping",
+                "本期实际非零个人社保扣款超过个税模板的三个固定险种列",
+                component_codes=sorted(nonzero_by_code),
+                amount_fen=sum_fen(nonzero_by_code.values()),
+            )
+        )
+        return {**result, "status": "unsupported"}
+
+    if issues:
+        return {**result, "status": "pending_publication"}
+
+    if len(mappings) != 1:
+        issues.append(
+            _assessment_issue(
+                ("tax_import_mapping_required" if not mappings else "tax_import_mapping_ambiguous"),
+                "management_fact",
+                "tax_import_mapping",
+                (
+                    "需要本月唯一的险种与个税列对应关系"
+                    if not mappings
+                    else "本月存在多份险种与个税列对应关系"
+                ),
+            )
+        )
+        return {**result, "status": "needs_information"}
+
+    mapping = mappings[0].fact
+
+    selected = (mapping.pension_code, mapping.medical_code, mapping.unemployment_code)
+    for employee_id, _calculation, components in extracted:
+        social = components["social"]
+        missing = sorted(code for code, amount in social.items() if amount and code not in selected)
+        if missing:
+            issues.append(
+                _assessment_issue(
+                    "tax_import_mapping_incomplete",
+                    "management_fact",
+                    "tax_import_mapping",
+                    "本月险种映射未覆盖实际非零个人社保扣款",
+                    employee_id=employee_id,
+                    component_codes=missing,
+                    amount_fen=sum_fen(social[code] for code in missing),
+                )
+            )
+        absent = sorted(code for code in selected if code is not None and code not in social)
+        if absent:
+            issues.append(
+                _assessment_issue(
+                    "tax_import_mapping_policy_mismatch",
+                    "management_fact",
+                    "tax_import_mapping",
+                    "本月险种映射声明的代码不属于该工资采用的社保政策",
+                    employee_id=employee_id,
+                    component_codes=absent,
+                )
+            )
+    if issues:
+        return {**result, "status": "needs_information"}
+    return result
+
+
+def _contributions(connection, store, calculation, mapping):
+    components = _contribution_components(connection, store, calculation)
+    social = components["social"]
+    housing = components["housing"]
     selected = (mapping.pension_code, mapping.medical_code, mapping.unemployment_code)
     if any(amount and code not in selected for code, amount in social.items()):
-        raise ValueError("a nonzero employee insurance component has no tax import column")
+        raise KernelError(
+            "tax_import_mapping_invalid",
+            "本月险种映射未覆盖实际非零个人社保扣款",
+            component_codes=sorted(
+                code for code, amount in social.items() if amount and code not in selected
+            ),
+        )
     if any(code is not None and code not in social for code in selected):
-        raise ValueError("a declared tax insurance code is not in the published policy")
-    amounts = [social.get(code, 0) for code in selected] + [sum_fen(housing)]
+        raise KernelError(
+            "tax_import_mapping_invalid",
+            "本月险种映射声明的代码不属于工资采用的社保政策",
+        )
+    amounts = [social.get(code, 0) for code in selected] + [
+        sum_fen(amount for _code, amount in housing)
+    ]
     if sum_fen(amounts) != calculation.values["employee_contributions_fen"]:
-        raise ValueError("tax insurance columns differ from published employee deductions")
+        _content_error(
+            "个税模板险种列与正式工资个人扣款不一致",
+            calculation_id=calculation.id,
+        )
     return amounts
 
 
@@ -177,6 +404,7 @@ class TaxImport:
                 row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")
             }
             mappings = self.store.select(connection, Read("fact", TaxImportMapping.kind, period))
+            mapping_assessment = assess_tax_import_mapping(self.store, connection, month)
             issues = payroll_required_work(
                 month,
                 Context(
@@ -186,17 +414,13 @@ class TaxImport:
                     }
                 ),
             )
+            issues.extend(dict(item) for item in mapping_assessment["issues"])
             rows, sources, excluded = [], [], []
             if not facts:
                 issues.append(
                     {"field": "payroll", "message": "没有已明确的本月工资，不推定空申报文件"}
                 )
-            if len(mappings) != 1:
-                issues.append(
-                    {"field": "tax_import_mapping", "message": "需要唯一的险种与个税列对应关系"}
-                )
-            else:
-                sources.append(mappings[0].id)
+            sources.extend(mapping_assessment["mapping_fact_ids"])
             for version in sorted(facts, key=lambda item: item.fact.employee_id):
                 fact, calculation = version.fact, calculations.get(version.subject_id)
                 employee = fact.employee_id
@@ -211,13 +435,6 @@ class TaxImport:
                     or calculation.fact_id != version.id
                     or version.subject_id in pending
                 ):
-                    issues.append(
-                        {
-                            "field": "payroll",
-                            "employee_id": employee,
-                            "message": "工资尚未正式发布或待更正",
-                        }
-                    )
                     continue
                 if calculation.values.get("tax_status") == "not_started":
                     excluded.append(
@@ -244,12 +461,12 @@ class TaxImport:
                         for item in calculation.values["tax_state_bounds"]["unknown_fields"]
                     )
                     continue
-                if len(identity) != 1 or len(details) != 1 or len(mappings) != 1:
+                if len(identity) != 1 or len(details) != 1:
                     issues.append(
                         {
                             "field": "tax_import_details",
                             "employee_id": employee,
-                            "message": "导出需要身份、扣除明细和险种映射；这些资料不阻断工资入账",
+                            "message": "导出需要身份和扣除明细；这些资料不阻断工资入账",
                         }
                     )
                     continue
@@ -276,19 +493,17 @@ class TaxImport:
                     != fact.tax_relief_fen
                 ):
                     errors.append("减免税拆分与正式工资不符")
-                try:
-                    contributions = _contributions(
-                        connection, self.store, calculation, mappings[0].fact
-                    )
-                except (ValueError, KeyError) as exc:
-                    errors.append(str(exc))
-                    contributions = []
                 if errors:
                     issues.extend(
                         {"field": "tax_import_details", "employee_id": employee, "message": error}
                         for error in errors
                     )
                     continue
+                if mapping_assessment["status"] != "ready":
+                    continue
+                contributions = _contributions(
+                    connection, self.store, calculation, mappings[0].fact
+                )
                 rows.append(
                     [
                         person.employee_code,
@@ -329,6 +544,7 @@ class TaxImport:
                 "row_count": len(rows),
                 "source_versions": sorted(sources),
                 "excluded_sources": excluded,
+                "tax_import_mapping": mapping_assessment,
                 "fact_issues": issues,
                 "epochs": {
                     key: value
@@ -338,7 +554,13 @@ class TaxImport:
             }
             return {
                 **plan,
-                "status": "needs_information" if issues else "ready",
+                "status": (
+                    "unsupported"
+                    if mapping_assessment["status"] == "unsupported"
+                    else "needs_information"
+                    if issues
+                    else "ready"
+                ),
                 "digest": digest(plan).hex(),
             }
 
@@ -351,6 +573,12 @@ class TaxImport:
         plan = self.preview(period)
         if plan["digest"] != preview_digest:
             raise KernelError("preview_expired", "工资或导入资料已有变化，请重新预览")
+        if plan["status"] == "unsupported":
+            raise KernelError(
+                "tax_import_format_unsupported",
+                "本期实际个人社保扣款无法装入个税文件固定列",
+                fact_issues=plan["tax_import_mapping"]["issues"],
+            )
         if plan["fact_issues"]:
             raise KernelError(
                 "needs_information", "个税导入文件尚缺明确资料", fact_issues=plan["fact_issues"]

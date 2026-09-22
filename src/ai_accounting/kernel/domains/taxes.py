@@ -12,9 +12,10 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from decimal import Context as DecimalContext
 from typing import Annotated, ClassVar, Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+
+from ai_accounting.policy_sources import OfficialPolicySourceURL
 
 from ..contracts import (
     BalanceEffect,
@@ -73,20 +74,9 @@ def exact_decimal_rate(value) -> Decimal:
 
 class EffectiveTaxPolicy(TaxInput):
     version: str = Field(min_length=1, max_length=100)
-    source_url: str
+    source_url: OfficialPolicySourceURL
     effective_from: date
     effective_to: date | None
-
-    @field_validator("source_url")
-    @classmethod
-    def official_source(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname or ""
-        if parsed.scheme != "https" or not hostname.endswith(".gov.cn"):
-            raise ValueError("a primary official HTTPS .gov.cn tax policy source is required")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("policy source must not contain credentials")
-        return value
 
     @model_validator(mode="after")
     def valid_interval(self):

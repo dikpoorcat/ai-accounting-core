@@ -8,9 +8,11 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import Annotated, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+
+from ai_accounting.policy_sources import OfficialPolicySourceURL
 
 from .contracts import Fact, KernelError, NeedsInformation, Outcome, Read
 from .domains.payroll import PAYROLL_KINDS
@@ -85,7 +87,7 @@ class FilingCalendarPolicy(Fact):
     version: str = Field(min_length=1)
     effective_from: YearMonth
     effective_to: YearMonth
-    primary_source_url: Annotated[str, Field(pattern=r"^https://[^/\s]+/[^\s]*$")]
+    primary_source_url: OfficialPolicySourceURL
     rules: tuple[FilingRule, ...]
     deadlines: tuple[FilingDeadline, ...] = ()
 
@@ -129,11 +131,7 @@ def _basis_reads(kind, start, end):
             for source_kind in definition.basis_kinds
             for source in (("calculation",) if source_kind == "*" else ("fact", "calculation"))
         ),
-        *(
-            (Read("fact", "payroll_profile", "*"),)
-            if definition.check_payroll_population
-            else ()
-        ),
+        *((Read("fact", "payroll_profile", "*"),) if definition.check_payroll_population else ()),
     )
 
 

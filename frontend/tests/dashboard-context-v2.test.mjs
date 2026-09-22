@@ -40,7 +40,7 @@ async function harness(name, refreshContext = async () => {}) {
 }
 function result(name, marker) {
   if (name === "Reports") return { marker, statements: [] };
-  if (name === "Funds") return { schema_version: 4, snapshot_version: "same", selected_period: { label: "一月" }, data: { marker, accounts: [], investments: { products: [] }, bank_statement: {} } };
+  if (name === "Funds") return { schema_version: 5, snapshot_version: "same", selected_period: { label: "一月" }, data: { marker, accounts: [], investments: { products: [] }, bank_statement: {} } };
   return { marker, selected_period: { key: "2026-01" }, data: { workforce_cost: { has_activity: false }, vouchers: [], activity_groups: [], voucher_page: { has_more: false }, collections: {} } };
 }
 function period(name, month) { return name === "Reports" ? `2026-Q${month}` : `2026-0${month}`; }
@@ -112,7 +112,7 @@ test("actual API consumers reject stale schemas, missing page metadata and misma
   globalThis.window = { location: { origin: "http://localhost", search: "?company_id=a" } };
   const page = { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null };
   const preparation = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8")).employees.data.period_preparation;
-  const valid = { schema_version: 4, data: { period_preparation: preparation, employees: { items: [] }, collections: { employees: { items: [], page } } } };
+  const valid = { schema_version: 5, data: { period_preparation: preparation, employees: { items: [] }, collections: { employees: { items: [], page } } } };
   const rejected = [
     { ...valid, schema_version: 1 },
     { ...valid, data: { ...valid.data, collections: { employees: { items: [], page: { has_more: false } } } } },
@@ -124,7 +124,7 @@ test("actual API consumers reject stale schemas, missing page metadata and misma
     await assert.rejects(requestJson("/api/dashboard/employees?period=2026-01"), error => error.code === "DASHBOARD_SCHEMA_MISMATCH" && error.message.includes("刷新"));
   }
   globalThis.fetch = async () => new Response(JSON.stringify(valid));
-  assert.equal((await requestJson("/api/dashboard/employees?period=2026-01")).schema_version, 4);
+  assert.equal((await requestJson("/api/dashboard/employees?period=2026-01")).schema_version, 5);
 });
 
 test("business history API carries the selected settlement view and version through continuation", async () => {
@@ -153,5 +153,5 @@ test("embedded historical settlement pages require their shared scope and accura
     await assert.rejects(requestJson("/api/dashboard/employees?period=2026-11"), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
   }
   globalThis.fetch = async () => new Response(JSON.stringify(response));
-  assert.equal((await requestJson("/api/dashboard/employees?period=2026-11")).schema_version, 4);
+  assert.equal((await requestJson("/api/dashboard/employees?period=2026-11")).schema_version, 5);
 });

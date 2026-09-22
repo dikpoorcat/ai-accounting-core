@@ -1038,6 +1038,9 @@
           },
           "file_jobs": {
             "$ref": "#/$defs/FileJobFollowup"
+          },
+          "tax_import_mapping": {
+            "$ref": "#/$defs/TaxImportMappingFollowup"
           }
         },
         "required": [
@@ -1048,7 +1051,8 @@
           "close_requirements",
           "settlements",
           "external",
-          "file_jobs"
+          "file_jobs",
+          "tax_import_mapping"
         ],
         "title": "CurrentFollowups",
         "type": "object"
@@ -2604,6 +2608,11 @@
             "title": "Category",
             "type": "string"
           },
+          "inventory_id": {
+            "minimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          },
           "subject_id": {
             "title": "Subject Id",
             "type": "string"
@@ -2854,6 +2863,23 @@
           "review_period": {
             "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
             "title": "Review Period",
+            "type": "string"
+          },
+          "origin_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Origin Periods",
+            "type": "array"
+          },
+          "responsibility": {
+            "enum": [
+              "direct",
+              "closed_followup",
+              "unassigned"
+            ],
+            "title": "Responsibility",
             "type": "string"
           },
           "signals": {
@@ -3254,6 +3280,108 @@
         "title": "SourceMetadata",
         "type": "object"
       },
+      "TaxImportMappingFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unsupported",
+              "pending_publication",
+              "not_applicable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "mapping_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mapping Fact Ids",
+            "type": "array"
+          },
+          "calculation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation Ids",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/TaxImportMappingIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "blocking_scope",
+          "mapping_fact_ids",
+          "calculation_ids",
+          "issues"
+        ],
+        "title": "TaxImportMappingFollowup",
+        "type": "object"
+      },
+      "TaxImportMappingIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "management_fact",
+              "capability",
+              "publication"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "component_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Codes",
+            "type": "array"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "code",
+          "category",
+          "field",
+          "message"
+        ],
+        "title": "TaxImportMappingIssue",
+        "type": "object"
+      },
       "UnavailableReadiness": {
         "additionalProperties": false,
         "properties": {
@@ -3308,7 +3436,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 4,
+        "const": 5,
         "title": "Schema Version",
         "type": "integer"
       },

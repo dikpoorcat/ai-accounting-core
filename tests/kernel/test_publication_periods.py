@@ -154,6 +154,7 @@ def test_closed_payroll_correction_keeps_automatic_open_dependants_in_their_mont
         (payroll(period="2026-03"), "march"),
     ):
         company.save(fact, subject)
+    company.confirm_payroll("january", "february", "march")
     company.publish("january", "february", "march")
     frozen = company.close("2026-01")
     original_february = company.current("february")

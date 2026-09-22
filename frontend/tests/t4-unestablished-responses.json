@@ -1,6 +1,6 @@
 {
   "employees": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",
@@ -327,13 +327,20 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       }
     }
   },
   "assets": {
-    "schema_version": 4,
+    "schema_version": 5,
     "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
     "selected_period": {
       "key": "2024-01",
@@ -638,6 +645,13 @@
             "total_count": 0,
             "status_counts": {},
             "issue_count": 0
+          },
+          "tax_import_mapping": {
+            "status": "pending_publication",
+            "blocking_scope": "tax_import_file",
+            "mapping_fact_ids": [],
+            "calculation_ids": [],
+            "issues": []
           }
         }
       }

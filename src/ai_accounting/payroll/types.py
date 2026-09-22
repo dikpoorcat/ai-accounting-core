@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from urllib.parse import urlparse
+
+from ai_accounting.policy_sources import validate_official_policy_source_url
 
 NATIONAL_WITHHOLDING_SOURCE_URL = (
     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/201812/c4182700/content.html"
@@ -90,11 +91,12 @@ def require_decimal_rate(value: Decimal, field: str) -> None:
 
 
 def require_source_url(value: str, field: str = "primary_source_url") -> None:
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        validate_official_policy_source_url(value)
+    except ValueError as exc:
         raise CalculationValidationError(
-            "INVALID_SOURCE_URL", f"{field} must be an absolute HTTP(S) URL"
-        )
+            "INVALID_SOURCE_URL", f"{field} must be an official HTTPS gov.cn URL"
+        ) from exc
 
 
 @dataclass(frozen=True, order=True)

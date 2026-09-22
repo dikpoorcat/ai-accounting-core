@@ -35,7 +35,6 @@ from pydantic import (
 
 from .build import calculator_build_id
 from .contracts import Fact, FactVersion, KernelError, NeedsInformation
-from .schema import table_name
 from .storage import Store
 from .types import ActualDate, Fen, YearMonth, canonical, checked, digest, sum_fen
 
@@ -1139,18 +1138,48 @@ class _CompletenessReads:
 
     def __init__(self, connection, registry):
         self.connection, self.registry = connection, registry
-        self._versions, self._scopes = {}, {}
+        self._versions, self._scopes, self._current = {}, {}, {}
 
     def fact(self, fact_id):
         if fact_id not in self._versions:
             self._versions[fact_id] = Store.fact(self, self.connection, fact_id)
         return self._versions[fact_id]
 
+    def versions(self, fact_ids):
+        identifiers = tuple(dict.fromkeys(fact_ids))
+        missing = [ident for ident in identifiers if ident not in self._versions]
+        if missing:
+            self._versions.update(Store.facts(self, self.connection, missing))
+        return {ident: self._versions[ident] for ident in identifiers}
+
     def facts(self, kind, scope):
         key = kind, scope
         if key not in self._scopes:
-            self._scopes[key] = _facts(self.connection, self.registry, kind, scope, _reads=self)
+            if kind in {
+                MaterialSource.kind,
+                MaterialResolution.kind,
+                MaterialPeriodAllocation.kind,
+                MaterialGroupResolution.kind,
+            }:
+                self._scopes[key] = tuple(
+                    item for item in self.current_facts(kind) if scope in item.fact.scopes()
+                )
+            else:
+                self._scopes[key] = _facts(self.connection, self.registry, kind, scope, _reads=self)
         return self._scopes[key]
+
+    def current_facts(self, kind):
+        """Load authoritative current heads without trusting the scope directory."""
+        if kind not in self._current:
+            rows = self.connection.execute(
+                "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
+                "WHERE s.kind=? ORDER BY c.subject_id",
+                (kind,),
+            ).fetchall()
+            identifiers = [row[0] for row in rows]
+            versions = self.versions(identifiers)
+            self._current[kind] = tuple(versions[ident] for ident in identifiers)
+        return self._current[kind]
 
 
 def _facts(connection, registry, kind, scope, *, _reads=None):
@@ -1261,7 +1290,19 @@ def _groups_cover_unknown(allocation, groups):
     return True
 
 
-def _group_issues(connection, registry, version, source, inspection, *, current=None, _reads=None):
+def _group_issues(
+    connection,
+    registry,
+    version,
+    source,
+    inspection,
+    *,
+    current=None,
+    current_sources=None,
+    pending_subjects=None,
+    competitors_by_subject=None,
+    _reads=None,
+):
     """Validate a pool as a whole; its members never acquire invented individual links."""
     fact = version.fact
     issues = []
@@ -1366,14 +1407,19 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
             )
             continue
         original, calculation = target
+        pending = (
+            link.subject_id in pending_subjects
+            if pending_subjects is not None
+            else connection.execute(
+                "SELECT 1 FROM pending WHERE subject_id=? LIMIT 1", (link.subject_id,)
+            ).fetchone()
+        )
         if (
             original.id != link.fact_id
             or original.fact.kind != link.fact_kind
             or calculation.id != link.calculation_id
             or calculation.fact_id != original.id
-            or connection.execute(
-                "SELECT 1 FROM pending WHERE subject_id=? LIMIT 1", (link.subject_id,)
-            ).fetchone()
+            or pending
         ):
             problem(
                 "material_result_stale",
@@ -1407,28 +1453,39 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
         targets[key] = original, calculation, capacity
     for (subject_id, basis), (original, calculation, capacity) in targets.items():
         allocated = totals[subject_id, basis]
-        for kind in (MaterialResolution.kind, MaterialGroupResolution.kind):
-            for other in facts(kind, "material-business:" + subject_id):
-                if other.subject_id == version.subject_id:
-                    continue
+        others = (
+            competitors_by_subject.get(subject_id, ())
+            if competitors_by_subject is not None
+            else tuple(
+                other
+                for kind in (MaterialResolution.kind, MaterialGroupResolution.kind)
+                for other in facts(kind, "material-business:" + subject_id)
+            )
+        )
+        for other in others:
+            if other.subject_id == version.subject_id:
+                continue
+            if current_sources is None:
                 active_source = connection.execute(
                     "SELECT fact_id FROM fact_current WHERE subject_id=?", (other.fact.source_id,)
                 ).fetchone()
                 if active_source is None or active_source[0] != other.fact.source_fact_id:
                     continue
-                for used in other.fact.links:
-                    if (used.subject_id, used.fact_id, used.fact_kind, used.calculation_id) != (
-                        subject_id,
-                        original.id,
-                        original.fact.kind,
-                        calculation.id,
-                    ):
-                        continue
-                    try:
-                        if _amount_basis(original.fact, calculation, used.amount_field) == basis:
-                            allocated = sum_fen((allocated, abs(used.amount_fen)))
-                    except KernelError:
-                        pass  # Its own active row/group reports the stale invalid association.
+            elif current_sources.get(other.fact.source_id) != other.fact.source_fact_id:
+                continue
+            for used in other.fact.links:
+                if (used.subject_id, used.fact_id, used.fact_kind, used.calculation_id) != (
+                    subject_id,
+                    original.id,
+                    original.fact.kind,
+                    calculation.id,
+                ):
+                    continue
+                try:
+                    if _amount_basis(original.fact, calculation, used.amount_field) == basis:
+                        allocated = sum_fen((allocated, abs(used.amount_fen)))
+                except KernelError:
+                    pass  # Its own active row/group reports the stale invalid association.
         if allocated > abs(capacity):
             problem(
                 "material_business_overallocated",
@@ -1438,11 +1495,57 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
     return issues
 
 
-def check_completeness(connection, month: int, registry) -> dict:
-    """Read the bound snapshot; the returned digest belongs in the close manifest."""
-    period = YearMonth.from_ordinal(month)
+def _inventory_reference(row, item_digests):
+    content = {
+        "inventory_id": row["id"],
+        "period": str(YearMonth.from_ordinal(row["period"])),
+        "category": row["category"],
+        "expected": row["expected"],
+        "received": row["received"],
+        "no_business": bool(row["no_business"]),
+        "evidence_digest": row["evidence_digest"].hex(),
+        "item_digests": sorted(item_digests),
+    }
+    return {
+        "inventory_id": content["inventory_id"],
+        "period": content["period"],
+        "category": content["category"],
+        "content_digest": digest(content).hex(),
+    }
+
+
+_CURRENT_CLOSED_THROUGH = object()
+
+
+class _CompletenessInspectionCache:
+    """Parsed originals owned by one connection and its current transaction."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.results = {}
+
+
+def check_completeness_many(
+    connection,
+    months,
+    registry,
+    *,
+    closed_through=_CURRENT_CLOSED_THROUGH,
+    _inspection_cache=None,
+) -> dict[int, dict]:
+    """Evaluate several review months once, including every current closed-period row."""
+    review_months = tuple(sorted(set(months)))
+    if not review_months:
+        return {}
+    review_periods = {month: YearMonth.from_ordinal(month) for month in review_months}
+    if _inspection_cache is not None and _inspection_cache.connection is not connection:
+        raise ValueError("material inspection cache belongs to another snapshot connection")
     reads = _CompletenessReads(connection, registry)
-    by_id = {item.subject_id: item for item in reads.facts(MaterialSource.kind, str(period))}
+    if closed_through is _CURRENT_CLOSED_THROUGH:
+        closed_row = connection.execute("SELECT max(period) FROM period_close").fetchone()
+        closed_through = closed_row[0] if closed_row is not None else None
+    elif closed_through is not None and type(closed_through) is not int:
+        raise TypeError("closed_through must be an ordinal month or None")
     current_sources = dict(
         connection.execute(
             "SELECT c.subject_id,c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
@@ -1450,25 +1553,27 @@ def check_completeness(connection, month: int, registry) -> dict:
             (MaterialSource.kind,),
         ).fetchall()
     )
+    all_sources = {item.subject_id: item for item in reads.current_facts(MaterialSource.kind)}
+    all_allocations = reads.current_facts(MaterialPeriodAllocation.kind)
+    all_groups = reads.current_facts(MaterialGroupResolution.kind)
+    all_resolutions = reads.current_facts(MaterialResolution.kind)
+    groups_by_source = {}
+    for item in all_groups:
+        groups_by_source.setdefault(item.fact.source_id, []).append(item)
 
     def source_groups(source_id):
-        return reads.facts(MaterialGroupResolution.kind, "material-source:" + source_id)
+        return tuple(groups_by_source.get(source_id, ()))
 
-    group_versions = {
-        item.id: item
-        for item in reads.facts(MaterialGroupResolution.kind, "material-period:" + str(period))
+    mapped_sources = {
+        item.fact.source_id
+        for item in all_allocations
         if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
     }
-    allocation_versions = {
-        item.id: item
-        for scope in ("material-period:" + str(period), "material-period-unknown")
-        for item in reads.facts(MaterialPeriodAllocation.kind, scope)
-        if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
-    }
-    # A v2 source has no partition. A changed source invalidates its old partition.
-    # Collective pools own finite months without inventing individual row periods.
-    for ident, allocation in list(allocation_versions.items()):
-        if any(entry.recognition_period == period for entry in allocation.fact.entries):
+    unallocated = current_sources.keys() - mapped_sources
+    allocation_versions, group_versions, resolution_versions = {}, {}, {}
+    relevant = set(unallocated)
+    for allocation in all_allocations:
+        if current_sources.get(allocation.fact.source_id) != allocation.fact.source_fact_id:
             continue
         groups = [
             item
@@ -1476,59 +1581,107 @@ def check_completeness(connection, month: int, registry) -> dict:
             if item.fact.source_fact_id == allocation.fact.source_fact_id
             and item.fact.joint_basis_confirmed is True
         ]
-        if _groups_cover_unknown(allocation, groups):
-            del allocation_versions[ident]
-    # A v2 source has no partition. A changed source invalidates its old partition.
-    # Discover these using current identity metadata, without opening historical BLOBs.
-    mapped_sources = set()
-    if MaterialPeriodAllocation.kind in registry.models:
-        mapped_sources = {
-            row[0]
-            for row in connection.execute(
-                f"SELECT a.source_id FROM {table_name(MaterialPeriodAllocation.kind)} a "
-                "JOIN fact_current m ON m.fact_id=a.revision_id "
-                "JOIN fact_current s ON s.subject_id=a.source_id AND s.fact_id=a.source_fact_id"
-            )
+        known = {
+            entry.recognition_period.ordinal
+            for entry in allocation.fact.entries
+            if entry.recognition_period is not None
         }
-    resolution_versions = {
-        item.id: item
-        for scope in (str(period), "material-period:" + str(period))
-        for item in reads.facts(MaterialResolution.kind, scope)
-        if item.fact.source_id in current_sources
+        unknown = not allocation.fact.entries or any(
+            entry.recognition_period is None for entry in allocation.fact.entries
+        )
+        if unknown and _groups_cover_unknown(allocation, groups):
+            unknown = False
+            known.update(
+                link.recognition_period.ordinal for group in groups for link in group.fact.links
+            )
+        if (
+            unknown
+            or known.intersection(review_months)
+            or (closed_through is not None and any(value <= closed_through for value in known))
+        ):
+            relevant.add(allocation.fact.source_id)
+            allocation_versions[allocation.id] = allocation
+    for source in all_sources.values():
+        if source.fact.period.ordinal in review_months:
+            relevant.add(source.subject_id)
+    active_business_ids = {
+        link.subject_id
+        for item in (*all_resolutions, *all_groups)
+        if item.fact.source_id in relevant
+        and current_sources.get(item.fact.source_id) == item.fact.source_fact_id
+        for link in item.fact.links
     }
-    unallocated = current_sources.keys() - mapped_sources
-    relevant = (
-        set(by_id)
-        | {item.fact.source_id for item in resolution_versions.values()}
-        | {item.fact.source_id for item in allocation_versions.values()}
-        | {item.fact.source_id for item in group_versions.values()}
+    relevant.update(
+        item.fact.source_id
+        for item in (*all_resolutions, *all_groups)
+        if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
+        and any(link.subject_id in active_business_ids for link in item.fact.links)
     )
-    by_item, issues, parsed, parsed_items = {}, [], {}, {}
+    for item in all_groups:
+        if item.fact.source_id in relevant:
+            group_versions[item.id] = item
+    for item in all_resolutions:
+        if item.fact.source_id in relevant:
+            resolution_versions[item.id] = item
+
+    by_id = {
+        source_id: all_sources[source_id] for source_id in relevant if source_id in all_sources
+    }
+    by_item, raw_issues, parsed, parsed_items = {}, [], {}, {}
     for source_id in sorted(unallocated):
-        issues.append(
+        raw_issues.append(
             _issue(
                 "material_allocation_required",
                 "原件尚未建立与当前来源一致的归属版本",
                 source_id=source_id,
+                _unassigned=True,
             )
         )
-    relevant.difference_update(unallocated)
-    legacy = {
-        row[0].hex()
-        for row in connection.execute(
-            "SELECT DISTINCT i.evidence_digest FROM material_item i JOIN material_revision m "
-            "ON m.id=i.inventory_id WHERE m.period=?",
-            (month,),
-        )
-    }
-    for evidence in sorted(legacy):
-        matches = reads.facts(MaterialSource.kind, "material-evidence:" + evidence)
+    inventory_origins, inventory_rows, inventory_items = {}, {}, {}
+    for row in connection.execute(
+        "WITH current_inventory AS ("
+        "SELECT m.* FROM material_revision m WHERE m.id=(SELECT max(n.id) "
+        "FROM material_revision n WHERE n.period=m.period AND n.category=m.category)) "
+        "SELECT c.*,i.evidence_digest item_digest FROM current_inventory c "
+        "LEFT JOIN material_item i ON i.inventory_id=c.id WHERE "
+        "c.period IN (SELECT value FROM json_each(?)) OR (? IS NOT NULL AND c.period<=?) "
+        "ORDER BY c.period,c.category,i.evidence_digest",
+        (canonical(review_months), closed_through, closed_through),
+    ):
+        inventory_rows[row["id"]] = row
+        inventory_items.setdefault(row["id"], [])
+        if row["item_digest"] is not None:
+            evidence = row["item_digest"].hex()
+            inventory_items[row["id"]].append(evidence)
+            inventory_origins.setdefault(evidence, set()).add(row["period"])
+    inventory_versions = [
+        _inventory_reference(row, inventory_items[ident])
+        for ident, row in sorted(inventory_rows.items())
+    ]
+    for row in inventory_rows.values():
+        if row["expected"] > row["received"]:
+            raw_issues.append(
+                _issue(
+                    "material_expected_missing",
+                    "预期资料尚未全部收到",
+                    category=row["category"],
+                    field="materials." + row["category"],
+                    inventory_id=row["id"],
+                    _origin_ordinals=(row["period"],),
+                )
+            )
+    sources_by_evidence = {}
+    for item in all_sources.values():
+        sources_by_evidence.setdefault(item.fact.evidence_digest, []).append(item)
+    for evidence, origins in sorted(inventory_origins.items()):
+        matches = sources_by_evidence.get(evidence, ())
         if not matches:
-            issues.append(
+            raw_issues.append(
                 _issue(
                     "material_source_not_registered",
                     "已接收原件尚未登记逐项核对来源",
                     evidence_digest=evidence,
+                    _origin_ordinals=tuple(sorted(origins)),
                 )
             )
         by_id.update((item.subject_id, item) for item in matches)
@@ -1543,13 +1696,18 @@ def check_completeness(connection, month: int, registry) -> dict:
             continue
         loaded.add(source_id)
         if source_id not in by_id:
-            matches = reads.facts(MaterialSource.kind, "@" + source_id)
+            matches = tuple(
+                item
+                for item in reads.current_facts(MaterialSource.kind)
+                if item.subject_id == source_id
+            )
             if not matches:
-                issues.append(
+                raw_issues.append(
                     _issue(
                         "material_source_missing",
                         "逐项处置的原件来源不存在或已撤去",
                         source_id=source_id,
+                        _unassigned=True,
                     )
                 )
                 continue
@@ -1565,12 +1723,14 @@ def check_completeness(connection, month: int, registry) -> dict:
             )
             != 1
         ):
-            issues.append(
+            raw_issues.append(
                 _issue(
                     "material_duplicate_source", "同一原件只能有一个来源身份", source_id=source_id
                 )
             )
-        for item in reads.facts(MaterialResolution.kind, "material-source:" + source_id):
+        for item in all_resolutions:
+            if item.fact.source_id != source_id:
+                continue
             resolution_versions[item.id] = item
             if item.fact.treatment == "duplicate" and item.fact.duplicate_source_id:
                 queue.append(item.fact.duplicate_source_id)
@@ -1579,7 +1739,7 @@ def check_completeness(connection, month: int, registry) -> dict:
             "SELECT content FROM evidence WHERE digest=?", (bytes.fromhex(fact.evidence_digest),)
         ).fetchone()
         if row is None or fact.evidence_digest not in version.evidence:
-            issues.append(
+            raw_issues.append(
                 _issue(
                     "material_source_evidence_missing",
                     "来源必须引用留存的原件证据",
@@ -1587,13 +1747,33 @@ def check_completeness(connection, month: int, registry) -> dict:
                 )
             )
             continue
+        inspection_key = (
+            version.id,
+            fact.evidence_digest,
+            digest(fact.specification.model_dump(mode="json")).hex(),
+        )
         try:
-            parsed[source_id] = inspect_bytes(row[0], fact.specification)
+            if _inspection_cache is None:
+                inspection = inspect_bytes(row[0], fact.specification)
+            elif inspection_key not in _inspection_cache.results:
+                try:
+                    _inspection_cache.results[inspection_key] = (
+                        True,
+                        inspect_bytes(row[0], fact.specification),
+                    )
+                except (ValueError, OSError, KeyError) as exc:
+                    _inspection_cache.results[inspection_key] = (False, str(exc))
+            if _inspection_cache is not None:
+                valid, cached = _inspection_cache.results[inspection_key]
+                if not valid:
+                    raise ValueError(cached)
+                inspection = cached
+            parsed[source_id] = inspection
             parsed_items[source_id] = {
                 item["location"]: item for item in parsed[source_id]["items"]
             }
         except (ValueError, OSError, KeyError) as exc:
-            issues.append(
+            raw_issues.append(
                 _issue(
                     "material_unreadable",
                     "原件或解析映射无效",
@@ -1612,7 +1792,53 @@ def check_completeness(connection, month: int, registry) -> dict:
             key = group.fact.source_id, member.location
             by_group_member.setdefault(key, []).append(group)
             group_amounts[group.id, member.location] = member.amount_fen
-    current_cache, capacities, active_capacities, coverage = {}, {}, set(), []
+    linked_subjects = sorted(
+        {link.subject_id for item in (*all_resolutions, *all_groups) for link in item.fact.links}
+    )
+    current_rows = (
+        connection.execute(
+            "SELECT ids.value requested_subject_id,f.fact_id current_fact_id,c.* "
+            "FROM json_each(?) ids LEFT JOIN fact_current f ON f.subject_id=ids.value "
+            "LEFT JOIN calculation_current a ON a.subject_id=f.subject_id "
+            "LEFT JOIN calculation c ON c.id=a.calculation_id ORDER BY ids.value",
+            (canonical(linked_subjects),),
+        ).fetchall()
+        if linked_subjects
+        else ()
+    )
+    linked_versions = reads.versions(
+        row["current_fact_id"] for row in current_rows if row["current_fact_id"] is not None
+    )
+    current_cache = {
+        row["requested_subject_id"]: (
+            None
+            if row["current_fact_id"] is None
+            else (
+                linked_versions[row["current_fact_id"]],
+                Store.calculation(row) if row["id"] else None,
+            )
+        )
+        for row in current_rows
+    }
+    pending_subjects = (
+        {
+            row[0]
+            for row in connection.execute(
+                "SELECT p.subject_id FROM json_each(?) ids JOIN pending p "
+                "ON p.subject_id=ids.value",
+                (canonical(linked_subjects),),
+            )
+        }
+        if linked_subjects
+        else set()
+    )
+    competitors_by_subject = {}
+    for item in (*all_resolutions, *all_groups):
+        if current_sources.get(item.fact.source_id) != item.fact.source_fact_id:
+            continue
+        for subject_id in {link.subject_id for link in item.fact.links}:
+            competitors_by_subject.setdefault(subject_id, []).append(item)
+    capacities, active_capacities, coverage = {}, set(), []
     item_periods, partition_issues = {}, {}
     for source_id, inspection in parsed.items():
         source = by_id[source_id]
@@ -1723,19 +1949,7 @@ def check_completeness(connection, month: int, registry) -> dict:
         ] + controls
 
     def current(subject):
-        if subject not in current_cache:
-            row = connection.execute(
-                "SELECT f.fact_id current_fact_id,c.* FROM fact_current f "
-                "LEFT JOIN calculation_current a ON a.subject_id=f.subject_id "
-                "LEFT JOIN calculation c ON c.id=a.calculation_id WHERE f.subject_id=?",
-                (subject,),
-            ).fetchone()
-            if row is None:
-                current_cache[subject] = None
-            else:
-                fact_version = reads.fact(row["current_fact_id"])
-                current_cache[subject] = fact_version, Store.calculation(row) if row["id"] else None
-        return current_cache[subject]
+        return current_cache.get(subject)
 
     group_errors = {}
 
@@ -1754,6 +1968,9 @@ def check_completeness(connection, month: int, registry) -> dict:
                 by_id.get(key[0]),
                 parsed.get(key[0], {}),
                 current=current,
+                current_sources=current_sources,
+                pending_subjects=pending_subjects,
+                competitors_by_subject=competitors_by_subject,
                 _reads=reads,
             )
         return group_errors[group.id]
@@ -1894,9 +2111,7 @@ def check_completeness(connection, month: int, registry) -> dict:
                 or fact_version.fact.kind != link.fact_kind
                 or calculation.id != link.calculation_id
                 or calculation.fact_id != fact_version.id
-                or connection.execute(
-                    "SELECT 1 FROM pending WHERE subject_id=? LIMIT 1", (link.subject_id,)
-                ).fetchone()
+                or link.subject_id in pending_subjects
             ):
                 result.append(
                     _issue(
@@ -1955,196 +2170,327 @@ def check_completeness(connection, month: int, registry) -> dict:
                 active_capacities.add(capacity_key)
         return result
 
-    file_summaries, file_diagnostics = [], {}
-    for source_id in sorted(relevant):
-        source = by_id.get(source_id)
-        if source is None or source_id not in parsed:
-            continue
-        inspection = parsed[source_id]
-        periods = item_periods[source_id]
-        source_errors = partition_issues[source_id]
-        issues.extend(dict(item, source_id=source_id) for item in source_errors)
-        control_members = {
-            control["location"]: control["member_locations"]
-            for control in inspection["control_totals"]
-        }
-        inspected_errors = inspection_issues(source_id, inspection)
-        file_diagnostics[source_id] = [*source_errors, *inspected_errors]
-        for error in inspected_errors:
-            location = error.get("location")
-            if error["code"] in {
-                "material_total_mismatch",
-                "material_control_invalid",
-                "material_amount_missing",
-                "material_formula_result_missing",
-            }:
-                members = control_members.get(location, [location])
-                related = {periods.get(member) for member in members}
-                if related and period not in related and None not in related:
-                    continue
-            issues.append(dict(error, source_id=source_id))
-        file_unprocessed = 0
-        unknown_count = 0
-        for item in inspection["items"]:
-            allocated_period = periods[item["location"]]
-            groups = by_group_member.get((source_id, item["location"]), ())
-            shared_periods = (
-                frozenset().union(*(_group_periods(group) for group in groups))
-                if groups
-                else frozenset()
-            )
-            active = (
-                period in shared_periods
-                if groups
-                else allocated_period is None or allocated_period == period
-            )
-            item_issues = [
-                dict(issue, source_id=source_id)
-                for issue in resolve((source_id, item["location"]), active=active)
-            ]
-            if allocated_period is None and not groups:
-                unknown_count += 1
-                item_issues.append(
-                    _issue(
-                        "material_period_unknown",
-                        "原行的公司核算所属期尚无依据",
-                        source_id=source_id,
-                        location=item["location"],
+    def origin_ordinals(source_id, locations=()):
+        values, unknown = set(), False
+        periods = item_periods.get(source_id, {})
+        selected = tuple(locations) or tuple(periods)
+        for location in selected:
+            groups = by_group_member.get((source_id, location), ())
+            if groups:
+                values.update(
+                    period.ordinal for group in groups for period in _group_periods(group)
+                )
+                continue
+            value = periods.get(location)
+            if value is None:
+                unknown = True
+            else:
+                values.add(value.ordinal)
+        return values, unknown or not selected
+
+    def decorate(issue, review_month, *, source_id=None, locations=(), origins=None, unknown=None):
+        item = dict(issue)
+        private_origins = item.pop("_origin_ordinals", None)
+        private_unknown = item.pop("_unassigned", False)
+        if origins is None:
+            if private_origins is not None:
+                origins = set(private_origins)
+                unknown = private_unknown
+            elif source_id is not None:
+                origins, inferred_unknown = origin_ordinals(source_id, locations)
+                unknown = private_unknown or inferred_unknown
+            else:
+                origins, unknown = set(), True
+        origins = set(origins)
+        unknown = bool(unknown)
+        if unknown:
+            responsibility = "unassigned"
+        elif review_month in origins:
+            responsibility = "direct"
+        elif (
+            closed_through is not None
+            and review_month > closed_through
+            and any(value <= closed_through for value in origins)
+        ):
+            responsibility = "closed_followup"
+        else:
+            return None
+        item.update(
+            {
+                "origin_periods": [str(YearMonth.from_ordinal(value)) for value in sorted(origins)],
+                "review_period": str(review_periods[review_month]),
+                "responsibility": responsibility,
+            }
+        )
+        if source_id is not None:
+            item.setdefault("source_id", source_id)
+        source = by_id.get(item.get("source_id"))
+        if source is not None:
+            item["category"] = source.fact.category
+            item["field"] = "materials." + source.fact.category
+        return item
+
+    def build_result(review_month):
+        period = review_periods[review_month]
+        capacities.clear()
+        active_capacities.clear()
+        coverage.clear()
+        issues = []
+        for raw in raw_issues:
+            decorated = decorate(raw, review_month, source_id=raw.get("source_id"))
+            if decorated is not None:
+                issues.append(decorated)
+        file_summaries, file_diagnostics = [], {}
+        for source_id in sorted(relevant):
+            source = by_id.get(source_id)
+            if source is None or source_id not in parsed:
+                continue
+            inspection = parsed[source_id]
+            periods = item_periods[source_id]
+            source_errors = partition_issues[source_id]
+            control_members = {
+                control["location"]: control["member_locations"]
+                for control in inspection["control_totals"]
+            }
+            inspected_errors = inspection_issues(source_id, inspection)
+            file_diagnostics[source_id] = [*source_errors, *inspected_errors]
+            for error in (*source_errors, *inspected_errors):
+                location = error.get("location")
+                members = control_members.get(location, [location]) if location else ()
+                decorated = decorate(
+                    error,
+                    review_month,
+                    source_id=source_id,
+                    locations=members,
+                )
+                if decorated is not None:
+                    issues.append(decorated)
+            file_unprocessed = 0
+            unknown_count = 0
+            for item in inspection["items"]:
+                location = item["location"]
+                allocated_period = periods[location]
+                groups = by_group_member.get((source_id, location), ())
+                shared_periods = (
+                    frozenset().union(*(_group_periods(group) for group in groups))
+                    if groups
+                    else frozenset()
+                )
+                origins = {value.ordinal for value in shared_periods}
+                unknown = not groups and allocated_period is None
+                if allocated_period is not None and not groups:
+                    origins.add(allocated_period.ordinal)
+                active = (
+                    unknown
+                    or review_month in origins
+                    or (
+                        closed_through is not None
+                        and review_month > closed_through
+                        and any(value <= closed_through for value in origins)
                     )
                 )
-            file_unprocessed += bool(item_issues)
-            file_diagnostics[source_id].extend(item_issues)
-            if active:
-                issues.extend(item_issues)
-                coverage.append(
-                    {
-                        "source_id": source_id,
-                        "source_fact_id": source.id,
-                        "location": item["location"],
-                        "amount_fen": item["amount_fen"],
-                        "recognition_period": allocated_period,
-                        **(
-                            {
-                                "joint_periods": sorted(shared_periods),
-                                "group_ids": sorted(group.subject_id for group in groups),
-                            }
-                            if groups
-                            else {}
-                        ),
-                        "complete": not item_issues,
-                    }
-                )
-        file_summaries.append(
-            {
-                "source_id": source_id,
-                "source_fact_id": source.id,
-                "item_count": len(inspection["items"]),
-                "unprocessed_count": file_unprocessed,
-                "unknown_period_count": unknown_count,
-                "issue_count": len(inspected_errors) + len(source_errors),
-                "status": "complete"
-                if not (file_unprocessed or inspected_errors or source_errors)
-                else "needs_information",
-            }
-        )
-        locations = {
-            item["location"] for item in (*inspection["items"], *inspection["control_totals"])
-        }
-        for key in by_item:
-            if key[0] == source_id and key[1] not in locations:
-                location_issue = _issue(
-                    "material_location_unknown",
-                    "处置位置不在原件业务行中",
-                    source_id=source_id,
-                    location=key[1],
-                )
-                issues.append(location_issue)
-                file_diagnostics[source_id].append(location_issue)
-    # Lookup other allocations by the touched business identity. Historical
-    # documents are not opened merely to enforce a numeric allocation capacity.
-    for key, capacity in capacities.items():
-        competitors = tuple(
-            item
-            for kind in (MaterialResolution.kind, MaterialGroupResolution.kind)
-            for item in reads.facts(kind, "material-business:" + key[0])
-            if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
-        )
-        resolution_versions.update((item.id, item) for item in competitors)
-        fact_version, calculation = current(key[0])
-        amount = 0
-        for item in competitors:
-            if isinstance(item.fact, MaterialResolution) and item.fact.treatment not in {
-                "recognize",
-                "other_period",
-            }:
-                continue
-            for link in item.fact.links:
-                if (
-                    link.subject_id != key[0]
-                    or link.fact_id != fact_version.id
-                    or link.fact_kind != fact_version.fact.kind
-                    or link.calculation_id != calculation.id
-                ):
-                    continue
-                try:
-                    basis = _amount_basis(fact_version.fact, calculation, link.amount_field)
-                except KernelError:
-                    continue  # Its own row reports the inconsistent business result.
-                if basis == key[1]:
-                    amount += abs(link.amount_fen)
-        if amount > capacity:
-            capacity_issue = _issue(
-                "material_business_overallocated",
-                "多条原资料重复占用了同一业务金额，须明确重复关系",
-                subject_id=key[0],
-                amount_field=key[1],
+                item_issues = [
+                    dict(issue, source_id=source_id)
+                    for issue in resolve((source_id, location), active=active)
+                ]
+                if unknown:
+                    unknown_count += 1
+                    item_issues.append(
+                        _issue(
+                            "material_period_unknown",
+                            "原行的公司核算所属期尚无依据",
+                            source_id=source_id,
+                            location=location,
+                        )
+                    )
+                file_unprocessed += bool(item_issues)
+                file_diagnostics[source_id].extend(item_issues)
+                if active:
+                    for issue in item_issues:
+                        decorated = decorate(
+                            issue,
+                            review_month,
+                            source_id=source_id,
+                            locations=(location,),
+                            origins=origins,
+                            unknown=unknown,
+                        )
+                        if decorated is not None:
+                            issues.append(decorated)
+                    coverage.append(
+                        {
+                            "source_id": source_id,
+                            "source_fact_id": source.id,
+                            "location": location,
+                            "amount_fen": item["amount_fen"],
+                            "recognition_period": allocated_period,
+                            "origin_periods": [
+                                str(YearMonth.from_ordinal(value)) for value in sorted(origins)
+                            ],
+                            "review_period": str(period),
+                            "responsibility": (
+                                "unassigned"
+                                if unknown
+                                else "direct"
+                                if review_month in origins
+                                else "closed_followup"
+                            ),
+                            **(
+                                {
+                                    "joint_periods": sorted(shared_periods),
+                                    "group_ids": sorted(group.subject_id for group in groups),
+                                }
+                                if groups
+                                else {}
+                            ),
+                            "complete": not item_issues,
+                        }
+                    )
+            file_summaries.append(
+                {
+                    "source_id": source_id,
+                    "source_fact_id": source.id,
+                    "item_count": len(inspection["items"]),
+                    "unprocessed_count": file_unprocessed,
+                    "unknown_period_count": unknown_count,
+                    "issue_count": len(file_diagnostics[source_id]),
+                    "status": (
+                        "complete" if not file_diagnostics[source_id] else "needs_information"
+                    ),
+                }
             )
-            if key in active_capacities:
-                issues.append(capacity_issue)
-            for source_id in {item.fact.source_id for item in competitors}:
-                if source_id in file_diagnostics:
-                    file_diagnostics[source_id].append(capacity_issue)
-    for summary in file_summaries:
-        summary["issue_count"] = len(file_diagnostics[summary["source_id"]])
-        summary["status"] = "needs_information" if summary["issue_count"] else "complete"
-    for source_id in sorted(unallocated):
-        file_summaries.append(
-            {
-                "source_id": source_id,
-                "source_fact_id": current_sources[source_id],
-                "status": "needs_information",
-                "allocation_required": True,
+            locations = {
+                item["location"] for item in (*inspection["items"], *inspection["control_totals"])
             }
+            for key in by_item:
+                if key[0] == source_id and key[1] not in locations:
+                    location_issue = _issue(
+                        "material_location_unknown",
+                        "处置位置不在原件业务行中",
+                        source_id=source_id,
+                        location=key[1],
+                    )
+                    file_diagnostics[source_id].append(location_issue)
+                    decorated = decorate(location_issue, review_month, source_id=source_id)
+                    if decorated is not None:
+                        issues.append(decorated)
+        # Re-evaluate every current competitor for each touched business identity.
+        for key, capacity in capacities.items():
+            competitors = tuple(competitors_by_subject.get(key[0], ()))
+            resolution_versions.update((item.id, item) for item in competitors)
+            target = current(key[0])
+            if target is None or target[1] is None:
+                continue
+            fact_version, calculation = target
+            amount, competitor_origins, competitor_unknown = 0, set(), False
+            for competitor in competitors:
+                if isinstance(
+                    competitor.fact, MaterialResolution
+                ) and competitor.fact.treatment not in {"recognize", "other_period"}:
+                    continue
+                for link in competitor.fact.links:
+                    if (
+                        link.subject_id != key[0]
+                        or link.fact_id != fact_version.id
+                        or link.fact_kind != fact_version.fact.kind
+                        or link.calculation_id != calculation.id
+                    ):
+                        continue
+                    try:
+                        basis = _amount_basis(fact_version.fact, calculation, link.amount_field)
+                    except KernelError:
+                        continue
+                    if basis == key[1]:
+                        amount += abs(link.amount_fen)
+                        locations = (
+                            (competitor.fact.location,)
+                            if isinstance(competitor.fact, MaterialResolution)
+                            else tuple(member.location for member in competitor.fact.members)
+                        )
+                        origins, unknown = origin_ordinals(competitor.fact.source_id, locations)
+                        competitor_origins.update(origins)
+                        competitor_unknown = competitor_unknown or unknown
+            if amount > capacity:
+                capacity_issue = _issue(
+                    "material_business_overallocated",
+                    "多条原资料重复占用了同一业务金额，须明确重复关系",
+                    subject_id=key[0],
+                    amount_field=key[1],
+                )
+                if key in active_capacities:
+                    decorated = decorate(
+                        capacity_issue,
+                        review_month,
+                        origins=competitor_origins,
+                        unknown=competitor_unknown or not competitor_origins,
+                    )
+                    if decorated is not None:
+                        issues.append(decorated)
+                for source_id in {item.fact.source_id for item in competitors}:
+                    if source_id in file_diagnostics:
+                        file_diagnostics[source_id].append(capacity_issue)
+        for summary in file_summaries:
+            summary["issue_count"] = len(file_diagnostics[summary["source_id"]])
+            summary["status"] = "needs_information" if summary["issue_count"] else "complete"
+        for source_id in sorted(unallocated):
+            file_summaries.append(
+                {
+                    "source_id": source_id,
+                    "source_fact_id": current_sources[source_id],
+                    "status": "needs_information",
+                    "allocation_required": True,
+                }
+            )
+        result = {
+            "period": period,
+            "closed_through": (
+                str(YearMonth.from_ordinal(closed_through)) if closed_through is not None else None
+            ),
+            "issues": issues,
+            "coverage": list(coverage),
+            "source_versions": sorted(item.id for item in by_id.values()),
+            "resolution_versions": sorted(resolution_versions),
+            "group_versions": sorted(group_versions),
+            "allocation_versions": sorted(allocation_versions),
+            "inventory_versions": inventory_versions,
+            "file_summaries": file_summaries,
+            "file_status": (
+                "complete"
+                if all(item["status"] == "complete" for item in file_summaries)
+                else "needs_information"
+            ),
+        }
+        result["fact_ids"] = sorted(
+            set(result["source_versions"])
+            | set(result["resolution_versions"])
+            | set(result["allocation_versions"])
+            | set(result["group_versions"])
         )
-    for issue in issues:
-        source = by_id.get(issue.get("source_id"))
-        if source is not None:
-            issue["category"] = source.fact.category
-            issue["field"] = "materials." + source.fact.category
-    result = {
-        "period": period,
-        "issues": issues,
-        "coverage": coverage,
-        "source_versions": sorted(item.id for item in by_id.values()),
-        "resolution_versions": sorted(resolution_versions),
-        "group_versions": sorted(group_versions),
-        "allocation_versions": sorted(allocation_versions),
-        "file_summaries": file_summaries,
-        "file_status": "complete"
-        if not issues and all(item["status"] == "complete" for item in file_summaries)
-        else "needs_information",
-    }
-    result["fact_ids"] = sorted(
-        set(result["source_versions"])
-        | set(result["resolution_versions"])
-        | set(result["allocation_versions"])
-        | set(result["group_versions"])
-    )
-    return {
-        **result,
-        "status": "complete" if not issues else "needs_information",
-        "coverage_digest": digest(result).hex(),
-    }
+        return {
+            **result,
+            "status": "complete" if not issues else "needs_information",
+            "coverage_digest": digest(result).hex(),
+        }
+
+    return {month: build_result(month) for month in review_months}
+
+
+def check_completeness(
+    connection,
+    month: int,
+    registry,
+    *,
+    closed_through=_CURRENT_CLOSED_THROUGH,
+    _inspection_cache=None,
+) -> dict:
+    """Read one bound snapshot; the returned digest belongs in the close manifest."""
+    return check_completeness_many(
+        connection,
+        (month,),
+        registry,
+        closed_through=closed_through,
+        _inspection_cache=_inspection_cache,
+    )[month]
 
 
 class Materials:

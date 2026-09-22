@@ -40,6 +40,8 @@ _declare(
     ("person",),
 )
 _declare("payroll_plan_v2 payroll_plan_bounded", "payroll.employee_id", "employee", ("person",))
+_declare("payroll_no_change_v2", "employees.*.employee_id", "employee", ("person",))
+_declare("payroll_no_change_v2", "employees.*.payroll.employee_id", "employee", ("person",))
 _declare("labor labor_accrual labor_project_cost", "person_id", "worker", ("person",))
 _declare(
     "funding payment bank_income loan_drawdown bank_opening bank_statement bank_reconciliation "
@@ -227,10 +229,22 @@ BUSINESS_PATHS = {
         "source_id source_fact_id links.*.subject_id links.*.fact_id links.*.calculation_id"
     ),
     "payroll_plan_v2": (
-        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id"
+        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id "
+        "profile_revision.subject_id contribution_policy_revision.subject_id "
+        "income_tax_policy_revision.subject_id change_notice_revisions.*.subject_id"
     ),
     "payroll_plan_bounded": (
-        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id"
+        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id "
+        "profile_revision.subject_id contribution_policy_revision.subject_id "
+        "income_tax_policy_revision.subject_id change_notice_revisions.*.subject_id"
+    ),
+    "payroll_no_change_v2": (
+        "employees.*.payroll.profile_id employees.*.payroll.contribution_policy_id "
+        "employees.*.payroll.income_tax_policy_id "
+        "employees.*.prior_payroll_revision.subject_id "
+        "employees.*.profile_revision.subject_id "
+        "employees.*.contribution_policy_revision.subject_id "
+        "employees.*.income_tax_policy_revision.subject_id"
     ),
     "payroll_disbursement_basis": "payroll_id declaration_id declaration_fact_id",
 }

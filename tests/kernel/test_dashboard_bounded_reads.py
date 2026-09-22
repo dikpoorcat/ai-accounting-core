@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 import pytest
 from entity_fixture import seed_registration_entities
+from payroll_plan_fixture import confirm_wage_inputs
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 
 import ai_accounting.kernel.dashboard as dashboard_module
@@ -198,6 +199,10 @@ def layered_book(tmp_path_factory):
                 "cost_fen": 1000,
                 "acquisition_basis": "direct_purchase",
             },
+        )
+    for index in range(4):
+        confirm_wage_inputs(
+            engine, f"wage-{index}", evidence=(proof,), request_id=f"confirm-wage-{index}"
         )
     publish(*(f"wage-{index}" for index in range(4)), *(f"asset-{index}" for index in range(4)))
     for revision in range(1, 4):

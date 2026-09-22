@@ -243,6 +243,7 @@ def test_unchosen_conflicting_wage_does_not_block_another_person(setup):
     company.save(profile(employee_id="other"), "other-profile")
     company.save(opening(employee_id="other"), "other-opening")
     company.save(payroll(employee_id="other", profile_id="other-profile"), "other-wage")
+    company.confirm_payroll("other-wage")
     company.publish("other-wage")
     inventory(company)
     _, declaration = declare(company, employee_id="other")
@@ -281,6 +282,7 @@ def test_pending_changed_plan_blocks_only_its_own_source_and_not_quarter_basis(s
 def test_real_payroll_pending_still_blocks_selected_export_and_close(setup):
     company, export, template = setup
     company.save(payroll(accounting_gross_salary_fen=1100000), "january", revision=1)
+    company.confirm_payroll("january")
     inventory(company)
     with pytest.raises(KernelError):
         preview(export, template, ["january"])

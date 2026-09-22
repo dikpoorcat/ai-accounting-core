@@ -8,6 +8,7 @@ from io import BytesIO
 import pytest
 from entity_fixture import seed_entities
 from openpyxl import Workbook, load_workbook
+from payroll_plan_fixture import confirm_wage_inputs
 from test_payroll import (
     actual,
     contribution_policy,
@@ -75,6 +76,12 @@ def setup(tmp_path):
         (payroll(), "january"),
     ):
         company.save(fact, subject)
+    confirm_wage_inputs(
+        company.engine,
+        "january",
+        evidence=(company.owner_confirmation,),
+        request_id=company.request(),
+    )
     company.publish("january")
     export = Exports(company.engine)
     export.save_payee(

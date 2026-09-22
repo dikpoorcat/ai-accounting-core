@@ -292,7 +292,7 @@ async function loadFunds(periodKey: string) {
   requestError.value = "";
   try {
     const response = await fetchFundsDashboard(periodKey, controller.signal, filters);
-    if (response.schema_version !== 4) {
+    if (response.schema_version !== 5) {
       throw new Error("FUNDS_SCHEMA_MISMATCH");
     }
     const data = response.data;

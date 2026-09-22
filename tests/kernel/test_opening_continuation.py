@@ -5,6 +5,7 @@ import json
 
 import pytest
 from entity_fixture import seed_registration_entities
+from payroll_plan_fixture import confirm_wage_inputs
 from test_banking import consume_assets
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -577,7 +578,7 @@ def test_opening_bank_reconciles_first_real_statement(book):
 
 
 def test_midyear_payroll_uses_confirmed_cumulative_state_without_recreating_six_months(book):
-    engine, save, publish, package, _ = book
+    engine, save, publish, package, evidence = book
     policy = CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
     save(
         "payroll_income_tax_policy",
@@ -680,6 +681,12 @@ def test_midyear_payroll_uses_confirmed_cumulative_state_without_recreating_six_
             "expense_class": "management",
             "contribution_basis": "policy_until_actual",
         },
+    )
+    confirm_wage_inputs(
+        engine,
+        "july-payroll",
+        evidence=(evidence,),
+        request_id="confirm-july-payroll",
     )
     publish("july-payroll")
     with engine.store.connection(read_only=True) as connection:

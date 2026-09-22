@@ -37,6 +37,7 @@ def bounded_company(tmp_path):
         )
     )
     company.save(PayrollBounded.model_validate(data), "bounded-january")
+    company.confirm_payroll("bounded-january")
     return company
 
 
