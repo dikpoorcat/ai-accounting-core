@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 from entity_fixture import seed_registration_entities
+from monthly_close_fixture import close_months, ready
 from pydantic import TypeAdapter, ValidationError
-from test_close_range import arguments, ready
 from test_opening_continuation import book as book  # noqa: F401
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -232,25 +232,16 @@ def test_commentary_context_conflicts_and_repeat_are_atomic(book):
             connection.execute("DELETE FROM period_commentary_revision")
 
 
-@pytest.mark.parametrize("batch", [False, True])
-def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(book, batch):
+@pytest.mark.parametrize("following_months", [False, True])
+def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
+    book, following_months
+):
     engine, _, _, _, proof = book
     ready(engine, proof)
     display, periods = Display(engine), Periods(engine)
     person, _ = register_employee(engine, request_id="person")
     commentary = save_commentary(display)
-    if batch:
-        preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
-        periods.close_range(**arguments(preview))
-    else:
-        preview = periods.preview_close("2026-01", owner_confirmation=proof)
-        periods.close(
-            "2026-01",
-            owner_confirmation=proof,
-            preview_digest=preview["digest"],
-            epochs=preview["epochs"],
-            request_id="close",
-        )
+    close_months(periods, proof, last="2026-03" if following_months else "2026-01")
     frozen = periods.closed_report("2026-01")
     assert frozen["management_snapshot"]["entity_profiles"][0]["id"] == person["profile_id"]
     assert frozen["management_snapshot"]["commentary"]["id"] == commentary["id"]
@@ -279,28 +270,21 @@ def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
         assert [item["id"] for item in result["supplements"]] == [supplement["id"]]
 
 
-@pytest.mark.parametrize("batch", [False, True])
-def test_metadata_change_expires_close_preview_without_accounting_mutation(book, batch):
+def test_metadata_change_expires_close_preview_without_accounting_mutation(book):
     engine, _, _, _, proof = book
     ready(engine, proof)
     periods = Periods(engine)
-    if batch:
-        preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
-    else:
-        preview = periods.preview_close("2026-01", owner_confirmation=proof)
+    preview = periods.preview_close("2026-01", owner_confirmation=proof)
     register_employee(engine, request_id="person")
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
-        if batch:
-            periods.close_range(**arguments(preview))
-        else:
-            periods.close(
-                "2026-01",
-                owner_confirmation=proof,
-                preview_digest=preview["digest"],
-                epochs=preview["epochs"],
-                request_id="close",
-            )
+        periods.close(
+            "2026-01",
+            owner_confirmation=proof,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id="close",
+        )
     assert stale.value.code == "preview_expired" and database_state(engine) == before
 
 
@@ -478,8 +462,10 @@ def test_commentary_preview_cannot_be_reused_for_an_identical_other_company(tmp_
     assert database_state(engines[1]) == before
 
 
-@pytest.mark.parametrize("batch", [False, True])
-def test_close_preserves_independent_management_fact_versions_without_future_facts(book, batch):
+@pytest.mark.parametrize("following_months", [False, True])
+def test_close_preserves_independent_management_fact_versions_without_future_facts(
+    book, following_months
+):
     engine, save, _, _, proof = book
     ready(engine, proof)
     declaration = {
@@ -502,25 +488,14 @@ def test_close_preserves_independent_management_fact_versions_without_future_fac
         },
     )
     periods = Periods(engine)
-    if batch:
-        preview = periods.preview_close_range("2026-01", "2026-03", owner_confirmation=proof)
-        periods.close_range(**arguments(preview))
-    else:
-        preview = periods.preview_close("2026-01", owner_confirmation=proof)
-        periods.close(
-            "2026-01",
-            owner_confirmation=proof,
-            preview_digest=preview["digest"],
-            epochs=preview["epochs"],
-            request_id="close",
-        )
+    close_months(periods, proof, last="2026-03" if following_months else "2026-01")
     frozen = periods.closed_report("2026-01")
     rows = frozen["management_snapshot"]["typed_facts"]
     assert [(item["id"], item["kind"], item["revision"]) for item in rows] == [
         (current["fact_id"], "payroll_tax_declaration_actual", 1)
     ]
     assert future["fact_id"] not in {item["id"] for item in rows}
-    if batch:
+    if following_months:
         february = periods.closed_report("2026-02")["management_snapshot"]["typed_facts"]
         assert {item["id"] for item in february} == {current["fact_id"], future["fact_id"]}
     # Independent declarations have no calculator and must not require fake publications.

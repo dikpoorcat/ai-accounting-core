@@ -99,42 +99,6 @@ COMPANY_DDL = (
 )
 
 
-# Additive catalogue v3 / company v4. Earlier released contracts remain intact.
-CATALOG_DDL += (
-    """CREATE TABLE security_close_batch(
-        id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,
-        owner_id TEXT NOT NULL REFERENCES security_owner(id),
-        session_id TEXT NOT NULL REFERENCES security_session(id),
-        credential_version INTEGER NOT NULL CHECK(credential_version>=1),
-        targets TEXT NOT NULL CHECK(json_valid(targets)),
-        digest BLOB NOT NULL CHECK(length(digest)=32),
-        confirmed_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
-        CHECK(expires_at>confirmed_at)
-    ) STRICT""",
-    """CREATE TRIGGER security_close_batch_no_update BEFORE UPDATE ON security_close_batch
-        BEGIN SELECT RAISE(ABORT,'immutable close batch'); END""",
-    """CREATE TRIGGER security_close_batch_no_delete BEFORE DELETE ON security_close_batch
-        BEGIN SELECT RAISE(ABORT,'retained close batch'); END""",
-)
-COMPANY_DDL += (
-    """CREATE TABLE security_close_batch_receipt(
-        batch_id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,
-        company_id TEXT NOT NULL, database_id TEXT NOT NULL,
-        from_period INTEGER NOT NULL CHECK(from_period BETWEEN 0 AND 119987),
-        through_period INTEGER NOT NULL CHECK(through_period BETWEEN from_period AND 119987),
-        preview_digest BLOB NOT NULL CHECK(length(preview_digest)=32),
-        target_digest BLOB NOT NULL CHECK(length(target_digest)=32),
-        consumed_at INTEGER NOT NULL
-    ) STRICT""",
-    """CREATE TRIGGER security_close_batch_receipt_no_update
-        BEFORE UPDATE ON security_close_batch_receipt
-        BEGIN SELECT RAISE(ABORT,'immutable close batch receipt'); END""",
-    """CREATE TRIGGER security_close_batch_receipt_no_delete
-        BEFORE DELETE ON security_close_batch_receipt
-        BEGIN SELECT RAISE(ABORT,'retained close batch receipt'); END""",
-)
-
-
 def _initialize(connection, statements):
     if not connection.in_transaction:
         raise RuntimeError("Security DDL requires the caller's migration transaction")

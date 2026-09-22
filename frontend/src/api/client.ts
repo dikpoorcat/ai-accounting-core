@@ -1,5 +1,4 @@
-import { LocalApiError, requestLocalJson, verifyMoneyStrings } from "./localKernel";
-import { validDashboardContract } from "./dashboardContracts";
+import { LocalApiError, requestLocalJson } from "./localKernel";
 import type {
   DashboardContextResponse,
   DashboardFundsContract,
@@ -9,6 +8,7 @@ import {
   validateDashboardContextResponse,
   validateDashboardFundsResponse,
 } from "./generated/dashboardValidators.js";
+import { validDashboardCollections } from "./dashboardContracts";
 
 export class DashboardApiError extends Error {
   readonly status: number;
@@ -22,21 +22,7 @@ export class DashboardApiError extends Error {
   }
 }
 
-// Remaining endpoints migrate to generated requests in their assigned stages.
-export async function requestJson<T>(
-  path: string,
-  options: { signal?: AbortSignal } = {},
-): Promise<T> {
-  const target = withCurrentCompany(path);
-  const payload = await requestLocalJson(target, { signal: options.signal });
-  if (!validDashboardContract(target, payload)) {
-    throw new DashboardApiError(502, "DASHBOARD_SCHEMA_MISMATCH", "看板数据版本或分页信息不匹配，请刷新页面后重试。");
-  }
-  verifyMoneyStrings(payload);
-  return payload as T;
-}
-
-async function requestGeneratedJson<T>(
+export async function requestGeneratedJson<T>(
   path: string,
   endpoint: string,
   validator: (value: unknown) => value is T,
@@ -57,61 +43,29 @@ function contextMatchesRequest(url: URL, response: DashboardContextResponse): bo
   return companyId === null || response.current_company?.company_id === companyId;
 }
 
-function validPage(page: DashboardFundsContract.CollectionPage, returnedCount: number): boolean {
-  return [page.total_count, page.filtered_count, page.returned_count].every(
-    count => Number.isSafeInteger(count) && count >= 0,
-  ) && page.total_count >= page.filtered_count
-    && page.filtered_count >= page.returned_count
-    && page.returned_count === returnedCount
-    && (page.has_more ? typeof page.next_cursor === "string" && page.next_cursor.length > 0 : page.next_cursor === null);
-}
-
-function aliasPageMatchesCollection(
-  alias: DashboardFundsContract.CollectionPage | undefined,
-  collection: DashboardFundsContract.CollectionPage,
-): boolean {
-  return alias !== undefined && (
-    alias.total_count === collection.filtered_count
-    && alias.filtered_count === collection.filtered_count
-    && alias.returned_count === collection.returned_count
-    && alias.has_more === collection.has_more
-    && alias.next_cursor === collection.next_cursor
-  );
-}
-
-function sameItems(left: readonly unknown[], right: readonly unknown[]): boolean {
-  return left.length === right.length && left.every((item, index) => JSON.stringify(item) === JSON.stringify(right[index]));
-}
-
 function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
   const period = url.searchParams.get("period");
+  if (companyId !== null && response.read_context.company_id !== companyId) return false;
   if (period !== null && response.selected_period?.key !== period) return false;
   const expectedVersion = url.searchParams.get("expected_version");
   if (expectedVersion !== null && response.snapshot_version !== expectedVersion) return false;
   if (response.data === null) return url.searchParams.get("section") === null;
 
   const data = response.data;
+  if (!validDashboardCollections(data)) return false;
   const deferred = url.searchParams.get("preparation") === "deferred";
   if (deferred ? data.period_preparation !== null : data.period_preparation === null) return false;
   const requestedSection = url.searchParams.get("section") ?? "movements";
   if (!(requestedSection in data.collections)) return false;
 
-  const { accounts, movements, statements, investment_products: products, investment_events: events } = data.collections;
-  for (const collection of [accounts, movements, statements, products, events]) {
-    if (collection && !validPage(collection.page, collection.items.length)) return false;
-  }
-  if (accounts && !sameItems(accounts.items, data.accounts)) return false;
-  if (movements && (!sameItems(movements.items, data.movements) || !aliasPageMatchesCollection(data.movement_page, movements.page))) return false;
-  if (statements && (!sameItems(statements.items, data.bank_statement.rows) || !aliasPageMatchesCollection(data.bank_statement.page, statements.page))) return false;
-  if (products && !sameItems(products.items, data.investments.products)) return false;
-  if (events && (!sameItems(events.items, data.investments.events) || !aliasPageMatchesCollection(data.investments.page, events.page))) return false;
-
+  const { movements, statements } = data.collections;
   const movementType = url.searchParams.get("movement_account_type");
   const movementAccount = url.searchParams.get("movement_account_id");
   const statementAccount = url.searchParams.get("statement_account_id");
-  return (!movementType || data.movements.every((item: DashboardFundsContract.FundMovement) => item.account_type === movementType))
-    && (!movementAccount || data.movements.every((item: DashboardFundsContract.FundMovement) => item.account_id === movementAccount))
-    && (!statementAccount || data.bank_statement.rows.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
+  return (!movementType || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === movementType))
+    && (!movementAccount || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_id === movementAccount))
+    && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
 }
 
 export function requestDashboardContext(options: { signal?: AbortSignal } = {}): Promise<DashboardContextResponse> {

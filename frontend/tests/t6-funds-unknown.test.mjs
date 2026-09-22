@@ -32,9 +32,9 @@ test("T6 funds keeps historical source warnings without the company-wide followu
       const data = structuredClone(fixtures.funds.data);
       data.total_fen = total;
       if (total === null) {
-        data.accounts[0].opening_fen = null;
-        data.accounts[0].closing_fen = null;
-        data.accounts[0].negative_balance = false;
+        data.collections.accounts.items[0].opening_fen = null;
+        data.collections.accounts.items[0].closing_fen = null;
+        data.collections.accounts.items[0].negative_balance = false;
       }
       data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [
         { calculation_id: "t6-frozen-candidate-a", amount_fen: "987654321" },

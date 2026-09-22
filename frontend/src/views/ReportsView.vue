@@ -429,10 +429,12 @@ async function exportReport() {
     const attempt = exportAttempt;
     needsRegeneration.value = false;
     if (!attempt.jobId) attempt.jobId = (await requestQuarterlyExport(companyId, current, attempt.requestId, controller.signal)).job_id;
+    const jobId = attempt.jobId;
+    if (!jobId) throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务没有返回任务编号。");
     if (!isCurrent(generation, selection) || exportController !== controller) return;
     exportNotice.value = "报表正在生成，完成后将开始下载。离开页面后，仍可在“文件与处理进度”中查看结果。";
     while (!controller.signal.aborted) {
-      const [job] = await fetchLocalJob(companyId, attempt.jobId, controller.signal);
+      const [job] = await fetchLocalJob(companyId, jobId, controller.signal);
       if (!isCurrent(generation, selection) || exportController !== controller) return;
       if (job?.status === "succeeded") break;
       if (!job || (job.status === "failed" && job.attempts >= 3)) throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
@@ -444,7 +446,7 @@ async function exportReport() {
       });
     }
     if (!isCurrent(generation, selection) || controller.signal.aborted || exportController !== controller) return;
-    const blob = await fetchQuarterlyWorkbook(companyId, attempt.jobId, controller.signal);
+    const blob = await fetchQuarterlyWorkbook(companyId, jobId, controller.signal);
     if (!isCurrent(generation, selection) || exportController !== controller) return;
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -708,7 +710,7 @@ onBeforeUnmount(() => {
                   <div><strong>{{ detail.primary }}</strong><span>{{ detail.secondary }}</span></div>
                   <RouterLink v-if="detail.location?.voucher_number !== undefined && detail.location?.period" :to="{ path: '/', query: { company_id: route.query.company_id, period: detail.location.period, voucher: String(detail.location.voucher_number) } }">查看相关凭证</RouterLink>
                   <details v-if="detail.location"><summary>供核对的详细信息</summary><pre>{{ JSON.stringify(detail.location, null, 2) }}</pre></details>
-                  <strong v-if="detail.amount_fen != null">{{ formatFen(detail.amount_fen) }}</strong>
+                  <strong v-if="detail.location?.actual_fen != null">实际 {{ formatFen(detail.location.actual_fen) }}</strong>
                 </li>
               </ul>
             </article>

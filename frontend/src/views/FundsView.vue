@@ -62,18 +62,22 @@ let requestGeneration = 0;
 const periods = computed(() => context.value?.periods ?? []);
 const pageError = computed(() => requestError.value || contextError.value);
 const detailViews = ["book", "bank"] as const;
+const accounts = computed(() => funds.value?.collections.accounts?.items ?? []);
+const movements = computed(() => funds.value?.collections.movements?.items ?? []);
+const bankRows = computed(() => funds.value?.collections.statements?.items ?? []);
+const investmentProducts = computed(() => funds.value?.collections.investment_products?.items ?? []);
+const investmentEvents = computed(() => funds.value?.collections.investment_events?.items ?? []);
 const visibleMovements = computed(() => {
-  const movements = funds.value?.movements ?? [];
-  if (!selectedAccount.value) return movements;
-  return movements.filter(
+  if (!selectedAccount.value) return movements.value;
+  return movements.value.filter(
     (item) => accountKey(item.account_type, item.account_id) === selectedAccount.value,
   );
 });
 const bankAccounts = computed(
-  () => funds.value?.accounts.filter((account) => account.type === "bank") ?? [],
+  () => accounts.value.filter((account) => account.type === "bank"),
 );
 const accountOptions = computed(() => {
-  const options = (funds.value?.accounts ?? []).map(account => ({ value: accountKey(account.type, account.account_id), label: fundAccountDisplayLabel(account.name, account.code) }));
+  const options = accounts.value.map(account => ({ value: accountKey(account.type, account.account_id), label: fundAccountDisplayLabel(account.name, account.code) }));
   if (selectedAccount.value && !options.some(option => option.value === selectedAccount.value)) {
     const separator = selectedAccount.value.indexOf(":");
     options.push({ value: selectedAccount.value, label: fundAccountLabel(queryText("company_id"), selectedPeriod.value, selectedAccount.value.slice(0, separator), selectedAccount.value.slice(separator + 1)) ?? "所选账户（名称尚未加载）" });
@@ -81,7 +85,7 @@ const accountOptions = computed(() => {
   return options;
 });
 const movementAccountEntries = computed<MovementAccountEntry[]>(() => {
-  const entries: MovementAccountEntry[] = (funds.value?.accounts ?? []).map((account) => ({
+  const entries: MovementAccountEntry[] = accounts.value.map((account) => ({
     value: accountKey(account.type, account.account_id),
     label: fundAccountDisplayName(account.name, account.code),
     meta: `${accountTypeLabel(account.type)}${accountCodeAddsInformation(account.name, account.code) ? ` · ${account.code}` : ""}`,
@@ -111,9 +115,8 @@ const bankAccountOptions = computed(() => {
   return options;
 });
 const visibleBankRows = computed(() => {
-  const rows = funds.value?.bank_statement.rows ?? [];
-  if (!selectedBankAccount.value) return rows;
-  return rows.filter((item) => item.account_id === selectedBankAccount.value);
+  if (!selectedBankAccount.value) return bankRows.value;
+  return bankRows.value.filter((item) => item.account_id === selectedBankAccount.value);
 });
 const selectedBankAccountLabel = computed(
   () => bankAccountOptions.value.find((option) => option.value === selectedBankAccount.value)?.label ?? "全部银行账户",
@@ -126,7 +129,7 @@ const visibleBankRowCount = computed(() => {
 const attentionItems = computed(() => {
   if (!funds.value) return [];
   const items: string[] = [];
-  for (const account of funds.value.accounts) {
+  for (const account of accounts.value) {
     if (account.negative_balance) {
       items.push(
         `${fundAccountDisplayName(account.name, account.code)}期末账面余额为负数 ${formatFen(account.closing_fen)}。`,
@@ -174,7 +177,7 @@ const sectionLinks = computed(() => {
     { id: "funds-overview", label: "概览" },
     { id: "fund-accounts", label: "账户" },
   ];
-  if (funds.value?.investments.products.length) links.push({ id: "fund-investments", label: "货币基金" });
+  if (investmentProducts.value.length) links.push({ id: "fund-investments", label: "货币基金" });
   if (attentionItems.value.length || funds.value?.attention_account_count) links.push({ id: "funds-attention", label: "关注" });
   links.push({ id: "bank-details", label: "资金明细" });
   return links;
@@ -277,28 +280,16 @@ async function loadFunds(periodKey: string) {
   const sectionToRestore = activeSection.value;
   const shouldRestoreSection = funds.value !== null;
   snapshotVersion.value = "";
-  if (funds.value) {
-    const emptyPage = { has_more: false, next_cursor: null, total_count: 0, filtered_count: 0, returned_count: 0 };
-    funds.value = {
-      ...funds.value,
-      movements: [],
-      movement_page: emptyPage,
-      bank_statement: { ...funds.value.bank_statement, rows: [], page: emptyPage },
-      investments: { ...funds.value.investments, events: [], page: emptyPage },
-    };
-  }
+  funds.value = null;
   activeRequest = controller;
   loading.value = true;
   requestError.value = "";
   try {
     const response = await fetchFundsDashboard(periodKey, controller.signal, filters);
-    if (response.schema_version !== 5) {
-      throw new Error("FUNDS_SCHEMA_MISMATCH");
-    }
     const data = response.data;
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     funds.value = data;
-    if (data) rememberFundAccounts(queryText("company_id"), periodKey, data.accounts);
+    if (data) rememberFundAccounts(queryText("company_id"), periodKey, data.collections.accounts?.items ?? []);
     if (queryText("movement_account_type") || queryText("movement_account_id") || queryText("statement_account_id")) {
       void router.replace({
         query: {
@@ -363,12 +354,9 @@ async function loadMore(kind: PageKind) {
     const collection = next.data.collections[section];
     const previousCollection = latest.collections[section];
     if (!collection || !previousCollection) return;
-    const collections = { ...latest.collections, [section]: { ...collection, items: [...previousCollection.items, ...collection.items] } };
-    if (kind === "book") funds.value = { ...latest, collections, movements: [...latest.movements, ...next.data.movements], movement_page: next.data.movement_page };
-    else if (kind === "bank") funds.value = { ...latest, collections, bank_statement: { ...latest.bank_statement, rows: [...latest.bank_statement.rows, ...next.data.bank_statement.rows], page: next.data.bank_statement.page } };
-    else if (kind === "accounts") { funds.value = { ...latest, collections, accounts: [...latest.accounts, ...next.data.accounts] }; rememberFundAccounts(queryText("company_id"), selectedPeriod.value, next.data.accounts); }
-    else if (kind === "investment_products") funds.value = { ...latest, collections, investments: { ...latest.investments, products: [...latest.investments.products, ...next.data.investments.products] } };
-    else funds.value = { ...latest, collections, investments: { ...latest.investments, events: [...latest.investments.events, ...next.data.investments.events], page: next.data.investments.page } };
+    const appended = { ...collection, items: [...previousCollection.items, ...collection.items] };
+    funds.value = { ...latest, collections: { ...latest.collections, [section]: appended } };
+    if (kind === "accounts") rememberFundAccounts(queryText("company_id"), selectedPeriod.value, collection.items);
   } catch (caught) {
     if (isCurrent(generation, selection) && pageRequests.get(kind) === request) {
       if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
@@ -660,7 +648,7 @@ watch(
 );
 
 watch(
-  () => funds.value?.accounts,
+  accounts,
   () => {
     if (!funds.value || !selectedAccount.value || movementAccountEntries.value.some((entry) => entry.value === selectedAccount.value)) return;
     selectedAccount.value = movementAccountEntries.value[0]?.value ?? "";
@@ -799,9 +787,9 @@ onBeforeUnmount(() => {
               <p class="list-caption">{{ funds.account_count }} 个账户 · 期末 {{ formatFen(funds.total_fen) }}</p>
             </div>
           </div>
-          <div v-if="funds.accounts.length" class="account-grid">
+          <div v-if="accounts.length" class="account-grid">
             <article
-              v-for="account in funds.accounts"
+              v-for="account in accounts"
               :key="accountKey(account.type, account.account_id)"
               class="account-card dashboard-record-card"
               :class="{ attention: accountOwnerState(account).tone === 'attention' }"
@@ -853,10 +841,10 @@ onBeforeUnmount(() => {
             </article>
           </div>
           <p v-else class="empty">本月暂无已入账的公司资金账户。</p>
-          <DashboardPagination compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="funds.accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
+          <DashboardPagination compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
         </section>
 
-        <section v-if="funds.investments.products.length" id="fund-investments"
+        <section v-if="investmentProducts.length" id="fund-investments"
           class="panel section-panel section-anchor" tabindex="-1" aria-labelledby="fund-investments-title">
           <div class="section-heading">
             <div><h2 id="fund-investments-title">货币基金</h2></div>
@@ -870,12 +858,12 @@ onBeforeUnmount(() => {
             <table class="investment-table investment-summary-table">
               <colgroup><col><col class="investment-amount-column"><col class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">产品</th><th scope="col" class="number">月末账面成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
-              <tbody><tr v-for="item in funds.investments.products" :key="item.fund_id">
+              <tbody><tr v-for="item in investmentProducts" :key="item.fund_id">
                 <td>{{ item.name }}</td><td class="number">{{ formatFen(item.closing_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.investment_income_fen) }}</td>
               </tr></tbody></table>
           </div>
-          <DashboardPagination compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="funds.investments.products.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
+          <DashboardPagination compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="investmentProducts.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
           <details class="investment-details">
           <summary>查看申购、赎回与收付款明细</summary>
           <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
@@ -884,7 +872,7 @@ onBeforeUnmount(() => {
               <colgroup><col><col v-for="column in 5" :key="column" class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初成本</th><th scope="col" class="number">申购成本变动</th>
               <th scope="col" class="number">赎回成本变动</th><th scope="col" class="number">期末成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
-              <tbody><tr v-for="item in funds.investments.products" :key="item.fund_id">
+              <tbody><tr v-for="item in investmentProducts" :key="item.fund_id">
                 <td>{{ item.name }}<details><summary>查看产品标识</summary>{{ item.fund_id }}</details></td>
                 <td class="number">{{ formatFen(item.opening_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.subscription_cost_fen) }}</td>
@@ -894,12 +882,12 @@ onBeforeUnmount(() => {
               </tr></tbody></table>
           </div>
           <h3>本月确认及收付款</h3>
-          <div v-if="funds.investments.events.length" class="table-wrap" role="region" aria-label="基金确认及收付款明细" tabindex="0">
+          <div v-if="investmentEvents.length" class="table-wrap" role="region" aria-label="基金确认及收付款明细" tabindex="0">
             <table class="investment-table investment-events-table">
               <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"><col class="reference-column"></colgroup>
               <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
               <th scope="col" class="number">确认赎回净款</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th><th scope="col">凭证</th></tr></thead>
-              <tbody><tr v-for="item in funds.investments.events" :key="item.id">
+              <tbody><tr v-for="item in investmentEvents" :key="item.id">
                 <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}</td>
                 <td class="number">{{ item.cost_fen === null ? "—" : formatFen(item.cost_fen) }}</td>
                 <td class="number">{{ item.net_proceeds_fen === null ? "—" : formatFen(item.net_proceeds_fen) }}</td>
@@ -909,7 +897,7 @@ onBeforeUnmount(() => {
               </tr></tbody></table>
           </div>
           <p v-else class="empty">{{ loading ? "正在读取基金明细…" : "本月没有已确认的申赎或实际收付款。" }}</p>
-          <DashboardPagination compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="funds.investments.events.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
+          <DashboardPagination compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="investmentEvents.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
           </details>
         </section>
 
@@ -921,7 +909,7 @@ onBeforeUnmount(() => {
             <span class="review-action">查看事项 <span aria-hidden="true">⌄</span></span>
           </summary>
           <div class="review-content">
-            <p class="muted">账户问题仅包含已加载 {{ funds.accounts.length }} 个账户；流水覆盖与待匹配数量为全公司范围，两类数量不相加。</p>
+            <p class="muted">账户问题仅包含已加载 {{ accounts.length }} 个账户；流水覆盖与待匹配数量为全公司范围，两类数量不相加。</p>
             <ul class="attention-list"><li v-for="(item, index) in attentionItems" :key="`${index}-${item}`">{{ item }}</li></ul>
           </div>
         </details>
@@ -940,7 +928,7 @@ onBeforeUnmount(() => {
                 <strong>{{ selectedDetailView === "book"
                   ? `${selectedMovementAccountLabel} · ${loading || pageStates.book.loading ? "正在读取…" : `${visibleMovementCount} 笔资金变动`}`
                   : `${selectedBankAccountLabel} · ${loading || pageStates.bank.loading ? "正在读取…" : `${visibleBankRowCount} 笔银行流水`}` }}</strong>
-                <template v-if="funds.collections.accounts?.page.has_more"> · 账户选项已加载 {{ funds.accounts.length }} / {{ funds.account_count }}</template>
+                <template v-if="funds.collections.accounts?.page.has_more"> · 账户选项已加载 {{ accounts.length }} / {{ funds.account_count }}</template>
               </p>
             </div>
             <div class="heading-controls">
@@ -1086,7 +1074,7 @@ onBeforeUnmount(() => {
               </ol>
             </div>
             <p v-else class="empty">{{ loading || pageStates.book.loading ? "正在读取资金明细…" : selectedAccount ? "该账户本月没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
-            <DashboardPagination compact item-label="笔变动" :page="funds.collections.movements?.page" :loaded="funds.movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
+            <DashboardPagination compact item-label="笔变动" :page="funds.collections.movements?.page" :loaded="movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
               </div>
             </div>
           </div>
@@ -1179,7 +1167,7 @@ onBeforeUnmount(() => {
             </div>
             <p v-else class="empty">{{ loading ? "正在读取银行流水…" : selectedBankAccount ? "该账户本月没有已提供的银行流水。" : "本月没有已提供的银行流水。" }}</p>
             <button v-if="!visibleBankRows.length && selectedBankAccount" class="control" @click="selectedBankAccount = ''">清除账户筛选</button>
-            <DashboardPagination compact item-label="笔流水" :page="funds.collections.statements?.page" :loaded="funds.bank_statement.rows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
+            <DashboardPagination compact item-label="笔流水" :page="funds.collections.statements?.page" :loaded="bankRows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
           </div>
           </div>
         </section>

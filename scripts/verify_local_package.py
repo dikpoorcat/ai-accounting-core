@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 _SERVICES = {}
 _RUNNERS = {}
@@ -389,7 +390,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     assert nets["560201"] == 660000
     assert nets["5602"] == 78200
     funds = execute("dashboard_funds", {"period": month})
-    assert funds["schema_version"] == 5
+    assert funds["schema_version"] == 6
     mapping_check = funds["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]
     assert mapping_check["status"] == "needs_information"
     assert mapping_check["blocking_scope"] == "tax_import_file"
@@ -485,7 +486,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
         "dashboard_business_status",
         {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"},
     )
-    assert wage_details["schema_version"] == 3
+    assert wage_details["schema_version"] == 4
     current_confirmation = wage_details["data"]["current_business_result"]["payroll_confirmation"]
     frozen_confirmation = wage_details["data"]["frozen_adoption"]["payroll_confirmation"]
     assert current_confirmation["confirmation_revision"] == 2
@@ -813,6 +814,10 @@ def main():
         "company/draft.json",
     ]
     assert not (package / "app/ai_accounting/kernel/migrations").exists()
+    assert not (package / "app/ai_accounting/kernel/security/batches.py").exists()
+    for contract_file in contracts.rglob("*.json"):
+        objects = json.loads(contract_file.read_text("utf-8"))["objects"]
+        assert "security_close_batch" not in json.dumps(objects)
     assert sqlite3.sqlite_version == manifest["runtime"]["sqlite"] == "3.53.1"
     assert sys.version.split()[0] == manifest["runtime"]["python"] == "3.12.13"
     template_bytes = len(_template_bytes())
@@ -932,12 +937,20 @@ def main():
     def approve_close(company, period, preview, *, root=data_root):
         app = _SERVICES[root][0]
         client, password = _PRIVATE_NATIVE[root]
+        review = call(
+            "dashboard_close_review",
+            {"company_id": company["id"], "period": period, "preview_digest": preview["digest"]},
+            root=root,
+        )
+        assert review["state"] == "prepared"
+        assert review["preview_digest"] == preview["digest"]
+        assert review["owner_review"] == preview["manifest"]["owner_review"]
         request = app.security_controller.request(
             kind="approve_period_close",
             company_id=company["id"],
             database_id=company["database_id"],
             period=period,
-            calculation_hash=preview["digest"],
+            preview_digest=preview["digest"],
             epochs=preview["epochs"],
         )
         approved = client.call("native_execute", request["request_id"], password=password)
@@ -946,6 +959,12 @@ def main():
         return approved["approval_id"]
 
     schema = call("schema", {})
+    assert not {"preview_close_range", "close_range"} & set(schema["commands"])
+    assert "approve_close_batches" not in json.dumps(schema["security_request_schema"])
+    assert "calculation_hash" not in schema["security_request_schema"]["properties"]
+    assert "preview_digest" in schema["security_request_schema"]["properties"]
+    assert schema["period_close_contract"]["format_version"] == 4
+    assert "owner_review" in schema["period_close_contract"]["required_fields"]
     assert {
         "expense",
         "cash_payment",
@@ -1280,6 +1299,11 @@ def main():
     )
     assert closed["status"] == "closed" and closed["backup_job"]
     frozen_close = call("closed_report", {"company_id": close_company_id, "period": close_period})
+    frozen_review = call(
+        "dashboard_close_review", {"company_id": close_company_id, "period": close_period}
+    )
+    assert frozen_review["state"] == "closed"
+    assert frozen_review["owner_review"] == close_preview["manifest"]["owner_review"]
     close_backup = wait_for_backup(
         close_company_id, {"status": "pending", "job_id": closed["backup_job"]}
     )
@@ -1295,6 +1319,12 @@ def main():
     )
     assert close_restored["id"] == close_company_id
     assert close_restored["database_id"] == close_company["database_id"]
+    restored_review = call(
+        "dashboard_close_review",
+        {"company_id": close_company_id, "period": close_period},
+        root=close_restored_root,
+    )
+    assert restored_review == frozen_review
     assert (
         call(
             "closed_report",
@@ -1577,6 +1607,7 @@ def main():
         assert all(isinstance(row["debit"], str) for row in wire_overview["accounts"])
         assert sum(int(row["debit"]) for row in wire_overview["accounts"]) == 123456
         connection.close()
+        dashboard_read_context = None
         for action in (
             "context",
             "brief",
@@ -1585,6 +1616,7 @@ def main():
             "assets",
             "quarterly-report",
             "business-status",
+            "period-preparation",
         ):
             query = f"company_id={company_id}"
             query += (
@@ -1594,6 +1626,14 @@ def main():
             )
             if action == "business-status":
                 query += "&subject_id=synthetic-expense&as_of=2026-09-30&limit=1"
+            if action == "period-preparation":
+                assert dashboard_read_context is not None
+                query += "&" + urlencode(
+                    {
+                        "expected_read_version": dashboard_read_context["read_version"],
+                        "as_of": dashboard_read_context["as_of"],
+                    }
+                )
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
                 "GET",
@@ -1603,16 +1643,19 @@ def main():
             response = connection.getresponse()
             wire_dashboard = json.loads(response.read())
             assert response.status == 200, (action, wire_dashboard)
-            assert wire_dashboard["schema_version"] == (
-                2
-                if action == "context"
-                else (3 if action in {"business-status", "quarterly-report"} else 5)
-            )
+            expected_version = {
+                "context": 2,
+                "business-status": 4,
+                "quarterly-report": 3,
+                "period-preparation": 3,
+            }.get(action, 6)
+            assert wire_dashboard["schema_version"] == expected_version
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id
             elif action == "brief":
                 assert isinstance(wire_dashboard["data"]["total_debit_fen"], str)
                 assert wire_dashboard["data"]["total_debit_fen"] == "123456"
+                dashboard_read_context = wire_dashboard["read_context"]
             if action in {"brief", "funds", "employees", "assets"}:
                 assert wire_dashboard["data"]["period_preparation"]["projection"] == (
                     "dashboard_period_preparation"
@@ -1626,6 +1669,21 @@ def main():
                 assert len(collection["items"]) == page["returned_count"]
                 assert page["returned_count"] <= page["filtered_count"] <= page["total_count"]
             connection.close()
+        review_app, review_server, _, _ = _SERVICES[corrected_restored_root]
+        review_token = review_app.security_controller.store.load_session_token().get_secret_value()
+        connection = http.client.HTTPConnection("127.0.0.1", review_server.server_port)
+        connection.request(
+            "GET",
+            f"/api/dashboard/close-review?company_id={close_company_id}&period={close_period}",
+            headers={"Authorization": "Bearer " + review_token},
+        )
+        response = connection.getresponse()
+        wire_review = json.loads(response.read())
+        assert response.status == 200, wire_review
+        assert wire_review["schema_version"] == 1 and wire_review["state"] == "closed"
+        assert wire_review["company_id"] == close_company_id
+        assert wire_review["owner_review"]["accounting_summary"]["total_debit_fen"] == "1000"
+        connection.close()
     finally:
         connection.close()
 

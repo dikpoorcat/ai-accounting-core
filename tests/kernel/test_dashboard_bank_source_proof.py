@@ -49,9 +49,7 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
     candidate = Path(__file__).resolve().parents[2]
     assert Path(ai_accounting.__file__).resolve().is_relative_to(candidate / "src")
     engine, save, statement_data = closed_banks(bank_book)
-    status = BusinessQueries(engine).business_status(
-        "statement-bank-a", MONTH, as_of="2026-10-01"
-    )
+    status = BusinessQueries(engine).business_status("statement-bank-a", MONTH, as_of="2026-10-01")
     selection = status["as_posted"]
     statement_state = next(
         item for item in selection["state_results"] if item["kind"] == "bank_statement"
@@ -99,7 +97,7 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
         assert metadata_calls == [expected_parents]
 
     dashboard = Dashboard(engine)
-    first = dashboard.funds(MONTH, limit=1)
+    first = dashboard.funds(MONTH, section="statements", limit=1)
     assert first["data"]["fact_issues"] == []
     bank = first["data"]["bank_statement"]
     assert (bank["transaction_count"], bank["matched_count"], bank["needs_review_count"]) == (
@@ -108,8 +106,9 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
         0,
     )
     assert bank["coverage_state"] == "complete" and bank["missing_account_count"] == 0
-    assert len(bank["rows"]) == 1 and bank["page"]["has_more"]
-    check = bank["rows"][0]["source_check"]
+    statements = first["data"]["collections"]["statements"]
+    assert len(statements["items"]) == 1 and statements["page"]["has_more"]
+    check = statements["items"][0]["source_check"]
     assert check["statement_confirmed"] and check["reconciliation_valid"]
     assert check["selection_source"] == "close_manifest"
     assert check["selection_proof"]["basis"] == "direct_adoption"
@@ -125,13 +124,15 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
         )  # Two original statement rows legitimately share one funds source.
     next_page = dashboard.funds(
         MONTH,
+        section="statements",
         limit=1,
-        after_statement=bank["page"]["next_cursor"],
+        cursor=statements["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
-    )["data"]["bank_statement"]
-    assert next_page["matched_count"] == 3
-    assert next_page["rows"][0]["id"] != bank["rows"][0]["id"]
-    assert next_page["rows"][0]["source_check"] == check
+    )
+    assert next_page["data"]["bank_statement"]["matched_count"] == 3
+    next_statements = next_page["data"]["collections"]["statements"]["items"]
+    assert next_statements[0]["id"] != statements["items"][0]["id"]
+    assert next_statements[0]["source_check"] == check
 
     # A later current fact/pending cannot replace the frozen statement or undo
     # its historical matches; it does invalidate an old pagination version.
@@ -142,9 +143,12 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
     with pytest.raises(KernelError) as failure:
         dashboard.funds(MONTH, expected_version=first["snapshot_version"])
     assert failure.value.code == "dashboard_snapshot_changed"
-    reloaded = dashboard.funds(MONTH)["data"]["bank_statement"]
-    assert reloaded["matched_count"] == 3 and reloaded["coverage_state"] == "complete"
-    assert all(row["memo"] != "later extraction" for row in reloaded["rows"])
+    reloaded = dashboard.funds(MONTH, section="statements")["data"]
+    assert reloaded["bank_statement"]["matched_count"] == 3
+    assert reloaded["bank_statement"]["coverage_state"] == "complete"
+    assert all(
+        row["memo"] != "later extraction" for row in reloaded["collections"]["statements"]["items"]
+    )
     assert dashboard.brief(MONTH)["data"]["cash"]["missing_account_count"] == 0
 
 
@@ -292,9 +296,7 @@ def test_prior_frozen_reconciliations_resolve_accumulated_bank_source_warnings(b
         statement_id="october-statement",
         month="2026-10",
     )
-    banking.close_month(
-        banking.inventories(engine, proof, "2026-10", {"bank"}), proof, "2026-10"
-    )
+    banking.close_month(banking.inventories(engine, proof, "2026-10", {"bank"}), proof, "2026-10")
 
     data = Dashboard(engine).funds("2026-10")["data"]
 

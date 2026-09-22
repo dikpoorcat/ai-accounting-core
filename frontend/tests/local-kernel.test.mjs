@@ -1,18 +1,27 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { test } from "node:test";
-import ts from "typescript";
+import { fileURLToPath } from "node:url";
+import { after, test } from "node:test";
+import { createServer } from "vite";
 
-async function importTypeScript(relative) {
-  const source = readFileSync(new URL(relative, import.meta.url), "utf8");
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
-  });
-  return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-}
+const server = await createServer({
+  root: fileURLToPath(new URL("..", import.meta.url)),
+  configFile: false,
+  optimizeDeps: { noDiscovery: true },
+  server: { middlewareMode: true, hmr: false, ws: false },
+  appType: "custom",
+});
+after(() => server.close());
+const api = await server.ssrLoadModule("/src/api/localKernel.ts");
+const money = await server.ssrLoadModule("/src/utils/money.ts");
 
-const api = await importTypeScript("../src/api/localKernel.ts");
-const money = await importTypeScript("../src/utils/money.ts");
+const job = (overrides = {}) => ({
+  id: "j1", kind: "report_export", status: "succeeded", attempts: 1,
+  last_error: null, download_available: true, download_file_name: "report.xlsx",
+  delivery_status: "verified", delivery_message: null, ...overrides,
+});
+const jobsResponse = (companyId, items) => ({
+  schema_version: 1, company_id: companyId, database_id: `db-${companyId}`, items,
+});
 
 test("reserve facts and mixed payroll use the current business labels", () => {
   assert.equal(api.localBusinessName("managed_reserve_expense"), "备用金支出");
@@ -80,21 +89,24 @@ test("native security requests carry operation kind and use same-origin cookies"
     assert.equal(options.credentials, "same-origin");
     assert.deepEqual(JSON.parse(options.body), { operation: "request", payload: { kind: "login" } });
     assert.equal(options.headers.Authorization, undefined);
-    return new Response(JSON.stringify({ request_id: "request-1", status: "waiting_for_user" }));
+    return new Response(JSON.stringify({ schema_version: 1, request_id: "request-1", kind: "login", status: "waiting_for_user",
+      catalog_instance_id: "catalog-1", error_code: null, operation_committed: null,
+      login_completed: false, recovery_code_acknowledged: false }));
   };
   assert.equal((await api.localSecurity("request", { kind: "login" })).status, "waiting_for_user");
 });
 
-test("large cents remain exact and numeric money responses are rejected", async () => {
-  const jobs = [{ id: "j1", kind: "report_export", status: "succeeded", attempts: 1, last_error: null, result: { total_fen: "9007199254740993" } }];
+test("large cents remain exact while browser jobs expose no raw result payload", async () => {
+  const jobs = [job()];
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.credentials, "same-origin");
-    return new Response(JSON.stringify(jobs));
+    return new Response(JSON.stringify(jobsResponse("company-1", jobs)));
   };
-  assert.equal((await api.fetchLocalJobs("company-1")).at(0).result.total_fen, "9007199254740993");
+  assert.equal((await api.fetchLocalJobs("company-1")).at(0).id, "j1");
   assert.equal(money.formatFen("9007199254740993"), "¥90,071,992,547,409.93");
-  jobs[0].result.total_fen = 9007199254740992;
-  await assert.rejects(api.fetchLocalJobs("company-1"), { code: "LOCAL_MONEY_FORMAT" });
+  const malformed = { ...jobsResponse("company-1", jobs), items: [{ ...jobs[0], result: { total_fen: "9007199254740993" } }] };
+  globalThis.fetch = async () => new Response(JSON.stringify(malformed));
+  await assert.rejects(api.fetchLocalJobs("company-1"), { code: "LOCAL_JOBS_RESPONSE" });
 });
 
 test("expired identity directs the owner to the native window", async () => {
@@ -110,14 +122,15 @@ test("unlaunched browser is directed to the local launcher", async () => {
 
 test("recent jobs request is bounded, scoped to one company and read only", async () => {
   const controller = new AbortController();
-  const jobs = [{ id: "j1", kind: "portable_backup", status: "pending", attempts: 0, last_error: null, result: null }];
+  const jobs = [job({ kind: "portable_backup", status: "pending", attempts: 0,
+    download_available: false, download_file_name: null, delivery_status: "pending" })];
   globalThis.fetch = async (url, options) => {
     assert.equal(url, "/api/local/jobs?company_id=company-2&limit=20");
     assert.equal(options.method, undefined);
     assert.equal(options.body, undefined);
     assert.equal(options.signal, controller.signal);
     assert.equal(options.credentials, "same-origin");
-    return new Response(JSON.stringify(jobs));
+    return new Response(JSON.stringify(jobsResponse("company-2", jobs)));
   };
   assert.deepEqual(await api.fetchLocalJobs("company-2", controller.signal), jobs);
 });
@@ -139,7 +152,8 @@ test("queued, running, failed and unknown jobs never imply completion", () => {
 test("an exact background job is queried even when outside the recent list", async () => {
   globalThis.fetch = async (url) => {
     assert.equal(url, "/api/local/jobs?company_id=company-2&job_id=older-job&limit=1");
-    return new Response(JSON.stringify([{ id: "older-job", status: "running" }]));
+    return new Response(JSON.stringify(jobsResponse("company-2", [job({ id: "older-job", status: "running",
+      download_available: false, download_file_name: null, delivery_status: "pending" })])));
   };
   assert.equal((await api.fetchLocalJob("company-2", "older-job"))[0].id, "older-job");
 });
@@ -148,34 +162,6 @@ test("missing money is explicitly unavailable rather than shown as zero", () => 
   assert.equal(money.formatFen(null), "暂无法确定");
   assert.equal(money.formatPositiveFen(undefined), "未提供");
   assert.equal(money.formatFen("0"), "¥0.00");
-});
-
-test("report check counts remain integers while monetary totals require strings", () => {
-  api.verifyMoneyStrings({ checks: { passed: 2, total: 3 }, summary: { current_net_profit_fen: "9007199254740993" } });
-  assert.throws(() => api.verifyMoneyStrings({ checks: { passed: 2, total: 3 }, summary: { current_net_profit_fen: 100 } }), { code: "LOCAL_MONEY_FORMAT" });
-});
-
-test("employee field provenance is distinct from money while actual nested amounts remain strict", () => {
-  const provenance = (field) => ({ source_type: "fact", id: "synthetic-profile", revision: 1,
-    field, source: null, evidence_digest: null, evidence: [], basis: "frozen", recorded_at: null });
-  const employee = {
-    social_insurance_base_fen: "9007199254740993", housing_fund_base_fen: null, declared_tax_fen: "0",
-    field_sources: {
-      social_insurance_base_fen: provenance("social_insurance_base_fen"),
-      housing_fund_base_fen: provenance("housing_fund_base_fen"),
-      declared_tax_fen: provenance("declared_tax_fen"),
-    },
-  };
-  const payload = { data: { employees: { items: [employee] }, collections: { employees: { items: [employee] } } } };
-  const before = structuredClone(payload);
-  api.verifyMoneyStrings(payload);
-  assert.deepEqual(payload, before);
-  for (const invalid of [100, { source_type: "fact", id: "not-a-money-value" }]) {
-    assert.throws(() => api.verifyMoneyStrings({ social_insurance_base_fen: invalid }), { code: "LOCAL_MONEY_FORMAT" });
-  }
-  assert.throws(() => api.verifyMoneyStrings({ field_sources: {
-    social_insurance_base_fen: { ...provenance("social_insurance_base_fen"), source: { amount_fen: 100 } },
-  } }), { code: "LOCAL_MONEY_FORMAT" });
 });
 
 test("only successful report tasks explicitly approved by the service offer downloads", () => {

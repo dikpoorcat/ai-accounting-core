@@ -53,7 +53,7 @@ def display_profile(engine, kind, entity_id, **fields):
 def voucher(engine, period, subject):
     return next(
         row
-        for row in Dashboard(engine).brief(period)["data"]["vouchers"]
+        for row in Dashboard(engine).brief(period)["data"]["collections"]["vouchers"]["items"]
         if row["components"][0]["id"] == subject and not row["reverses_version_id"]
     )
 
@@ -83,7 +83,7 @@ def test_business_short_title_keeps_supplied_purpose_and_party_in_full_summary(b
     )
     before = engine.ledger("2026-09")
     data = Dashboard(engine).brief("2026-09")["data"]
-    row = data["vouchers"][0]
+    row = data["collections"]["vouchers"]["items"][0]
     assert row["list_summary"] == "办公用品采购"
     assert row["display_summary"] == (
         "办公用品采购（2026-09） · 甲办公用品店；供研发办公室日常使用；已核对本次采购清单"
@@ -199,7 +199,7 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     company.save(payroll(accounting_gross_salary_fen=1100000), "january", revision=1)
     company.confirm_payroll("january")
     company.publish("january", posting_period="2026-02")
-    rows = Dashboard(company.engine).brief("2026-02")["data"]["vouchers"]
+    rows = Dashboard(company.engine).brief("2026-02")["data"]["collections"]["vouchers"]["items"]
     reversal = next(
         row for row in rows if row["reverses_version_id"] == original["voucher_version_id"]
     )
@@ -332,7 +332,9 @@ def test_offset_changes_obligations_without_presenting_company_money(bank_book):
     )
     publish("office", "prepayment", "offset")
     data = Dashboard(engine).brief("2026-09")["data"]
-    row = next(row for row in data["vouchers"] if row["kind"] == "settlement")
+    row = next(
+        row for row in data["collections"]["vouchers"]["items"] if row["kind"] == "settlement"
+    )
     assert row["list_summary"] == "款项抵销"
     assert row["business_amount_fen"] == 15000
     assert {line["code"] for line in row["lines"]} == {"2202", "1123"}

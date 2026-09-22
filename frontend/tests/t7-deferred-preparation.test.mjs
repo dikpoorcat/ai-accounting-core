@@ -4,6 +4,11 @@ import { test } from "node:test";
 import * as Vue from "vue";
 import { parse, compileTemplate } from "@vue/compiler-sfc";
 import ts from "typescript";
+import {
+  validateDashboardBriefResponse,
+  validateDashboardFundsResponse,
+  validateDashboardQuarterlyReportResponse,
+} from "../src/api/generated/dashboardValidators.js";
 
 const source = path => readFileSync(new URL(path, import.meta.url), "utf8");
 const withoutImports = text => text.replace(/import[\s\S]*?from "[^"]+";/g, "");
@@ -54,14 +59,24 @@ const stale = () => new ApiError(409, "dashboard_snapshot_changed", "expired");
 async function apiHarness() {
   const calls = [], window = { location: { origin: "http://offline.invalid", search: "?company_id=b" } };
   const contracts = await compile(source("../src/api/dashboardContracts.ts"));
-  const environment = { ...contracts, window, LocalApiError: ApiError, verifyMoneyStrings() {},
-    validateDashboardContextResponse: () => true, validateDashboardFundsResponse: () => true,
-    requestLocalJson(path, options) { return new Promise((resolve, reject) => calls.push({ path, ...options, resolve, reject })); } };
-  const client = await compile(`const { window, LocalApiError, verifyMoneyStrings, requestLocalJson, validDashboardContract, validateDashboardContextResponse, validateDashboardFundsResponse } = environment;\n${withoutImports(source("../src/api/client.ts"))}`, environment);
-  Object.assign(environment, client);
-  const api = await compile(`const { requestJson, DashboardApiError } = environment;\n${withoutImports(source("../src/api/periodPreparation.ts"))}`, environment);
-  const briefApi = await compile(`const { requestJson, pageQuery } = environment;\n${withoutImports(source("../src/api/brief.ts"))}`, environment);
-  const reportApi = await compile(`const { requestJson, DashboardApiError, requestLocalJson, LocalApiError } = environment;\n${withoutImports(source("../src/api/reports.ts"))}`, environment);
+  const environment = { ...contracts, window, DashboardApiError: ApiError, LocalApiError: ApiError,
+    validateDashboardPeriodPreparationResponse: () => true,
+    validateDashboardBriefResponse: () => true,
+    validateDashboardQuarterlyReportResponse: () => true,
+    validateReportExportReceiptResponse: () => true,
+    requestGeneratedJson(path, endpoint, validator, matchesRequest, options = {}) {
+      return new Promise((resolve, reject) => calls.push({ path, endpoint, ...options,
+        resolve(value) {
+          const url = new URL(path, window.location.origin);
+          if (!validator(value) || !matchesRequest(url, value)) reject(new ApiError(502, "DASHBOARD_SCHEMA_MISMATCH", "mismatch"));
+          else resolve(value);
+        }, reject }));
+    },
+    requestLocalJson(path, options) { return new Promise((resolve, reject) => calls.push({ path, ...options, resolve, reject })); },
+  };
+  const api = await compile(`const { requestGeneratedJson, DashboardApiError, validateDashboardPeriodPreparationResponse } = environment;\n${withoutImports(source("../src/api/periodPreparation.ts"))}`, environment);
+  const briefApi = await compile(`const { requestGeneratedJson, pageQuery, validateDashboardBriefResponse } = environment;\n${withoutImports(source("../src/api/brief.ts"))}`, environment);
+  const reportApi = await compile(`const { requestGeneratedJson, DashboardApiError, requestLocalJson, LocalApiError, validateDashboardQuarterlyReportResponse, validateReportExportReceiptResponse } = environment;\n${withoutImports(source("../src/api/reports.ts"))}`, environment);
   return { ...api, ...briefApi, ...reportApi, ...contracts, calls, window };
 }
 
@@ -104,34 +119,18 @@ async function viewHarness(kind) {
 }
 
 test("deferred request projections remain distinct from complete and unrelated page contracts", async () => {
-  const { validDashboardContract: valid } = await apiHarness();
-  const deferred = "/api/dashboard/brief?company_id=a&period=2026-02&preparation=deferred";
-  const full = brief(); delete full.projection; delete full.read_context;
-  full.data.period_preparation = preparation().data.period_preparation;
-  assert(valid(deferred, brief())); assert(!valid("/api/dashboard/brief", brief())); assert(!valid(deferred, full)); assert(valid("/api/dashboard/brief", full));
-  assert(!valid("/api/dashboard/brief", { ...full, projection: "unknown_projection" }));
-  for (const value of [-1, NaN, 1.5, undefined]) { const malformed = brief(); malformed.data.validation.attention_count = value; assert(!valid(deferred, malformed)); }
-  for (const value of [undefined, "true", 0]) { const malformed = brief(); malformed.data.validation.integrity_valid = value; assert(!valid(deferred, malformed)); }
-  const missing = brief(); missing.data.validation.items = []; assert(!valid(deferred, missing));
-  assert(valid(deferred, { schema_version: 5, projection: "dashboard_brief_deferred", data: null, read_context: null }));
-  assert(!valid(deferred, { schema_version: 5, data: null, read_context: null }));
-  assert(!valid("/api/dashboard/funds?preparation=deferred", { ...brief(), data: { collections: { movements: page() }, period_preparation: null } }));
-  const fundsDeferred = "/api/dashboard/funds?preparation=deferred";
-  const fundsData = { collections: { movements: page() }, period_preparation: null };
-  assert(valid(fundsDeferred, { schema_version: 5, selected_period: null, data: fundsData }));
-  assert(!valid(fundsDeferred, { schema_version: 5, data: { ...fundsData, period_preparation: preparation().data.period_preparation } }));
-  assert(!valid("/api/dashboard/funds", { schema_version: 5, data: fundsData }));
-  assert(!valid(fundsDeferred, { schema_version: 5, projection: "dashboard_brief_deferred", data: fundsData }));
-  const employeesDeferred = "/api/dashboard/employees?preparation=deferred";
-  assert(valid(employeesDeferred, { schema_version: 5, data: { collections: { employees: page() }, period_preparation: null } }));
-  assert(!valid(employeesDeferred, { schema_version: 5, data: { collections: { employees: page() }, period_preparation: preparation().data.period_preparation } }));
-  const assetsDeferred = "/api/dashboard/assets?preparation=deferred";
-  assert(valid(assetsDeferred, { schema_version: 5, data: { collections: { assets: page() }, period_preparation: null } }));
-  assert(!valid("/api/dashboard/assets", { schema_version: 5, data: { collections: { assets: page() }, period_preparation: null } }));
-  const quarterly = "/api/dashboard/quarterly-report?company_id=a&year=2026&quarter=1&preparation=deferred";
-  assert(valid(quarterly, report())); assert(!valid(quarterly, { ...report(), period_preparations: [] }));
-  assert(!valid("/api/dashboard/quarterly-report", report()));
-  assert(!valid("/api/dashboard/quarterly-report", { ...report(), projection: "unknown_projection", period_preparations: [] }));
+  const samples = JSON.parse(source("./fixtures/dashboard-contracts.json"));
+  assert(validateDashboardBriefResponse(samples.deferred_brief.response));
+  assert(validateDashboardFundsResponse(samples.deferred_funds.response));
+  assert(validateDashboardQuarterlyReportResponse(samples.deferred_quarterly_report.response));
+  for (const [validator, response] of [
+    [validateDashboardBriefResponse, samples.deferred_brief.response],
+    [validateDashboardFundsResponse, samples.deferred_funds.response],
+    [validateDashboardQuarterlyReportResponse, samples.deferred_quarterly_report.response],
+  ]) {
+    assert.equal(validator({ ...response, schema_version: 5 }), false);
+    assert.equal(validator({ ...response, projection: "retired_projection" }), false);
+  }
 });
 
 test("preparation API captures the company and rejects wrong month, version, date or database", async () => {

@@ -7,7 +7,7 @@ import {
   fetchEmployeesDashboard,
   type EstablishedEmployeeItem,
   type EmployeesDashboardResponse,
-  type PersonalLaborWorkforceCost,
+  type PersonalLaborItem,
   type PayrollSource,
   type EmployeesQuery,
 } from "../api/employees";
@@ -17,6 +17,7 @@ import DashboardPagination from "../components/DashboardPagination.vue";
 import DashboardSourceHistory from "../components/DashboardSourceHistory.vue";
 import DashboardBusinessRecords from "../components/DashboardBusinessRecords.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
+import type { DashboardCollection } from "../api/dashboardContracts";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
@@ -43,16 +44,18 @@ let requestGeneration = 0;
 const pageLoading = ref<Record<string, boolean>>({});
 const pageErrors = ref<Record<string, string>>({});
 const pageControllers = new Map<string, AbortController>();
+const payrollCollections = ref<Record<string, DashboardCollection<PayrollSource>>>({});
 const updateNotice = ref("");
 function pageKey(section: string, employeeId?: string) { return `${section}:${employeeId ?? ""}`; }
 function clearPageRequests() {
   pageControllers.forEach(request => request.abort());
-  pageControllers.clear(); pageLoading.value = {}; pageErrors.value = {};
+  pageControllers.clear(); pageLoading.value = {}; pageErrors.value = {}; payrollCollections.value = {};
 }
 
 const employees = computed(() => response.value?.data?.employees ?? null);
 const data = computed(() => response.value?.data ?? null);
 const workforce = computed(() => response.value?.data?.workforce_cost ?? null);
+const personalLaborItems = computed(() => data.value?.collections.labor_sources?.items ?? []);
 const sectionLinks = computed(() => {
   if (!employees.value || !response.value?.selected_period) return [];
   return [
@@ -61,7 +64,7 @@ const sectionLinks = computed(() => {
       ? [{ id: "employees-readiness", label: "薪酬核对" }]
       : []),
     { id: "employee-list-title", label: "员工明细" },
-    ...(workforce.value?.personal_labor.items.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
+    ...(personalLaborItems.value.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
   ];
 });
 const { activeSection, focusSection } = useDashboardSections(sectionLinks, "employees-overview");
@@ -110,7 +113,7 @@ const attentionItems = computed(() => {
   }
   return items;
 });
-const filteredEmployees = computed(() => employees.value?.items ?? []);
+const filteredEmployees = computed(() => data.value?.collections.employees?.items ?? []);
 const employeeListColumns = [
   { key: "salary", label: "应发工资", amount: (item: EstablishedEmployeeItem) => item.gross_salary_fen === null ? null : fen(item.gross_salary_fen) },
   { key: "bonus", label: "全年一次性奖金", amount: (item: EstablishedEmployeeItem) => item.annual_bonus_fen === null ? null : fen(item.annual_bonus_fen) },
@@ -126,7 +129,6 @@ const employeeListColumns = [
   { key: "net", label: "应付净薪", amount: (item: EstablishedEmployeeItem) => item.net_salary_fen === null ? null : fen(item.net_salary_fen) },
 ];
 const visibleListColumns = computed(() => employeeListColumns);
-type PersonalLaborItem = PersonalLaborWorkforceCost["items"][number];
 const laborListColumns = [
   { key: "gross", label: "劳务报酬", amount: (item: PersonalLaborItem) => item.gross_fen === null ? null : fen(item.gross_fen) },
   { key: "tax", label: "扣税（入账）", amount: (item: PersonalLaborItem) => item.booked_tax_fen === null ? null : fen(item.booked_tax_fen) },
@@ -230,8 +232,8 @@ async function loadMore(section: EmployeesQuery["section"] = "employees", employ
   section = section ?? "employees";
   const key = pageKey(section, employeeId);
   const current = response.value;
-  const employee = employeeId ? current?.data?.employees.items.find(item => item.employee_id === employeeId) : undefined;
-  const page = section === "payroll_sources" ? employee && employee.selection_status !== "unestablished" ? employee.payroll_source_page : undefined : current?.data?.collections[section ?? "employees"]?.page;
+  if (section === "payroll_sources") return;
+  const page = current?.data?.collections[section]?.page;
   if (!current?.data || !page?.has_more || !page.next_cursor || pageLoading.value[key]) return;
   const generation = requestGeneration, selection = selectionKey();
   const request = new AbortController(); pageControllers.set(key, request); pageLoading.value[key] = true; pageErrors.value[key] = "";
@@ -242,18 +244,50 @@ async function loadMore(section: EmployeesQuery["section"] = "employees", employ
     const latest = response.value;
     if (!latest.data) return;
     const collection = next.data.collections[section!];
-    const collections = section === "payroll_sources" ? latest.data.collections : { ...latest.data.collections, [section!]: { ...collection, items: [...(latest.data.collections[section!]?.items ?? []), ...collection.items] } };
-    let items = latest.data.employees.items;
-    if (section === "employees") items = [...items, ...next.data.employees.items];
-    if (section === "payroll_sources") items = items.map(item => item.employee_id !== employeeId || item.selection_status === "unestablished" ? item : { ...item, payroll_sources: [...item.payroll_sources, ...collection.items as PayrollSource[]], payroll_source_page: collection.page });
-    response.value = { ...latest, data: { ...latest.data, collections, employees: { ...latest.data.employees, items },
-      ...(section === "labor_sources" ? { workforce_cost: { ...latest.data.workforce_cost, personal_labor: { ...latest.data.workforce_cost.personal_labor, items: [...latest.data.workforce_cost.personal_labor.items, ...next.data.workforce_cost.personal_labor.items] } } } : {}),
-    } };
+    if (!collection) return;
+    const collections = { ...latest.data.collections, [section!]: { ...collection, items: [...(latest.data.collections[section!]?.items ?? []), ...collection.items] } };
+    response.value = { ...latest, data: { ...latest.data, collections } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(key) !== request) return;
     if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
     else pageErrors.value[key] = dashboardErrorMessage(caught);
   } finally { if (isCurrent(generation, selection) && pageControllers.get(key) === request) { pageLoading.value[key] = false; pageControllers.delete(key); } }
+}
+
+async function loadPayrollSources(employeeId: string, more = false) {
+  const key = pageKey("payroll_sources", employeeId);
+  const current = response.value;
+  const existing = payrollCollections.value[employeeId];
+  if (!current?.data || pageLoading.value[key] || (more && !existing?.page.next_cursor)) return;
+  const generation = requestGeneration, selection = selectionKey();
+  const request = new AbortController(); pageControllers.set(key, request);
+  pageLoading.value[key] = true; pageErrors.value[key] = "";
+  try {
+    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, {
+      section: "payroll_sources", employee_id: employeeId, employee_filter: filter.value,
+      cursor: more ? existing?.page.next_cursor ?? undefined : undefined,
+      expected_version: current.snapshot_version ?? undefined,
+    });
+    if (!isCurrent(generation, selection) || pageControllers.get(key) !== request || !next.data || response.value?.snapshot_version !== current.snapshot_version) return;
+    const collection = next.data.collections.payroll_sources;
+    if (!collection) return;
+    payrollCollections.value = {
+      ...payrollCollections.value,
+      [employeeId]: { ...collection, items: [...(more ? existing?.items ?? [] : []), ...collection.items] },
+    };
+  } catch (caught) {
+    if (!isCurrent(generation, selection) || pageControllers.get(key) !== request) return;
+    if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
+    else pageErrors.value[key] = dashboardErrorMessage(caught);
+  } finally {
+    if (isCurrent(generation, selection) && pageControllers.get(key) === request) {
+      pageLoading.value[key] = false; pageControllers.delete(key);
+    }
+  }
+}
+
+function openEmployee(event: Event, employeeId: string) {
+  if ((event.target as HTMLDetailsElement).open && !payrollCollections.value[employeeId]) void loadPayrollSources(employeeId);
 }
 
 function companyContribution(item: EstablishedEmployeeItem) {
@@ -460,7 +494,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               </div>
               <DashboardBusinessRecords :items="[item]" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" :show-business="false" />
             </article>
-            <details v-else class="employee-card dashboard-record-card">
+            <details v-else class="employee-card dashboard-record-card" @toggle="openEmployee($event, item.employee_id)">
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="employeeDisplayMode === 'list'" class="employee-list-summary">
                   <div class="employee-list-identity">
@@ -532,7 +566,9 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                 <p class="muted">本月支付可包含以前月份的工资，各月份余额见下方详情。</p>
                 <h3>按工资来源期查看款项</h3>
                 <p class="scope-label">来源期款项 · 截至所选月末</p>
-                <details v-for="source in item.payroll_sources" :key="source.source_id" class="tax-details">
+                <p v-if="pageLoading[pageKey('payroll_sources', item.employee_id)] && !payrollCollections[item.employee_id]" class="muted">正在读取工资来源…</p>
+                <p v-if="pageErrors[pageKey('payroll_sources', item.employee_id)] && !payrollCollections[item.employee_id]" class="source-issue">{{ pageErrors[pageKey('payroll_sources', item.employee_id)] }} <button type="button" @click="loadPayrollSources(item.employee_id)">重新读取</button></p>
+                <details v-for="source in payrollCollections[item.employee_id]?.items ?? []" :key="source.source_id" class="tax-details">
                   <summary>{{ source.period }} · {{ source.label }} · 查看月末款项</summary>
                   <p v-for="(issue, issueIndex) in source.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本来源款项尚需核对，请查看精确依据。' }}</p>
                   <p v-if="source.opening_period" class="muted">期初接续月份 {{ source.opening_period }} · {{ obligationLabel(source.component ?? "primary") }}</p>
@@ -556,14 +592,16 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                     <dl v-for="basis in source.disbursements" :key="basis.calculation_id" class="employee-profile-grid">
                       <div><dt>代发方案登记月份</dt><dd>{{ basis.recording_period }}{{ basis.needs_review ? " · 方案依据需复核" : " · 已确认方案" }}</dd></div>
                       <div v-if="!basis.matches_displayed_wage"><dt>工资来源说明</dt><dd>方案采用的工资来源与本页展示来源不同，请核对各自依据。</dd></div>
-                      <div><dt>按申报额确定的拟发金额</dt><dd>{{ formatFen(basis.target_net_fen) }}</dd></div>
-                      <div><dt>方案保留差额</dt><dd>{{ formatFen(basis.held_fen) }}</dd></div>
+                      <div><dt>代发目标净薪</dt><dd>{{ formatFen(basis.target_net_fen) }}</dd></div>
+                      <div><dt>暂缓发放</dt><dd>{{ formatFen(basis.held_fen) }}</dd></div>
+                      <div><dt>实际申报个税</dt><dd>{{ formatFen(basis.declared_tax_fen) }}</dd></div>
+                      <div><dt>实际扣缴记录</dt><dd>{{ basis.withholding_recorded ? "已登记" : "尚未登记" }}</dd></div>
                     </dl>
                     <p v-if="source.disbursements.length" class="muted">代发方案表示拟发金额，实际付款以上方记录为准。</p>
                   </details>
                 </details>
-                <DashboardPagination :page="item.payroll_source_page" :loaded="item.payroll_sources.length" :loading="pageLoading[pageKey('payroll_sources', item.employee_id)]" :error="pageErrors[pageKey('payroll_sources', item.employee_id)]" @more="loadMore('payroll_sources', item.employee_id)" @retry="loadMore('payroll_sources', item.employee_id)" />
-                <DashboardSourceHistory endpoint="employees" section="settlement_events" :entity-id="item.employee_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" title="当前后续事项 · 查看精确关联的清偿事件" @changed="refresh" />
+                <DashboardPagination v-if="payrollCollections[item.employee_id]" :page="payrollCollections[item.employee_id].page" :loaded="payrollCollections[item.employee_id].items.length" :loading="pageLoading[pageKey('payroll_sources', item.employee_id)]" :error="pageErrors[pageKey('payroll_sources', item.employee_id)]" @more="loadPayrollSources(item.employee_id, true)" @retry="loadPayrollSources(item.employee_id, true)" />
+                <DashboardSourceHistory v-if="response.snapshot_version" endpoint="employees" section="settlement_events" :entity-id="item.employee_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" title="当前后续事项 · 查看精确关联的清偿事件" @changed="refresh" />
                 <details class="tax-details">
                   <summary>查看薪酬构成</summary>
                   <dl class="employee-profile-grid">
@@ -636,11 +674,11 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 
       <DashboardPagination :page="data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
 
-      <section v-if="workforce?.personal_labor.items.length" id="labor-sources" class="panel employee-section">
+      <section v-if="personalLaborItems.length" id="labor-sources" class="panel employee-section">
         <div class="section-heading">
           <div>
             <h2 id="labor-title" tabindex="-1">个人劳务</h2>
-            <p class="list-caption">已加载 {{ workforce.personal_labor.items.length }} 笔 · 本月费用 {{ formatFen(workforce.personal_labor.total_fen) }} · 资产或项目 {{ formatFen(workforce.capitalized_labor_fen) }}</p>
+            <p class="list-caption">已加载 {{ personalLaborItems.length }} 笔 · 本月费用 {{ formatFen(workforce?.personal_labor.total_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }}</p>
           </div>
           <div class="employee-toolbar">
             <div class="display-mode-switch" role="group" aria-label="个人劳务明细显示模式">
@@ -656,7 +694,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <span v-for="column in visibleLaborListColumns" :id="`labor-column-${column.key}`" :key="column.key">{{ column.label }}</span>
               <span aria-hidden="true"></span>
             </div>
-            <details v-for="labor in workforce.personal_labor.items" :key="labor.source_id" class="employee-card dashboard-record-card">
+            <details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card">
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="laborDisplayMode === 'list'" class="employee-list-summary">
                   <div class="employee-list-identity">
@@ -689,13 +727,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                   <div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div>
                   <div><dt>月末未结金额</dt><dd>{{ formatFen(obligation.remaining_fen) }}</dd></div>
                 </dl>
-                <div v-for="movement in labor.movements" :key="movement.id">
-                  <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }}{{ movement.reversal ? "（冲正）" : "" }} · {{ formatFen(movement.amount_fen) }}</p>
-                  <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-                </div>
-                <p v-if="labor.movements_page" class="scope-label">相关来源历史清偿 · 截至所选月末 · 共 {{ labor.movements_page.total_count }} 项，已加载 {{ labor.movements.length }} 项</p>
                 <p class="muted">含关联来源明细；本来源金额见上方汇总。</p>
-                <BusinessStatusDetails v-if="labor.movements_page?.has_more && labor.subject_id" :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" settlement-view="historical" @changed="refresh" />
+                <BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看精确关联的清偿事件" @changed="refresh" />
                 <details class="tax-details">
                   <summary>查看劳务扣税依据</summary>
                   <p>{{ labor.withholding_label }}</p>
@@ -708,7 +741,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
             </details>
           </div>
         </div>
-        <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="workforce.personal_labor.items.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
+        <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
       </section>
 
       <details class="panel identity-note">

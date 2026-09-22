@@ -110,15 +110,19 @@ def test_dashboard_keeps_original_bank_rows_and_nests_whole_batch_recipients(boo
     reconciliation(save, publish, group_matches())
 
     dashboard = Dashboard(engine)
-    first = dashboard.funds("2026-09", limit=2)
-    bank = first["data"]["bank_statement"]
+    first = dashboard.funds("2026-09", section="statements", limit=2)
+    statements = first["data"]["collections"]["statements"]
     following = dashboard.funds(
         "2026-09",
+        section="statements",
         limit=2,
-        after_statement=bank["page"]["next_cursor"],
+        cursor=statements["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
     )
-    rows = [*bank["rows"], *following["data"]["bank_statement"]["rows"]]
+    rows = [
+        *statements["items"],
+        *following["data"]["collections"]["statements"]["items"],
+    ]
     assert [(row["reference"], row["signed_amount_fen"]) for row in rows] == [
         ("receipt", 1000),
         ("first", -130),

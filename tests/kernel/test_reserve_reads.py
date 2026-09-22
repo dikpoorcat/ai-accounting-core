@@ -119,7 +119,9 @@ def test_reserve_facts_read_as_external_money_on_all_supported_accounts(reserve_
     assert data["net_change_fen"] == data["total_fen"] == -540
     assert data["internal_transfer_fen"] == 0
     reserve = [
-        row for row in data["movements"] if row["component_kinds"][0].startswith("managed_reserve_")
+        row
+        for row in data["collections"]["movements"]["items"]
+        if row["component_kinds"][0].startswith("managed_reserve_")
     ]
     assert len(reserve) == 6
     assert {
@@ -160,7 +162,7 @@ def test_reserve_vouchers_show_actual_amounts_without_settlements(reserve_book):
     )
     publish("expense", "refund")
 
-    vouchers = Dashboard(engine).brief("2026-09")["data"]["vouchers"]
+    vouchers = Dashboard(engine).brief("2026-09")["data"]["collections"]["vouchers"]["items"]
     reserve = {row["kind"]: row for row in vouchers}
 
     expense = reserve["managed_reserve_expense"]

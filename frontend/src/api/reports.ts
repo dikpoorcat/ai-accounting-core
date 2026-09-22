@@ -1,162 +1,31 @@
-import { DashboardApiError, requestJson } from "./client";
+import { DashboardApiError, requestGeneratedJson } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
-import type { DashboardReadContext, PeriodPreparation } from "./dashboardContracts";
+import type { DashboardQuarterlyReportContract, DashboardQuarterlyReportResponse } from "./generated/dashboardResponses";
+import { validateDashboardQuarterlyReportResponse, validateReportExportReceiptResponse } from "./generated/dashboardValidators.js";
 
-export type ReportStatus =
-  | "ready"
-  | "blocked"
-  | "in_progress"
-  | "not_applicable"
-  | "error";
+export type QuarterlyReport = DashboardQuarterlyReportResponse;
+export type DeferredQuarterlyReport = DashboardQuarterlyReportResponse;
+export type ReportStatement = DashboardQuarterlyReportContract.ReportStatement;
+export type ReportStatementRow = DashboardQuarterlyReportContract.ReportStatementRow;
 
-export interface ReportReadinessDetail {
-  primary: string;
-  secondary: string;
-  amount_fen?: string | null;
-  location?: { field: string; period?: string; voucher_number?: number; voucher_version_id?: string; line_no?: number; subject_id?: string; account?: string };
+function matchesRequest(url: URL, response: DashboardQuarterlyReportResponse) {
+  const companyId = url.searchParams.get("company_id");
+  const year = Number(url.searchParams.get("year"));
+  const quarter = Number(url.searchParams.get("quarter"));
+  const carryForward = url.searchParams.get("carry_forward_fact_id");
+  return response.read_context.company_id === companyId
+    && response.period.year === year
+    && response.period.quarter === quarter
+    && (carryForward === null || response.carry_forward.selected_fact_id === carryForward);
 }
-
-export interface ReportReadinessItem {
-  key: string;
-  label: string;
-  state: "pass" | "pending" | "attention";
-  summary: string;
-  details: ReportReadinessDetail[];
-}
-
-export interface ReportSummary {
-  assets_total_fen: string | null;
-  liabilities_total_fen: string | null;
-  liabilities_equity_total_fen: string | null;
-  current_net_profit_fen: string | null;
-  year_to_date_net_profit_fen: string | null;
-  current_cash_change_fen: string | null;
-  ending_cash_fen: string | null;
-}
-
-export interface ReportStatementColumn {
-  key: string;
-  label: string;
-}
-
-export interface ReportStatementRow {
-  line: number;
-  name: string;
-  values: Record<string, string | null>;
-  is_total: boolean;
-  has_amount: boolean;
-}
-
-export interface ReportStatement {
-  key: string;
-  label: string;
-  columns: ReportStatementColumn[];
-  rows: ReportStatementRow[];
-}
-
-export interface ReportCheck {
-  code: string;
-  label: string;
-  passed: boolean | null;
-}
-
-export interface QuarterlyReport {
-  period_preparations: PeriodPreparation[];
-  schema_version: 3;
-  status: ReportStatus;
-  status_label: string;
-  headline: string;
-  message: string;
-  checked_at: string;
-  organization?: {
-    name: string | null;
-    taxpayer_identification_number: string | null;
-  };
-  period: {
-    year: number;
-    quarter: number;
-    label: string;
-    quarter_start?: string;
-    quarter_end: string;
-  };
-  readiness: ReportReadinessItem[];
-  summary: ReportSummary;
-  statements: ReportStatement[];
-  checks: {
-    passed: number;
-    total: number;
-    items: ReportCheck[];
-  };
-  draft: boolean;
-  close_state: "open" | "closed";
-  readiness_state: "ready" | "blocked";
-  carry_forward: {
-    selected_fact_id: string | null;
-    options: { fact_id: string; subject_id: string; revision: number; period: string; label: string; evidence_count: number; used: boolean }[];
-  };
-  export: {
-    available: boolean;
-    file_name: string;
-    calculation_hash: string | null;
-    preview_digest: string | null;
-    epochs: { accounting: number; material: number; management: number } | null;
-  };
-  technical: {
-    calculation_hash: string | null;
-    template: {
-      file_name?: string;
-      profile?: string;
-      sha256?: string;
-    };
-    rule: {
-      version?: string;
-    };
-    source_close_hashes: string[];
-    classification_count: number | null;
-    income_tax_confirmation_count: number | null;
-    requirement_codes: string[];
-    errors: string[];
-  };
-}
-
-export async function fetchQuarterlyReport(
-  year: number,
-  quarter: number,
-  signal?: AbortSignal,
-  carryForwardFactId?: string,
-) {
-  const query = new URLSearchParams({
-    year: String(year),
-    quarter: String(quarter),
-  });
-  if (carryForwardFactId) query.set("carry_forward_fact_id", carryForwardFactId);
-  const report = await requestJson<QuarterlyReport>(
-    `/api/dashboard/quarterly-report?${query}`,
-    { signal },
-  );
-  if (report.schema_version !== 3) {
-    throw new DashboardApiError(
-      502,
-      "REPORT_SCHEMA_MISMATCH",
-      "季度报表响应无法识别，请重启本地看板服务后重试。",
-    );
-  }
-  return report;
-}
-
-export type DeferredQuarterlyReport = Omit<QuarterlyReport, "period_preparations"> & {
-  projection: "dashboard_quarterly_report_deferred";
-  read_context: DashboardReadContext;
-  period_preparations: null;
-};
 
 export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, carryForwardFactId?: string) {
   const query = new URLSearchParams({ company_id: companyId, year: String(year), quarter: String(quarter), preparation: "deferred" });
   if (carryForwardFactId) query.set("carry_forward_fact_id", carryForwardFactId);
-  return requestJson<DeferredQuarterlyReport>(`/api/dashboard/quarterly-report?${query}`, { signal });
+  return requestGeneratedJson(`/api/dashboard/quarterly-report?${query}`, "/api/dashboard/quarterly-report", validateDashboardQuarterlyReportResponse, matchesRequest, { signal });
 }
 
-export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport | DeferredQuarterlyReport, requestId: string, signal?: AbortSignal): Promise<{ job_id: string }> {
+export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport, requestId: string, signal?: AbortSignal) {
   if (!report.export.available || !report.export.preview_digest || !report.export.epochs) {
     throw new DashboardApiError(409, "REPORT_EXPORT_UNAVAILABLE", "季度报表尚未准备完成，当前不能导出。");
   }
@@ -165,10 +34,10 @@ export async function requestQuarterlyExport(companyId: string, report: Quarterl
     preview_digest: report.export.preview_digest, epochs: report.export.epochs, request_id: requestId,
     ...(report.carry_forward.selected_fact_id ? { carry_forward_fact_id: report.carry_forward.selected_fact_id } : {}),
   }) });
-  if (!result || typeof result !== "object" || !("job_id" in result) || typeof result.job_id !== "string") {
+  if (!validateReportExportReceiptResponse(result) || result.preview_digest !== report.export.preview_digest) {
     throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请刷新后台任务核对。");
   }
-  return { job_id: result.job_id };
+  return result;
 }
 
 export async function fetchQuarterlyWorkbook(companyId: string, jobId: string, signal?: AbortSignal) {

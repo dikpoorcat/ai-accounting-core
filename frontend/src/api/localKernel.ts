@@ -1,3 +1,6 @@
+import type { BrowserJobsContract, BrowserSecurityStatusContract, BrowserSecurityStatusResponse, DashboardBriefContract } from "./generated/dashboardResponses";
+import { validateBrowserJobsResponse, validateBrowserSecurityStatusResponse } from "./generated/dashboardValidators.js";
+
 export class LocalApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
     super(message);
@@ -5,25 +8,8 @@ export class LocalApiError extends Error {
   }
 }
 
-export interface EvidenceDetails {
-  digest: string;
-  name: string;
-  media_type: string;
-}
-
-export interface LocalJob {
-  id: string;
-  kind: string;
-  status: string;
-  attempts: number;
-  last_error: string | null;
-  result: unknown;
-  download_available?: boolean;
-  download_file_name?: string | null;
-  delivery_status?: "pending" | "unavailable" | "external" | "invalid" | "verified";
-  delivery_message?: string | null;
-  report_source?: { year: number; quarter: number; carry_forward_fact_id: string | null };
-}
+export type EvidenceDetails = DashboardBriefContract.EvidenceDetail;
+export type LocalJob = BrowserJobsContract.BrowserJob;
 
 export function localJobDownloadAvailable(job: LocalJob): boolean {
   return job.kind === "report_export" && job.status === "succeeded" && job.download_available === true;
@@ -194,24 +180,6 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function verifyMoneyStrings(value: unknown, parentKey = ""): void {
-  if (Array.isArray(value)) {
-    value.forEach(item => verifyMoneyStrings(item, parentKey));
-  } else if (record(value)) {
-    for (const [key, field] of Object.entries(value)) {
-      // field_sources maps displayed field names to provenance, not monetary values.
-      // Keep recursing so any actual amount inside a source still receives validation.
-      if (parentKey !== "field_sources" && field !== null && (key.endsWith("_fen") || ["debit", "credit", "amount"].includes(key) || (key === "total" && parentKey !== "checks"))) {
-        const amountPattern = key.startsWith("unrounded_") ? /^-?\d+(\.\d+)?$/ : /^-?\d+$/;
-        if (typeof field !== "string" || !amountPattern.test(field)) {
-          throw new LocalApiError(502, "LOCAL_MONEY_FORMAT", "金额传输格式不正确，无法可靠展示。请更新本地内核后重试。");
-        }
-      }
-      verifyMoneyStrings(field, key);
-    }
-  }
-}
-
 export async function requestLocalJson(path: string, options: RequestInit = {}): Promise<unknown> {
   const response = await fetch(path, {
     ...options,
@@ -239,40 +207,42 @@ export async function requestLocalJson(path: string, options: RequestInit = {}):
   return payload;
 }
 
-async function localRequest<T>(path: string, parameters: Record<string, string>, signal?: AbortSignal): Promise<T> {
-  const query = new URLSearchParams(parameters);
-  const payload = await requestLocalJson(`/api/local/${path}?${query}`, { signal });
-  verifyMoneyStrings(payload);
-  return payload as T;
-}
+export type SecurityAction = Exclude<BrowserSecurityStatusContract.BrowserSecurityRequestState["kind"], "approve_period_close">;
+export type LocalSecurityState = BrowserSecurityStatusResponse;
+export type LocalSecurityRequestState = BrowserSecurityStatusContract.BrowserSecurityRequestState;
+export type LocalSecuritySessionStatus = BrowserSecurityStatusContract.BrowserSecuritySessionStatus;
 
-export type SecurityAction = "bootstrap_owner" | "login" | "change_password" | "recover" | "replace_recovery_code";
-export interface LocalSecurityState {
-  provisioned?: boolean;
-  authenticated?: boolean;
-  login_name?: string;
-  request_id?: string;
-  status?: "starting" | "waiting_for_user" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
-  login_completed?: boolean;
-  browser_authenticated?: boolean;
-  operation_committed?: boolean;
-  error_code?: string | null;
-}
+export function isSecurityRequestState(value: LocalSecurityState): value is LocalSecurityRequestState { return "status" in value; }
+export function isSecuritySessionStatus(value: LocalSecurityState): value is LocalSecuritySessionStatus { return "authenticated" in value; }
 
 export async function localSecurity(operation: "request" | "status" | "cancel" | "session_status", payload: { kind?: SecurityAction; login_name?: string; request_id?: string } = {}): Promise<LocalSecurityState> {
   const result = await requestLocalJson("/api/security-request", {
     method: "POST", body: JSON.stringify({ operation, payload }),
   });
-  if (!record(result)) throw new LocalApiError(502, "LOCAL_SECURITY_RESPONSE", "安全窗口状态无法读取，请重新打开工作台。");
-  return result as LocalSecurityState;
+  if (!validateBrowserSecurityStatusResponse(result)
+    || (payload.request_id && (!isSecurityRequestState(result) || result.request_id !== payload.request_id))
+    || (operation === "session_status" && !isSecuritySessionStatus(result))
+    || (operation !== "session_status" && !isSecurityRequestState(result))) {
+    throw new LocalApiError(502, "LOCAL_SECURITY_RESPONSE", "安全窗口状态无法读取，请重新打开工作台。");
+  }
+  return result;
 }
 
-export function fetchLocalJobs(companyId: string, signal?: AbortSignal): Promise<LocalJob[]> {
-  return localRequest("jobs", { company_id: companyId, limit: "20" }, signal);
+async function fetchJobs(companyId: string, parameters: Record<string, string>, signal?: AbortSignal) {
+  const query = new URLSearchParams({ company_id: companyId, ...parameters });
+  const result = await requestLocalJson(`/api/local/jobs?${query}`, { signal });
+  if (!validateBrowserJobsResponse(result) || result.company_id !== companyId) {
+    throw new LocalApiError(502, "LOCAL_JOBS_RESPONSE", "后台任务状态无法读取，请刷新后重试。");
+  }
+  return result.items;
 }
 
-export function fetchLocalJob(companyId: string, jobId: string, signal?: AbortSignal): Promise<LocalJob[]> {
-  return localRequest("jobs", { company_id: companyId, job_id: jobId, limit: "1" }, signal);
+export function fetchLocalJobs(companyId: string, signal?: AbortSignal) {
+  return fetchJobs(companyId, { limit: "20" }, signal);
+}
+
+export function fetchLocalJob(companyId: string, jobId: string, signal?: AbortSignal) {
+  return fetchJobs(companyId, { job_id: jobId, limit: "1" }, signal);
 }
 
 export function localErrorMessage(error: unknown): string {

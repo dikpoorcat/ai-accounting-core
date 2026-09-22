@@ -99,11 +99,11 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
     complete = dashboard.brief("2026-03", limit=1)
     assert complete["data"]["voucher_count"] == 2
     assert complete["data"]["total_debit_fen"] == 12000
-    assert complete["data"]["vouchers"][0]["components"]
+    assert complete["data"]["collections"]["vouchers"]["items"][0]["components"]
 
     forbid_preparation(monkeypatch)
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 5
+    assert deferred["schema_version"] == complete["schema_version"] == 6
     assert deferred["projection"] == "dashboard_brief_deferred"
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
@@ -134,9 +134,10 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
             )
             assert_pending_checks(next_page)
             assert next_page["read_context"] == context
-            assert len(next_page["data"]["vouchers"]) == 1
+            assert len(next_page["data"]["collections"]["vouchers"]["items"]) == 1
             assert (
-                next_page["data"]["vouchers"][0]["number"] != page["data"]["vouchers"][0]["number"]
+                next_page["data"]["collections"]["vouchers"]["items"][0]["number"]
+                != page["data"]["collections"]["vouchers"]["items"][0]["number"]
             )
 
     original_position = dashboard_module._position
@@ -174,7 +175,9 @@ def test_deferred_report_keeps_open_and_closed_sources_and_export_contract(book,
                 for k, v in deferred.items()
                 if k not in {"projection", "read_context", "period_preparations"}
             }
-        ) == without_clock({k: v for k, v in complete.items() if k != "period_preparations"})
+        ) == without_clock(
+            {k: v for k, v in complete.items() if k not in {"read_context", "period_preparations"}}
+        )
 
 
 def test_preparation_restores_original_checks_inside_the_validated_read_snapshot(book, monkeypatch):
@@ -279,9 +282,11 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 5
+    assert result["schema_version"] == 6
     assert result["projection"] == "dashboard_brief_deferred"
-    assert result["read_context"] is None and result["data"] is None
+    assert result["read_context"]["company_id"] == "empty"
+    assert result["read_context"]["database_id"] == "empty-db"
+    assert result["data"] is None
 
 
 def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resident, monkeypatch):

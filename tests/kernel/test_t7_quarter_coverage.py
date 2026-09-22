@@ -5,6 +5,7 @@ from test_reports import book as book  # noqa: F401
 from test_reports import close_quarter, scenario
 
 from ai_accounting.kernel.close_contract import CLOSE_FORMAT, CLOSE_FORMAT_VERSION
+from ai_accounting.kernel.close_review import build_owner_review
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close
@@ -98,6 +99,7 @@ def insert_closes(engine, rows):
                 },
                 "approval": None,
             }
+            manifest["owner_review"] = build_owner_review(connection, engine, manifest)
             month = YearMonth(period).ordinal
             connection.execute(
                 "INSERT INTO period_close VALUES(?,?,?)",

@@ -686,7 +686,60 @@ def _check_audit_sources(connection):
             _invalid("audit", row["id"], "audit_request_result_mismatch")
 
 
-def _check_closes(engine, connection, source, *, through_period=None):
+def _check_close_approval(row, manifest, period):
+    """Tie the frozen receipt to the immutable, consumed company-local grant."""
+    approval = manifest["approval"]
+    if approval is None:
+        return None
+    versions = manifest["read_version"]
+    preview_manifest = {**manifest, "approval": None}
+    preview_digest = digest(
+        [
+            preview_manifest,
+            versions["accounting"],
+            versions["material"],
+            versions["management"],
+        ]
+    ).hex()
+    if (
+        row is None
+        or row["consumed_at"] is None
+        or not row["confirmed_at"] <= row["consumed_at"] < row["expires_at"]
+        or (
+            row["catalog_instance_id"],
+            row["company_id"],
+            row["database_id"],
+            row["period"],
+            row["preview_digest"].hex(),
+            row["accounting_epoch"],
+            row["material_epoch"],
+            row["management_epoch"],
+            row["owner_id"],
+            row["credential_version"],
+            row["confirmed_at"],
+        )
+        != (
+            approval["catalog_instance_id"],
+            manifest["company_id"],
+            manifest["database_id"],
+            period,
+            approval["preview_digest"],
+            versions["accounting"],
+            versions["material"],
+            versions["management"],
+            approval["owner_id"],
+            approval["credential_version"],
+            approval["confirmed_at"],
+        )
+        or approval["preview_digest"] != preview_digest
+    ):
+        _invalid("close", period, "close_approval_mismatch")
+    return approval["approval_id"]
+
+
+def _check_closes(
+    engine, connection, source, *, through_period=None, verify_financial_position=True
+):
     from .close_contract import direct_calculation_ids, require_close_contract
 
     previous_digest, previous_trial, previous_period = None, None, None
@@ -695,6 +748,7 @@ def _check_closes(engine, connection, source, *, through_period=None):
         "SELECT coalesce(max(sequence),0) FROM calculation_publication"
     ).fetchone()[0]
     count = 0
+    used_approval_ids = set()
     parameters = (through_period,) if through_period is not None else ()
     restriction = " WHERE period<=?" if through_period is not None else ""
     closes = []
@@ -706,8 +760,23 @@ def _check_closes(engine, connection, source, *, through_period=None):
             _invalid("close", period, "manifest_digest_mismatch")
         manifest = require_close_contract(_object(row["manifest"], "close", period))
         closes.append((row, manifest))
-    if not closes:
-        return 0, []
+    approval_ids = [
+        manifest["approval"]["approval_id"]
+        for _, manifest in closes
+        if manifest["approval"] is not None
+    ]
+    approval_rows = (
+        {
+            row["id"]: row
+            for row in connection.execute(
+                "SELECT * FROM security_close_approval "
+                "WHERE id IN (SELECT value FROM json_each(?))",
+                (canonical(approval_ids),),
+            )
+        }
+        if approval_ids
+        else {}
+    )
     coverage_inventory_references = []
     for row, manifest in closes:
         references = manifest["material_coverage"].get("inventory_versions")
@@ -787,6 +856,16 @@ def _check_closes(engine, connection, source, *, through_period=None):
             or manifest["previous_close_period"] != previous_period
         ):
             _invalid("close", period, "manifest_identity_or_chain_mismatch")
+        approval = manifest["approval"]
+        approval_id = _check_close_approval(
+            approval_rows.get(approval["approval_id"]) if approval is not None else None,
+            manifest,
+            period,
+        )
+        if approval_id is not None:
+            if approval_id in used_approval_ids:
+                _invalid("close", period, "duplicate_close_approval")
+            used_approval_ids.add(approval_id)
         if not previous_sequence <= manifest["publication_sequence"] <= maximum_sequence:
             _invalid("close", period, "publication_boundary_mismatch")
         previous_sequence = manifest["publication_sequence"]
@@ -955,12 +1034,32 @@ def _check_closes(engine, connection, source, *, through_period=None):
             baseline = previous_trial
         if _merge(baseline, _totals(voucher_lines, "close", period)) != trial:
             _invalid("close", period, "trial_balance_source_mismatch")
+        from .close_review import verify_owner_review_integrity
+
+        verify_owner_review_integrity(
+            connection,
+            engine,
+            manifest,
+            verify_financial_position=verify_financial_position,
+        )
         previous_digest, previous_trial, previous_period = (
             row["digest"].hex(),
             trial,
             manifest["period"],
         )
         count += 1
+    approval_parameters = (through_period,) if through_period is not None else ()
+    approval_restriction = " AND period<=?" if through_period is not None else ""
+    consumed_approval_ids = {
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM security_close_approval WHERE consumed_at IS NOT NULL"
+            + approval_restriction,
+            approval_parameters,
+        )
+    }
+    if consumed_approval_ids != used_approval_ids:
+        _invalid("close", "*", "orphaned_close_approval")
     return count, []
 
 
@@ -1019,7 +1118,12 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
             _invalid("sqlite", "*", "foreign_key_check_failed")
         _check_heads(connection)
         source = _check_sources(engine, connection)
-        close_count, limitations = _check_closes(engine, connection, source)
+        close_count, limitations = _check_closes(
+            engine,
+            connection,
+            source,
+            verify_financial_position=include_projections and include_indexes,
+        )
         _check_job_sources(engine, connection, source)
         _check_audit_sources(connection)
         from .duplicates import verify_duplicate_checks

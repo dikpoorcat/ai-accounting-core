@@ -42,7 +42,7 @@ npm run dev
 
 每个资料根目录只有一个常驻服务，承载页面、鉴权、命令和后台任务。负责人在原生安全窗口输入独立密码；Windows 凭据管理器保存会话。密码不通过聊天、命令行或业务 MCP 提交。
 
-连续历史关账支持一次密码批准多个明确的公司与月份范围：先分别 `preview_close_range`，再通过原生 `approve_close_batches` 确认，按公司执行 `close_range`。每家公司整段月份原子提交并生成一次备份；中断和部分成功按原批准与幂等请求继续，已关月份保持冻结。
+关账按公司逐月完成：AI 先 `preview_close`，负责人在经营简报核对内核提供的同版内容，再通过本机 `approve_period_close` 密码窗口批准，由 AI 执行 `close`。页面只读，整月统一批准；预览变化须重新核对。已关月份保留原核对内容及实际采用依据，自动备份按任务状态确认完成。
 
 仓库环境可说“启动”，或运行 `deploy/windows/start_accounting.ps1`。详见 [运行入口](docs/local-kernel-startup.md) 与 [独立打包](docs/local-kernel-packaging.md)。
 

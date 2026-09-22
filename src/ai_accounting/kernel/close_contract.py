@@ -1,11 +1,24 @@
 """The single stored close contract: direct adoption, never an ancestry snapshot."""
 
+import re
+
 from .contracts import KernelError
 from .types import YearMonth
 
 CLOSE_FORMAT = "ai-accounting-kernel/2/period-close"
-CLOSE_FORMAT_VERSION = 3
+CLOSE_FORMAT_VERSION = 4
 ADOPTION_ROLES = frozenset({"journal_basis", "state_only", "opening_basis", "asset_batch_owner"})
+APPROVAL_FIELDS = frozenset(
+    {
+        "approval_id",
+        "preview_digest",
+        "owner_id",
+        "catalog_instance_id",
+        "credential_version",
+        "confirmed_at",
+        "method",
+    }
+)
 
 
 def _invalid(reason):
@@ -16,6 +29,31 @@ def _invalid(reason):
         record_id="*",
         reason=reason,
     )
+
+
+def require_close_approval(value):
+    """Validate the exact security receipt frozen into a password-approved close."""
+    if value is None:
+        return None
+    if (
+        not isinstance(value, dict)
+        or set(value) != APPROVAL_FIELDS
+        or not isinstance(value["approval_id"], str)
+        or re.fullmatch(r"[0-9a-f]{32}", value["approval_id"]) is None
+        or not isinstance(value["preview_digest"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["preview_digest"]) is None
+        or not isinstance(value["owner_id"], str)
+        or not value["owner_id"]
+        or not isinstance(value["catalog_instance_id"], str)
+        or not value["catalog_instance_id"]
+        or type(value["credential_version"]) is not int
+        or value["credential_version"] < 1
+        or type(value["confirmed_at"]) is not int
+        or value["confirmed_at"] < 0
+        or value["method"] != "local_password_reauthentication"
+    ):
+        _invalid("invalid_close_approval")
+    return value
 
 
 def require_close_contract(manifest):
@@ -43,34 +81,16 @@ def require_close_contract(manifest):
         "report_classification",
         "read_version",
         "approval",
+        "owner_review",
     }
     if (
         not isinstance(manifest, dict)
-        or set(manifest) not in (required, required | {"close_range"})
+        or set(manifest) != required
         or manifest.get("format") != CLOSE_FORMAT
         or type(manifest.get("format_version")) is not int
         or manifest.get("format_version") != CLOSE_FORMAT_VERSION
     ):
         _invalid("unsupported_close_contract")
-    if "close_range" in manifest:
-        scope = manifest["close_range"]
-        if (
-            not isinstance(scope, dict)
-            or set(scope) != {"from_period", "through_period", "preview_digest"}
-            or any(not isinstance(value, str) for value in scope.values())
-            or len(scope["preview_digest"]) != 64
-            or any(character not in "0123456789abcdef" for character in scope["preview_digest"])
-        ):
-            _invalid("invalid_close_range")
-        try:
-            if not (
-                YearMonth(scope["from_period"])
-                <= YearMonth(manifest["period"])
-                <= YearMonth(scope["through_period"])
-            ):
-                raise ValueError("range excludes close period")
-        except (TypeError, ValueError):
-            _invalid("invalid_close_range")
     if type(manifest["publication_sequence"]) is not int or manifest["publication_sequence"] < 0:
         _invalid("invalid_publication_boundary")
     if not isinstance(manifest.get("management_snapshot"), dict) or not isinstance(
@@ -121,8 +141,10 @@ def require_close_contract(manifest):
         type(value) is not int or value < 0 for value in versions.values()
     ):
         _invalid("invalid_close_read_version")
-    if manifest["approval"] is not None and not isinstance(manifest["approval"], dict):
-        _invalid("invalid_close_approval")
+    require_close_approval(manifest["approval"])
+    from .close_review import require_owner_review
+
+    require_owner_review(manifest["owner_review"])
     if (manifest["previous_close_period"] is None) != (manifest["previous_close_digest"] is None):
         _invalid("invalid_previous_close")
     fields = {

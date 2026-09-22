@@ -155,7 +155,7 @@ def test_related_later_payroll_sources_are_exact_and_unrelated_future_wages_are_
 
 
 def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatch):
-    from test_close_range import ready
+    from monthly_close_fixture import ready
 
     engine, *_ = book
     proof = book[-1]

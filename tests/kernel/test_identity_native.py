@@ -129,10 +129,10 @@ def test_close_context_is_displayed_and_revalidated_by_injected_issuer(tmp_path)
         company_id="company",
         database_id="database",
         period="2026-09",
-        calculation_hash="a" * 64,
+        preview_digest="a" * 64,
         epochs={"accounting": 1, "material": 2, "management": 3},
     )["request_id"]
     assert call(native, "native_inspect", request_id)["facts"]["period_month"] == "2026-09"
     result = call(native, "native_execute", request_id, password=PASSWORD)
     assert result["approval_id"] == "synthetic"
-    assert seen[0]["calculation_hash"] == "a" * 64
+    assert seen[0]["preview_digest"] == "a" * 64

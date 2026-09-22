@@ -101,7 +101,7 @@ def test_fund_identity_reassignment_is_an_explicit_non_cash_adjustment(
     add_open_period(engine, evidence, "2026-03")
     add_open_period(engine, evidence, "2026-04")
     funds = Dashboard(engine).funds("2026-03")["data"]
-    accounts = {item["account_id"]: item for item in funds["accounts"]}
+    accounts = {item["account_id"]: item for item in funds["collections"]["accounts"]["items"]}
     assert set(accounts) == {current_account}
     assert accounts[current_account]["opening_fen"] == 0
     assert accounts[current_account]["net_change_fen"] == 0
@@ -113,7 +113,9 @@ def test_fund_identity_reassignment_is_an_explicit_non_cash_adjustment(
     assert funds["cash_fen"] == 10000
 
     next_month = Dashboard(engine).funds("2026-04")["data"]
-    next_accounts = {item["account_id"]: item for item in next_month["accounts"]}
+    next_accounts = {
+        item["account_id"]: item for item in next_month["collections"]["accounts"]["items"]
+    }
     assert set(next_accounts) == {current_account}
     assert next_accounts[current_account]["opening_fen"] == 10000
     assert next_accounts[current_account]["attribution_adjustment_fen"] == 0

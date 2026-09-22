@@ -117,7 +117,7 @@ def test_declared_and_frozen_sources_share_unresolved_slot_pagination(mismatched
         assert first["page"]["total_count"] == first["page"]["filtered_count"] == 2
         assert first["page"]["returned_count"] == 1 and first["page"]["has_more"]
         damaged = first["items"][0]
-        assert damaged["state"] == "unresolved"
+        assert damaged["relation_state"] == "unresolved"
         assert damaged["source_business"]["subject_id"] == "expense-b"
         assert damaged["source_calculation_id"] == identifiers["expense-b"]
         assert (
@@ -140,7 +140,7 @@ def test_declared_and_frozen_sources_share_unresolved_slot_pagination(mismatched
         assert second["page"]["total_count"] == 2
         assert second["page"]["returned_count"] == 1 and not second["page"]["has_more"]
         assert second["items"][0]["id"] != damaged["id"]
-        assert second["items"][0]["state"] == "resolved"
+        assert second["items"][0]["relation_state"] == "resolved"
         assert second["items"][0]["amount_fen"] == 20
         source_b = queries.business_collection(
             connection,
@@ -221,9 +221,7 @@ def test_unresolved_source_mismatch_propagates_unknown_without_reassigning_payme
 def test_future_mismatched_key_advances_only_current_affected_subjects(domain_book):
     with mismatched_payment_copy(domain_book, damaged_period="2026-02") as selected:
         queries, connection, _identifiers, original_key = selected
-        historical_a = queries.settlement_summary(
-            connection, "2026-01", subject_ids={"expense"}
-        )
+        historical_a = queries.settlement_summary(connection, "2026-01", subject_ids={"expense"})
         assert historical_a["cutoff_period"] == "2026-01"
         assert historical_a["status"] == "established"
         assert historical_a["movement_count"] == 1
@@ -240,9 +238,7 @@ def test_future_mismatched_key_advances_only_current_affected_subjects(domain_bo
         assert current_a["obligations"][0]["paid_fen"] is None
         assert current_a["obligations"][0]["remaining_fen"] is None
 
-        historical_b = queries.settlement_summary(
-            connection, "2026-01", subject_ids={"expense-b"}
-        )
+        historical_b = queries.settlement_summary(connection, "2026-01", subject_ids={"expense-b"})
         assert historical_b["cutoff_period"] == "2026-01"
         assert historical_b["status"] == "established"
         assert historical_b["movement_count"] == 0

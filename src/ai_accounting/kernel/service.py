@@ -10,6 +10,7 @@ from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
 from .catalog import Catalog
+from .close_review import CloseReview
 from .contracts import KernelError, Registry
 from .discovery import Discovery
 from .display import Display
@@ -97,11 +98,13 @@ OPERATING_PROTOCOL = {
         "recorded_at仅是系统确认时间，不能替代实际发生日或冒充负责人最早知悉日。"
         "不更改冻结凭证，不要求负责人补写AI应完成的经营说明。"
     ),
-    "closing": "核对资料和处理结果及负责人确认依据；空数据库或零待匹配项不能证明无业务。",
-    "closing_batches": (
-        "连续历史关账先分别preview_close_range，再用approve_close_batches原生窗口一次密码确认"
-        "明确的公司、起止月份及预览摘要；各公司用对应approval_id执行close_range，"
-        "失败重试沿用原请求键。批准不可扩大期间；过期或预览变化须重新核对批准。"
+    "closing": (
+        "按公司逐月preview_close，使用返回的核对定位让负责人查看经营简报的同版月度核对。"
+        "页面只读；实际采用的政策、工资确认、原始资料和金额由内核提供，不用AI自写摘要替代。"
+        "核对后请求approve_period_close原生密码窗口，携带同一preview_digest及版本；"
+        "取得approval_id后执行close。密码只在原生窗口输入，批准窗口不执行关账。"
+        "预览替换或版本变化须重新核对；响应丢失先查询原状态并沿用幂等键，不重复关账。"
+        "连续月份逐月完成；空数据库或零待匹配项不能证明无业务。"
     ),
     "material_allocation": (
         "跨月原件先核对逐项归属，再分别处理各月业务；归属不等于入账完成，未知归属不能默认接收月。"
@@ -191,13 +194,51 @@ class LocalService:
         self.catalog = Catalog(root, self.bundle)
         self.security = SecurityService(self.catalog.path)
         self.close_previews = {}
-        self.close_range_previews = {}
+        self.active_close_previews = {}
         from .command_schema import command_models
 
         self.command_models = command_models(self.registry)
 
     def engine(self, company_id):
         return Engine(self.catalog.bind(company_id))
+
+    def require_active_close_preview(self, company_id, database_id, period, preview_digest):
+        """Read the exact active preview under the same gate used by close commits."""
+        with self.security.authorization_gate:
+            preview = self.close_previews.get((company_id, database_id, preview_digest))
+            if (
+                self.active_close_previews.get((company_id, database_id, period)) != preview_digest
+                or preview is None
+                or preview["manifest"]["period"] != period
+            ):
+                raise KernelError("preview_expired", "该关账预览已失效，请重新准备并核对")
+            return preview
+
+    def _remember_close_preview(self, engine, result, owner_confirmation):
+        from .read_state import repair_revision
+
+        company_id, database_id = engine.store.company_id, engine.store.database_id
+        period, preview_digest = result["manifest"]["period"], result["digest"]
+        with self.security.authorization_gate:
+            # A concurrent commit may have completed after the read snapshot.
+            # Never reactivate that old preview after a successful close.
+            with engine.store.connection(read_only=True) as connection:
+                connection.execute("BEGIN")
+                current = {
+                    **engine.store.epochs(connection),
+                    "read_repair_revision": repair_revision(connection),
+                }
+                if current != result["manifest"]["read_version"]:
+                    raise KernelError("preview_expired", "关账预览已变化，请重新准备并核对")
+            key = (company_id, database_id, preview_digest)
+            self.close_previews[key] = {**result, "owner_confirmation": owner_confirmation}
+            self.active_close_previews[(company_id, database_id, period)] = preview_digest
+            while len(self.close_previews) > 128:
+                removed_key = next(iter(self.close_previews))
+                removed = self.close_previews.pop(removed_key)
+                active_key = (*removed_key[:2], removed["manifest"]["period"])
+                if self.active_close_previews.get(active_key) == removed_key[2]:
+                    self.active_close_previews.pop(active_key)
 
     def dashboard_context(self, company_id: str | None = None):
         from .dashboard import Dashboard
@@ -319,13 +360,9 @@ class LocalService:
                         "report_classification",
                         "read_version",
                         "approval",
+                        "owner_review",
                     ],
-                    "optional_fields": ["close_range"],
-                    "close_range_fields": ["from_period", "through_period", "preview_digest"],
-                    "close_range_constraints": (
-                        "仅范围关账记录包含此字段；范围必须覆盖当前关账月，"
-                        "preview_digest 为 64 位小写十六进制摘要。"
-                    ),
+                    "optional_fields": [],
                     "adopted_result_fields": [
                         "publication_id",
                         "calculation_id",
@@ -389,15 +426,18 @@ class LocalService:
             "session_id": authority.session_id,
             "credential_version": authority.credential_version,
         }
-        if command in {"close", "close_range"} and data.get("backup_directory") is None:
+        if command == "close" and data.get("backup_directory") is None:
             setting = self.catalog.company_settings(company_id)
             data["backup_directory"] = setting["backup_directory"] or str(
                 self.catalog.root / "backups" / engine.store.path.parent.name
             )
-        approval_id = data.pop("approval_id", None) if command in {"close", "close_range"} else None
+        approval_id = data.pop("approval_id", None) if command == "close" else None
 
         def authorize_close(connection, period, preview_digest, epochs):
             self.security.validate_authority(authority)
+            self.require_active_close_preview(
+                company_id, engine.store.database_id, period, preview_digest
+            )
             return consume_close_approval(
                 connection,
                 approval_id,
@@ -410,25 +450,7 @@ class LocalService:
                 now=self.security.now(),
             )
 
-        def authorize_close_range(connection, from_period, through_period, preview_digest, epochs):
-            from .security.batches import consume_batch_approval
-
-            return consume_batch_approval(
-                connection,
-                approval_id,
-                service=self.security,
-                authority=authority,
-                company_id=engine.store.company_id,
-                database_id=engine.store.database_id,
-                from_period=from_period,
-                through_period=through_period,
-                preview_digest=preview_digest,
-                epochs=epochs,
-            )
-
-        periods = Periods(
-            engine, authorize_close=authorize_close, authorize_close_range=authorize_close_range
-        )
+        periods = Periods(engine, authorize_close=authorize_close)
         exports = Exports(engine)
         reports = Reports(engine)
         workflow = Workflow(engine)
@@ -471,8 +493,6 @@ class LocalService:
             "inventory": periods.inventory,
             "preview_close": periods.preview_close,
             "close": periods.close,
-            "preview_close_range": periods.preview_close_range,
-            "close_range": periods.close_range,
             "closed_report": periods.closed_report,
             "rebuild": engine.rebuild_projections,
             "verify_integrity": maintenance.verify_integrity,
@@ -505,6 +525,7 @@ class LocalService:
             "dashboard_business_status": dashboard.business_status,
             "dashboard_quarterly_report": dashboard.quarterly_report,
             "dashboard_period_preparation": dashboard.period_preparation,
+            "dashboard_close_review": CloseReview(self, engine).read,
             "find_facts": discovery.find_facts,
             "payroll_reuse_basis": payroll_preparation.reuse_basis,
             "prepare_payroll": payroll_preparation.prepare,
@@ -541,18 +562,26 @@ class LocalService:
             return run_report_jobs(engine, **data)
         if command not in actions:
             raise KernelError("unknown_command", "不支持该业务命令")
+        if command == "close":
+            with self.security.authorization_gate:
+                result = actions[command](**data)
+                active_key = (company_id, engine.store.database_id, data["period"])
+                if self.active_close_previews.get(active_key) == data["preview_digest"]:
+                    self.active_close_previews.pop(active_key)
+                self.close_previews.pop(
+                    (company_id, engine.store.database_id, data["preview_digest"]), None
+                )
+                return result
         result = actions[command](**data)
         if command == "preview_close":
-            key = (company_id, engine.store.database_id, result["digest"])
-            self.close_previews[key] = {**result, "owner_confirmation": data["owner_confirmation"]}
-            while len(self.close_previews) > 128:
-                self.close_previews.pop(next(iter(self.close_previews)))
-        elif command == "preview_close_range":
-            key = (company_id, engine.store.database_id, result["digest"])
-            self.close_range_previews[key] = {
+            self._remember_close_preview(engine, result, data["owner_confirmation"])
+            result = {
                 **result,
-                "owner_confirmation": data["owner_confirmation"],
+                "review_locator": {
+                    "company_id": company_id,
+                    "database_id": engine.store.database_id,
+                    "period": data["period"],
+                    "preview_digest": result["digest"],
+                },
             }
-            while len(self.close_range_previews) > 128:
-                self.close_range_previews.pop(next(iter(self.close_range_previews)))
         return result

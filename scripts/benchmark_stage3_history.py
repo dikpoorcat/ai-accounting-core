@@ -507,6 +507,47 @@ def main():
                 "settlement_summary": repeat(summary),
                 "brief": repeat(brief),
             }
+            # Stage 7 adds a frozen readable review. The baseline has no such
+            # API: measure the new work explicitly rather than invent a zero.
+            if (source / "src/ai_accounting/kernel/close_review.py").exists():
+                from ai_accounting.kernel.close_review import CloseReview, build_owner_review
+                from ai_accounting.kernel.response_contracts import http_response
+
+                def review_summary():
+                    return CloseReview(None, engine).read(month)
+
+                def review_page():
+                    return CloseReview(None, engine).read(month, section="vouchers", limit=1)
+
+                def review_build():
+                    with engine.store.connection(read_only=True) as connection:
+                        connection.execute("BEGIN")
+                        row = connection.execute(
+                            "SELECT manifest FROM period_close WHERE period=?",
+                            (YearMonth(month).ordinal,),
+                        ).fetchone()
+                        frozen = json.loads(row[0])
+                        built = build_owner_review(
+                            connection,
+                            engine,
+                            frozen,
+                            _frozen_followups=frozen["owner_review"]["followup_summary"],
+                        )
+                        assert built == frozen["owner_review"]
+                        return built
+
+                review = review_summary()
+                stats["owner_review_build"] = repeat(review_build)
+                stats["owner_review_summary"] = repeat(review_summary)
+                stats["owner_review_page_1"] = repeat(review_page)
+                stats["owner_review_http_validation"] = repeat(
+                    lambda: http_response("dashboard_close_review", review)
+                )
+                stats["owner_review_bytes"] = len(canonical(review["owner_review"]).encode("utf-8"))
+                stats["owner_review_collection_counts"] = {
+                    item["section"]: item["total_count"]
+                    for item in review["owner_review"]["collections"]
+                }
             with engine.store.connection(read_only=True) as connection:
                 manifests = [
                     json.loads(row[0])

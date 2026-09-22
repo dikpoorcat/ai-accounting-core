@@ -67,8 +67,8 @@ export namespace DashboardContextContract {
   }
 }
 
-export namespace DashboardFundsContract {
-  export type SchemaVersion = 5;
+export namespace DashboardBriefContract {
+  export type SchemaVersion = 6;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -87,6 +87,1709 @@ export namespace DashboardFundsContract {
   export type RecordedAt = "system_recording_time";
   export type RecordingPeriod = "business_recording_period";
   export type RecordedLater = "business_recording_period_after_selected_period";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type GeneratedAt = string;
+  export type ManagementCommentary = string;
+  export type Status1 = "frozen" | "current" | "stale" | "not_provided";
+  export type Id = string;
+  export type Period = string;
+  export type Revision = number;
+  export type Text = string;
+  export type ContextDigest = string;
+  export type CloseDigest = string | null;
+  export type Source = string;
+  export type EvidenceDigest = string;
+  export type Digest = string;
+  export type Supplementary = boolean;
+  export type Status2 = "current" | "frozen" | "stale" | "unverifiable";
+  export type Contract = string | null;
+  export type Reason = string;
+  export type Method = string;
+  export type Supplements = CommentaryItem[];
+  export type Closed = boolean;
+  export type Satisfied = boolean;
+  export type Field = string;
+  export type Message = string;
+  export type Code = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category = string;
+  export type InventoryId = number;
+  export type SubjectId = string;
+  export type FactId = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId = string;
+  export type AssetId = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest1 = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period1 = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId = string | null;
+  export type VoucherNumber = number;
+  export type VersionId = string | null;
+  export type CalculationId = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo = number | null;
+  export type Account = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason1 = string;
+  export type CalculationId1 = string;
+  export type FactId1 = string;
+  export type ResultDigest = string;
+  export type Kind = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = SelectionCandidate[];
+  export type CalculationId2 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code1 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence = string[];
+  export type EvidenceDigest2 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Issues = ReadinessIssue[];
+  export type CoverageDigest = string;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type Period2 = string;
+  export type AsOf1 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State = "open";
+  export type State1 = "exact_close";
+  export type Digest1 = string;
+  export type State2 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge1 = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status3 = "ready";
+  export type Source1 = "exact_period_manifest";
+  export type Status4 = "recorded" | "not_recorded";
+  export type Status5 = "unavailable";
+  export type Reason2 = "no_exact_period_manifest";
+  export type Period3 = string;
+  export type Code2 = "already_closed" | "earlier_period_open";
+  export type Message1 = string;
+  export type Period4 = string;
+  export type Issues1 = ReadinessIssue[];
+  export type Knowledge2 = "current_knowledge";
+  export type AffectsFrozenReadiness = false;
+  export type Status6 = "ready" | "needs_information";
+  export type Issues2 = ReadinessIssue[];
+  export type InventoryCount = number;
+  export type CoverageDigest1 = string;
+  export type Status7 = "ready" | "needs_information";
+  export type Issues3 = ReadinessIssue[];
+  export type PendingSubjectId = string | null;
+  export type UnpublishedCount = number;
+  export type Status8 = "ready" | "needs_information";
+  export type Issues4 = ReadinessIssue[];
+  export type Status9 = string;
+  export type CutoffPeriod = string;
+  export type CurrentCutoffPeriod = string;
+  export type Issues5 = ReadinessIssue[];
+  export type ObligationCount = number;
+  export type Complete = boolean;
+  export type UnestablishedStateSelectionCount = number;
+  export type MovementCount = number;
+  export type SourceAmountFen = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type Status10 = "completed" | "followup_required" | "unestablished";
+  export type ObligationCount1 = number;
+  export type BasisIssueCount = number;
+  export type ScopePeriod = string;
+  export type ScopeSemantics = "obligation_interval_includes_selected_period";
+  export type FactIssues = ReadinessIssue[];
+  export type TotalCount = number;
+  export type IssueCount = number;
+  export type Status11 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code3 = string;
+  export type Category1 = "management_fact" | "capability" | "publication";
+  export type Field1 = string;
+  export type Message2 = string;
+  export type EmployeeId1 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen = string;
+  export type Issues6 = TaxImportMappingIssue[];
+  export type VoucherCount = number;
+  export type LineCount = number;
+  export type TotalDebitFen = string;
+  export type TotalCreditFen = string;
+  export type Number = string;
+  export type CalculationId3 = string;
+  export type VoucherVersionId1 = string;
+  export type ReversesVersionId = string | null;
+  export type Date = string | null;
+  export type Precision = "month" | "day";
+  export type Period5 = string;
+  export type Date1 = string | null;
+  export type Label1 = string;
+  export type Type = string;
+  export type Kind1 = string;
+  export type State3 = string;
+  export type Summary = string;
+  export type DisplaySummary = string;
+  export type ListSummary = string;
+  export type SourceType = string;
+  export type Id1 = string;
+  export type Revision1 = number | null;
+  export type Field2 = string | null;
+  export type Source2 = string | null;
+  export type EvidenceDigest3 = string | null;
+  export type Evidence1 = string[];
+  export type Basis = "frozen" | "current_supplement" | "current";
+  export type RecordedAt1 = string | null;
+  export type AssetId1 = string;
+  export type AssetType = "fixed" | "intangible";
+  export type Name = string | null;
+  export type Code4 = string | null;
+  export type AssetId2 = string;
+  export type AssetType1 = "fixed" | "intangible";
+  export type Name1 = string | null;
+  export type Code5 = string | null;
+  export type CalculationId4 = string;
+  export type OwnerCalculationId = string;
+  export type AmountFen1 = string | null;
+  export type AmountLabel = string;
+  export type LineStart = number | null;
+  export type LineCount1 = number;
+  export type AssetMembers = AssetMemberReference[];
+  export type AmountFen2 = string;
+  export type BusinessAmountFen = string | null;
+  export type BusinessAmountLabel = string;
+  export type FundInflowFen = string;
+  export type FundOutflowFen = string;
+  export type Evidence2 = string[];
+  export type Digest2 = string;
+  export type Name2 = string;
+  export type MediaType = string;
+  export type EvidenceDetails = EvidenceDetail[];
+  export type Id2 = string;
+  export type Key1 = string;
+  export type Kind2 = string;
+  export type Group = string;
+  export type Label2 = string;
+  export type Description = string;
+  export type AmountFen3 = string | null;
+  export type AmountLabel1 = string;
+  export type Parties = string[];
+  export type Version = number;
+  export type VersionScope = "base_profile";
+  export type Purpose = string;
+  export type Description1 = string;
+  export type PartyId = string;
+  export type Name3 = string;
+  export type Source3 = string | null;
+  export type Id3 = string;
+  export type ConflictingIds = string[];
+  export type PartySources = PartySource[];
+  export type Type1 = string;
+  export type Value = string;
+  export type SourceReferences = SourceReference[];
+  export type Components = VoucherComponent[];
+  export type Id4 = string;
+  export type AccountId = string;
+  export type Category2 = string;
+  export type Name4 = string;
+  export type Direction = "inflow" | "outflow";
+  export type AmountFen4 = string;
+  export type Funds = VoucherFundMovement[];
+  export type Id5 = string;
+  export type Key2 = string;
+  export type Label3 = string;
+  export type Account1 = string;
+  export type AmountFen5 = string;
+  export type ChangeFen = string;
+  export type Direction1 = string;
+  export type RelationState = "resolved" | "unresolved";
+  export type Party = string;
+  export type PartyId1 = string | null;
+  export type CreditorId = string | null;
+  export type ActualRecipientId = string | null;
+  export type SourceLabel = string;
+  export type SourcePeriod = string;
+  export type SourceCalculationId = string;
+  export type SourceFactId = string;
+  export type SourceSubjectId = string;
+  export type SourceKind = string;
+  export type ObligationName = string;
+  export type LineNumber = number | null;
+  export type Settlements = VoucherSettlement[];
+  export type LineNumber1 = number;
+  export type Code6 = string;
+  export type Account2 = string;
+  export type DebitFen = string;
+  export type CreditFen = string;
+  export type Party1 = string;
+  export type SourceLabel1 = string;
+  export type Id6 = string;
+  export type Name5 = string;
+  export type AmountFen6 = string;
+  export type Parties1 = VoucherLineParty[];
+  export type PartyState = "known" | "multiple" | "name_missing" | "not_applicable" | "unresolved";
+  export type ComponentId = string;
+  export type Lines = VoucherLine[];
+  export type Label4 = string;
+  export type Kind3 = string;
+  export type Version1 = string | null;
+  export type EffectiveFrom = string | null;
+  export type EffectiveTo = string | null;
+  export type OfficialUrls = string[];
+  export type SourceType1 = "voucher" | "calculation" | "fact" | "evidence" | "inventory";
+  export type Id7 = string;
+  export type Revision2 = number | null;
+  export type Digest3 = string | null;
+  export type Name6 = string | null;
+  export type MediaType1 = string | null;
+  export type Policies = AdoptedPolicy[];
+  export type Label5 = string;
+  export type Mode = string;
+  export type ConfirmationReferences = CloseReviewSourceReference[];
+  export type PayrollConfirmations = AdoptedPayrollConfirmation[];
+  export type Evidence3 = CloseReviewSourceReference[];
+  export type Scope = "current_voucher_page";
+  export type CalculationIds1 = string[];
+  export type Key3 = string;
+  export type Label6 = string;
+  export type EventCount = number;
+  export type LoadedCount = number;
+  export type Label7 = string;
+  export type Count = number;
+  export type TypeCounts = ActivityTypeCount[];
+  export type Date2 = string | null;
+  export type Reference = string;
+  export type CalculationId5 = string;
+  export type VoucherVersionId2 = string;
+  export type Title = string;
+  export type Subject = string;
+  export type Description2 = string;
+  export type DisplayDescription = string;
+  export type AmountFen7 = string | null;
+  export type AmountLabel2 = string;
+  export type JournalTotalFen = string;
+  export type State4 = string;
+  export type Party2 = string;
+  export type Evidence4 = string[];
+  export type EvidenceDetails1 = EvidenceDetail[];
+  export type Components1 = VoucherComponent[];
+  export type Funds1 = VoucherFundMovement[];
+  export type Settlements1 = VoucherSettlement[];
+  export type Rows = BriefActivityRow[];
+  export type ActivityGroups = BriefActivityGroup[];
+  export type AssetsFen = string | null;
+  export type LiabilitiesFen = string | null;
+  export type CapitalFen = string | null;
+  export type EquityFen = string | null;
+  export type BankFen = string;
+  export type FixedAssetCostFen = string;
+  export type AccumulatedDepreciationFen = string;
+  export type FixedAssetNetFen = string | null;
+  export type IntangibleAssetCostFen = string;
+  export type AccumulatedAmortizationFen = string;
+  export type IntangibleAssetNetFen = string | null;
+  export type OtherAssetsFen = string | null;
+  export type MonthRevenueFen = string | null;
+  export type MonthExpenseFen = string | null;
+  export type MonthResultFen = string | null;
+  export type CumulativeResultFen = string | null;
+  export type EquationValid = boolean | null;
+  export type Complete1 = boolean;
+  export type Field3 = string;
+  export type Message3 = string;
+  export type Semantics1 = string;
+  export type Account3 = string;
+  export type AmountFen8 = string;
+  export type Issues7 = BriefPositionIssue[];
+  export type TotalFen = string | null;
+  export type BankFen1 = string | null;
+  export type CashFen = string | null;
+  export type PaymentPlatformFen = string | null;
+  export type InflowFen = string;
+  export type OutflowFen = string;
+  export type NetChangeFen = string;
+  export type InternalTransferFen = string;
+  export type TransactionCount = number;
+  export type MatchedCount = number;
+  export type UnmatchedCount = number;
+  export type NeedsReviewCount = number;
+  export type CoverageState = "missing" | "partial" | "complete" | "not_applicable";
+  export type MissingAccountCount = number;
+  export type InflowFen1 = string | null;
+  export type OutflowFen1 = string | null;
+  export type NetFen = string | null;
+  export type Count1 = number;
+  export type InflowFen2 = string;
+  export type OutflowFen2 = string;
+  export type Id8 = string;
+  export type Date3 = string;
+  export type Reference1 = string;
+  export type AccountId1 = string;
+  export type AccountCode = string;
+  export type AccountName = string;
+  export type Direction2 = "inflow" | "outflow";
+  export type AmountFen9 = string;
+  export type SignedAmountFen = string;
+  export type Party3 = string;
+  export type PartySources1 = PartySource[];
+  export type Memo = string;
+  export type State5 = "matched" | "unmatched" | "needs_review";
+  export type State6 = "confirmed" | "unestablished" | "needs_review" | "conflict";
+  export type Message4 = string;
+  export type StatementConfirmed = boolean;
+  export type ReconciliationValid = boolean;
+  export type StatementCalculationId = string | null;
+  export type SelectedStatementCalculationIds = string[];
+  export type StatementFactId = string;
+  export type ReconciliationCalculationId = string | null;
+  export type ReconciliationFactId = string | null;
+  export type SelectionSource = string | null;
+  export type SelectionProof = DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof | null;
+  export type Basis1 = "direct_adoption";
+  export type ClosePeriod = string;
+  export type PublicationId = string;
+  export type Role = string;
+  export type Basis2 = "calculation_current";
+  export type Basis3 = "asset_batch_member";
+  export type OwnerCalculationId1 = string;
+  export type OwnerPublicationId = string;
+  export type MembershipDigest = string;
+  export type ProofMethod = ("frozen_reconciliation_direct_statement" | "independent_statement_selection") | null;
+  export type BankRowCount = number;
+  export type TotalFen1 = string;
+  export type Party4 = string;
+  export type AmountFen10 = string;
+  export type Items = BatchPaymentItem[];
+  export type Rows1 = BankStatementRow[];
+  export type RowsTruncated = boolean;
+  export type ReceivableCount = number;
+  export type ReceivableFen = string | null;
+  export type PayableCount = number;
+  export type PayableFen = string | null;
+  export type TotalCount1 = number;
+  export type UnestablishedCount = number;
+  export type Complete2 = boolean;
+  export type Status12 = string;
+  export type Issues8 = ReadinessIssue[];
+  export type Key4 = string;
+  export type Label8 = string;
+  export type Direction3 = "receivable" | "payable";
+  export type Unit = "笔";
+  export type Count2 = number;
+  export type LoadedCount1 = number;
+  export type OutstandingFen = string | null;
+  export type Key5 = string;
+  export type Party5 = string;
+  export type Count3 = number;
+  export type OutstandingFen1 = string | null;
+  export type OpenCount = number;
+  export type PartialCount = number;
+  export type Groups = OpenItemGroup[];
+  export type Categories = OpenCategory[];
+  export type ReceivableCount1 = number;
+  export type ReceivableFen1 = string | null;
+  export type PayableCount1 = number;
+  export type PayableFen1 = string | null;
+  export type TotalCount2 = number;
+  export type UnestablishedCount1 = number;
+  export type Complete3 = boolean;
+  export type Status13 = string;
+  export type Issues9 = ReadinessIssue[];
+  export type CutoffPeriod1 = string;
+  export type CurrentCutoffPeriod1 = string;
+  export type HasActivity = boolean;
+  export type TotalFen2 = string;
+  export type CapitalizedLaborFen = string;
+  export type HasActivity1 = boolean;
+  export type BreakdownAvailable = boolean;
+  export type Reason3 = string | null;
+  export type TotalFen3 = string;
+  export type ControlledTotalFen = string;
+  export type SettlementAdjustmentFen = string;
+  export type PriorPeriodSettlementAdjustmentFen = string;
+  export type BatchCount = number;
+  export type PayrollPeriod = string;
+  export type RemunerationPeriod = string;
+  export type TotalFen4 = string;
+  export type HasReversal = boolean;
+  export type HasAmendment = boolean;
+  export type CorrectionIds = string[];
+  export type GrossSalaryFen = string;
+  export type EmployerSocialInsuranceFen = string;
+  export type EmployerHousingFundFen = string;
+  export type EmployeeSocialInsuranceFen = string;
+  export type EmployeeHousingFundFen = string;
+  export type GrossRemunerationFen = string;
+  export type TheoreticalWithholdingTaxFen = string | null;
+  export type Periods = WorkforcePeriod[];
+  export type AnnualBonusFen = string | null;
+  export type GrossSalaryFen1 = string | null;
+  export type EmployerSocialInsuranceFen1 = string | null;
+  export type EmployerHousingFundFen1 = string | null;
+  export type EmployeeSocialInsuranceFen1 = string | null;
+  export type EmployeeHousingFundFen1 = string | null;
+  export type PersonalWithholdingFen = string | null;
+  export type HasActivity2 = boolean;
+  export type BreakdownAvailable1 = boolean;
+  export type Reason4 = string | null;
+  export type TotalFen5 = string;
+  export type GrossRemunerationFen1 = string | null;
+  export type BookedWithholdingTaxFen = string | null;
+  export type UnwithheldTaxFen = string | null;
+  export type TheoreticalWithholdingTaxFen1 = string | null;
+  export type WithholdingStatus = string;
+  export type WithholdingNote = string;
+  export type SettlementModes = string[];
+  export type BatchCount1 = number;
+  export type Periods1 = WorkforcePeriod[];
+  export type NetFen1 = string | null;
+  export type FixedNetFen = string | null;
+  export type IntangibleNetFen = string | null;
+  export type FixedActiveCount = number;
+  export type IntangibleActiveCount = number;
+  export type PendingCount = number;
+  export type ProjectCostFen = string | null;
+  export type State7 = "complete" | "attention" | "error" | "pending";
+  export type Title1 = string;
+  export type Summary1 = string;
+  export type IntegrityValid = boolean | null;
+  export type VoucherBalanced = boolean;
+  export type Issues10 = ReadinessIssue[];
+  export type AttentionCount = number;
+  export type Key6 = string;
+  export type Label9 = string;
+  export type State8 = "pass" | "pending" | "error" | "neutral";
+  export type Text1 = string;
+  export type Items1 = ValidationItem[];
+  export type Items2 = BriefVoucher[];
+  export type TotalCount3 = number;
+  export type FilteredCount = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+  export type CollectionVersion = string;
+  export type Id9 = string;
+  export type Key7 = string;
+  export type CategoryKey = string;
+  export type Voucher = string;
+  export type PartyKey = string;
+  export type Party6 = string;
+  export type Description3 = string;
+  export type Status14 = string;
+  export type SubjectId1 = string;
+  export type Kind4 = string;
+  export type SourcePeriod1 = string;
+  export type SourceAmountFen1 = string | null;
+  export type PaidFen1 = string | null;
+  export type OtherSettledFen1 = string | null;
+  export type OutstandingFen2 = string | null;
+  export type CurrentStatus = string | null;
+  export type CurrentOutstandingFen = string | null;
+  export type SubjectId2 = string | null;
+  export type Account4 = string;
+  export type AmountFen11 = string;
+  export type Cashflow = string;
+  export type Category3 = string;
+  export type CounterpartyId = string | null;
+  export type CreditorId1 = string | null;
+  export type Name7 = string;
+  export type Normal = string;
+  export type SourceCalculationId1 = string;
+  export type SourceFactId1 = string;
+  export type SourceResultDigest = string;
+  export type State9 = string;
+  export type SettlementStatus = string;
+  export type PeriodPaidFen = string | null;
+  export type PeriodOtherSettledFen = string | null;
+  export type RemainingFen1 = string | null;
+  export type SourceEventCount = number;
+  export type CalculationId6 = string;
+  export type FactId2 = string;
+  export type PostingPeriod = string;
+  export type VoucherVersionId3 = string | null;
+  export type Direction4 = -1 | 1;
+  export type SourceEvents = SettlementSourceEvent[];
+  export type Items3 = OpenItem[];
+  export type Id10 = string;
+  export type EventType = "voucher";
+  export type VoucherVersionId4 = string;
+  export type VoucherId = string;
+  export type VoucherNumber1 = number;
+  export type VoucherCalculationId = string;
+  export type CalculationId7 = string;
+  export type FactId3 = string;
+  export type Kind5 = string;
+  export type CalculationPeriod = string;
+  export type PostingPeriod1 = string;
+  export type ResultDigest1 = string;
+  export type Role1 = string;
+  export type Direction5 = number;
+  export type ReversesVoucherVersionId = string | null;
+  export type SelectionSource1 = string;
+  export type LineNo1 = number;
+  export type Account5 = string;
+  export type Debit = string;
+  export type Credit = string;
+  export type Cashflow1 = string | null;
+  export type Lines1 = VoucherEventLine[];
+  export type Id11 = string;
+  export type EventType1 = "state_result";
+  export type Status15 = "established";
+  export type CalculationId8 = string;
+  export type FactId4 = string;
+  export type Kind6 = string;
+  export type CalculationPeriod1 = string;
+  export type PostingPeriod2 = string;
+  export type ResultDigest2 = string;
+  export type Opening = boolean;
+  export type SelectionSource2 = string;
+  export type SelectionProof1 = DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof;
+  export type Vouchers = VoucherEvent[];
+  export type Mode1 = "monthly_plan" | "explicit_no_change";
+  export type ConfirmationFactId = string;
+  export type ConfirmationSubjectId = string;
+  export type ConfirmationRevision = number;
+  export type ConfirmationKind = string;
+  export type Evidence5 = string[];
+  export type Id12 = string;
+  export type SubjectId3 = string;
+  export type PostingPeriod3 = string;
+  export type SelectionStatus = "unestablished";
+  export type Reason5 = string;
+  export type CalculationId9 = string;
+  export type FactId5 = string;
+  export type ResultDigest3 = string;
+  export type Kind7 = string;
+  export type HasJournalLines1 = boolean;
+  export type TraceOnly1 = true;
+  export type Candidates1 = CandidateSelection[];
+  export type TraceTargets1 = CalculationTarget[];
+  export type Items4 = (VoucherEvent | StateResult | UnestablishedSelection)[];
+  export type Items5 = any[];
+  export type ScopePeriod1 = string;
+  export type CurrentCutoffPeriod2 = string;
+  export type CutoffSemantics = string;
+  export type ObligationId1 = string;
+  export type Kind8 = string;
+  export type Label10 = string;
+  export type StartPeriod = string;
+  export type EndPeriod = string;
+  export type CompletionStatus = string;
+  export type DueDate = string | null;
+  export type IssueCount1 = number;
+  export type FactIssues1 = ReadinessIssue[];
+  export type Items6 = ExternalObligation[];
+  export type JobId = string;
+  export type Kind9 = string;
+  export type Status16 = string;
+  export type Attempts = number;
+  export type LastError = string | null;
+  export type ContractIssues = ReadinessIssue[];
+  export type Association = "direct_source" | "period_scope";
+  export type Id13 = string;
+  export type Source4 = string;
+  export type SubjectId4 = string;
+  export type CalculationId10 = string;
+  export type Obligation = string;
+  export type References = FileReference[];
+  export type Period6 = string | ReportPeriod;
+  export type Year1 = number;
+  export type Quarter = number;
+  export type QuarterStart = string;
+  export type QuarterEnd = string;
+  export type Label11 = string;
+  export type VerifiedWhenSucceeded = boolean;
+  export type CurrentFileAvailability = "not_checked";
+  export type Items7 = FileJob[];
+  export type Projection1 = "dashboard_brief_deferred";
+
+  export interface DashboardBriefResponse {
+    schema_version: SchemaVersion;
+    snapshot_version: SnapshotVersion;
+    selected_period: DashboardPeriod | null;
+    read_semantics: ReadSemantics;
+    read_context: DashboardReadContext;
+    data: BriefData | null;
+    projection?: Projection1;
+  }
+  export interface DashboardPeriod {
+    key: Key;
+    year: Year;
+    month: Month;
+    label: Label;
+    short_label: ShortLabel;
+    status: Status;
+    start_date: StartDate;
+    end_date: EndDate;
+    closed_at: ClosedAt;
+  }
+  export interface ReadSemantics {
+    knowledge: Knowledge;
+    accounting: Accounting;
+    business_basis: BusinessBasis;
+    display: Display;
+    system_time_replay: SystemTimeReplay;
+    recorded_at: RecordedAt;
+    recording_period: RecordingPeriod;
+    recorded_later: RecordedLater;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface BriefData {
+    generated_at: GeneratedAt;
+    management_commentary: ManagementCommentary;
+    management_commentary_details: CommentaryDetails;
+    material_completeness: MaterialCompleteness | null;
+    period_preparation: PeriodPreparation | null;
+    voucher_count: VoucherCount;
+    line_count: LineCount;
+    total_debit_fen: TotalDebitFen;
+    total_credit_fen: TotalCreditFen;
+    focused_voucher: BriefVoucher | null;
+    adopted_basis: BriefAdoptedBasis;
+    activity_groups: ActivityGroups;
+    position: BriefPosition;
+    funds_overview: FundsOverview;
+    cash: BriefCash;
+    unmatched_bank_activity: UnmatchedBankActivity;
+    open_items: BriefOpenItems;
+    workforce_cost: WorkforceCost;
+    long_term_assets: LongTermAssets;
+    validation: BriefValidation;
+    collections: BriefCollections;
+  }
+  export interface CommentaryDetails {
+    status: Status1;
+    current: CommentaryItem | null;
+    frozen: CommentaryItem | null;
+    latest: CommentaryItem | null;
+    supplements: Supplements;
+  }
+  export interface CommentaryItem {
+    id: Id;
+    period: Period;
+    revision: Revision;
+    text: Text;
+    context_digest: ContextDigest;
+    close_digest: CloseDigest;
+    source: Source;
+    evidence_digest: EvidenceDigest;
+    digest: Digest;
+    supplementary: Supplementary;
+    content_validity: CommentaryContentValidity;
+  }
+  export interface CommentaryContentValidity {
+    status: Status2;
+    contract: Contract;
+    reason?: Reason;
+    method?: Method;
+  }
+  export interface MaterialCompleteness {
+    closed: Closed;
+    satisfied: Satisfied;
+    issues: Issues;
+    coverage_digest?: CoverageDigest;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field;
+    message: Message;
+    code?: Code;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId;
+    fact_id?: FactId;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest1;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period1;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId;
+    voucher_number?: VoucherNumber;
+    version_id?: VersionId;
+    calculation_id?: CalculationId;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason1;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId1;
+    fact_id: FactId1;
+    result_digest: ResultDigest;
+    kind: Kind;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId2;
+  }
+  export interface DuplicateSignal {
+    code: Code1;
+    matched_fields: MatchedFields;
+    evidence?: Evidence;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest2;
+    location: Location1;
+  }
+  export interface PeriodPreparation {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    period: Period2;
+    as_of: AsOf1;
+    as_of_semantics: AsOfSemantics;
+    closure: Closure;
+    read_semantics: PreparationReadSemantics;
+    projection: Projection;
+    frozen_readiness: FrozenReadiness1;
+    readiness: Readiness | null;
+    current_followups: PeriodCurrentFollowups;
+  }
+  export interface OpenClosure {
+    state: State;
+  }
+  export interface ExactClosure {
+    state: State1;
+    digest: Digest1;
+  }
+  export interface LaterClosure {
+    state: State2;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface PreparationReadSemantics {
+    knowledge: Knowledge1;
+    frozen_readiness: FrozenReadiness;
+    current_followups: CurrentFollowups;
+  }
+  export interface RecordedReadiness {
+    status: Status3;
+    source: Source1;
+    readiness: RecordedStatus;
+    inventories: RecordedStatus;
+    material_coverage: RecordedStatus;
+    previous_close_digest: RecordedStatus;
+  }
+  export interface RecordedStatus {
+    status: Status4;
+  }
+  export interface UnavailableReadiness {
+    status: Status5;
+    reason: Reason2;
+  }
+  export interface Readiness {
+    period: Period3;
+    order_failure: OrderFailure | null;
+    issues: Issues1;
+  }
+  export interface OrderFailure {
+    code: Code2;
+    message: Message1;
+    details: OrderDetails;
+  }
+  export interface OrderDetails {
+    period?: Period4;
+  }
+  export interface PeriodCurrentFollowups {
+    knowledge: Knowledge2;
+    affects_frozen_readiness: AffectsFrozenReadiness;
+    materials: MaterialFollowup;
+    accounting: AccountingFollowup;
+    close_requirements: CheckFollowup;
+    settlements: SettlementFollowup;
+    external: ExternalFollowup;
+    file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
+  }
+  export interface MaterialFollowup {
+    status: Status6;
+    issues: Issues2;
+    inventory_count: InventoryCount;
+    coverage_digest: CoverageDigest1;
+  }
+  export interface AccountingFollowup {
+    status: Status7;
+    issues: Issues3;
+    pending_subject_id: PendingSubjectId;
+    unpublished_count: UnpublishedCount;
+  }
+  export interface CheckFollowup {
+    status: Status8;
+    issues: Issues4;
+  }
+  export interface SettlementFollowup {
+    status: Status9;
+    cutoff_period?: CutoffPeriod;
+    current_cutoff_period?: CurrentCutoffPeriod;
+    issues?: Issues5;
+    obligation_count: ObligationCount;
+    complete: Complete;
+    unestablished_state_selection_count: UnestablishedStateSelectionCount;
+    movement_count: MovementCount;
+    source_amount_fen: SourceAmountFen;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    remaining_fen: RemainingFen;
+  }
+  export interface ExternalFollowup {
+    status: Status10;
+    obligation_count: ObligationCount1;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    scope_period: ScopePeriod;
+    scope_semantics: ScopeSemantics;
+    fact_issues: FactIssues;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobFollowup {
+    total_count: TotalCount;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status11;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues6;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code3;
+    category: Category1;
+    field: Field1;
+    message: Message2;
+    employee_id?: EmployeeId1;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen;
+  }
+  export interface BriefVoucher {
+    number: Number;
+    calculation_id: CalculationId3;
+    voucher_version_id: VoucherVersionId1;
+    reverses_version_id: ReversesVersionId;
+    date: Date;
+    recognition: Recognition;
+    type: Type;
+    kind: Kind1;
+    state: State3;
+    summary: Summary;
+    display_summary: DisplaySummary;
+    list_summary: ListSummary;
+    field_sources: FieldSources;
+    asset: AssetReference | null;
+    asset_members?: AssetMembers;
+    amount_fen: AmountFen2;
+    business_amount_fen: BusinessAmountFen;
+    business_amount_label: BusinessAmountLabel;
+    fund_inflow_fen: FundInflowFen;
+    fund_outflow_fen: FundOutflowFen;
+    evidence: Evidence2;
+    evidence_details: EvidenceDetails;
+    components: Components;
+    funds: Funds;
+    settlements: Settlements;
+    lines: Lines;
+  }
+  export interface Recognition {
+    precision: Precision;
+    period: Period5;
+    date: Date1;
+    label: Label1;
+  }
+  export interface FieldSources {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface SourceMetadata {
+    source_type: SourceType;
+    id: Id1;
+    revision: Revision1;
+    field: Field2;
+    source: Source2;
+    evidence_digest: EvidenceDigest3;
+    evidence: Evidence1;
+    basis: Basis;
+    recorded_at: RecordedAt1;
+  }
+  export interface AssetReference {
+    asset_id: AssetId1;
+    asset_type: AssetType;
+    name: Name;
+    code: Code4;
+    field_sources?: FieldSources1;
+  }
+  export interface FieldSources1 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface AssetMemberReference {
+    asset_id: AssetId2;
+    asset_type: AssetType1;
+    name: Name1;
+    code: Code5;
+    field_sources?: FieldSources2;
+    calculation_id: CalculationId4;
+    owner_calculation_id: OwnerCalculationId;
+    amount_fen: AmountFen1;
+    amount_label: AmountLabel;
+    line_start: LineStart;
+    line_count: LineCount1;
+  }
+  export interface FieldSources2 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface EvidenceDetail {
+    digest: Digest2;
+    name: Name2;
+    media_type: MediaType;
+  }
+  export interface VoucherComponent {
+    id: Id2;
+    key: Key1;
+    kind: Kind2;
+    group: Group;
+    label: Label2;
+    description: Description;
+    amount_fen: AmountFen3;
+    amount_label: AmountLabel1;
+    parties: Parties;
+    management: ComponentManagement;
+    recognition: Recognition;
+    party_sources: PartySources;
+    source_references: SourceReferences;
+  }
+  export interface ComponentManagement {
+    version: Version;
+    version_scope: VersionScope;
+    metadata: ManagementMetadata;
+    field_sources: FieldSources3;
+  }
+  export interface ManagementMetadata {
+    purpose: Purpose;
+    description: Description1;
+  }
+  export interface FieldSources3 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface PartySource {
+    party_id: PartyId;
+    name: Name3;
+    source: Source3;
+    id?: Id3;
+    conflicting_ids?: ConflictingIds;
+    field_sources?: FieldSources4;
+  }
+  export interface FieldSources4 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface SourceReference {
+    type: Type1;
+    value: Value;
+  }
+  export interface VoucherFundMovement {
+    id: Id4;
+    account_id: AccountId;
+    category: Category2;
+    name: Name4;
+    field_sources: FieldSources5;
+    direction: Direction;
+    amount_fen: AmountFen4;
+  }
+  export interface FieldSources5 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface VoucherSettlement {
+    id: Id5;
+    key: Key2;
+    label: Label3;
+    account: Account1;
+    amount_fen: AmountFen5;
+    change_fen: ChangeFen;
+    direction: Direction1;
+    relation_state?: RelationState;
+    party: Party;
+    party_id: PartyId1;
+    creditor_id?: CreditorId;
+    actual_recipient_id?: ActualRecipientId;
+    source_label: SourceLabel;
+    source_period: SourcePeriod;
+    source_calculation_id: SourceCalculationId;
+    source_fact_id?: SourceFactId;
+    source_subject_id?: SourceSubjectId;
+    source_kind?: SourceKind;
+    obligation_name?: ObligationName;
+    line_number: LineNumber;
+    field_sources: FieldSources6;
+  }
+  export interface FieldSources6 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface VoucherLine {
+    line_number: LineNumber1;
+    code: Code6;
+    account: Account2;
+    debit_fen: DebitFen;
+    credit_fen: CreditFen;
+    party: Party1;
+    source_label: SourceLabel1;
+    field_sources: FieldSources7;
+    parties: Parties1;
+    party_state: PartyState;
+    component_id: ComponentId;
+    asset?: AssetMemberReference;
+  }
+  export interface FieldSources7 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface VoucherLineParty {
+    id: Id6;
+    name: Name5;
+    amount_fen: AmountFen6;
+  }
+  export interface BriefAdoptedBasis {
+    policies: Policies;
+    payroll_confirmations: PayrollConfirmations;
+    evidence: Evidence3;
+    scope: Scope;
+    calculation_ids: CalculationIds1;
+  }
+  export interface AdoptedPolicy {
+    label: Label4;
+    kind: Kind3;
+    version: Version1;
+    effective_from: EffectiveFrom;
+    effective_to: EffectiveTo;
+    official_urls: OfficialUrls;
+    reference: CloseReviewSourceReference;
+  }
+  export interface CloseReviewSourceReference {
+    source_type: SourceType1;
+    id: Id7;
+    revision: Revision2;
+    digest: Digest3;
+    name: Name6;
+    media_type: MediaType1;
+  }
+  export interface AdoptedPayrollConfirmation {
+    label: Label5;
+    mode: Mode;
+    calculation_reference: CloseReviewSourceReference;
+    confirmation_references: ConfirmationReferences;
+  }
+  export interface BriefActivityGroup {
+    key: Key3;
+    label: Label6;
+    event_count: EventCount;
+    loaded_count: LoadedCount;
+    type_counts: TypeCounts;
+    rows: Rows;
+  }
+  export interface ActivityTypeCount {
+    label: Label7;
+    count: Count;
+  }
+  export interface BriefActivityRow {
+    date: Date2;
+    recognition: Recognition;
+    reference: Reference;
+    calculation_id: CalculationId5;
+    voucher_version_id: VoucherVersionId2;
+    title: Title;
+    subject: Subject;
+    description: Description2;
+    display_description: DisplayDescription;
+    asset: AssetReference | null;
+    field_sources: FieldSources8;
+    amount_fen: AmountFen7;
+    amount_label: AmountLabel2;
+    journal_total_fen: JournalTotalFen;
+    state: State4;
+    party: Party2;
+    evidence: Evidence4;
+    evidence_details: EvidenceDetails1;
+    components: Components1;
+    funds: Funds1;
+    settlements: Settlements1;
+  }
+  export interface FieldSources8 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface BriefPosition {
+    assets_fen: AssetsFen;
+    liabilities_fen: LiabilitiesFen;
+    capital_fen: CapitalFen;
+    equity_fen: EquityFen;
+    bank_fen: BankFen;
+    bank_calculation: BankCalculation;
+    liability_calculation: LiabilityCalculation;
+    fixed_asset_cost_fen: FixedAssetCostFen;
+    accumulated_depreciation_fen: AccumulatedDepreciationFen;
+    fixed_asset_net_fen: FixedAssetNetFen;
+    intangible_asset_cost_fen: IntangibleAssetCostFen;
+    accumulated_amortization_fen: AccumulatedAmortizationFen;
+    intangible_asset_net_fen: IntangibleAssetNetFen;
+    other_assets_fen: OtherAssetsFen;
+    month_revenue_fen: MonthRevenueFen;
+    month_expense_fen: MonthExpenseFen;
+    month_result_fen: MonthResultFen;
+    cumulative_result_fen: CumulativeResultFen;
+    equation_valid: EquationValid;
+    complete: Complete1;
+    issues: Issues7;
+  }
+  export interface BankCalculation {
+    [k: string]: string | null;
+  }
+  export interface LiabilityCalculation {
+    [k: string]: string | null;
+  }
+  export interface BriefPositionIssue {
+    field: Field3;
+    message: Message3;
+    semantics?: Semantics1;
+    account?: Account3;
+    amount_fen?: AmountFen8;
+  }
+  export interface FundsOverview {
+    total_fen: TotalFen;
+    bank_fen: BankFen1;
+    cash_fen: CashFen;
+    payment_platform_fen: PaymentPlatformFen;
+    inflow_fen: InflowFen;
+    outflow_fen: OutflowFen;
+    net_change_fen: NetChangeFen;
+    internal_transfer_fen: InternalTransferFen;
+  }
+  export interface BriefCash {
+    transaction_count: TransactionCount;
+    matched_count: MatchedCount;
+    unmatched_count: UnmatchedCount;
+    needs_review_count: NeedsReviewCount;
+    coverage_state: CoverageState;
+    missing_account_count: MissingAccountCount;
+    inflow_fen: InflowFen1;
+    outflow_fen: OutflowFen1;
+    net_fen: NetFen;
+  }
+  export interface UnmatchedBankActivity {
+    count: Count1;
+    inflow_fen: InflowFen2;
+    outflow_fen: OutflowFen2;
+    rows: Rows1;
+    rows_truncated: RowsTruncated;
+  }
+  export interface BankStatementRow {
+    id: Id8;
+    date: Date3;
+    reference: Reference1;
+    account_id: AccountId1;
+    account_code: AccountCode;
+    account_name: AccountName;
+    field_sources: FieldSources9;
+    direction: Direction2;
+    amount_fen: AmountFen9;
+    signed_amount_fen: SignedAmountFen;
+    party: Party3;
+    party_sources: PartySources1;
+    memo: Memo;
+    state: State5;
+    source_check: BankSourceCheck;
+    batch_payment?: BatchPayment;
+  }
+  export interface FieldSources9 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface BankSourceCheck {
+    state: State6;
+    message: Message4;
+    statement_confirmed: StatementConfirmed;
+    reconciliation_valid: ReconciliationValid;
+    statement_calculation_id: StatementCalculationId;
+    selected_statement_calculation_ids: SelectedStatementCalculationIds;
+    statement_fact_id: StatementFactId;
+    reconciliation_calculation_id: ReconciliationCalculationId;
+    reconciliation_fact_id: ReconciliationFactId;
+    selection_source: SelectionSource;
+    selection_proof: SelectionProof;
+    proof_method: ProofMethod;
+  }
+  export interface DirectAdoptionProof {
+    basis: Basis1;
+    close_period: ClosePeriod;
+    publication_id: PublicationId;
+    role: Role;
+  }
+  export interface CalculationCurrentProof {
+    basis: Basis2;
+  }
+  export interface AssetBatchMemberProof {
+    basis: Basis3;
+    owner_calculation_id: OwnerCalculationId1;
+    owner_publication_id?: OwnerPublicationId;
+    membership_digest?: MembershipDigest;
+  }
+  export interface BatchPayment {
+    bank_row_count: BankRowCount;
+    total_fen: TotalFen1;
+    items: Items;
+  }
+  export interface BatchPaymentItem {
+    party: Party4;
+    amount_fen: AmountFen10;
+  }
+  export interface BriefOpenItems {
+    receivable_count: ReceivableCount;
+    receivable_fen: ReceivableFen;
+    payable_count: PayableCount;
+    payable_fen: PayableFen;
+    total_count: TotalCount1;
+    unestablished_count: UnestablishedCount;
+    complete: Complete2;
+    status: Status12;
+    issues: Issues8;
+    categories: Categories;
+    current_outstanding: OpenTotals;
+    cutoff_period: CutoffPeriod1;
+    current_cutoff_period: CurrentCutoffPeriod1;
+  }
+  export interface OpenCategory {
+    key: Key4;
+    label: Label8;
+    direction: Direction3;
+    unit: Unit;
+    count: Count2;
+    loaded_count: LoadedCount1;
+    outstanding_fen: OutstandingFen;
+    groups: Groups;
+  }
+  export interface OpenItemGroup {
+    key: Key5;
+    party: Party5;
+    field_sources: FieldSources10;
+    count: Count3;
+    outstanding_fen: OutstandingFen1;
+    open_count: OpenCount;
+    partial_count: PartialCount;
+  }
+  export interface FieldSources10 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface OpenTotals {
+    receivable_count: ReceivableCount1;
+    receivable_fen: ReceivableFen1;
+    payable_count: PayableCount1;
+    payable_fen: PayableFen1;
+    total_count: TotalCount2;
+    unestablished_count: UnestablishedCount1;
+    complete: Complete3;
+    status: Status13;
+    issues: Issues9;
+  }
+  export interface WorkforceCost {
+    has_activity: HasActivity;
+    total_fen: TotalFen2;
+    capitalized_labor_fen: CapitalizedLaborFen;
+    employee: EmployeeCost;
+    personal_labor: PersonalLaborCost;
+  }
+  export interface EmployeeCost {
+    has_activity: HasActivity1;
+    breakdown_available: BreakdownAvailable;
+    reason: Reason3;
+    total_fen: TotalFen3;
+    controlled_total_fen: ControlledTotalFen;
+    settlement_adjustment_fen: SettlementAdjustmentFen;
+    prior_period_settlement_adjustment_fen: PriorPeriodSettlementAdjustmentFen;
+    batch_count: BatchCount;
+    periods: Periods;
+    annual_bonus_fen: AnnualBonusFen;
+    gross_salary_fen: GrossSalaryFen1;
+    employer_social_insurance_fen: EmployerSocialInsuranceFen1;
+    employer_housing_fund_fen: EmployerHousingFundFen1;
+    employee_social_insurance_fen: EmployeeSocialInsuranceFen1;
+    employee_housing_fund_fen: EmployeeHousingFundFen1;
+    personal_withholding_fen: PersonalWithholdingFen;
+  }
+  export interface WorkforcePeriod {
+    payroll_period?: PayrollPeriod;
+    remuneration_period?: RemunerationPeriod;
+    total_fen: TotalFen4;
+    has_reversal: HasReversal;
+    has_amendment: HasAmendment;
+    correction_ids: CorrectionIds;
+    gross_salary_fen?: GrossSalaryFen;
+    employer_social_insurance_fen?: EmployerSocialInsuranceFen;
+    employer_housing_fund_fen?: EmployerHousingFundFen;
+    employee_social_insurance_fen?: EmployeeSocialInsuranceFen;
+    employee_housing_fund_fen?: EmployeeHousingFundFen;
+    gross_remuneration_fen?: GrossRemunerationFen;
+    theoretical_withholding_tax_fen?: TheoreticalWithholdingTaxFen;
+  }
+  export interface PersonalLaborCost {
+    has_activity: HasActivity2;
+    breakdown_available: BreakdownAvailable1;
+    reason: Reason4;
+    total_fen: TotalFen5;
+    gross_remuneration_fen: GrossRemunerationFen1;
+    booked_withholding_tax_fen: BookedWithholdingTaxFen;
+    unwithheld_tax_fen: UnwithheldTaxFen;
+    theoretical_withholding_tax_fen: TheoreticalWithholdingTaxFen1;
+    withholding_status: WithholdingStatus;
+    withholding_note: WithholdingNote;
+    settlement_modes: SettlementModes;
+    batch_count: BatchCount1;
+    periods: Periods1;
+  }
+  export interface LongTermAssets {
+    net_fen: NetFen1;
+    fixed_net_fen: FixedNetFen;
+    intangible_net_fen: IntangibleNetFen;
+    fixed_active_count: FixedActiveCount;
+    intangible_active_count: IntangibleActiveCount;
+    pending_count: PendingCount;
+    project_cost_fen: ProjectCostFen;
+  }
+  export interface BriefValidation {
+    state: State7;
+    title: Title1;
+    summary: Summary1;
+    integrity_valid: IntegrityValid;
+    voucher_balanced: VoucherBalanced;
+    issues: Issues10;
+    attention_count: AttentionCount;
+    items: Items1;
+  }
+  export interface ValidationItem {
+    key: Key6;
+    label: Label9;
+    state: State8;
+    text: Text1;
+  }
+  export interface BriefCollections {
+    vouchers?: Collection;
+    open_items?: Collection1;
+    businesses?: Collection2;
+    settlement_events?: ScopedSettlementCollection;
+    external_followups?: Collection3;
+    file_jobs?: Collection4;
+  }
+  export interface Collection {
+    items: Items2;
+    page: CollectionPage;
+  }
+  export interface CollectionPage {
+    total_count: TotalCount3;
+    filtered_count: FilteredCount;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+    collection_version?: CollectionVersion;
+  }
+  export interface Collection1 {
+    items: Items3;
+    page: CollectionPage;
+  }
+  export interface OpenItem {
+    id: Id9;
+    key: Key7;
+    category_key: CategoryKey;
+    voucher: Voucher;
+    party_key: PartyKey;
+    party: Party6;
+    field_sources: FieldSources11;
+    description: Description3;
+    status: Status14;
+    source_business: BusinessIdentity;
+    source_period?: SourcePeriod1;
+    source_amount_fen: SourceAmountFen1;
+    paid_fen: PaidFen1;
+    other_settled_fen: OtherSettledFen1;
+    outstanding_fen: OutstandingFen2;
+    current_status: CurrentStatus;
+    current_outstanding_fen: CurrentOutstandingFen;
+    subject_id: SubjectId2;
+    account: Account4;
+    amount_fen?: AmountFen11;
+    cashflow?: Cashflow;
+    category: Category3;
+    counterparty_id: CounterpartyId;
+    creditor_id?: CreditorId1;
+    name: Name7;
+    normal?: Normal;
+    source_calculation_id: SourceCalculationId1;
+    source_fact_id: SourceFactId1;
+    source_result_digest?: SourceResultDigest;
+    state?: State9;
+    settlement_status: SettlementStatus;
+    period_paid_fen: PeriodPaidFen;
+    period_other_settled_fen: PeriodOtherSettledFen;
+    remaining_fen: RemainingFen1;
+    source_event_count: SourceEventCount;
+    source_events: SourceEvents;
+  }
+  export interface FieldSources11 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface BusinessIdentity {
+    subject_id: SubjectId1;
+    kind: Kind4;
+  }
+  export interface SettlementSourceEvent {
+    calculation_id: CalculationId6;
+    fact_id: FactId2;
+    posting_period: PostingPeriod;
+    voucher_version_id: VoucherVersionId3;
+    direction: Direction4;
+  }
+  export interface Collection2 {
+    items: Items4;
+    page: CollectionPage;
+  }
+  export interface VoucherEvent {
+    id?: Id10;
+    event_type: EventType;
+    voucher_version_id: VoucherVersionId4;
+    voucher_id: VoucherId;
+    voucher_number: VoucherNumber1;
+    voucher_calculation_id: VoucherCalculationId;
+    calculation_id: CalculationId7;
+    fact_id: FactId3;
+    kind: Kind5;
+    calculation_period: CalculationPeriod;
+    posting_period: PostingPeriod1;
+    result_digest: ResultDigest1;
+    role: Role1;
+    direction: Direction5;
+    reverses_voucher_version_id: ReversesVoucherVersionId;
+    selection_source: SelectionSource1;
+    lines?: Lines1;
+  }
+  export interface VoucherEventLine {
+    line_no: LineNo1;
+    account: Account5;
+    debit: Debit;
+    credit: Credit;
+    cashflow: Cashflow1;
+  }
+  export interface StateResult {
+    id?: Id11;
+    event_type: EventType1;
+    status: Status15;
+    calculation_id: CalculationId8;
+    fact_id: FactId4;
+    kind: Kind6;
+    calculation_period: CalculationPeriod1;
+    posting_period: PostingPeriod2;
+    result_digest: ResultDigest2;
+    opening: Opening;
+    selection_source: SelectionSource2;
+    selection_proof: SelectionProof1;
+    vouchers: Vouchers;
+    payroll_confirmation?: PayrollConfirmation;
+  }
+  export interface PayrollConfirmation {
+    mode: Mode1;
+    confirmation_fact_id: ConfirmationFactId;
+    confirmation_subject_id: ConfirmationSubjectId;
+    confirmation_revision: ConfirmationRevision;
+    confirmation_kind: ConfirmationKind;
+    evidence: Evidence5;
+  }
+  export interface UnestablishedSelection {
+    id?: Id12;
+    subject_id: SubjectId3;
+    posting_period: PostingPeriod3;
+    selection_status: SelectionStatus;
+    reason: Reason5;
+    candidates: Candidates1;
+    trace_targets: TraceTargets1;
+  }
+  export interface CandidateSelection {
+    calculation_id: CalculationId9;
+    fact_id: FactId5;
+    result_digest: ResultDigest3;
+    kind: Kind7;
+    has_journal_lines: HasJournalLines1;
+    trace_only: TraceOnly1;
+  }
+  export interface ScopedSettlementCollection {
+    items: Items5;
+    page: CollectionPage;
+    scope_period?: ScopePeriod1;
+    current_cutoff_period?: CurrentCutoffPeriod2;
+    cutoff_semantics?: CutoffSemantics;
+  }
+  export interface Collection3 {
+    items: Items6;
+    page: CollectionPage;
+  }
+  export interface ExternalObligation {
+    obligation_id: ObligationId1;
+    kind: Kind8;
+    label: Label10;
+    start_period: StartPeriod;
+    end_period: EndPeriod;
+    completion_status: CompletionStatus;
+    due_date: DueDate;
+    issue_count: IssueCount1;
+    fact_issues: FactIssues1;
+  }
+  export interface Collection4 {
+    items: Items7;
+    page: CollectionPage;
+  }
+  export interface FileJob {
+    job_id: JobId;
+    kind: Kind9;
+    status: Status16;
+    attempts: Attempts;
+    last_error: LastError;
+    result_issue?: ReadinessIssue;
+    contract_issues?: ContractIssues;
+    association: Association;
+    references: References;
+    period: Period6;
+    verified_when_succeeded: VerifiedWhenSucceeded;
+    current_file_availability: CurrentFileAvailability;
+  }
+  export interface FileReference {
+    id?: Id13;
+    source?: Source4;
+    subject_id?: SubjectId4;
+    calculation_id?: CalculationId10;
+    obligation?: Obligation;
+  }
+  export interface ReportPeriod {
+    year: Year1;
+    quarter: Quarter;
+    quarter_start: QuarterStart;
+    quarter_end: QuarterEnd;
+    label: Label11;
+  }
+}
+
+export namespace DashboardFundsContract {
+  export type SchemaVersion = 6;
+  export type SnapshotVersion = string | null;
+  export type Key = string;
+  export type Year = number;
+  export type Month = number;
+  export type Label = string;
+  export type ShortLabel = string;
+  export type Status = "open" | "closed";
+  export type StartDate = string;
+  export type EndDate = string;
+  export type ClosedAt = string | null;
+  export type Knowledge = "current_knowledge";
+  export type Accounting = "as_posted";
+  export type BusinessBasis = "current_known" | "frozen_adoption";
+  export type Display = "current" | "frozen_with_current_supplements";
+  export type SystemTimeReplay = false;
+  export type RecordedAt = "system_recording_time";
+  export type RecordingPeriod = "business_recording_period";
+  export type RecordedLater = "business_recording_period_after_selected_period";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
   export type OpeningFen = string | null;
   export type NetChangeFen = string;
   export type InflowFen = string;
@@ -105,11 +1808,33 @@ export namespace DashboardFundsContract {
   export type CashAccountCount = number;
   export type PaymentPlatformAccountCount = number;
   export type AttentionAccountCount = number;
+  export type OpeningCostFen = string | null;
+  export type SubscriptionCostFen = string;
+  export type RedemptionCostFen = string;
+  export type ClosingCostFen = string | null;
+  export type InvestmentIncomeFen = string;
+  export type ActualPaymentsFen = string;
+  export type ActualReceiptsFen = string;
+  export type EventCount = number;
+  export type TransactionCount = number;
+  export type InflowFen1 = string | null;
+  export type OutflowFen1 = string | null;
+  export type MatchedCount = number;
+  export type UnmatchedCount = number;
+  export type NeedsReviewCount = number;
+  export type Count = number;
+  export type InflowFen2 = string;
+  export type OutflowFen2 = string;
+  export type CoverageState = "missing" | "partial" | "complete" | "not_applicable";
+  export type StatementCount = number;
+  export type ExpectedAccountCount = number;
+  export type ProvidedAccountCount = number;
+  export type MissingAccountCount = number;
   export type AccountId = string;
   export type Type = "bank" | "cash" | "payment_platform";
   export type OpeningFen1 = string | null;
-  export type InflowFen1 = string;
-  export type OutflowFen1 = string;
+  export type InflowFen3 = string;
+  export type OutflowFen3 = string;
   export type NetChangeFen1 = string;
   export type AttributionAdjustmentFen = string | null;
   export type ClosingFen = string | null;
@@ -128,13 +1853,13 @@ export namespace DashboardFundsContract {
   export type Evidence = string[];
   export type Basis = "frozen" | "current_supplement" | "current";
   export type RecordedAt1 = string | null;
-  export type InflowFen2 = string | null;
-  export type OutflowFen2 = string | null;
-  export type TransactionCount = number;
-  export type MatchedCount = number;
-  export type UnmatchedCount = number;
-  export type NeedsReviewCount = number;
-  export type CoverageState = "missing" | "partial" | "complete" | "not_applicable";
+  export type InflowFen4 = string | null;
+  export type OutflowFen4 = string | null;
+  export type TransactionCount1 = number;
+  export type MatchedCount1 = number;
+  export type UnmatchedCount1 = number;
+  export type NeedsReviewCount1 = number;
+  export type CoverageState1 = "missing" | "partial" | "complete" | "not_applicable";
   export type LastActivityDate1 = string | null;
   export type AccountCode = string;
   export type AccountName = string;
@@ -158,14 +1883,22 @@ export namespace DashboardFundsContract {
   export type Basis2 = "calculation_current";
   export type Basis3 = "asset_batch_member";
   export type OwnerCalculationId = string;
+  export type OwnerPublicationId = string;
+  export type MembershipDigest = string;
   export type ProofMethod = ("frozen_reconciliation_direct_statement" | "independent_statement_selection") | null;
   export type Version = number | null;
   export type StatementClosingFen = string;
   export type BookClosingFen = string | null;
   export type DifferenceFen = string | null;
-  export type UnmatchedCount1 = number;
-  export type NeedsReviewCount1 = number;
-  export type Accounts = FundAccount[];
+  export type UnmatchedCount2 = number;
+  export type NeedsReviewCount2 = number;
+  export type Items = FundAccount[];
+  export type TotalCount = number;
+  export type FilteredCount = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+  export type CollectionVersion = string;
   export type Id1 = string;
   export type Date = string | null;
   export type AccountId1 = string;
@@ -190,49 +1923,10 @@ export namespace DashboardFundsContract {
   export type Party = string;
   export type InternalTransfer = boolean;
   export type ComponentKinds = string[];
-  export type Movements = FundMovement[];
-  export type OpeningCostFen = string | null;
-  export type SubscriptionCostFen = string;
-  export type RedemptionCostFen = string;
-  export type ClosingCostFen = string | null;
-  export type InvestmentIncomeFen = string;
-  export type ActualPaymentsFen = string;
-  export type ActualReceiptsFen = string;
-  export type FundId = string;
-  export type OpeningCostFen1 = string | null;
-  export type SubscriptionCostFen1 = string;
-  export type RedemptionCostFen1 = string;
-  export type ClosingCostFen1 = string | null;
-  export type InvestmentIncomeFen1 = string;
-  export type Name2 = string;
-  export type Products = InvestmentProduct[];
+  export type Items1 = FundMovement[];
   export type Id3 = string;
-  export type Date1 = string | null;
-  export type Period = string;
-  export type FundId1 = string;
-  export type Name3 = string;
-  export type Type2 = string;
+  export type Date1 = string;
   export type Reference1 = string;
-  export type CostFen = string | null;
-  export type NetProceedsFen = string | null;
-  export type InvestmentIncomeFen2 = string | null;
-  export type SettlementFen = string | null;
-  export type Events = InvestmentEvent[];
-  export type EventCount = number;
-  export type TotalCount = number;
-  export type FilteredCount = number;
-  export type ReturnedCount = number;
-  export type HasMore = boolean;
-  export type NextCursor = string | null;
-  export type TransactionCount1 = number;
-  export type InflowFen3 = string | null;
-  export type OutflowFen3 = string | null;
-  export type MatchedCount1 = number;
-  export type UnmatchedCount2 = number;
-  export type NeedsReviewCount2 = number;
-  export type Id4 = string;
-  export type Date2 = string;
-  export type Reference2 = string;
   export type AccountId2 = string;
   export type AccountCode2 = string;
   export type AccountName2 = string;
@@ -247,20 +1941,27 @@ export namespace DashboardFundsContract {
   export type TotalFen1 = string;
   export type Party2 = string;
   export type AmountFen2 = string;
-  export type Items = BatchPaymentItem[];
-  export type Rows = BankStatementRow[];
-  export type Count = number;
-  export type InflowFen4 = string;
-  export type OutflowFen4 = string;
-  export type CoverageState1 = "missing" | "partial" | "complete" | "not_applicable";
-  export type StatementCount = number;
-  export type ExpectedAccountCount = number;
-  export type ProvidedAccountCount = number;
-  export type MissingAccountCount = number;
-  export type Items1 = FundAccount[];
-  export type Items2 = FundMovement[];
-  export type Items3 = BankStatementRow[];
+  export type Items3 = BatchPaymentItem[];
+  export type Items2 = BankStatementRow[];
+  export type FundId = string;
+  export type OpeningCostFen1 = string | null;
+  export type SubscriptionCostFen1 = string;
+  export type RedemptionCostFen1 = string;
+  export type ClosingCostFen1 = string | null;
+  export type InvestmentIncomeFen1 = string;
+  export type Name2 = string;
   export type Items4 = InvestmentProduct[];
+  export type Id4 = string;
+  export type Date2 = string | null;
+  export type Period = string;
+  export type FundId1 = string;
+  export type Name3 = string;
+  export type Type2 = string;
+  export type Reference2 = string;
+  export type CostFen = string | null;
+  export type NetProceedsFen = string | null;
+  export type InvestmentIncomeFen2 = string | null;
+  export type SettlementFen = string | null;
   export type Items5 = InvestmentEvent[];
   export type Field1 = string;
   export type Message1 = string;
@@ -290,6 +1991,7 @@ export namespace DashboardFundsContract {
   export type PeriodEndExclusive = string;
   export type Pages = number;
   export type VoucherVersionId = string | null;
+  export type VoucherNumber = number;
   export type VersionId = string | null;
   export type CalculationId1 = string | null;
   export type ObligationKey = string;
@@ -338,10 +2040,10 @@ export namespace DashboardFundsContract {
   export type DistinctLocationsProven = boolean;
   export type Signals = DuplicateSignal[];
   export type FactIssues = ReadinessIssue[];
-  export type CompanyId = string;
-  export type DatabaseId = string;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
   export type Period2 = string;
-  export type AsOf = string;
+  export type AsOf1 = string;
   export type AsOfSemantics = "current_knowledge";
   export type Closure = OpenClosure | ExactClosure | LaterClosure;
   export type State3 = "open";
@@ -415,6 +2117,7 @@ export namespace DashboardFundsContract {
     snapshot_version: SnapshotVersion;
     selected_period: DashboardPeriod | null;
     read_semantics: ReadSemantics;
+    read_context: DashboardReadContext;
     data: FundsData | null;
   }
   export interface DashboardPeriod {
@@ -438,6 +2141,12 @@ export namespace DashboardFundsContract {
     recording_period: RecordingPeriod;
     recorded_later: RecordedLater;
   }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
   export interface FundsData {
     opening_fen: OpeningFen;
     net_change_fen: NetChangeFen;
@@ -457,21 +2166,58 @@ export namespace DashboardFundsContract {
     cash_account_count: CashAccountCount;
     payment_platform_account_count: PaymentPlatformAccountCount;
     attention_account_count: AttentionAccountCount;
-    accounts: Accounts;
-    movements: Movements;
     investments: FundInvestments;
     bank_statement: BankStatement;
     collections: FundsCollections;
     fact_issues: FactIssues;
     period_preparation: PeriodPreparation | null;
-    movement_page?: CollectionPage;
+  }
+  export interface FundInvestments {
+    opening_cost_fen: OpeningCostFen;
+    subscription_cost_fen: SubscriptionCostFen;
+    redemption_cost_fen: RedemptionCostFen;
+    closing_cost_fen: ClosingCostFen;
+    investment_income_fen: InvestmentIncomeFen;
+    actual_payments_fen: ActualPaymentsFen;
+    actual_receipts_fen: ActualReceiptsFen;
+    event_count: EventCount;
+  }
+  export interface BankStatement {
+    transaction_count: TransactionCount;
+    inflow_fen: InflowFen1;
+    outflow_fen: OutflowFen1;
+    matched_count: MatchedCount;
+    unmatched_count: UnmatchedCount;
+    needs_review_count: NeedsReviewCount;
+    unmatched_totals: UnmatchedTotals;
+    coverage_state: CoverageState;
+    statement_count: StatementCount;
+    expected_account_count: ExpectedAccountCount;
+    provided_account_count: ProvidedAccountCount;
+    missing_account_count: MissingAccountCount;
+  }
+  export interface UnmatchedTotals {
+    count: Count;
+    inflow_fen: InflowFen2;
+    outflow_fen: OutflowFen2;
+  }
+  export interface FundsCollections {
+    accounts?: Collection;
+    movements?: Collection1;
+    statements?: Collection2;
+    investment_products?: Collection3;
+    investment_events?: Collection4;
+  }
+  export interface Collection {
+    items: Items;
+    page: CollectionPage;
   }
   export interface FundAccount {
     account_id: AccountId;
     type: Type;
     opening_fen: OpeningFen1;
-    inflow_fen: InflowFen1;
-    outflow_fen: OutflowFen1;
+    inflow_fen: InflowFen3;
+    outflow_fen: OutflowFen3;
     net_change_fen: NetChangeFen1;
     attribution_adjustment_fen: AttributionAdjustmentFen;
     closing_fen: ClosingFen;
@@ -500,13 +2246,13 @@ export namespace DashboardFundsContract {
     recorded_at: RecordedAt1;
   }
   export interface AccountStatement {
-    inflow_fen: InflowFen2;
-    outflow_fen: OutflowFen2;
-    transaction_count: TransactionCount;
-    matched_count: MatchedCount;
-    unmatched_count: UnmatchedCount;
-    needs_review_count: NeedsReviewCount;
-    coverage_state: CoverageState;
+    inflow_fen: InflowFen4;
+    outflow_fen: OutflowFen4;
+    transaction_count: TransactionCount1;
+    matched_count: MatchedCount1;
+    unmatched_count: UnmatchedCount1;
+    needs_review_count: NeedsReviewCount1;
+    coverage_state: CoverageState1;
     last_activity_date: LastActivityDate1;
     account_code: AccountCode;
     account_name: AccountName;
@@ -519,8 +2265,8 @@ export namespace DashboardFundsContract {
     statement_closing_fen?: StatementClosingFen;
     book_closing_fen?: BookClosingFen;
     difference_fen?: DifferenceFen;
-    unmatched_count?: UnmatchedCount1;
-    needs_review_count?: NeedsReviewCount1;
+    unmatched_count?: UnmatchedCount2;
+    needs_review_count?: NeedsReviewCount2;
   }
   export interface BankSourceCheck {
     state: State1;
@@ -548,6 +2294,20 @@ export namespace DashboardFundsContract {
   export interface AssetBatchMemberProof {
     basis: Basis3;
     owner_calculation_id: OwnerCalculationId;
+    owner_publication_id?: OwnerPublicationId;
+    membership_digest?: MembershipDigest;
+  }
+  export interface CollectionPage {
+    total_count: TotalCount;
+    filtered_count: FilteredCount;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+    collection_version?: CollectionVersion;
+  }
+  export interface Collection1 {
+    items: Items1;
+    page: CollectionPage;
   }
   export interface FundMovement {
     id: Id1;
@@ -585,76 +2345,18 @@ export namespace DashboardFundsContract {
   export interface FieldSources2 {
     [k: string]: SourceMetadata | SourceMetadata[];
   }
-  export interface FundInvestments {
-    opening_cost_fen: OpeningCostFen;
-    subscription_cost_fen: SubscriptionCostFen;
-    redemption_cost_fen: RedemptionCostFen;
-    closing_cost_fen: ClosingCostFen;
-    investment_income_fen: InvestmentIncomeFen;
-    actual_payments_fen: ActualPaymentsFen;
-    actual_receipts_fen: ActualReceiptsFen;
-    products: Products;
-    events: Events;
-    event_count: EventCount;
-    page?: CollectionPage;
-  }
-  export interface InvestmentProduct {
-    fund_id: FundId;
-    opening_cost_fen: OpeningCostFen1;
-    subscription_cost_fen: SubscriptionCostFen1;
-    redemption_cost_fen: RedemptionCostFen1;
-    closing_cost_fen: ClosingCostFen1;
-    investment_income_fen: InvestmentIncomeFen1;
-    name: Name2;
-    field_sources: FieldSources3;
-  }
-  export interface FieldSources3 {
-    [k: string]: SourceMetadata | SourceMetadata[];
-  }
-  export interface InvestmentEvent {
-    id: Id3;
-    date: Date1;
-    period: Period;
-    fund_id: FundId1;
-    name: Name3;
-    type: Type2;
-    reference: Reference1;
-    cost_fen: CostFen;
-    net_proceeds_fen: NetProceedsFen;
-    investment_income_fen: InvestmentIncomeFen2;
-    settlement_fen: SettlementFen;
-  }
-  export interface CollectionPage {
-    total_count: TotalCount;
-    filtered_count: FilteredCount;
-    returned_count: ReturnedCount;
-    has_more: HasMore;
-    next_cursor: NextCursor;
-  }
-  export interface BankStatement {
-    transaction_count: TransactionCount1;
-    inflow_fen: InflowFen3;
-    outflow_fen: OutflowFen3;
-    matched_count: MatchedCount1;
-    unmatched_count: UnmatchedCount2;
-    needs_review_count: NeedsReviewCount2;
-    rows: Rows;
-    unmatched_totals: UnmatchedTotals;
-    coverage_state: CoverageState1;
-    statement_count: StatementCount;
-    expected_account_count: ExpectedAccountCount;
-    provided_account_count: ProvidedAccountCount;
-    missing_account_count: MissingAccountCount;
-    page?: CollectionPage;
+  export interface Collection2 {
+    items: Items2;
+    page: CollectionPage;
   }
   export interface BankStatementRow {
-    id: Id4;
-    date: Date2;
-    reference: Reference2;
+    id: Id3;
+    date: Date1;
+    reference: Reference1;
     account_id: AccountId2;
     account_code: AccountCode2;
     account_name: AccountName2;
-    field_sources: FieldSources4;
+    field_sources: FieldSources3;
     direction: Direction1;
     amount_fen: AmountFen1;
     signed_amount_fen: SignedAmountFen1;
@@ -665,49 +2367,51 @@ export namespace DashboardFundsContract {
     source_check: BankSourceCheck;
     batch_payment?: BatchPayment;
   }
-  export interface FieldSources4 {
+  export interface FieldSources3 {
     [k: string]: SourceMetadata | SourceMetadata[];
   }
   export interface BatchPayment {
     bank_row_count: BankRowCount;
     total_fen: TotalFen1;
-    items: Items;
+    items: Items3;
   }
   export interface BatchPaymentItem {
     party: Party2;
     amount_fen: AmountFen2;
   }
-  export interface UnmatchedTotals {
-    count: Count;
-    inflow_fen: InflowFen4;
-    outflow_fen: OutflowFen4;
-  }
-  export interface FundsCollections {
-    accounts?: Collection;
-    movements?: Collection1;
-    statements?: Collection2;
-    investment_products?: Collection3;
-    investment_events?: Collection4;
-  }
-  export interface Collection {
-    items: Items1;
-    page: CollectionPage;
-  }
-  export interface Collection1 {
-    items: Items2;
-    page: CollectionPage;
-  }
-  export interface Collection2 {
-    items: Items3;
-    page: CollectionPage;
-  }
   export interface Collection3 {
     items: Items4;
     page: CollectionPage;
   }
+  export interface InvestmentProduct {
+    fund_id: FundId;
+    opening_cost_fen: OpeningCostFen1;
+    subscription_cost_fen: SubscriptionCostFen1;
+    redemption_cost_fen: RedemptionCostFen1;
+    closing_cost_fen: ClosingCostFen1;
+    investment_income_fen: InvestmentIncomeFen1;
+    name: Name2;
+    field_sources: FieldSources4;
+  }
+  export interface FieldSources4 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
   export interface Collection4 {
     items: Items5;
     page: CollectionPage;
+  }
+  export interface InvestmentEvent {
+    id: Id4;
+    date: Date2;
+    period: Period;
+    fund_id: FundId1;
+    name: Name3;
+    type: Type2;
+    reference: Reference2;
+    cost_fen: CostFen;
+    net_proceeds_fen: NetProceedsFen;
+    investment_income_fen: InvestmentIncomeFen2;
+    settlement_fen: SettlementFen;
   }
   /**
    * Fields emitted by material, accounting, report and close checkers.
@@ -744,6 +2448,7 @@ export namespace DashboardFundsContract {
     period_end_exclusive?: PeriodEndExclusive;
     pages?: Pages;
     voucher_version_id?: VoucherVersionId;
+    voucher_number?: VoucherNumber;
     version_id?: VersionId;
     calculation_id?: CalculationId1;
     obligation_key?: ObligationKey;
@@ -794,17 +2499,17 @@ export namespace DashboardFundsContract {
     location: Location1;
   }
   export interface PeriodPreparation {
-    company_id: CompanyId;
-    database_id: DatabaseId;
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
     period: Period2;
-    as_of: AsOf;
+    as_of: AsOf1;
     as_of_semantics: AsOfSemantics;
     closure: Closure;
     read_semantics: PreparationReadSemantics;
     projection: Projection;
     frozen_readiness: FrozenReadiness1;
     readiness: Readiness | null;
-    current_followups: CurrentFollowups1;
+    current_followups: PeriodCurrentFollowups;
   }
   export interface OpenClosure {
     state: State3;
@@ -851,7 +2556,7 @@ export namespace DashboardFundsContract {
   export interface OrderDetails {
     period?: Period4;
   }
-  export interface CurrentFollowups1 {
+  export interface PeriodCurrentFollowups {
     knowledge: Knowledge2;
     affects_frozen_readiness: AffectsFrozenReadiness;
     materials: MaterialFollowup;
@@ -930,5 +2635,4491 @@ export namespace DashboardFundsContract {
   }
 }
 
+export namespace DashboardEmployeesContract {
+  export type SchemaVersion = 6;
+  export type SnapshotVersion = string | null;
+  export type Key = string;
+  export type Year = number;
+  export type Month = number;
+  export type Label = string;
+  export type ShortLabel = string;
+  export type Status = "open" | "closed";
+  export type StartDate = string;
+  export type EndDate = string;
+  export type ClosedAt = string | null;
+  export type Knowledge = "current_knowledge";
+  export type Accounting = "as_posted";
+  export type BusinessBasis = "current_known" | "frozen_adoption";
+  export type Display = "current" | "frozen_with_current_supplements";
+  export type SystemTimeReplay = false;
+  export type RecordedAt = "system_recording_time";
+  export type RecordingPeriod = "business_recording_period";
+  export type RecordedLater = "business_recording_period_after_selected_period";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type GrossSalaryFen = string | null;
+  export type AnnualBonusFen = string | null;
+  export type EmployerSocialInsuranceFen = string | null;
+  export type EmployerHousingFundFen = string | null;
+  export type EmployeeSocialInsuranceFen = string | null;
+  export type EmployeeHousingFundFen = string | null;
+  export type IndividualIncomeTaxFen = string | null;
+  export type NetSalaryFen = string | null;
+  export type TaxReportedSalaryFen = string | null;
+  export type PersonalDeductionFen = string | null;
+  export type UnestablishedCount = number;
+  export type RegisteredCount = number;
+  export type InPeriodCount = number;
+  export type UnknownPeriodCount = number;
+  export type PayrollCount = number;
+  export type WithoutPayrollCount = number;
+  export type ProfileMissingCount = number;
+  export type ContributionsOnlyCount = number;
+  export type ControlledCostFen = string | null;
+  export type SettlementAdjustmentFen = string | null;
+  export type LedgerCostFen = string;
+  export type DetailReconciled = boolean | null;
+  export type BreakdownAvailable = boolean;
+  export type BreakdownReason = string | null;
+  export type IdentityNote = string;
+  export type EmployeeId = string;
+  export type SelectionStatus = "established";
+  export type Code = string;
+  export type Name = string;
+  export type SourceType = string;
+  export type Id = string;
+  export type Revision = number | null;
+  export type Field = string | null;
+  export type Source = string | null;
+  export type EvidenceDigest = string | null;
+  export type Evidence = string[];
+  export type Basis = "frozen" | "current_supplement" | "current";
+  export type RecordedAt1 = string | null;
+  export type Field1 = string;
+  export type Values = string[];
+  export type Sources = SourceMetadata[];
+  export type FieldConflicts = FieldConflict[];
+  export type RecordStatus = string;
+  export type PeriodState = string;
+  export type PeriodStateLabel = string;
+  export type InPeriod = boolean | null;
+  export type EmploymentStartDate = string | null;
+  export type EmploymentEndDate = string | null;
+  export type TaxWithholdingStartDate = string | null;
+  export type ProfileAvailable = boolean;
+  export type ExpenseAreas = string[];
+  export type SocialInsuranceParticipating = boolean | null;
+  export type HousingFundParticipating = boolean | null;
+  export type SocialInsuranceBaseFen = string | null;
+  export type HousingFundBaseFen = string | null;
+  export type HasPayrollActivity = boolean;
+  export type BatchCount = number;
+  export type CalculationId = string;
+  export type Period = string;
+  export type Kind = string;
+  export type Reversal = boolean;
+  export type BookedTaxFen = string;
+  export type CalculatedTaxFen = string | null;
+  export type ActualWithholdingTaxFen = string | null;
+  export type ActualWithholdingFactId = string | null;
+  export type TaxDetails = TaxDetail[];
+  export type DeclaredTaxFen = string | null;
+  export type RecordedNetPaymentsFen = string | null;
+  export type DirectNetPaymentsFen = string | null;
+  export type OtherNetSettlementsFen = string | null;
+  export type PayrollPeriods = string[];
+  export type HasAnnualBonus = boolean;
+  export type GrossSalaryFen1 = string;
+  export type AnnualBonusFen1 = string;
+  export type EmployerSocialInsuranceFen1 = string;
+  export type EmployerHousingFundFen1 = string;
+  export type EmployeeSocialInsuranceFen1 = string;
+  export type EmployeeHousingFundFen1 = string;
+  export type IndividualIncomeTaxFen1 = string;
+  export type NetSalaryFen1 = string;
+  export type TaxReportedSalaryFen1 = string;
+  export type PersonalDeductionFen1 = string;
+  export type CompanyCostFen = string;
+  export type WageTaxScope = string;
+  export type WageTaxScopeLabel = string;
+  export type EmployeeId1 = string;
+  export type Name1 = string;
+  export type SelectionStatus1 = "unestablished";
+  export type CalculationId1 = string;
+  export type FactId = string;
+  export type ResultDigest = string;
+  export type Kind1 = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type CandidateSelections = CandidateSelection[];
+  export type CalculationId2 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type GrossSalaryFen2 = null;
+  export type AnnualBonusFen2 = null;
+  export type EmployerSocialInsuranceFen2 = null;
+  export type EmployerHousingFundFen2 = null;
+  export type EmployeeSocialInsuranceFen2 = null;
+  export type EmployeeHousingFundFen2 = null;
+  export type IndividualIncomeTaxFen2 = null;
+  export type NetSalaryFen2 = null;
+  export type TaxReportedSalaryFen2 = null;
+  export type PersonalDeductionFen2 = null;
+  export type CompanyCostFen1 = null;
+  export type RecordedNetPaymentsFen1 = null;
+  export type DirectNetPaymentsFen1 = null;
+  export type OtherNetSettlementsFen1 = null;
+  export type Items = (EmployeeItem | UnestablishedEmployee)[];
+  export type TotalCount = number;
+  export type FilteredCount = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+  export type CollectionVersion = string;
+  export type SubjectId = string;
+  export type SettlementView = "historical";
+  export type MovementsScope = "business_related_settlement_events";
+  export type Status1 = string;
+  export type Key1 = string;
+  export type Name2 = string;
+  export type Category = string;
+  export type Account = string;
+  export type CounterpartyId = string | null;
+  export type CreditorId = string | null;
+  export type RecipientId = string | null;
+  export type SubjectId1 = string;
+  export type Kind2 = string;
+  export type SourceCalculationId = string;
+  export type SourceFactId = string;
+  export type SourcePeriod = string;
+  export type SourceResultDigest = string;
+  export type SourceAmountFen = string | null;
+  export type AmountFen = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type PeriodPaidFen = string | null;
+  export type PeriodOtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type SettlementStatus = string;
+  export type SourceEventCount = number;
+  export type Cashflow = string;
+  export type Normal = string;
+  export type PartyKey = [any, any] | null;
+  export type PartyRole = string;
+  export type State = "resolved" | "unresolved";
+  export type CalculationId3 = string;
+  export type FactId1 = string;
+  export type PostingPeriod = string;
+  export type VoucherVersionId = string | null;
+  export type Direction = -1 | 1;
+  export type SourceEvents = SettlementSourceEvent[];
+  export type ReimbursementAcceptanceBasis = "company_confirmation_month";
+  export type Obligations = SettlementObligation[];
+  export type Field2 = string;
+  export type Message = string;
+  export type Code1 = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category1 = string;
+  export type InventoryId = number;
+  export type SubjectId2 = string;
+  export type FactId2 = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId2 = string;
+  export type AssetId = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest1 = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period1 = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId1 = string | null;
+  export type VoucherNumber = number;
+  export type VersionId = string | null;
+  export type CalculationId4 = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo = number | null;
+  export type Account1 = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason = string;
+  export type CalculationId5 = string;
+  export type FactId3 = string;
+  export type ResultDigest1 = string;
+  export type Kind3 = string;
+  export type HasJournalLines1 = boolean;
+  export type TraceOnly1 = true;
+  export type Candidates = SelectionCandidate[];
+  export type TraceTargets1 = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code2 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence1 = string[];
+  export type EvidenceDigest2 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Issues = ReadinessIssue[];
+  export type CutoffPeriod = string;
+  export type Status2 = string;
+  export type Issues1 = ReadinessIssue[];
+  export type CurrentCutoffPeriod = string;
+  export type CutoffSemantics = string;
+  export type Obligations1 = SettlementObligation[];
+  export type SourceId1 = string;
+  export type CalculationId6 = string;
+  export type Kind4 = string;
+  export type Period2 = string;
+  export type OpeningPeriod = string | null;
+  export type Component = string | null;
+  export type Label1 = string;
+  export type FactId4 = string;
+  export type Revision1 = number;
+  export type Source1 = "current_record";
+  export type TaxPeriod = string;
+  export type RecordingPeriod1 = string;
+  export type Date = string | null;
+  export type DeclaredTaxFen1 = string;
+  export type RecordedLater1 = boolean;
+  export type RecordedAt2 = string | null;
+  export type Declarations = PayrollDeclaration[];
+  export type CalculationId7 = string;
+  export type RecordingPeriod2 = string;
+  export type NeedsReview = boolean;
+  export type MatchesDisplayedWage = boolean;
+  export type EmployeeId3 = string;
+  export type TaxPeriod1 = string;
+  export type PayrollKind = string;
+  export type PayrollId = string;
+  export type PayrollFactId = string;
+  export type PayrollCalculationId = string;
+  export type PayrollResultDigest = string;
+  export type DeclarationId = string;
+  export type DeclarationFactId = string;
+  export type DeclarationEvidence = string[];
+  export type CalculatedTaxFen1 = string;
+  export type DeclaredTaxFen2 = string;
+  export type OriginalNetFen = string;
+  export type TargetNetFen = string;
+  export type HeldFen = string;
+  export type WithholdingRecorded = boolean;
+  export type Disbursements = PayrollDisbursement[];
+  export type Items1 = PayrollSource[];
+  export type SubjectId3 = string;
+  export type SettlementView1 = "historical";
+  export type MovementsScope1 = "business_related_settlement_events";
+  export type Status3 = string;
+  export type Obligations2 = SettlementObligation[];
+  export type Issues2 = ReadinessIssue[];
+  export type CutoffPeriod1 = string;
+  export type SourceId2 = string;
+  export type CalculationId8 = string;
+  export type Period3 = string;
+  export type PersonId = string;
+  export type Name3 = string;
+  export type Party = string;
+  export type Capitalized = boolean;
+  export type ProjectId = string | null;
+  export type GrossFen = string;
+  export type NetFen = string;
+  export type BookedTaxFen1 = string;
+  export type TheoreticalTaxFen = string | null;
+  export type WithholdingMethod = string;
+  export type WithholdingLabel = string;
+  export type Items2 = LaborSource[];
+  export type Items3 = any[];
+  export type ScopePeriod = string;
+  export type CurrentCutoffPeriod1 = string;
+  export type CutoffSemantics1 = string;
+  export type HasActivity = boolean;
+  export type TotalFen = string;
+  export type CapitalizedLaborFen = string;
+  export type HasActivity1 = boolean;
+  export type BreakdownAvailable1 = boolean;
+  export type Reason1 = string | null;
+  export type TotalFen1 = string;
+  export type ControlledTotalFen = string;
+  export type SettlementAdjustmentFen1 = string;
+  export type PriorPeriodSettlementAdjustmentFen = string;
+  export type BatchCount1 = number;
+  export type PayrollPeriod = string;
+  export type RemunerationPeriod = string;
+  export type TotalFen2 = string;
+  export type HasReversal = boolean;
+  export type HasAmendment = boolean;
+  export type CorrectionIds = string[];
+  export type GrossSalaryFen3 = string;
+  export type EmployerSocialInsuranceFen3 = string;
+  export type EmployerHousingFundFen3 = string;
+  export type EmployeeSocialInsuranceFen3 = string;
+  export type EmployeeHousingFundFen3 = string;
+  export type GrossRemunerationFen = string;
+  export type TheoreticalWithholdingTaxFen = string | null;
+  export type Periods = WorkforcePeriod[];
+  export type AnnualBonusFen3 = string | null;
+  export type GrossSalaryFen4 = string | null;
+  export type EmployerSocialInsuranceFen4 = string | null;
+  export type EmployerHousingFundFen4 = string | null;
+  export type EmployeeSocialInsuranceFen4 = string | null;
+  export type EmployeeHousingFundFen4 = string | null;
+  export type PersonalWithholdingFen = string | null;
+  export type HasActivity2 = boolean;
+  export type BreakdownAvailable2 = boolean;
+  export type Reason2 = string | null;
+  export type TotalFen3 = string;
+  export type GrossRemunerationFen1 = string | null;
+  export type BookedWithholdingTaxFen = string | null;
+  export type UnwithheldTaxFen = string | null;
+  export type TheoreticalWithholdingTaxFen1 = string | null;
+  export type WithholdingStatus = string;
+  export type WithholdingNote = string;
+  export type SettlementModes = string[];
+  export type BatchCount2 = number;
+  export type Periods1 = WorkforcePeriod[];
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type Period4 = string;
+  export type AsOf1 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State1 = "open";
+  export type State2 = "exact_close";
+  export type Digest = string;
+  export type State3 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge1 = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status4 = "ready";
+  export type Source2 = "exact_period_manifest";
+  export type Status5 = "recorded" | "not_recorded";
+  export type Status6 = "unavailable";
+  export type Reason3 = "no_exact_period_manifest";
+  export type Period5 = string;
+  export type Code3 = "already_closed" | "earlier_period_open";
+  export type Message1 = string;
+  export type Period6 = string;
+  export type Issues3 = ReadinessIssue[];
+  export type Knowledge2 = "current_knowledge";
+  export type AffectsFrozenReadiness = false;
+  export type Status7 = "ready" | "needs_information";
+  export type Issues4 = ReadinessIssue[];
+  export type InventoryCount = number;
+  export type CoverageDigest = string;
+  export type Status8 = "ready" | "needs_information";
+  export type Issues5 = ReadinessIssue[];
+  export type PendingSubjectId = string | null;
+  export type UnpublishedCount = number;
+  export type Status9 = "ready" | "needs_information";
+  export type Issues6 = ReadinessIssue[];
+  export type Status10 = string;
+  export type CutoffPeriod2 = string;
+  export type CurrentCutoffPeriod2 = string;
+  export type Issues7 = ReadinessIssue[];
+  export type ObligationCount = number;
+  export type Complete = boolean;
+  export type UnestablishedStateSelectionCount = number;
+  export type MovementCount = number;
+  export type SourceAmountFen1 = string | null;
+  export type PaidFen1 = string | null;
+  export type OtherSettledFen1 = string | null;
+  export type RemainingFen1 = string | null;
+  export type Status11 = "completed" | "followup_required" | "unestablished";
+  export type ObligationCount1 = number;
+  export type BasisIssueCount = number;
+  export type ScopePeriod1 = string;
+  export type ScopeSemantics = "obligation_interval_includes_selected_period";
+  export type FactIssues = ReadinessIssue[];
+  export type TotalCount1 = number;
+  export type IssueCount = number;
+  export type Status12 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code4 = string;
+  export type Category2 = "management_fact" | "capability" | "publication";
+  export type Field3 = string;
+  export type Message2 = string;
+  export type EmployeeId4 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen1 = string;
+  export type Issues8 = TaxImportMappingIssue[];
+
+  export interface DashboardEmployeesResponse {
+    schema_version: SchemaVersion;
+    snapshot_version: SnapshotVersion;
+    selected_period: DashboardPeriod | null;
+    read_semantics: ReadSemantics;
+    read_context: DashboardReadContext;
+    data: EmployeesData | null;
+  }
+  export interface DashboardPeriod {
+    key: Key;
+    year: Year;
+    month: Month;
+    label: Label;
+    short_label: ShortLabel;
+    status: Status;
+    start_date: StartDate;
+    end_date: EndDate;
+    closed_at: ClosedAt;
+  }
+  export interface ReadSemantics {
+    knowledge: Knowledge;
+    accounting: Accounting;
+    business_basis: BusinessBasis;
+    display: Display;
+    system_time_replay: SystemTimeReplay;
+    recorded_at: RecordedAt;
+    recording_period: RecordingPeriod;
+    recorded_later: RecordedLater;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface EmployeesData {
+    employees: EmployeeSummary;
+    collections: EmployeeCollections;
+    workforce_cost: WorkforceCost;
+    period_preparation: PeriodPreparation | null;
+  }
+  export interface EmployeeSummary {
+    gross_salary_fen: GrossSalaryFen;
+    annual_bonus_fen: AnnualBonusFen;
+    employer_social_insurance_fen: EmployerSocialInsuranceFen;
+    employer_housing_fund_fen: EmployerHousingFundFen;
+    employee_social_insurance_fen: EmployeeSocialInsuranceFen;
+    employee_housing_fund_fen: EmployeeHousingFundFen;
+    individual_income_tax_fen: IndividualIncomeTaxFen;
+    net_salary_fen: NetSalaryFen;
+    tax_reported_salary_fen: TaxReportedSalaryFen;
+    personal_deduction_fen: PersonalDeductionFen;
+    unestablished_count: UnestablishedCount;
+    registered_count: RegisteredCount;
+    in_period_count: InPeriodCount;
+    unknown_period_count: UnknownPeriodCount;
+    payroll_count: PayrollCount;
+    without_payroll_count: WithoutPayrollCount;
+    profile_missing_count: ProfileMissingCount;
+    contributions_only_count: ContributionsOnlyCount;
+    controlled_cost_fen: ControlledCostFen;
+    settlement_adjustment_fen: SettlementAdjustmentFen;
+    ledger_cost_fen: LedgerCostFen;
+    detail_reconciled: DetailReconciled;
+    breakdown_available: BreakdownAvailable;
+    breakdown_reason: BreakdownReason;
+    identity_note: IdentityNote;
+  }
+  export interface EmployeeCollections {
+    employees?: Collection;
+    payroll_sources?: Collection1;
+    labor_sources?: Collection2;
+    settlement_events?: ScopedSettlementCollection;
+  }
+  export interface Collection {
+    items: Items;
+    page: CollectionPage;
+  }
+  export interface EmployeeItem {
+    employee_id: EmployeeId;
+    selection_status: SelectionStatus;
+    code: Code;
+    name: Name;
+    field_sources: FieldSources;
+    field_conflicts: FieldConflicts;
+    record_status: RecordStatus;
+    period_state: PeriodState;
+    period_state_label: PeriodStateLabel;
+    in_period: InPeriod;
+    employment_start_date: EmploymentStartDate;
+    employment_end_date: EmploymentEndDate;
+    tax_withholding_start_date: TaxWithholdingStartDate;
+    profile_available: ProfileAvailable;
+    expense_areas: ExpenseAreas;
+    social_insurance_participating: SocialInsuranceParticipating;
+    housing_fund_participating: HousingFundParticipating;
+    social_insurance_base_fen: SocialInsuranceBaseFen;
+    housing_fund_base_fen: HousingFundBaseFen;
+    has_payroll_activity: HasPayrollActivity;
+    batch_count: BatchCount;
+    tax_details: TaxDetails;
+    declared_tax_fen: DeclaredTaxFen;
+    recorded_net_payments_fen: RecordedNetPaymentsFen;
+    direct_net_payments_fen: DirectNetPaymentsFen;
+    other_net_settlements_fen: OtherNetSettlementsFen;
+    payroll_periods: PayrollPeriods;
+    has_annual_bonus: HasAnnualBonus;
+    gross_salary_fen: GrossSalaryFen1;
+    annual_bonus_fen: AnnualBonusFen1;
+    employer_social_insurance_fen: EmployerSocialInsuranceFen1;
+    employer_housing_fund_fen: EmployerHousingFundFen1;
+    employee_social_insurance_fen: EmployeeSocialInsuranceFen1;
+    employee_housing_fund_fen: EmployeeHousingFundFen1;
+    individual_income_tax_fen: IndividualIncomeTaxFen1;
+    net_salary_fen: NetSalaryFen1;
+    tax_reported_salary_fen: TaxReportedSalaryFen1;
+    personal_deduction_fen: PersonalDeductionFen1;
+    company_cost_fen: CompanyCostFen;
+    wage_tax_scope: WageTaxScope;
+    wage_tax_scope_label: WageTaxScopeLabel;
+  }
+  export interface FieldSources {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface SourceMetadata {
+    source_type: SourceType;
+    id: Id;
+    revision: Revision;
+    field: Field;
+    source: Source;
+    evidence_digest: EvidenceDigest;
+    evidence: Evidence;
+    basis: Basis;
+    recorded_at: RecordedAt1;
+  }
+  export interface FieldConflict {
+    field: Field1;
+    values: Values;
+    sources: Sources;
+  }
+  export interface TaxDetail {
+    calculation_id: CalculationId;
+    period: Period;
+    kind: Kind;
+    reversal: Reversal;
+    booked_tax_fen: BookedTaxFen;
+    calculated_tax_fen: CalculatedTaxFen;
+    actual_withholding_tax_fen: ActualWithholdingTaxFen;
+    actual_withholding_fact_id: ActualWithholdingFactId;
+  }
+  export interface UnestablishedEmployee {
+    employee_id: EmployeeId1;
+    name: Name1;
+    selection_status: SelectionStatus1;
+    candidate_selections: CandidateSelections;
+    trace_targets: TraceTargets;
+    gross_salary_fen: GrossSalaryFen2;
+    annual_bonus_fen: AnnualBonusFen2;
+    employer_social_insurance_fen: EmployerSocialInsuranceFen2;
+    employer_housing_fund_fen: EmployerHousingFundFen2;
+    employee_social_insurance_fen: EmployeeSocialInsuranceFen2;
+    employee_housing_fund_fen: EmployeeHousingFundFen2;
+    individual_income_tax_fen: IndividualIncomeTaxFen2;
+    net_salary_fen: NetSalaryFen2;
+    tax_reported_salary_fen: TaxReportedSalaryFen2;
+    personal_deduction_fen: PersonalDeductionFen2;
+    company_cost_fen: CompanyCostFen1;
+    recorded_net_payments_fen: RecordedNetPaymentsFen1;
+    direct_net_payments_fen: DirectNetPaymentsFen1;
+    other_net_settlements_fen: OtherNetSettlementsFen1;
+  }
+  export interface CandidateSelection {
+    calculation_id: CalculationId1;
+    fact_id: FactId;
+    result_digest: ResultDigest;
+    kind: Kind1;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId2;
+  }
+  export interface CollectionPage {
+    total_count: TotalCount;
+    filtered_count: FilteredCount;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+    collection_version?: CollectionVersion;
+  }
+  export interface Collection1 {
+    items: Items1;
+    page: CollectionPage;
+  }
+  export interface PayrollSource {
+    subject_id: SubjectId;
+    settlement_view: SettlementView;
+    movements_scope: MovementsScope;
+    status: Status1;
+    obligations: Obligations;
+    issues: Issues;
+    cutoff_period: CutoffPeriod;
+    current_followups: SettlementCurrentFollowup;
+    source_id: SourceId1;
+    calculation_id: CalculationId6;
+    kind: Kind4;
+    period: Period2;
+    opening_period: OpeningPeriod;
+    component: Component;
+    label: Label1;
+    declarations: Declarations;
+    disbursements: Disbursements;
+  }
+  export interface SettlementObligation {
+    key: Key1;
+    name: Name2;
+    category: Category;
+    account: Account;
+    counterparty_id: CounterpartyId;
+    creditor_id?: CreditorId;
+    recipient_id?: RecipientId;
+    source_business: BusinessIdentity;
+    source_calculation_id: SourceCalculationId;
+    source_fact_id: SourceFactId;
+    source_period?: SourcePeriod;
+    source_result_digest?: SourceResultDigest;
+    source_amount_fen: SourceAmountFen;
+    amount_fen?: AmountFen;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    period_paid_fen: PeriodPaidFen;
+    period_other_settled_fen: PeriodOtherSettledFen;
+    remaining_fen: RemainingFen;
+    settlement_status: SettlementStatus;
+    source_event_count: SourceEventCount;
+    cashflow?: Cashflow;
+    normal?: Normal;
+    party_key?: PartyKey;
+    party_role?: PartyRole;
+    state?: State;
+    source_events?: SourceEvents;
+    reimbursement_acceptance_basis?: ReimbursementAcceptanceBasis;
+  }
+  export interface BusinessIdentity {
+    subject_id: SubjectId1;
+    kind: Kind2;
+  }
+  export interface SettlementSourceEvent {
+    calculation_id: CalculationId3;
+    fact_id: FactId1;
+    posting_period: PostingPeriod;
+    voucher_version_id: VoucherVersionId;
+    direction: Direction;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field2;
+    message: Message;
+    code?: Code1;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category1;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId2;
+    fact_id?: FactId2;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId2;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest1;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period1;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId1;
+    voucher_number?: VoucherNumber;
+    version_id?: VersionId;
+    calculation_id?: CalculationId4;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account1;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets1;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId5;
+    fact_id: FactId3;
+    result_digest: ResultDigest1;
+    kind: Kind3;
+    has_journal_lines: HasJournalLines1;
+    trace_only: TraceOnly1;
+  }
+  export interface DuplicateSignal {
+    code: Code2;
+    matched_fields: MatchedFields;
+    evidence?: Evidence1;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest2;
+    location: Location1;
+  }
+  export interface SettlementCurrentFollowup {
+    status: Status2;
+    issues: Issues1;
+    current_cutoff_period: CurrentCutoffPeriod;
+    cutoff_semantics: CutoffSemantics;
+    obligations: Obligations1;
+  }
+  export interface PayrollDeclaration {
+    fact_id: FactId4;
+    revision: Revision1;
+    source: Source1;
+    tax_period: TaxPeriod;
+    recording_period: RecordingPeriod1;
+    date: Date;
+    declared_tax_fen: DeclaredTaxFen1;
+    recorded_later: RecordedLater1;
+    recorded_at: RecordedAt2;
+    source_metadata: SourceMetadata;
+  }
+  export interface PayrollDisbursement {
+    calculation_id: CalculationId7;
+    recording_period: RecordingPeriod2;
+    needs_review: NeedsReview;
+    matches_displayed_wage: MatchesDisplayedWage;
+    employee_id: EmployeeId3;
+    tax_period: TaxPeriod1;
+    payroll_kind: PayrollKind;
+    payroll_id: PayrollId;
+    payroll_fact_id: PayrollFactId;
+    payroll_calculation_id: PayrollCalculationId;
+    payroll_result_digest: PayrollResultDigest;
+    declaration_id: DeclarationId;
+    declaration_fact_id: DeclarationFactId;
+    declaration_evidence: DeclarationEvidence;
+    calculated_tax_fen: CalculatedTaxFen1;
+    declared_tax_fen: DeclaredTaxFen2;
+    original_net_fen: OriginalNetFen;
+    target_net_fen: TargetNetFen;
+    held_fen: HeldFen;
+    withholding_recorded: WithholdingRecorded;
+  }
+  export interface Collection2 {
+    items: Items2;
+    page: CollectionPage;
+  }
+  export interface LaborSource {
+    subject_id: SubjectId3;
+    settlement_view: SettlementView1;
+    movements_scope: MovementsScope1;
+    status: Status3;
+    obligations: Obligations2;
+    issues: Issues2;
+    cutoff_period: CutoffPeriod1;
+    current_followups: SettlementCurrentFollowup;
+    source_id: SourceId2;
+    calculation_id: CalculationId8;
+    period: Period3;
+    person_id: PersonId;
+    name: Name3;
+    party: Party;
+    field_sources: FieldSources1;
+    capitalized: Capitalized;
+    project_id: ProjectId;
+    gross_fen: GrossFen;
+    net_fen: NetFen;
+    booked_tax_fen: BookedTaxFen1;
+    theoretical_tax_fen: TheoreticalTaxFen;
+    withholding_method: WithholdingMethod;
+    withholding_label: WithholdingLabel;
+  }
+  export interface FieldSources1 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface ScopedSettlementCollection {
+    items: Items3;
+    page: CollectionPage;
+    scope_period?: ScopePeriod;
+    current_cutoff_period?: CurrentCutoffPeriod1;
+    cutoff_semantics?: CutoffSemantics1;
+  }
+  export interface WorkforceCost {
+    has_activity: HasActivity;
+    total_fen: TotalFen;
+    capitalized_labor_fen: CapitalizedLaborFen;
+    employee: EmployeeCost;
+    personal_labor: PersonalLaborCost;
+  }
+  export interface EmployeeCost {
+    has_activity: HasActivity1;
+    breakdown_available: BreakdownAvailable1;
+    reason: Reason1;
+    total_fen: TotalFen1;
+    controlled_total_fen: ControlledTotalFen;
+    settlement_adjustment_fen: SettlementAdjustmentFen1;
+    prior_period_settlement_adjustment_fen: PriorPeriodSettlementAdjustmentFen;
+    batch_count: BatchCount1;
+    periods: Periods;
+    annual_bonus_fen: AnnualBonusFen3;
+    gross_salary_fen: GrossSalaryFen4;
+    employer_social_insurance_fen: EmployerSocialInsuranceFen4;
+    employer_housing_fund_fen: EmployerHousingFundFen4;
+    employee_social_insurance_fen: EmployeeSocialInsuranceFen4;
+    employee_housing_fund_fen: EmployeeHousingFundFen4;
+    personal_withholding_fen: PersonalWithholdingFen;
+  }
+  export interface WorkforcePeriod {
+    payroll_period?: PayrollPeriod;
+    remuneration_period?: RemunerationPeriod;
+    total_fen: TotalFen2;
+    has_reversal: HasReversal;
+    has_amendment: HasAmendment;
+    correction_ids: CorrectionIds;
+    gross_salary_fen?: GrossSalaryFen3;
+    employer_social_insurance_fen?: EmployerSocialInsuranceFen3;
+    employer_housing_fund_fen?: EmployerHousingFundFen3;
+    employee_social_insurance_fen?: EmployeeSocialInsuranceFen3;
+    employee_housing_fund_fen?: EmployeeHousingFundFen3;
+    gross_remuneration_fen?: GrossRemunerationFen;
+    theoretical_withholding_tax_fen?: TheoreticalWithholdingTaxFen;
+  }
+  export interface PersonalLaborCost {
+    has_activity: HasActivity2;
+    breakdown_available: BreakdownAvailable2;
+    reason: Reason2;
+    total_fen: TotalFen3;
+    gross_remuneration_fen: GrossRemunerationFen1;
+    booked_withholding_tax_fen: BookedWithholdingTaxFen;
+    unwithheld_tax_fen: UnwithheldTaxFen;
+    theoretical_withholding_tax_fen: TheoreticalWithholdingTaxFen1;
+    withholding_status: WithholdingStatus;
+    withholding_note: WithholdingNote;
+    settlement_modes: SettlementModes;
+    batch_count: BatchCount2;
+    periods: Periods1;
+  }
+  export interface PeriodPreparation {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    period: Period4;
+    as_of: AsOf1;
+    as_of_semantics: AsOfSemantics;
+    closure: Closure;
+    read_semantics: PreparationReadSemantics;
+    projection: Projection;
+    frozen_readiness: FrozenReadiness1;
+    readiness: Readiness | null;
+    current_followups: PeriodCurrentFollowups;
+  }
+  export interface OpenClosure {
+    state: State1;
+  }
+  export interface ExactClosure {
+    state: State2;
+    digest: Digest;
+  }
+  export interface LaterClosure {
+    state: State3;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface PreparationReadSemantics {
+    knowledge: Knowledge1;
+    frozen_readiness: FrozenReadiness;
+    current_followups: CurrentFollowups;
+  }
+  export interface RecordedReadiness {
+    status: Status4;
+    source: Source2;
+    readiness: RecordedStatus;
+    inventories: RecordedStatus;
+    material_coverage: RecordedStatus;
+    previous_close_digest: RecordedStatus;
+  }
+  export interface RecordedStatus {
+    status: Status5;
+  }
+  export interface UnavailableReadiness {
+    status: Status6;
+    reason: Reason3;
+  }
+  export interface Readiness {
+    period: Period5;
+    order_failure: OrderFailure | null;
+    issues: Issues3;
+  }
+  export interface OrderFailure {
+    code: Code3;
+    message: Message1;
+    details: OrderDetails;
+  }
+  export interface OrderDetails {
+    period?: Period6;
+  }
+  export interface PeriodCurrentFollowups {
+    knowledge: Knowledge2;
+    affects_frozen_readiness: AffectsFrozenReadiness;
+    materials: MaterialFollowup;
+    accounting: AccountingFollowup;
+    close_requirements: CheckFollowup;
+    settlements: SettlementFollowup;
+    external: ExternalFollowup;
+    file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
+  }
+  export interface MaterialFollowup {
+    status: Status7;
+    issues: Issues4;
+    inventory_count: InventoryCount;
+    coverage_digest: CoverageDigest;
+  }
+  export interface AccountingFollowup {
+    status: Status8;
+    issues: Issues5;
+    pending_subject_id: PendingSubjectId;
+    unpublished_count: UnpublishedCount;
+  }
+  export interface CheckFollowup {
+    status: Status9;
+    issues: Issues6;
+  }
+  export interface SettlementFollowup {
+    status: Status10;
+    cutoff_period?: CutoffPeriod2;
+    current_cutoff_period?: CurrentCutoffPeriod2;
+    issues?: Issues7;
+    obligation_count: ObligationCount;
+    complete: Complete;
+    unestablished_state_selection_count: UnestablishedStateSelectionCount;
+    movement_count: MovementCount;
+    source_amount_fen: SourceAmountFen1;
+    paid_fen: PaidFen1;
+    other_settled_fen: OtherSettledFen1;
+    remaining_fen: RemainingFen1;
+  }
+  export interface ExternalFollowup {
+    status: Status11;
+    obligation_count: ObligationCount1;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    scope_period: ScopePeriod1;
+    scope_semantics: ScopeSemantics;
+    fact_issues: FactIssues;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobFollowup {
+    total_count: TotalCount1;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status12;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues8;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code4;
+    category: Category2;
+    field: Field3;
+    message: Message2;
+    employee_id?: EmployeeId4;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen1;
+  }
+}
+
+export namespace DashboardAssetsContract {
+  export type SchemaVersion = 6;
+  export type SnapshotVersion = string | null;
+  export type Key = string;
+  export type Year = number;
+  export type Month = number;
+  export type Label = string;
+  export type ShortLabel = string;
+  export type Status = "open" | "closed";
+  export type StartDate = string;
+  export type EndDate = string;
+  export type ClosedAt = string | null;
+  export type Knowledge = "current_knowledge";
+  export type Accounting = "as_posted";
+  export type BusinessBasis = "current_known" | "frozen_adoption";
+  export type Display = "current" | "frozen_with_current_supplements";
+  export type SystemTimeReplay = false;
+  export type RecordedAt = "system_recording_time";
+  export type RecordingPeriod = "business_recording_period";
+  export type RecordedLater = "business_recording_period_after_selected_period";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type FixedAssetCostFen = string;
+  export type AccumulatedDepreciationFen = string;
+  export type FixedAssetNetFen = string;
+  export type IntangibleAssetCostFen = string;
+  export type AccumulatedAmortizationFen = string;
+  export type IntangibleAssetNetFen = string;
+  export type ActiveCount = number;
+  export type RegisteredCount = number;
+  export type UnestablishedCount = number;
+  export type LedgerCostFen = string;
+  export type LedgerAccumulatedFen = string;
+  export type LedgerNetFen = string;
+  export type ActiveLedgerNetFen = string;
+  export type PendingIntangibleCount = number;
+  export type PendingIntangibleCostFen = string | null;
+  export type ProjectCostFen = string;
+  export type ReconciliationScope = string;
+  export type CardCostFen = string | null;
+  export type CardAccumulatedFen = string | null;
+  export type CardNetFen = string | null;
+  export type RegisteredCount1 = number;
+  export type CostFen = string;
+  export type AccumulatedChargeFen = string;
+  export type BookValueFen = string;
+  export type PendingFixedCount = number;
+  export type PendingFixedCostFen = string | null;
+  export type MonthChargeFen = string | null;
+  export type MonthAcquiredCount = number;
+  export type MonthAcquiredFen = string;
+  export type MonthCostAdjustmentFen = string;
+  export type MonthActivatedCount = number;
+  export type MonthExitedCount = number;
+  export type Reconciled = boolean | null;
+  export type ReconciliationLabel = string;
+  export type CostFen1 = string | null;
+  export type AccumulatedFen = string | null;
+  export type NetFen = string | null;
+  export type RegisteredCount2 = number;
+  export type UnestablishedCount1 = number;
+  export type ActiveCount1 = number;
+  export type ActiveCostFen = string | null;
+  export type ActiveAccumulatedFen = string | null;
+  export type ActiveNetFen = string | null;
+  export type PendingCount = number;
+  export type PendingCostFen = string | null;
+  export type MonthAcquiredCount1 = number;
+  export type MonthAcquiredFen1 = string;
+  export type MonthCostAdjustmentFen1 = string;
+  export type MonthDepreciationFen = string | null;
+  export type DisposedCount = number;
+  export type MonthActivatedCount1 = number;
+  export type MonthDisposedCount = number;
+  export type RegisteredCount3 = number;
+  export type UnestablishedCount2 = number;
+  export type ActiveCount2 = number;
+  export type ActiveCostFen1 = string | null;
+  export type ActiveAccumulatedFen1 = string | null;
+  export type ActiveNetFen1 = string | null;
+  export type PendingCount1 = number;
+  export type PendingCostFen1 = string | null;
+  export type MonthAcquiredCount2 = number;
+  export type MonthAcquiredFen2 = string;
+  export type MonthCostAdjustmentFen2 = string;
+  export type MonthAmortizationFen = string | null;
+  export type RetiredCount = number;
+  export type MonthRetiredCount = number;
+  export type AssetId = string;
+  export type AssetType = "fixed";
+  export type Code = string;
+  export type Name = string;
+  export type Category = string;
+  export type CategoryLabel = string;
+  export type SourceType = string;
+  export type Id = string;
+  export type Revision = number | null;
+  export type Field = string | null;
+  export type Source = string | null;
+  export type EvidenceDigest = string | null;
+  export type Evidence = string[];
+  export type Basis = "frozen" | "current_supplement" | "current";
+  export type RecordedAt1 = string | null;
+  export type Status1 = "active" | "pending_activation" | "disposed" | "retired";
+  export type StatusLabel = string;
+  export type AcquisitionDate = string | null;
+  export type PostingPeriod = string;
+  export type RecognitionLabel = string;
+  export type SourceLabel = string;
+  export type SourcePartyLabel = string;
+  export type SourceParties = string | null;
+  export type SettlementScope = string;
+  export type SubjectId = string;
+  export type SettlementView = "historical";
+  export type MovementsScope = "business_related_settlement_events";
+  export type Status2 = string;
+  export type Key1 = string;
+  export type Name1 = string;
+  export type Category1 = string;
+  export type Account = string;
+  export type CounterpartyId = string | null;
+  export type CreditorId = string | null;
+  export type RecipientId = string | null;
+  export type SubjectId1 = string;
+  export type Kind = string;
+  export type SourceCalculationId = string;
+  export type SourceFactId = string;
+  export type SourcePeriod = string;
+  export type SourceResultDigest = string;
+  export type SourceAmountFen = string | null;
+  export type AmountFen = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type PeriodPaidFen = string | null;
+  export type PeriodOtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type SettlementStatus = string;
+  export type SourceEventCount = number;
+  export type Cashflow = string;
+  export type Normal = string;
+  export type PartyKey = [any, any] | null;
+  export type PartyRole = string;
+  export type State = "resolved" | "unresolved";
+  export type CalculationId = string;
+  export type FactId = string;
+  export type PostingPeriod1 = string;
+  export type VoucherVersionId = string | null;
+  export type Direction = -1 | 1;
+  export type SourceEvents = SettlementSourceEvent[];
+  export type ReimbursementAcceptanceBasis = "company_confirmation_month";
+  export type Obligations = SettlementObligation[];
+  export type Field1 = string;
+  export type Message = string;
+  export type Code1 = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category2 = string;
+  export type InventoryId = number;
+  export type SubjectId2 = string;
+  export type FactId1 = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId = string;
+  export type AssetId1 = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest1 = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId1 = string | null;
+  export type VoucherNumber = number;
+  export type VersionId = string | null;
+  export type CalculationId1 = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo = number | null;
+  export type Account1 = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason = string;
+  export type CalculationId2 = string;
+  export type FactId2 = string;
+  export type ResultDigest = string;
+  export type Kind1 = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = SelectionCandidate[];
+  export type CalculationId3 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code2 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence1 = string[];
+  export type EvidenceDigest2 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Issues = ReadinessIssue[];
+  export type CutoffPeriod = string;
+  export type Status3 = string;
+  export type Issues1 = ReadinessIssue[];
+  export type CurrentCutoffPeriod = string;
+  export type CutoffSemantics = string;
+  export type Obligations1 = SettlementObligation[];
+  export type SourceId1 = string;
+  export type Label1 = string;
+  export type Settlements = LabeledSettlement[];
+  export type CostFen2 = string | null;
+  export type AccumulatedChargeFen1 = string | null;
+  export type MonthChargeFen1 = string | null;
+  export type BookValueFen1 = string | null;
+  export type LatestChargePeriod = string | null;
+  export type ChargeStateLabel = string | null;
+  export type CalculationId4 = string;
+  export type OwnerCalculationId = string;
+  export type VoucherVersionId2 = string | null;
+  export type VoucherNumber1 = number | null;
+  export type Period1 = string;
+  export type Label2 = string;
+  export type BatchReferences = AssetBatchReference[];
+  export type BenefitAreaLabel = string | null;
+  export type UsefulLifeMonths = number | null;
+  export type AcquisitionReference = string;
+  export type MonthAcquired = boolean;
+  export type MonthActivated = boolean;
+  export type MonthExited = boolean;
+  export type InServiceDate = string | null;
+  export type ResidualValueFen = string | null;
+  export type DepreciationMethodLabel = string | null;
+  export type RoundingPolicyLabel = string | null;
+  export type Date = string;
+  export type BookValueFen2 = string | null;
+  export type Reference = string;
+  export type SubjectId3 = string;
+  export type SettlementView1 = "historical";
+  export type MovementsScope1 = "business_related_settlement_events";
+  export type Status4 = string;
+  export type Obligations2 = SettlementObligation[];
+  export type Issues2 = ReadinessIssue[];
+  export type CutoffPeriod1 = string;
+  export type Kind2 = "sale" | "retirement";
+  export type GrossProceedsFen = string;
+  export type GainFen = string;
+  export type LossFen = string;
+  export type Party = string;
+  export type PartyId = string;
+  export type Source1 = string | null;
+  export type AssetId2 = string;
+  export type AssetType1 = "intangible";
+  export type Code3 = string;
+  export type Name2 = string;
+  export type Category3 = string;
+  export type CategoryLabel1 = string;
+  export type Status5 = "active" | "pending_activation" | "disposed" | "retired";
+  export type StatusLabel1 = string;
+  export type AcquisitionDate1 = string | null;
+  export type PostingPeriod2 = string;
+  export type RecognitionLabel1 = string;
+  export type SourceLabel1 = string;
+  export type SourcePartyLabel1 = string;
+  export type SourceParties1 = string | null;
+  export type SettlementScope1 = string;
+  export type Settlements1 = LabeledSettlement[];
+  export type CostFen3 = string | null;
+  export type AccumulatedChargeFen2 = string | null;
+  export type MonthChargeFen2 = string | null;
+  export type BookValueFen3 = string | null;
+  export type LatestChargePeriod1 = string | null;
+  export type ChargeStateLabel1 = string | null;
+  export type BatchReferences1 = AssetBatchReference[];
+  export type BenefitAreaLabel1 = string | null;
+  export type UsefulLifeMonths1 = number | null;
+  export type AcquisitionReference1 = string;
+  export type MonthAcquired1 = boolean;
+  export type MonthActivated1 = boolean;
+  export type MonthExited1 = boolean;
+  export type AvailableForUseDate = string | null;
+  export type LifeBasisLabel = string;
+  export type LifeBasisExplanation = string;
+  export type RightsDescription = string;
+  export type Date1 = string;
+  export type BookValueFen4 = string | null;
+  export type Reference1 = string;
+  export type AssetId3 = string;
+  export type AssetType2 = ("fixed" | "intangible") | null;
+  export type Name3 = string;
+  export type SelectionStatus = "unestablished";
+  export type CalculationId5 = string;
+  export type FactId3 = string;
+  export type ResultDigest1 = string;
+  export type Kind3 = string;
+  export type HasJournalLines1 = boolean;
+  export type TraceOnly1 = true;
+  export type CandidateSelections = CandidateSelection[];
+  export type TraceTargets1 = CalculationTarget[];
+  export type CostFen4 = null;
+  export type AccumulatedChargeFen3 = null;
+  export type MonthChargeFen3 = null;
+  export type BookValueFen5 = null;
+  export type EstablishedCard = FixedAssetItem | IntangibleAssetItem;
+  export type Items = (FixedAssetItem | IntangibleAssetItem | UnestablishedAsset)[];
+  export type TotalCount = number;
+  export type FilteredCount = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+  export type CollectionVersion = string;
+  export type SourceId2 = string;
+  export type ProjectId = string;
+  export type Period2 = string;
+  export type Kind4 = string;
+  export type Label3 = string;
+  export type Party1 = string;
+  export type PartyId1 = string;
+  export type Source2 = string | null;
+  export type CostFen5 = string;
+  export type RemainingFen1 = string;
+  export type Items1 = AssetProject[];
+  export type Id1 = string;
+  export type SubjectId4 = string;
+  export type Revision1 = number;
+  export type Kind5 = string;
+  export type Period3 = string;
+  export type Evidence2 = string[];
+  export type Deleted = boolean;
+  export type Knowledge1 = "current_knowledge";
+  export type RecordedAt2 = string | null;
+  export type CalculationId6 = string;
+  export type VoucherVersionId3 = string | null;
+  export type SelectionStatus1 = "unestablished";
+  export type TraceTargets2 = TraceTarget[];
+  export type Items2 = SourceHistoryItem[];
+  export type Items3 = any[];
+  export type ScopePeriod = string;
+  export type CurrentCutoffPeriod1 = string;
+  export type CutoffSemantics1 = string;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type Period4 = string;
+  export type AsOf1 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State1 = "open";
+  export type State2 = "exact_close";
+  export type Digest = string;
+  export type State3 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge2 = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status6 = "ready";
+  export type Source3 = "exact_period_manifest";
+  export type Status7 = "recorded" | "not_recorded";
+  export type Status8 = "unavailable";
+  export type Reason1 = "no_exact_period_manifest";
+  export type Period5 = string;
+  export type Code4 = "already_closed" | "earlier_period_open";
+  export type Message1 = string;
+  export type Period6 = string;
+  export type Issues3 = ReadinessIssue[];
+  export type Knowledge3 = "current_knowledge";
+  export type AffectsFrozenReadiness = false;
+  export type Status9 = "ready" | "needs_information";
+  export type Issues4 = ReadinessIssue[];
+  export type InventoryCount = number;
+  export type CoverageDigest = string;
+  export type Status10 = "ready" | "needs_information";
+  export type Issues5 = ReadinessIssue[];
+  export type PendingSubjectId = string | null;
+  export type UnpublishedCount = number;
+  export type Status11 = "ready" | "needs_information";
+  export type Issues6 = ReadinessIssue[];
+  export type Status12 = string;
+  export type CutoffPeriod2 = string;
+  export type CurrentCutoffPeriod2 = string;
+  export type Issues7 = ReadinessIssue[];
+  export type ObligationCount = number;
+  export type Complete = boolean;
+  export type UnestablishedStateSelectionCount = number;
+  export type MovementCount = number;
+  export type SourceAmountFen1 = string | null;
+  export type PaidFen1 = string | null;
+  export type OtherSettledFen1 = string | null;
+  export type RemainingFen2 = string | null;
+  export type Status13 = "completed" | "followup_required" | "unestablished";
+  export type ObligationCount1 = number;
+  export type BasisIssueCount = number;
+  export type ScopePeriod1 = string;
+  export type ScopeSemantics = "obligation_interval_includes_selected_period";
+  export type FactIssues = ReadinessIssue[];
+  export type TotalCount1 = number;
+  export type IssueCount = number;
+  export type Status14 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code5 = string;
+  export type Category4 = "management_fact" | "capability" | "publication";
+  export type Field2 = string;
+  export type Message2 = string;
+  export type EmployeeId1 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen1 = string;
+  export type Issues8 = TaxImportMappingIssue[];
+
+  export interface DashboardAssetsResponse {
+    schema_version: SchemaVersion;
+    snapshot_version: SnapshotVersion;
+    selected_period: DashboardPeriod | null;
+    read_semantics: ReadSemantics;
+    read_context: DashboardReadContext;
+    data: AssetsData | null;
+  }
+  export interface DashboardPeriod {
+    key: Key;
+    year: Year;
+    month: Month;
+    label: Label;
+    short_label: ShortLabel;
+    status: Status;
+    start_date: StartDate;
+    end_date: EndDate;
+    closed_at: ClosedAt;
+  }
+  export interface ReadSemantics {
+    knowledge: Knowledge;
+    accounting: Accounting;
+    business_basis: BusinessBasis;
+    display: Display;
+    system_time_replay: SystemTimeReplay;
+    recorded_at: RecordedAt;
+    recording_period: RecordingPeriod;
+    recorded_later: RecordedLater;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface AssetsData {
+    fixed_asset_cost_fen: FixedAssetCostFen;
+    accumulated_depreciation_fen: AccumulatedDepreciationFen;
+    fixed_asset_net_fen: FixedAssetNetFen;
+    intangible_asset_cost_fen: IntangibleAssetCostFen;
+    accumulated_amortization_fen: AccumulatedAmortizationFen;
+    intangible_asset_net_fen: IntangibleAssetNetFen;
+    active_count: ActiveCount;
+    registered_count: RegisteredCount;
+    unestablished_count: UnestablishedCount;
+    ledger_cost_fen: LedgerCostFen;
+    ledger_accumulated_fen: LedgerAccumulatedFen;
+    ledger_net_fen: LedgerNetFen;
+    active_ledger_net_fen: ActiveLedgerNetFen;
+    pending_intangible_count: PendingIntangibleCount;
+    pending_intangible_cost_fen: PendingIntangibleCostFen;
+    project_cost_fen: ProjectCostFen;
+    reconciliation_scope: ReconciliationScope;
+    card_cost_fen: CardCostFen;
+    card_accumulated_fen: CardAccumulatedFen;
+    card_net_fen: CardNetFen;
+    established_card_totals: EstablishedCardTotals | null;
+    pending_fixed_count: PendingFixedCount;
+    pending_fixed_cost_fen: PendingFixedCostFen;
+    month_charge_fen: MonthChargeFen;
+    month_acquired_count: MonthAcquiredCount;
+    month_acquired_fen: MonthAcquiredFen;
+    month_cost_adjustment_fen: MonthCostAdjustmentFen;
+    month_activated_count: MonthActivatedCount;
+    month_exited_count: MonthExitedCount;
+    reconciled: Reconciled;
+    reconciliation_label: ReconciliationLabel;
+    differences: AssetDifferences;
+    fixed: FixedAssetSummary;
+    intangible: IntangibleAssetSummary;
+    collections: AssetCollections;
+    period_preparation: PeriodPreparation | null;
+  }
+  export interface EstablishedCardTotals {
+    registered_count: RegisteredCount1;
+    cost_fen: CostFen;
+    accumulated_charge_fen: AccumulatedChargeFen;
+    book_value_fen: BookValueFen;
+  }
+  export interface AssetDifferences {
+    cost_fen: CostFen1;
+    accumulated_fen: AccumulatedFen;
+    net_fen: NetFen;
+  }
+  export interface FixedAssetSummary {
+    registered_count: RegisteredCount2;
+    unestablished_count: UnestablishedCount1;
+    active_count: ActiveCount1;
+    active_cost_fen: ActiveCostFen;
+    active_accumulated_fen: ActiveAccumulatedFen;
+    active_net_fen: ActiveNetFen;
+    pending_count: PendingCount;
+    pending_cost_fen: PendingCostFen;
+    month_acquired_count: MonthAcquiredCount1;
+    month_acquired_fen: MonthAcquiredFen1;
+    month_cost_adjustment_fen: MonthCostAdjustmentFen1;
+    month_depreciation_fen: MonthDepreciationFen;
+    disposed_count: DisposedCount;
+    month_activated_count: MonthActivatedCount1;
+    month_disposed_count: MonthDisposedCount;
+  }
+  export interface IntangibleAssetSummary {
+    registered_count: RegisteredCount3;
+    unestablished_count: UnestablishedCount2;
+    active_count: ActiveCount2;
+    active_cost_fen: ActiveCostFen1;
+    active_accumulated_fen: ActiveAccumulatedFen1;
+    active_net_fen: ActiveNetFen1;
+    pending_count: PendingCount1;
+    pending_cost_fen: PendingCostFen1;
+    month_acquired_count: MonthAcquiredCount2;
+    month_acquired_fen: MonthAcquiredFen2;
+    month_cost_adjustment_fen: MonthCostAdjustmentFen2;
+    month_amortization_fen: MonthAmortizationFen;
+    retired_count: RetiredCount;
+    month_retired_count: MonthRetiredCount;
+  }
+  export interface AssetCollections {
+    assets?: Collection;
+    projects?: Collection1;
+    source_history?: Collection2;
+    settlement_events?: ScopedSettlementCollection;
+  }
+  export interface Collection {
+    items: Items;
+    page: CollectionPage;
+  }
+  export interface FixedAssetItem {
+    asset_id: AssetId;
+    asset_type: AssetType;
+    code: Code;
+    name: Name;
+    category: Category;
+    category_label: CategoryLabel;
+    field_sources: FieldSources;
+    status: Status1;
+    status_label: StatusLabel;
+    acquisition_date: AcquisitionDate;
+    posting_period: PostingPeriod;
+    recognition_label: RecognitionLabel;
+    source_label: SourceLabel;
+    source_party_label: SourcePartyLabel;
+    source_parties: SourceParties;
+    settlement_scope: SettlementScope;
+    settlements: Settlements;
+    cost_fen: CostFen2;
+    accumulated_charge_fen: AccumulatedChargeFen1;
+    month_charge_fen: MonthChargeFen1;
+    book_value_fen: BookValueFen1;
+    latest_charge_period: LatestChargePeriod;
+    charge_state_label: ChargeStateLabel;
+    batch_references: BatchReferences;
+    benefit_area_label: BenefitAreaLabel;
+    useful_life_months: UsefulLifeMonths;
+    acquisition_reference: AcquisitionReference;
+    month_acquired: MonthAcquired;
+    month_activated: MonthActivated;
+    month_exited: MonthExited;
+    in_service_date: InServiceDate;
+    residual_value_fen: ResidualValueFen;
+    depreciation_method_label: DepreciationMethodLabel;
+    rounding_policy_label: RoundingPolicyLabel;
+    disposal: FixedAssetDisposal | null;
+  }
+  export interface FieldSources {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface SourceMetadata {
+    source_type: SourceType;
+    id: Id;
+    revision: Revision;
+    field: Field;
+    source: Source;
+    evidence_digest: EvidenceDigest;
+    evidence: Evidence;
+    basis: Basis;
+    recorded_at: RecordedAt1;
+  }
+  export interface LabeledSettlement {
+    subject_id: SubjectId;
+    settlement_view: SettlementView;
+    movements_scope: MovementsScope;
+    status: Status2;
+    obligations: Obligations;
+    issues: Issues;
+    cutoff_period: CutoffPeriod;
+    current_followups: SettlementCurrentFollowup;
+    source_id: SourceId1;
+    label: Label1;
+  }
+  export interface SettlementObligation {
+    key: Key1;
+    name: Name1;
+    category: Category1;
+    account: Account;
+    counterparty_id: CounterpartyId;
+    creditor_id?: CreditorId;
+    recipient_id?: RecipientId;
+    source_business: BusinessIdentity;
+    source_calculation_id: SourceCalculationId;
+    source_fact_id: SourceFactId;
+    source_period?: SourcePeriod;
+    source_result_digest?: SourceResultDigest;
+    source_amount_fen: SourceAmountFen;
+    amount_fen?: AmountFen;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    period_paid_fen: PeriodPaidFen;
+    period_other_settled_fen: PeriodOtherSettledFen;
+    remaining_fen: RemainingFen;
+    settlement_status: SettlementStatus;
+    source_event_count: SourceEventCount;
+    cashflow?: Cashflow;
+    normal?: Normal;
+    party_key?: PartyKey;
+    party_role?: PartyRole;
+    state?: State;
+    source_events?: SourceEvents;
+    reimbursement_acceptance_basis?: ReimbursementAcceptanceBasis;
+  }
+  export interface BusinessIdentity {
+    subject_id: SubjectId1;
+    kind: Kind;
+  }
+  export interface SettlementSourceEvent {
+    calculation_id: CalculationId;
+    fact_id: FactId;
+    posting_period: PostingPeriod1;
+    voucher_version_id: VoucherVersionId;
+    direction: Direction;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field1;
+    message: Message;
+    code?: Code1;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category2;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId2;
+    fact_id?: FactId1;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId1;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest1;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId1;
+    voucher_number?: VoucherNumber;
+    version_id?: VersionId;
+    calculation_id?: CalculationId1;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account1;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId2;
+    fact_id: FactId2;
+    result_digest: ResultDigest;
+    kind: Kind1;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId3;
+  }
+  export interface DuplicateSignal {
+    code: Code2;
+    matched_fields: MatchedFields;
+    evidence?: Evidence1;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest2;
+    location: Location1;
+  }
+  export interface SettlementCurrentFollowup {
+    status: Status3;
+    issues: Issues1;
+    current_cutoff_period: CurrentCutoffPeriod;
+    cutoff_semantics: CutoffSemantics;
+    obligations: Obligations1;
+  }
+  export interface AssetBatchReference {
+    calculation_id: CalculationId4;
+    owner_calculation_id: OwnerCalculationId;
+    voucher_version_id: VoucherVersionId2;
+    voucher_number: VoucherNumber1;
+    period: Period1;
+    label: Label2;
+  }
+  export interface FixedAssetDisposal {
+    date: Date;
+    book_value_fen: BookValueFen2;
+    reference: Reference;
+    settlement: SourceSettlement;
+    kind: Kind2;
+    gross_proceeds_fen: GrossProceedsFen;
+    gain_fen: GainFen;
+    loss_fen: LossFen;
+    party: Party;
+    party_id?: PartyId;
+    source?: Source1;
+    field_sources?: FieldSources1;
+  }
+  export interface SourceSettlement {
+    subject_id: SubjectId3;
+    settlement_view: SettlementView1;
+    movements_scope: MovementsScope1;
+    status: Status4;
+    obligations: Obligations2;
+    issues: Issues2;
+    cutoff_period: CutoffPeriod1;
+    current_followups: SettlementCurrentFollowup;
+  }
+  export interface FieldSources1 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface IntangibleAssetItem {
+    asset_id: AssetId2;
+    asset_type: AssetType1;
+    code: Code3;
+    name: Name2;
+    category: Category3;
+    category_label: CategoryLabel1;
+    field_sources: FieldSources2;
+    status: Status5;
+    status_label: StatusLabel1;
+    acquisition_date: AcquisitionDate1;
+    posting_period: PostingPeriod2;
+    recognition_label: RecognitionLabel1;
+    source_label: SourceLabel1;
+    source_party_label: SourcePartyLabel1;
+    source_parties: SourceParties1;
+    settlement_scope: SettlementScope1;
+    settlements: Settlements1;
+    cost_fen: CostFen3;
+    accumulated_charge_fen: AccumulatedChargeFen2;
+    month_charge_fen: MonthChargeFen2;
+    book_value_fen: BookValueFen3;
+    latest_charge_period: LatestChargePeriod1;
+    charge_state_label: ChargeStateLabel1;
+    batch_references: BatchReferences1;
+    benefit_area_label: BenefitAreaLabel1;
+    useful_life_months: UsefulLifeMonths1;
+    acquisition_reference: AcquisitionReference1;
+    month_acquired: MonthAcquired1;
+    month_activated: MonthActivated1;
+    month_exited: MonthExited1;
+    available_for_use_date: AvailableForUseDate;
+    life_basis_label: LifeBasisLabel;
+    life_basis_explanation: LifeBasisExplanation;
+    rights_description: RightsDescription;
+    retirement: IntangibleAssetRetirement | null;
+  }
+  export interface FieldSources2 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface IntangibleAssetRetirement {
+    date: Date1;
+    book_value_fen: BookValueFen4;
+    reference: Reference1;
+    settlement: SourceSettlement;
+  }
+  export interface UnestablishedAsset {
+    asset_id: AssetId3;
+    asset_type: AssetType2;
+    name: Name3;
+    selection_status: SelectionStatus;
+    candidate_selections: CandidateSelections;
+    trace_targets: TraceTargets1;
+    cost_fen: CostFen4;
+    accumulated_charge_fen: AccumulatedChargeFen3;
+    month_charge_fen: MonthChargeFen3;
+    book_value_fen: BookValueFen5;
+    established_card?: EstablishedCard;
+  }
+  export interface CandidateSelection {
+    calculation_id: CalculationId5;
+    fact_id: FactId3;
+    result_digest: ResultDigest1;
+    kind: Kind3;
+    has_journal_lines: HasJournalLines1;
+    trace_only: TraceOnly1;
+  }
+  export interface CollectionPage {
+    total_count: TotalCount;
+    filtered_count: FilteredCount;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+    collection_version?: CollectionVersion;
+  }
+  export interface Collection1 {
+    items: Items1;
+    page: CollectionPage;
+  }
+  export interface AssetProject {
+    source_id: SourceId2;
+    project_id: ProjectId;
+    period: Period2;
+    kind: Kind4;
+    label: Label3;
+    party: Party1;
+    party_id?: PartyId1;
+    source?: Source2;
+    field_sources?: FieldSources3;
+    cost_fen: CostFen5;
+    remaining_fen: RemainingFen1;
+    settlement: SourceSettlement;
+  }
+  export interface FieldSources3 {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface Collection2 {
+    items: Items2;
+    page: CollectionPage;
+  }
+  export interface SourceHistoryItem {
+    id: Id1;
+    subject_id: SubjectId4;
+    revision: Revision1;
+    kind: Kind5;
+    period: Period3;
+    evidence: Evidence2;
+    deleted?: Deleted;
+    knowledge?: Knowledge1;
+    recorded_at: RecordedAt2;
+    trace_targets: TraceTargets2;
+  }
+  export interface TraceTarget {
+    calculation_id: CalculationId6;
+    voucher_version_id: VoucherVersionId3;
+    selection_status?: SelectionStatus1;
+  }
+  export interface ScopedSettlementCollection {
+    items: Items3;
+    page: CollectionPage;
+    scope_period?: ScopePeriod;
+    current_cutoff_period?: CurrentCutoffPeriod1;
+    cutoff_semantics?: CutoffSemantics1;
+  }
+  export interface PeriodPreparation {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    period: Period4;
+    as_of: AsOf1;
+    as_of_semantics: AsOfSemantics;
+    closure: Closure;
+    read_semantics: PreparationReadSemantics;
+    projection: Projection;
+    frozen_readiness: FrozenReadiness1;
+    readiness: Readiness | null;
+    current_followups: PeriodCurrentFollowups;
+  }
+  export interface OpenClosure {
+    state: State1;
+  }
+  export interface ExactClosure {
+    state: State2;
+    digest: Digest;
+  }
+  export interface LaterClosure {
+    state: State3;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface PreparationReadSemantics {
+    knowledge: Knowledge2;
+    frozen_readiness: FrozenReadiness;
+    current_followups: CurrentFollowups;
+  }
+  export interface RecordedReadiness {
+    status: Status6;
+    source: Source3;
+    readiness: RecordedStatus;
+    inventories: RecordedStatus;
+    material_coverage: RecordedStatus;
+    previous_close_digest: RecordedStatus;
+  }
+  export interface RecordedStatus {
+    status: Status7;
+  }
+  export interface UnavailableReadiness {
+    status: Status8;
+    reason: Reason1;
+  }
+  export interface Readiness {
+    period: Period5;
+    order_failure: OrderFailure | null;
+    issues: Issues3;
+  }
+  export interface OrderFailure {
+    code: Code4;
+    message: Message1;
+    details: OrderDetails;
+  }
+  export interface OrderDetails {
+    period?: Period6;
+  }
+  export interface PeriodCurrentFollowups {
+    knowledge: Knowledge3;
+    affects_frozen_readiness: AffectsFrozenReadiness;
+    materials: MaterialFollowup;
+    accounting: AccountingFollowup;
+    close_requirements: CheckFollowup;
+    settlements: SettlementFollowup;
+    external: ExternalFollowup;
+    file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
+  }
+  export interface MaterialFollowup {
+    status: Status9;
+    issues: Issues4;
+    inventory_count: InventoryCount;
+    coverage_digest: CoverageDigest;
+  }
+  export interface AccountingFollowup {
+    status: Status10;
+    issues: Issues5;
+    pending_subject_id: PendingSubjectId;
+    unpublished_count: UnpublishedCount;
+  }
+  export interface CheckFollowup {
+    status: Status11;
+    issues: Issues6;
+  }
+  export interface SettlementFollowup {
+    status: Status12;
+    cutoff_period?: CutoffPeriod2;
+    current_cutoff_period?: CurrentCutoffPeriod2;
+    issues?: Issues7;
+    obligation_count: ObligationCount;
+    complete: Complete;
+    unestablished_state_selection_count: UnestablishedStateSelectionCount;
+    movement_count: MovementCount;
+    source_amount_fen: SourceAmountFen1;
+    paid_fen: PaidFen1;
+    other_settled_fen: OtherSettledFen1;
+    remaining_fen: RemainingFen2;
+  }
+  export interface ExternalFollowup {
+    status: Status13;
+    obligation_count: ObligationCount1;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    scope_period: ScopePeriod1;
+    scope_semantics: ScopeSemantics;
+    fact_issues: FactIssues;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobFollowup {
+    total_count: TotalCount1;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status14;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues8;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code5;
+    category: Category4;
+    field: Field2;
+    message: Message2;
+    employee_id?: EmployeeId1;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen1;
+  }
+}
+
+export namespace DashboardBusinessStatusContract {
+  export type SchemaVersion = 4;
+  export type SnapshotVersion = string;
+  export type Key = string;
+  export type Year = number;
+  export type Month = number;
+  export type Label = string;
+  export type ShortLabel = string;
+  export type Status = "open" | "closed";
+  export type StartDate = string;
+  export type EndDate = string;
+  export type ClosedAt = string | null;
+  export type Knowledge = "current_knowledge";
+  export type Accounting = "as_posted";
+  export type BusinessBasis = "current_known" | "frozen_adoption";
+  export type Display = "current" | "frozen_with_current_supplements";
+  export type SystemTimeReplay = false;
+  export type RecordedAt = "system_recording_time";
+  export type RecordingPeriod = "business_recording_period";
+  export type RecordedLater = "business_recording_period_after_selected_period";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type SubjectId = string;
+  export type Kind = string;
+  export type Period = string;
+  export type AsOf1 = string;
+  export type Id = string;
+  export type SubjectId1 = string;
+  export type Revision = number;
+  export type Kind1 = string;
+  export type Period1 = string;
+  export type Evidence = string[];
+  export type Deleted = boolean;
+  export type Knowledge1 = "current_knowledge";
+  export type RecordedAt1 = string | null;
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State = "open";
+  export type State1 = "exact_close";
+  export type Digest = string;
+  export type State2 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type CutoffPeriod = string;
+  export type Status1 = string;
+  export type Id1 = string;
+  export type EventType = "voucher";
+  export type VoucherVersionId = string;
+  export type VoucherId = string;
+  export type VoucherNumber = number;
+  export type VoucherCalculationId = string;
+  export type CalculationId = string;
+  export type FactId = string;
+  export type Kind2 = string;
+  export type CalculationPeriod = string;
+  export type PostingPeriod = string;
+  export type ResultDigest = string;
+  export type Role = string;
+  export type Direction = number;
+  export type ReversesVoucherVersionId = string | null;
+  export type SelectionSource = string;
+  export type LineNo = number;
+  export type Account = string;
+  export type Debit = string;
+  export type Credit = string;
+  export type Cashflow = string | null;
+  export type Lines = VoucherEventLine[];
+  export type VoucherEvents = VoucherEvent[];
+  export type Id2 = string;
+  export type EventType1 = "state_result";
+  export type Status2 = "established";
+  export type CalculationId1 = string;
+  export type FactId1 = string;
+  export type Kind3 = string;
+  export type CalculationPeriod1 = string;
+  export type PostingPeriod1 = string;
+  export type ResultDigest1 = string;
+  export type Opening = boolean;
+  export type SelectionSource1 = string;
+  export type SelectionProof = DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof;
+  export type Basis = "direct_adoption";
+  export type ClosePeriod = string;
+  export type PublicationId = string;
+  export type Role1 = string;
+  export type Basis1 = "calculation_current";
+  export type Basis2 = "asset_batch_member";
+  export type OwnerCalculationId = string;
+  export type OwnerPublicationId = string;
+  export type MembershipDigest = string;
+  export type Vouchers = VoucherEvent[];
+  export type Mode = "monthly_plan" | "explicit_no_change";
+  export type ConfirmationFactId = string;
+  export type ConfirmationSubjectId = string;
+  export type ConfirmationRevision = number;
+  export type ConfirmationKind = string;
+  export type Evidence1 = string[];
+  export type StateResults = StateResult[];
+  export type Id3 = string;
+  export type SubjectId2 = string;
+  export type PostingPeriod2 = string;
+  export type SelectionStatus = "unestablished";
+  export type Reason = string;
+  export type CalculationId2 = string;
+  export type FactId2 = string;
+  export type ResultDigest2 = string;
+  export type Kind4 = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = CandidateSelection[];
+  export type CalculationId3 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type UnestablishedStateSelections = UnestablishedSelection[];
+  export type AssetMemberResults = StateResult[];
+  export type Status3 = "published";
+  export type Knowledge2 = "current_knowledge";
+  export type CalculationId4 = string;
+  export type SubjectId3 = string;
+  export type Kind5 = string;
+  export type FactId3 = string;
+  export type ResultDigest3 = string;
+  export type PostingPeriod3 = string;
+  export type PublicationId1 = string;
+  export type VoucherId1 = string | null;
+  export type HasJournalLines1 = boolean;
+  export type CurrentVoucherVersionId = string | null;
+  export type AmountFen = string | null;
+  export type AmountLabel = string;
+  export type ClosePeriod1 = string;
+  export type PublicationId2 = string;
+  export type CalculationId5 = string;
+  export type ResultDigest4 = string;
+  export type Role2 = string;
+  export type SelectionProof1 =
+    DirectAdoptionProof | CalculationCurrentProof | AssetBatchMemberProof | AssetCardAdoptionProof;
+  export type Basis3 = "asset_card_adoption";
+  export type OwnerCalculationId1 = string;
+  export type OwnerPublicationId1 = string;
+  export type AmountFen1 = string | null;
+  export type AmountLabel1 = string;
+  export type Label1 = string;
+  export type Kind6 = string;
+  export type Version = string | null;
+  export type EffectiveFrom = string | null;
+  export type EffectiveTo = string | null;
+  export type OfficialUrls = string[];
+  export type SourceType = "voucher" | "calculation" | "fact" | "evidence" | "inventory";
+  export type Id4 = string;
+  export type Revision1 = number | null;
+  export type Digest1 = string | null;
+  export type Name = string | null;
+  export type MediaType = string | null;
+  export type Policies = AdoptedPolicy[];
+  export type Label2 = string;
+  export type Mode1 = string;
+  export type ConfirmationReferences = CloseReviewSourceReference[];
+  export type PayrollConfirmations = AdoptedPayrollConfirmation[];
+  export type Evidence2 = CloseReviewSourceReference[];
+  export type Basis4 = "current_publication" | "frozen_adoption";
+  export type CalculationIds = string[];
+  export type Status4 = string;
+  export type LatestMatchesPublication = boolean;
+  export type PendingCauses = string[];
+  export type Dispositions = string[];
+  export type DispositionCount = number;
+  export type CutoffPeriod1 = string;
+  export type Status5 = string;
+  export type Key1 = string;
+  export type Name1 = string;
+  export type Category = string;
+  export type Account1 = string;
+  export type CounterpartyId = string | null;
+  export type CreditorId = string | null;
+  export type RecipientId = string | null;
+  export type SubjectId4 = string;
+  export type Kind7 = string;
+  export type SourceCalculationId = string;
+  export type SourceFactId = string;
+  export type SourcePeriod = string;
+  export type SourceResultDigest = string;
+  export type SourceAmountFen = string | null;
+  export type AmountFen2 = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type PeriodPaidFen = string | null;
+  export type PeriodOtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type SettlementStatus = string;
+  export type SourceEventCount = number;
+  export type Cashflow1 = string;
+  export type Normal = string;
+  export type PartyKey = [any, any] | null;
+  export type PartyRole = string;
+  export type State3 = "resolved" | "unresolved";
+  export type CalculationId6 = string;
+  export type FactId4 = string;
+  export type PostingPeriod4 = string;
+  export type VoucherVersionId1 = string | null;
+  export type Direction1 = -1 | 1;
+  export type SourceEvents = SettlementSourceEvent[];
+  export type ReimbursementAcceptanceBasis = "company_confirmation_month";
+  export type Obligations = SettlementObligation[];
+  export type Field = string;
+  export type Message = string;
+  export type Code = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category1 = string;
+  export type InventoryId = number;
+  export type SubjectId5 = string;
+  export type FactId5 = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId = string;
+  export type AssetId = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period2 = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId2 = string | null;
+  export type VoucherNumber1 = number;
+  export type VersionId = string | null;
+  export type CalculationId7 = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo1 = number | null;
+  export type Account2 = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason1 = string;
+  export type CalculationId8 = string;
+  export type FactId6 = string;
+  export type ResultDigest5 = string;
+  export type Kind8 = string;
+  export type HasJournalLines2 = boolean;
+  export type TraceOnly1 = true;
+  export type Candidates1 = SelectionCandidate[];
+  export type TraceTargets1 = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code1 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence3 = string[];
+  export type EvidenceDigest1 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Issues = ReadinessIssue[];
+  export type BusinessCount = number;
+  export type MovementCount = number;
+  export type LineRelationCount = number;
+  export type Status6 = string;
+  export type ObligationCount = number;
+  export type BasisIssueCount = number;
+  export type AsOf2 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type CompletionCount = number;
+  export type TotalCount = number;
+  export type IssueCount = number;
+  export type EntityId = string;
+  export type DisplayName = string | null;
+  export type DisplayNumber = string | null;
+  export type Purpose = string | null;
+  export type Note = string | null;
+  export type EmploymentStart = string | null;
+  export type EmploymentEnd = string | null;
+  export type EmploymentStatus = string | null;
+  export type Active = boolean | null;
+  export type CategoryLabel = string | null;
+  export type RightsDescription = string | null;
+  export type UsefulLifeBasis = string | null;
+  export type CounterpartyId1 = string | null;
+  export type BeneficiaryId = string | null;
+  export type HandlerId = string | null;
+  export type SourceType1 = string;
+  export type Id5 = string;
+  export type Revision2 = number | null;
+  export type Field1 = string | null;
+  export type Source = string | null;
+  export type EvidenceDigest2 = string | null;
+  export type Evidence4 = string[];
+  export type Basis5 = "frozen" | "current_supplement" | "current";
+  export type RecordedAt2 = string | null;
+  export type Counterparties = DisplayProfile[];
+  export type Employees = DisplayProfile[];
+  export type Assets = DisplayProfile[];
+  export type CalculationId9 = string;
+  export type VoucherVersionId3 = string | null;
+  export type SelectionStatus1 = "unestablished";
+  export type TraceTargets2 = TraceTarget[];
+  export type Knowledge3 = "current_knowledge";
+  export type Accounting1 = "as_posted";
+  export type BusinessBasis1 = "current_known" | "frozen_adoption";
+  export type Display1 = "frozen_with_current_supplements";
+  export type AsOf3 = "external_deadlines_and_completion_only";
+  export type Projection = "summary";
+  export type TraceTargetCount = number;
+  export type CutoffPeriod2 = string;
+  export type Status7 = string;
+  export type Obligations1 = SettlementObligation[];
+  export type Issues1 = ReadinessIssue[];
+  export type BusinessCount1 = number;
+  export type MovementCount1 = number;
+  export type LineRelationCount1 = number;
+  export type UnestablishedStateSelections1 = UnestablishedSelection[];
+  export type Complete = boolean;
+  export type ScopePeriod = string;
+  export type CurrentCutoffPeriod = string;
+  export type CutoffSemantics = string;
+  export type CandidateContract = string;
+  export type CandidateVersion = number;
+  export type SubjectId6 = string;
+  export type Status8 = "clear" | "review_required";
+  export type SubjectId7 = string;
+  export type FactId7 = string | null;
+  export type Kind9 = string;
+  export type Period3 = string;
+  export type Signals1 = DuplicateSignal[];
+  export type StrongCandidates = DuplicateCandidate[];
+  export type WeakCandidates = DuplicateCandidate[];
+  export type Message1 = string;
+  export type CandidateSubjectId1 = string;
+  export type ReviewPeriod1 = string;
+  export type Signals2 = DuplicateSignal[];
+  export type Unresolved = DuplicateUnresolved[];
+  export type CheckId = string;
+  export type Action = "clear" | "reuse_existing" | "create_separate";
+  export type ProposedSubjectId = string;
+  export type ResultFactId = string;
+  export type SelectedFactId = string | null;
+  export type CandidateDigest = string;
+  export type Explanation = string;
+  export type CreatedAt = string;
+  export type Checks = DuplicateCheck[];
+  export type CheckCount = number;
+  export type ChecksTruncated = boolean;
+  export type Id6 = string;
+  export type Action1 = string;
+  export type BeforeFactId = string;
+  export type AfterFactId = string | null;
+  export type ReplacementSubjectId = string | null;
+  export type Digest2 = string;
+  export type IdentityCorrections = IdentityCorrection[];
+  export type FactId8 = string;
+  export type Path = string;
+  export type RecordedEntityId = string;
+  export type CurrentEntityId = string;
+  export type Role3 = string;
+  export type EntityReferences = EntityReference[];
+  export type SettlementView = "historical" | "current";
+  export type Items = (VoucherEvent | StateResult | UnestablishedSelection)[];
+  export type TotalCount1 = number;
+  export type FilteredCount = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+  export type CollectionVersion = string;
+  export type Items1 = any[];
+  export type ScopePeriod1 = string;
+  export type CurrentCutoffPeriod1 = string;
+  export type CutoffSemantics1 = string;
+  export type Id7 = string;
+  export type SubjectId8 = string;
+  export type Revision3 = number;
+  export type Kind10 = string;
+  export type Period4 = string;
+  export type Evidence5 = string[];
+  export type Deleted1 = boolean;
+  export type Knowledge4 = "current_knowledge";
+  export type RecordedAt3 = string | null;
+  export type TraceTargets3 = TraceTarget[];
+  export type Items2 = SourceHistoryItem[];
+  export type JobId = string;
+  export type Kind11 = string;
+  export type Status9 = string;
+  export type Attempts = number;
+  export type LastError = string | null;
+  export type ContractIssues = ReadinessIssue[];
+  export type Association = "direct_source" | "period_scope";
+  export type Id8 = string;
+  export type Source1 = string;
+  export type SubjectId9 = string;
+  export type CalculationId10 = string;
+  export type Obligation = string;
+  export type References = FileReference[];
+  export type Period5 = string | ReportPeriod;
+  export type Year1 = number;
+  export type Quarter = number;
+  export type QuarterStart = string;
+  export type QuarterEnd = string;
+  export type Label3 = string;
+  export type VerifiedWhenSucceeded = boolean;
+  export type CurrentFileAvailability = "not_checked";
+  export type Items3 = FileJob[];
+
+  export interface DashboardBusinessStatusResponse {
+    schema_version: SchemaVersion;
+    snapshot_version: SnapshotVersion;
+    selected_period: DashboardPeriod;
+    read_semantics: ReadSemantics;
+    read_context: DashboardReadContext;
+    data: BusinessStatusData;
+  }
+  export interface DashboardPeriod {
+    key: Key;
+    year: Year;
+    month: Month;
+    label: Label;
+    short_label: ShortLabel;
+    status: Status;
+    start_date: StartDate;
+    end_date: EndDate;
+    closed_at: ClosedAt;
+  }
+  export interface ReadSemantics {
+    knowledge: Knowledge;
+    accounting: Accounting;
+    business_basis: BusinessBasis;
+    display: Display;
+    system_time_replay: SystemTimeReplay;
+    recorded_at: RecordedAt;
+    recording_period: RecordingPeriod;
+    recorded_later: RecordedLater;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface BusinessStatusData {
+    identity: BusinessIdentityDetails;
+    period: Period;
+    as_of: AsOf1;
+    latest_source: LatestBusinessSource;
+    closure: Closure;
+    as_posted: AsPostedAccounting;
+    current_business_result: CurrentBusinessResult | null;
+    frozen_adoption: FrozenAdoption | null;
+    adopted_basis: BusinessAdoptedBasis | null;
+    review: BusinessReview;
+    settlements: BusinessSettlements;
+    external: ExternalSummary;
+    file_jobs: FileJobsSummary;
+    display_profiles: DisplayProfiles;
+    trace_targets: TraceTargets2;
+    read_semantics: BusinessReadSemantics;
+    projection: Projection;
+    trace_target_count: TraceTargetCount;
+    current_followups: BusinessStatusCurrentFollowups;
+    duplicate_checks: DuplicateChecks;
+    identity_corrections: IdentityCorrections;
+    entity_references: EntityReferences;
+    settlement_view: SettlementView;
+    collections: BusinessCollections;
+  }
+  export interface BusinessIdentityDetails {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    subject_id: SubjectId;
+    kind: Kind;
+  }
+  export interface LatestBusinessSource {
+    id: Id;
+    subject_id: SubjectId1;
+    revision: Revision;
+    kind: Kind1;
+    period: Period1;
+    evidence: Evidence;
+    deleted: Deleted;
+    knowledge: Knowledge1;
+    recorded_at: RecordedAt1;
+  }
+  export interface OpenClosure {
+    state: State;
+  }
+  export interface ExactClosure {
+    state: State1;
+    digest: Digest;
+  }
+  export interface LaterClosure {
+    state: State2;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface AsPostedAccounting {
+    cutoff_period: CutoffPeriod;
+    status: Status1;
+    voucher_events: VoucherEvents;
+    state_results: StateResults;
+    unestablished_state_selections: UnestablishedStateSelections;
+    asset_member_results?: AssetMemberResults;
+  }
+  export interface VoucherEvent {
+    id?: Id1;
+    event_type: EventType;
+    voucher_version_id: VoucherVersionId;
+    voucher_id: VoucherId;
+    voucher_number: VoucherNumber;
+    voucher_calculation_id: VoucherCalculationId;
+    calculation_id: CalculationId;
+    fact_id: FactId;
+    kind: Kind2;
+    calculation_period: CalculationPeriod;
+    posting_period: PostingPeriod;
+    result_digest: ResultDigest;
+    role: Role;
+    direction: Direction;
+    reverses_voucher_version_id: ReversesVoucherVersionId;
+    selection_source: SelectionSource;
+    lines?: Lines;
+  }
+  export interface VoucherEventLine {
+    line_no: LineNo;
+    account: Account;
+    debit: Debit;
+    credit: Credit;
+    cashflow: Cashflow;
+  }
+  export interface StateResult {
+    id?: Id2;
+    event_type: EventType1;
+    status: Status2;
+    calculation_id: CalculationId1;
+    fact_id: FactId1;
+    kind: Kind3;
+    calculation_period: CalculationPeriod1;
+    posting_period: PostingPeriod1;
+    result_digest: ResultDigest1;
+    opening: Opening;
+    selection_source: SelectionSource1;
+    selection_proof: SelectionProof;
+    vouchers: Vouchers;
+    payroll_confirmation?: PayrollConfirmation;
+  }
+  export interface DirectAdoptionProof {
+    basis: Basis;
+    close_period: ClosePeriod;
+    publication_id: PublicationId;
+    role: Role1;
+  }
+  export interface CalculationCurrentProof {
+    basis: Basis1;
+  }
+  export interface AssetBatchMemberProof {
+    basis: Basis2;
+    owner_calculation_id: OwnerCalculationId;
+    owner_publication_id?: OwnerPublicationId;
+    membership_digest?: MembershipDigest;
+  }
+  export interface PayrollConfirmation {
+    mode: Mode;
+    confirmation_fact_id: ConfirmationFactId;
+    confirmation_subject_id: ConfirmationSubjectId;
+    confirmation_revision: ConfirmationRevision;
+    confirmation_kind: ConfirmationKind;
+    evidence: Evidence1;
+  }
+  export interface UnestablishedSelection {
+    id?: Id3;
+    subject_id: SubjectId2;
+    posting_period: PostingPeriod2;
+    selection_status: SelectionStatus;
+    reason: Reason;
+    candidates: Candidates;
+    trace_targets: TraceTargets;
+  }
+  export interface CandidateSelection {
+    calculation_id: CalculationId2;
+    fact_id: FactId2;
+    result_digest: ResultDigest2;
+    kind: Kind4;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId3;
+  }
+  export interface CurrentBusinessResult {
+    status: Status3;
+    knowledge: Knowledge2;
+    calculation_id: CalculationId4;
+    subject_id: SubjectId3;
+    kind: Kind5;
+    fact_id: FactId3;
+    result_digest: ResultDigest3;
+    posting_period: PostingPeriod3;
+    publication_id: PublicationId1;
+    voucher_id: VoucherId1;
+    has_journal_lines: HasJournalLines1;
+    current_voucher_version_id: CurrentVoucherVersionId;
+    amount_fen: AmountFen;
+    amount_label: AmountLabel;
+    payroll_confirmation?: PayrollConfirmation;
+  }
+  export interface FrozenAdoption {
+    close_period: ClosePeriod1;
+    publication_id: PublicationId2;
+    calculation_id: CalculationId5;
+    result_digest: ResultDigest4;
+    role: Role2;
+    selection_proof: SelectionProof1;
+    amount_fen: AmountFen1;
+    amount_label: AmountLabel1;
+    payroll_confirmation?: PayrollConfirmation;
+  }
+  export interface AssetCardAdoptionProof {
+    basis: Basis3;
+    owner_calculation_id: OwnerCalculationId1;
+    owner_publication_id: OwnerPublicationId1;
+  }
+  export interface BusinessAdoptedBasis {
+    policies: Policies;
+    payroll_confirmations: PayrollConfirmations;
+    evidence: Evidence2;
+    basis: Basis4;
+    calculation_ids: CalculationIds;
+  }
+  export interface AdoptedPolicy {
+    label: Label1;
+    kind: Kind6;
+    version: Version;
+    effective_from: EffectiveFrom;
+    effective_to: EffectiveTo;
+    official_urls: OfficialUrls;
+    reference: CloseReviewSourceReference;
+  }
+  export interface CloseReviewSourceReference {
+    source_type: SourceType;
+    id: Id4;
+    revision: Revision1;
+    digest: Digest1;
+    name: Name;
+    media_type: MediaType;
+  }
+  export interface AdoptedPayrollConfirmation {
+    label: Label2;
+    mode: Mode1;
+    calculation_reference: CloseReviewSourceReference;
+    confirmation_references: ConfirmationReferences;
+  }
+  export interface BusinessReview {
+    status: Status4;
+    latest_matches_publication: LatestMatchesPublication;
+    pending_causes: PendingCauses;
+    dispositions: Dispositions;
+    disposition_count: DispositionCount;
+  }
+  export interface BusinessSettlements {
+    cutoff_period: CutoffPeriod1;
+    status: Status5;
+    obligations: Obligations;
+    issues: Issues;
+    business_count: BusinessCount;
+    movement_count: MovementCount;
+    line_relation_count: LineRelationCount;
+  }
+  export interface SettlementObligation {
+    key: Key1;
+    name: Name1;
+    category: Category;
+    account: Account1;
+    counterparty_id: CounterpartyId;
+    creditor_id?: CreditorId;
+    recipient_id?: RecipientId;
+    source_business: BusinessIdentity;
+    source_calculation_id: SourceCalculationId;
+    source_fact_id: SourceFactId;
+    source_period?: SourcePeriod;
+    source_result_digest?: SourceResultDigest;
+    source_amount_fen: SourceAmountFen;
+    amount_fen?: AmountFen2;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    period_paid_fen: PeriodPaidFen;
+    period_other_settled_fen: PeriodOtherSettledFen;
+    remaining_fen: RemainingFen;
+    settlement_status: SettlementStatus;
+    source_event_count: SourceEventCount;
+    cashflow?: Cashflow1;
+    normal?: Normal;
+    party_key?: PartyKey;
+    party_role?: PartyRole;
+    state?: State3;
+    source_events?: SourceEvents;
+    reimbursement_acceptance_basis?: ReimbursementAcceptanceBasis;
+  }
+  export interface BusinessIdentity {
+    subject_id: SubjectId4;
+    kind: Kind7;
+  }
+  export interface SettlementSourceEvent {
+    calculation_id: CalculationId6;
+    fact_id: FactId4;
+    posting_period: PostingPeriod4;
+    voucher_version_id: VoucherVersionId1;
+    direction: Direction1;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field;
+    message: Message;
+    code?: Code;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category1;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId5;
+    fact_id?: FactId5;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period2;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId2;
+    voucher_number?: VoucherNumber1;
+    version_id?: VersionId;
+    calculation_id?: CalculationId7;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo1;
+    account?: Account2;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason1;
+    candidates?: Candidates1;
+    trace_targets?: TraceTargets1;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId8;
+    fact_id: FactId6;
+    result_digest: ResultDigest5;
+    kind: Kind8;
+    has_journal_lines: HasJournalLines2;
+    trace_only: TraceOnly1;
+  }
+  export interface DuplicateSignal {
+    code: Code1;
+    matched_fields: MatchedFields;
+    evidence?: Evidence3;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest1;
+    location: Location1;
+  }
+  export interface ExternalSummary {
+    status: Status6;
+    obligation_count: ObligationCount;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    as_of: AsOf2;
+    as_of_semantics: AsOfSemantics;
+    completion_count: CompletionCount;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobsSummary {
+    total_count: TotalCount;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface DisplayProfiles {
+    business?: DisplayProfile;
+    counterparties?: Counterparties;
+    employees?: Employees;
+    assets?: Assets;
+  }
+  export interface DisplayProfile {
+    entity_id: EntityId;
+    values: DisplayProfileValues;
+    field_sources: FieldSources;
+  }
+  export interface DisplayProfileValues {
+    display_name: DisplayName;
+    display_number: DisplayNumber;
+    purpose: Purpose;
+    note: Note;
+    employment_start: EmploymentStart;
+    employment_end: EmploymentEnd;
+    employment_status: EmploymentStatus;
+    active: Active;
+    category_label: CategoryLabel;
+    rights_description: RightsDescription;
+    useful_life_basis: UsefulLifeBasis;
+    counterparty_id: CounterpartyId1;
+    beneficiary_id: BeneficiaryId;
+    handler_id: HandlerId;
+  }
+  export interface FieldSources {
+    [k: string]: SourceMetadata | SourceMetadata[];
+  }
+  export interface SourceMetadata {
+    source_type: SourceType1;
+    id: Id5;
+    revision: Revision2;
+    field: Field1;
+    source: Source;
+    evidence_digest: EvidenceDigest2;
+    evidence: Evidence4;
+    basis: Basis5;
+    recorded_at: RecordedAt2;
+  }
+  export interface TraceTarget {
+    calculation_id: CalculationId9;
+    voucher_version_id: VoucherVersionId3;
+    selection_status?: SelectionStatus1;
+  }
+  export interface BusinessReadSemantics {
+    knowledge: Knowledge3;
+    accounting: Accounting1;
+    business_basis: BusinessBasis1;
+    display: Display1;
+    as_of: AsOf3;
+  }
+  export interface BusinessStatusCurrentFollowups {
+    settlements: CurrentBusinessSettlements;
+  }
+  export interface CurrentBusinessSettlements {
+    cutoff_period: CutoffPeriod2;
+    status: Status7;
+    obligations: Obligations1;
+    issues: Issues1;
+    business_count: BusinessCount1;
+    movement_count: MovementCount1;
+    line_relation_count: LineRelationCount1;
+    unestablished_state_selections: UnestablishedStateSelections1;
+    complete: Complete;
+    scope_period: ScopePeriod;
+    current_cutoff_period: CurrentCutoffPeriod;
+    cutoff_semantics: CutoffSemantics;
+  }
+  export interface DuplicateChecks {
+    candidate_contract: CandidateContract;
+    candidate_version: CandidateVersion;
+    subject_id: SubjectId6;
+    status: Status8;
+    strong_candidates: StrongCandidates;
+    weak_candidates: WeakCandidates;
+    unresolved: Unresolved;
+    checks: Checks;
+    check_count: CheckCount;
+    checks_truncated: ChecksTruncated;
+  }
+  export interface DuplicateCandidate {
+    subject_id: SubjectId7;
+    fact_id: FactId7;
+    kind: Kind9;
+    period: Period3;
+    signals: Signals1;
+  }
+  export interface DuplicateUnresolved {
+    message: Message1;
+    candidate_subject_id: CandidateSubjectId1;
+    review_period: ReviewPeriod1;
+    signals: Signals2;
+  }
+  export interface DuplicateCheck {
+    check_id: CheckId;
+    action: Action;
+    proposed_subject_id: ProposedSubjectId;
+    result_fact_id: ResultFactId;
+    selected_fact_id: SelectedFactId;
+    candidate_digest: CandidateDigest;
+    explanation: Explanation;
+    created_at: CreatedAt;
+  }
+  export interface IdentityCorrection {
+    id: Id6;
+    action: Action1;
+    before_fact_id: BeforeFactId;
+    after_fact_id: AfterFactId;
+    replacement_subject_id: ReplacementSubjectId;
+    digest: Digest2;
+  }
+  export interface EntityReference {
+    fact_id: FactId8;
+    path: Path;
+    recorded_entity_id: RecordedEntityId;
+    current_entity_id: CurrentEntityId;
+    role: Role3;
+  }
+  export interface BusinessCollections {
+    events?: Collection;
+    settlement_events?: ScopedSettlementCollection;
+    source_history?: Collection1;
+    file_jobs?: Collection2;
+  }
+  export interface Collection {
+    items: Items;
+    page: CollectionPage;
+  }
+  export interface CollectionPage {
+    total_count: TotalCount1;
+    filtered_count: FilteredCount;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+    collection_version?: CollectionVersion;
+  }
+  export interface ScopedSettlementCollection {
+    items: Items1;
+    page: CollectionPage;
+    scope_period?: ScopePeriod1;
+    current_cutoff_period?: CurrentCutoffPeriod1;
+    cutoff_semantics?: CutoffSemantics1;
+  }
+  export interface Collection1 {
+    items: Items2;
+    page: CollectionPage;
+  }
+  export interface SourceHistoryItem {
+    id: Id7;
+    subject_id: SubjectId8;
+    revision: Revision3;
+    kind: Kind10;
+    period: Period4;
+    evidence: Evidence5;
+    deleted?: Deleted1;
+    knowledge?: Knowledge4;
+    recorded_at: RecordedAt3;
+    trace_targets: TraceTargets3;
+  }
+  export interface Collection2 {
+    items: Items3;
+    page: CollectionPage;
+  }
+  export interface FileJob {
+    job_id: JobId;
+    kind: Kind11;
+    status: Status9;
+    attempts: Attempts;
+    last_error: LastError;
+    result_issue?: ReadinessIssue;
+    contract_issues?: ContractIssues;
+    association: Association;
+    references: References;
+    period: Period5;
+    verified_when_succeeded: VerifiedWhenSucceeded;
+    current_file_availability: CurrentFileAvailability;
+  }
+  export interface FileReference {
+    id?: Id8;
+    source?: Source1;
+    subject_id?: SubjectId9;
+    calculation_id?: CalculationId10;
+    obligation?: Obligation;
+  }
+  export interface ReportPeriod {
+    year: Year1;
+    quarter: Quarter;
+    quarter_start: QuarterStart;
+    quarter_end: QuarterEnd;
+    label: Label3;
+  }
+}
+
+export namespace DashboardQuarterlyReportContract {
+  export type SchemaVersion = 3;
+  export type CloseState = "open" | "closed";
+  export type ReadinessState = "ready" | "blocked";
+  export type SelectedFactId = string | null;
+  export type FactId = string;
+  export type SubjectId = string;
+  export type Revision = number;
+  export type Period = string;
+  export type Label = string;
+  export type EvidenceCount = number;
+  export type Used = boolean;
+  export type Options = CarryForwardOption[];
+  export type Status = "ready" | "blocked" | "in_progress" | "not_applicable" | "error";
+  export type StatusLabel = string;
+  export type Headline = string;
+  export type Message = string;
+  export type CheckedAt = string;
+  export type Name = string | null;
+  export type TaxpayerIdentificationNumber = string | null;
+  export type Year = number;
+  export type Quarter = number;
+  export type QuarterStart = string;
+  export type QuarterEnd = string;
+  export type Label1 = string;
+  export type Key = string;
+  export type Label2 = string;
+  export type State = "pass" | "pending" | "attention";
+  export type Summary = string;
+  export type Primary = string;
+  export type Secondary = string;
+  export type Field = string;
+  export type Message1 = string;
+  export type Code = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category = string;
+  export type InventoryId = number;
+  export type SubjectId1 = string;
+  export type FactId1 = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId = string;
+  export type AssetId = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period1 = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId = string | null;
+  export type VoucherNumber = number;
+  export type VersionId = string | null;
+  export type CalculationId = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo = number | null;
+  export type Account = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason = string;
+  export type CalculationId1 = string;
+  export type FactId2 = string;
+  export type ResultDigest = string;
+  export type Kind = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = SelectionCandidate[];
+  export type CalculationId2 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code1 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence = string[];
+  export type EvidenceDigest1 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Details = ReportReadinessDetail[];
+  export type Readiness = ReportReadinessItem[];
+  export type AssetsTotalFen = string | null;
+  export type LiabilitiesTotalFen = string | null;
+  export type LiabilitiesEquityTotalFen = string | null;
+  export type CurrentNetProfitFen = string | null;
+  export type YearToDateNetProfitFen = string | null;
+  export type CurrentCashChangeFen = string | null;
+  export type EndingCashFen = string | null;
+  export type Key1 = string;
+  export type Label3 = string;
+  export type Key2 = string;
+  export type Label4 = string;
+  export type Columns = ReportStatementColumn[];
+  export type Line = number;
+  export type Name1 = string;
+  export type IsTotal = boolean;
+  export type HasAmount = boolean;
+  export type Rows = ReportStatementRow[];
+  export type Statements = ReportStatement[];
+  export type Passed = number;
+  export type Total = number;
+  export type Code2 = string;
+  export type Label5 = string;
+  export type Passed1 = boolean | null;
+  export type Items = ReportCheck[];
+  export type Draft = boolean;
+  export type Available = boolean;
+  export type FileName = string;
+  export type CalculationHash = string | null;
+  export type PreviewDigest = string | null;
+  export type Accounting = number;
+  export type Material = number;
+  export type Management = number;
+  export type CalculationHash1 = string;
+  export type Name2 = string;
+  export type Sha256 = string;
+  export type Profile = string;
+  export type FileName1 = string;
+  export type Version = string;
+  export type AdapterVersion = string;
+  export type EffectiveFrom = string;
+  export type SourceUrl = string;
+  export type SourceCloseHashes = string[];
+  export type ClassificationCount = number;
+  export type IncomeTaxConfirmationCount = number;
+  export type RequirementCodes = string[];
+  export type Errors = string[];
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type PeriodPreparations = PeriodPreparation[] | null;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type Period2 = string;
+  export type AsOf1 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State1 = "open";
+  export type State2 = "exact_close";
+  export type Digest = string;
+  export type State3 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status1 = "ready";
+  export type Source = "exact_period_manifest";
+  export type Status2 = "recorded" | "not_recorded";
+  export type Status3 = "unavailable";
+  export type Reason1 = "no_exact_period_manifest";
+  export type Period3 = string;
+  export type Code3 = "already_closed" | "earlier_period_open";
+  export type Message2 = string;
+  export type Period4 = string;
+  export type Issues = ReadinessIssue[];
+  export type Knowledge1 = "current_knowledge";
+  export type AffectsFrozenReadiness = false;
+  export type Status4 = "ready" | "needs_information";
+  export type Issues1 = ReadinessIssue[];
+  export type InventoryCount = number;
+  export type CoverageDigest = string;
+  export type Status5 = "ready" | "needs_information";
+  export type Issues2 = ReadinessIssue[];
+  export type PendingSubjectId = string | null;
+  export type UnpublishedCount = number;
+  export type Status6 = "ready" | "needs_information";
+  export type Issues3 = ReadinessIssue[];
+  export type Status7 = string;
+  export type CutoffPeriod = string;
+  export type CurrentCutoffPeriod = string;
+  export type Issues4 = ReadinessIssue[];
+  export type ObligationCount = number;
+  export type Complete = boolean;
+  export type UnestablishedStateSelectionCount = number;
+  export type MovementCount = number;
+  export type SourceAmountFen = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type Status8 = "completed" | "followup_required" | "unestablished";
+  export type ObligationCount1 = number;
+  export type BasisIssueCount = number;
+  export type ScopePeriod = string;
+  export type ScopeSemantics = "obligation_interval_includes_selected_period";
+  export type FactIssues = ReadinessIssue[];
+  export type TotalCount = number;
+  export type IssueCount = number;
+  export type Status9 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code4 = string;
+  export type Category1 = "management_fact" | "capability" | "publication";
+  export type Field1 = string;
+  export type Message3 = string;
+  export type EmployeeId1 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen = string;
+  export type Issues5 = TaxImportMappingIssue[];
+  export type Projection1 = "dashboard_quarterly_report_deferred";
+
+  export interface DashboardQuarterlyReportResponse {
+    schema_version: SchemaVersion;
+    close_state: CloseState;
+    readiness_state: ReadinessState;
+    carry_forward: CarryForward;
+    status: Status;
+    status_label: StatusLabel;
+    headline: Headline;
+    message: Message;
+    checked_at: CheckedAt;
+    organization: Organization;
+    period: ReportPeriod;
+    readiness: Readiness;
+    summary: ReportSummary;
+    statements: Statements;
+    checks: ReportChecks;
+    draft: Draft;
+    export: ReportExport;
+    technical: ReportTechnical;
+    read_context: DashboardReadContext;
+    period_preparations: PeriodPreparations;
+    projection?: Projection1;
+  }
+  export interface CarryForward {
+    selected_fact_id: SelectedFactId;
+    options: Options;
+  }
+  export interface CarryForwardOption {
+    fact_id: FactId;
+    subject_id: SubjectId;
+    revision: Revision;
+    period: Period;
+    label: Label;
+    evidence_count: EvidenceCount;
+    used: Used;
+  }
+  export interface Organization {
+    name: Name;
+    taxpayer_identification_number: TaxpayerIdentificationNumber;
+  }
+  export interface ReportPeriod {
+    year: Year;
+    quarter: Quarter;
+    quarter_start: QuarterStart;
+    quarter_end: QuarterEnd;
+    label: Label1;
+  }
+  export interface ReportReadinessItem {
+    key: Key;
+    label: Label2;
+    state: State;
+    summary: Summary;
+    details: Details;
+  }
+  export interface ReportReadinessDetail {
+    primary: Primary;
+    secondary: Secondary;
+    location: ReadinessIssue;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field;
+    message: Message1;
+    code?: Code;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId1;
+    fact_id?: FactId1;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period1;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId;
+    voucher_number?: VoucherNumber;
+    version_id?: VersionId;
+    calculation_id?: CalculationId;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId1;
+    fact_id: FactId2;
+    result_digest: ResultDigest;
+    kind: Kind;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId2;
+  }
+  export interface DuplicateSignal {
+    code: Code1;
+    matched_fields: MatchedFields;
+    evidence?: Evidence;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest1;
+    location: Location1;
+  }
+  export interface ReportSummary {
+    assets_total_fen: AssetsTotalFen;
+    liabilities_total_fen: LiabilitiesTotalFen;
+    liabilities_equity_total_fen: LiabilitiesEquityTotalFen;
+    current_net_profit_fen: CurrentNetProfitFen;
+    year_to_date_net_profit_fen: YearToDateNetProfitFen;
+    current_cash_change_fen: CurrentCashChangeFen;
+    ending_cash_fen: EndingCashFen;
+  }
+  export interface ReportStatement {
+    key: Key1;
+    label: Label3;
+    columns: Columns;
+    rows: Rows;
+  }
+  export interface ReportStatementColumn {
+    key: Key2;
+    label: Label4;
+  }
+  export interface ReportStatementRow {
+    line: Line;
+    name: Name1;
+    values: Values;
+    is_total: IsTotal;
+    has_amount: HasAmount;
+  }
+  export interface Values {
+    [k: string]: string | null;
+  }
+  export interface ReportChecks {
+    passed: Passed;
+    total: Total;
+    items: Items;
+  }
+  export interface ReportCheck {
+    code: Code2;
+    label: Label5;
+    passed: Passed1;
+  }
+  export interface ReportExport {
+    available: Available;
+    file_name: FileName;
+    calculation_hash: CalculationHash;
+    preview_digest: PreviewDigest;
+    epochs: ReportEpochs | null;
+  }
+  export interface ReportEpochs {
+    accounting: Accounting;
+    material: Material;
+    management: Management;
+  }
+  export interface ReportTechnical {
+    calculation_hash: CalculationHash1;
+    template: ReportTemplate;
+    rule: ReportRule;
+    source_close_hashes: SourceCloseHashes;
+    classification_count: ClassificationCount;
+    income_tax_confirmation_count: IncomeTaxConfirmationCount;
+    requirement_codes: RequirementCodes;
+    errors: Errors;
+  }
+  export interface ReportTemplate {
+    name: Name2;
+    sha256: Sha256;
+    profile: Profile;
+    file_name: FileName1;
+  }
+  export interface ReportRule {
+    version: Version;
+    adapter_version: AdapterVersion;
+    effective_from: EffectiveFrom;
+    source_url: SourceUrl;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface PeriodPreparation {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    period: Period2;
+    as_of: AsOf1;
+    as_of_semantics: AsOfSemantics;
+    closure: Closure;
+    read_semantics: PreparationReadSemantics;
+    projection: Projection;
+    frozen_readiness: FrozenReadiness1;
+    readiness: Readiness1 | null;
+    current_followups: PeriodCurrentFollowups;
+  }
+  export interface OpenClosure {
+    state: State1;
+  }
+  export interface ExactClosure {
+    state: State2;
+    digest: Digest;
+  }
+  export interface LaterClosure {
+    state: State3;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface PreparationReadSemantics {
+    knowledge: Knowledge;
+    frozen_readiness: FrozenReadiness;
+    current_followups: CurrentFollowups;
+  }
+  export interface RecordedReadiness {
+    status: Status1;
+    source: Source;
+    readiness: RecordedStatus;
+    inventories: RecordedStatus;
+    material_coverage: RecordedStatus;
+    previous_close_digest: RecordedStatus;
+  }
+  export interface RecordedStatus {
+    status: Status2;
+  }
+  export interface UnavailableReadiness {
+    status: Status3;
+    reason: Reason1;
+  }
+  export interface Readiness1 {
+    period: Period3;
+    order_failure: OrderFailure | null;
+    issues: Issues;
+  }
+  export interface OrderFailure {
+    code: Code3;
+    message: Message2;
+    details: OrderDetails;
+  }
+  export interface OrderDetails {
+    period?: Period4;
+  }
+  export interface PeriodCurrentFollowups {
+    knowledge: Knowledge1;
+    affects_frozen_readiness: AffectsFrozenReadiness;
+    materials: MaterialFollowup;
+    accounting: AccountingFollowup;
+    close_requirements: CheckFollowup;
+    settlements: SettlementFollowup;
+    external: ExternalFollowup;
+    file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
+  }
+  export interface MaterialFollowup {
+    status: Status4;
+    issues: Issues1;
+    inventory_count: InventoryCount;
+    coverage_digest: CoverageDigest;
+  }
+  export interface AccountingFollowup {
+    status: Status5;
+    issues: Issues2;
+    pending_subject_id: PendingSubjectId;
+    unpublished_count: UnpublishedCount;
+  }
+  export interface CheckFollowup {
+    status: Status6;
+    issues: Issues3;
+  }
+  export interface SettlementFollowup {
+    status: Status7;
+    cutoff_period?: CutoffPeriod;
+    current_cutoff_period?: CurrentCutoffPeriod;
+    issues?: Issues4;
+    obligation_count: ObligationCount;
+    complete: Complete;
+    unestablished_state_selection_count: UnestablishedStateSelectionCount;
+    movement_count: MovementCount;
+    source_amount_fen: SourceAmountFen;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    remaining_fen: RemainingFen;
+  }
+  export interface ExternalFollowup {
+    status: Status8;
+    obligation_count: ObligationCount1;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    scope_period: ScopePeriod;
+    scope_semantics: ScopeSemantics;
+    fact_issues: FactIssues;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobFollowup {
+    total_count: TotalCount;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status9;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues5;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code4;
+    category: Category1;
+    field: Field1;
+    message: Message3;
+    employee_id?: EmployeeId1;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen;
+  }
+}
+
+export namespace DashboardPeriodPreparationContract {
+  export type SchemaVersion = 3;
+  export type Projection = "dashboard_period_preparation_result";
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type AsOf = string;
+  export type ReadVersion = string;
+  export type Period = string;
+  export type CompanyId1 = string;
+  export type DatabaseId1 = string;
+  export type Period1 = string;
+  export type AsOf1 = string;
+  export type AsOfSemantics = "current_knowledge";
+  export type Closure = OpenClosure | ExactClosure | LaterClosure;
+  export type State = "open";
+  export type State1 = "exact_close";
+  export type Digest = string;
+  export type State2 = "covered_by_later_close";
+  export type SealingBoundary = string;
+  export type SealingDigest = string;
+  export type Knowledge = "current_knowledge";
+  export type FrozenReadiness = "exact_period_manifest_only";
+  export type CurrentFollowups = "never_changes_frozen_readiness";
+  export type Projection1 = "dashboard_period_preparation";
+  export type FrozenReadiness1 = RecordedReadiness | UnavailableReadiness | null;
+  export type Status = "ready";
+  export type Source = "exact_period_manifest";
+  export type Status1 = "recorded" | "not_recorded";
+  export type Status2 = "unavailable";
+  export type Reason = "no_exact_period_manifest";
+  export type Period2 = string;
+  export type Code = "already_closed" | "earlier_period_open";
+  export type Message = string;
+  export type Period3 = string;
+  export type Field = string;
+  export type Message1 = string;
+  export type Code1 = string;
+  export type Location = string | null;
+  export type Semantics = string;
+  export type Domain = string;
+  export type Category = string;
+  export type InventoryId = number;
+  export type SubjectId = string;
+  export type FactId = string;
+  export type SourceId = string;
+  export type GroupId = string;
+  export type EmployeeId = string;
+  export type AssetId = string;
+  export type DrawdownId = string;
+  export type BankAccountId = string;
+  export type ObligationId = string;
+  export type ObligationKind = string;
+  export type EvidenceDigest = string;
+  export type MemberLocation = string;
+  export type Detail = string;
+  export type AmountField = string;
+  export type AmountFields = string[];
+  export type Period4 = string;
+  export type PeriodStart = string;
+  export type PeriodEndExclusive = string;
+  export type Pages = number;
+  export type VoucherVersionId = string | null;
+  export type VoucherNumber = number;
+  export type VersionId = string | null;
+  export type CalculationId = string | null;
+  export type ObligationKey = string;
+  export type AllocationIndex = number;
+  export type SourceIndex = number;
+  export type Row = number;
+  export type AffectedLines = number[];
+  export type LineNo = number | null;
+  export type Account = string;
+  export type AllowedPrecision = string[];
+  export type ReusableSources = string[];
+  export type ExpectedFen = string | null;
+  export type ActualFen = string | null;
+  export type Reason1 = string;
+  export type CalculationId1 = string;
+  export type FactId1 = string;
+  export type ResultDigest = string;
+  export type Kind = string;
+  export type HasJournalLines = boolean;
+  export type TraceOnly = true;
+  export type Candidates = SelectionCandidate[];
+  export type CalculationId2 = string;
+  export type TraceTargets = CalculationTarget[];
+  export type Statement = string;
+  export type Column = string;
+  export type Dimension = "bank" | "platform";
+  export type ExpectedDirection = "inflow" | "outflow";
+  export type CandidateSubjectId = string;
+  export type PairDigest = string;
+  export type ReviewPeriod = string;
+  export type OriginPeriods = string[];
+  export type Responsibility = "direct" | "closed_followup" | "unassigned";
+  export type Code2 =
+    | "same_exact_material_location"
+    | "same_complete_signature_and_evidence"
+    | "same_complete_actual_money"
+    | "same_complete_signature"
+    | "shared_evidence"
+    | "same_material_location_different_signature"
+    | "same_actual_money_coordinates";
+  export type MatchedFields = string[];
+  export type Evidence = string[];
+  export type EvidenceDigest1 = string;
+  export type Location1 = string;
+  export type SourceLocations = DuplicateSourceLocation[];
+  export type DistinctLocationsProven = boolean;
+  export type Signals = DuplicateSignal[];
+  export type Issues = ReadinessIssue[];
+  export type Knowledge1 = "current_knowledge";
+  export type AffectsFrozenReadiness = false;
+  export type Status3 = "ready" | "needs_information";
+  export type Issues1 = ReadinessIssue[];
+  export type InventoryCount = number;
+  export type CoverageDigest = string;
+  export type Status4 = "ready" | "needs_information";
+  export type Issues2 = ReadinessIssue[];
+  export type PendingSubjectId = string | null;
+  export type UnpublishedCount = number;
+  export type Status5 = "ready" | "needs_information";
+  export type Issues3 = ReadinessIssue[];
+  export type Status6 = string;
+  export type CutoffPeriod = string;
+  export type CurrentCutoffPeriod = string;
+  export type Issues4 = ReadinessIssue[];
+  export type ObligationCount = number;
+  export type Complete = boolean;
+  export type UnestablishedStateSelectionCount = number;
+  export type MovementCount = number;
+  export type SourceAmountFen = string | null;
+  export type PaidFen = string | null;
+  export type OtherSettledFen = string | null;
+  export type RemainingFen = string | null;
+  export type Status7 = "completed" | "followup_required" | "unestablished";
+  export type ObligationCount1 = number;
+  export type BasisIssueCount = number;
+  export type ScopePeriod = string;
+  export type ScopeSemantics = "obligation_interval_includes_selected_period";
+  export type FactIssues = ReadinessIssue[];
+  export type TotalCount = number;
+  export type IssueCount = number;
+  export type Status8 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type BlockingScope = "tax_import_file";
+  export type MappingFactIds = string[];
+  export type CalculationIds = string[];
+  export type Code3 = string;
+  export type Category1 = "management_fact" | "capability" | "publication";
+  export type Field1 = string;
+  export type Message2 = string;
+  export type EmployeeId1 = string;
+  export type ComponentCodes = string[];
+  export type AmountFen = string;
+  export type Issues5 = TaxImportMappingIssue[];
+  export type Closed = boolean;
+  export type Satisfied = boolean;
+  export type Issues6 = ReadinessIssue[];
+  export type CoverageDigest1 = string;
+  export type Issues7 = ReadinessIssue[];
+  export type AttentionCount = number;
+  export type Key = string;
+  export type Label = string;
+  export type State3 = "pass" | "pending" | "error" | "neutral";
+  export type Text = string;
+  export type Items = ValidationItem[];
+
+  export interface DashboardPeriodPreparationResponse {
+    schema_version: SchemaVersion;
+    projection: Projection;
+    read_context: DashboardReadContext;
+    period: Period;
+    data: PeriodPreparationData;
+  }
+  export interface DashboardReadContext {
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    as_of: AsOf;
+    read_version: ReadVersion;
+  }
+  export interface PeriodPreparationData {
+    period_preparation: PeriodPreparation;
+    brief_checks: BriefChecks;
+  }
+  export interface PeriodPreparation {
+    company_id: CompanyId1;
+    database_id: DatabaseId1;
+    period: Period1;
+    as_of: AsOf1;
+    as_of_semantics: AsOfSemantics;
+    closure: Closure;
+    read_semantics: PreparationReadSemantics;
+    projection: Projection1;
+    frozen_readiness: FrozenReadiness1;
+    readiness: Readiness | null;
+    current_followups: PeriodCurrentFollowups;
+  }
+  export interface OpenClosure {
+    state: State;
+  }
+  export interface ExactClosure {
+    state: State1;
+    digest: Digest;
+  }
+  export interface LaterClosure {
+    state: State2;
+    sealing_boundary: SealingBoundary;
+    sealing_digest: SealingDigest;
+  }
+  export interface PreparationReadSemantics {
+    knowledge: Knowledge;
+    frozen_readiness: FrozenReadiness;
+    current_followups: CurrentFollowups;
+  }
+  export interface RecordedReadiness {
+    status: Status;
+    source: Source;
+    readiness: RecordedStatus;
+    inventories: RecordedStatus;
+    material_coverage: RecordedStatus;
+    previous_close_digest: RecordedStatus;
+  }
+  export interface RecordedStatus {
+    status: Status1;
+  }
+  export interface UnavailableReadiness {
+    status: Status2;
+    reason: Reason;
+  }
+  export interface Readiness {
+    period: Period2;
+    order_failure: OrderFailure | null;
+    issues: Issues;
+  }
+  export interface OrderFailure {
+    code: Code;
+    message: Message;
+    details: OrderDetails;
+  }
+  export interface OrderDetails {
+    period?: Period3;
+  }
+  /**
+   * Fields emitted by material, accounting, report and close checkers.
+   *
+   * Checkers may attach the listed diagnostics. Adding a diagnostic requires an
+   * explicit contract change; monetary values cannot fall through an open map.
+   */
+  export interface ReadinessIssue {
+    field: Field;
+    message: Message1;
+    code?: Code1;
+    location?: Location;
+    semantics?: Semantics;
+    domain?: Domain;
+    category?: Category;
+    inventory_id?: InventoryId;
+    subject_id?: SubjectId;
+    fact_id?: FactId;
+    source_id?: SourceId;
+    group_id?: GroupId;
+    employee_id?: EmployeeId;
+    asset_id?: AssetId;
+    drawdown_id?: DrawdownId;
+    bank_account_id?: BankAccountId;
+    obligation_id?: ObligationId;
+    obligation_kind?: ObligationKind;
+    evidence_digest?: EvidenceDigest;
+    member_location?: MemberLocation;
+    detail?: Detail;
+    amount_field?: AmountField;
+    amount_fields?: AmountFields;
+    period?: Period4;
+    period_start?: PeriodStart;
+    period_end_exclusive?: PeriodEndExclusive;
+    pages?: Pages;
+    voucher_version_id?: VoucherVersionId;
+    voucher_number?: VoucherNumber;
+    version_id?: VersionId;
+    calculation_id?: CalculationId;
+    obligation_key?: ObligationKey;
+    allocation_index?: AllocationIndex;
+    source_index?: SourceIndex;
+    row?: Row;
+    affected_lines?: AffectedLines;
+    line_no?: LineNo;
+    account?: Account;
+    allowed_precision?: AllowedPrecision;
+    reusable_sources?: ReusableSources;
+    expected_fen?: ExpectedFen;
+    actual_fen?: ActualFen;
+    reason?: Reason1;
+    candidates?: Candidates;
+    trace_targets?: TraceTargets;
+    statement?: Statement;
+    column?: Column;
+    dimension?: Dimension;
+    expected_direction?: ExpectedDirection;
+    candidate_subject_id?: CandidateSubjectId;
+    pair_digest?: PairDigest;
+    review_period?: ReviewPeriod;
+    origin_periods?: OriginPeriods;
+    responsibility?: Responsibility;
+    signals?: Signals;
+  }
+  export interface SelectionCandidate {
+    calculation_id: CalculationId1;
+    fact_id: FactId1;
+    result_digest: ResultDigest;
+    kind: Kind;
+    has_journal_lines: HasJournalLines;
+    trace_only: TraceOnly;
+  }
+  export interface CalculationTarget {
+    calculation_id: CalculationId2;
+  }
+  export interface DuplicateSignal {
+    code: Code2;
+    matched_fields: MatchedFields;
+    evidence?: Evidence;
+    source_locations?: SourceLocations;
+    distinct_locations_proven?: DistinctLocationsProven;
+  }
+  export interface DuplicateSourceLocation {
+    evidence_digest: EvidenceDigest1;
+    location: Location1;
+  }
+  export interface PeriodCurrentFollowups {
+    knowledge: Knowledge1;
+    affects_frozen_readiness: AffectsFrozenReadiness;
+    materials: MaterialFollowup;
+    accounting: AccountingFollowup;
+    close_requirements: CheckFollowup;
+    settlements: SettlementFollowup;
+    external: ExternalFollowup;
+    file_jobs: FileJobFollowup;
+    tax_import_mapping: TaxImportMappingFollowup;
+  }
+  export interface MaterialFollowup {
+    status: Status3;
+    issues: Issues1;
+    inventory_count: InventoryCount;
+    coverage_digest: CoverageDigest;
+  }
+  export interface AccountingFollowup {
+    status: Status4;
+    issues: Issues2;
+    pending_subject_id: PendingSubjectId;
+    unpublished_count: UnpublishedCount;
+  }
+  export interface CheckFollowup {
+    status: Status5;
+    issues: Issues3;
+  }
+  export interface SettlementFollowup {
+    status: Status6;
+    cutoff_period?: CutoffPeriod;
+    current_cutoff_period?: CurrentCutoffPeriod;
+    issues?: Issues4;
+    obligation_count: ObligationCount;
+    complete: Complete;
+    unestablished_state_selection_count: UnestablishedStateSelectionCount;
+    movement_count: MovementCount;
+    source_amount_fen: SourceAmountFen;
+    paid_fen: PaidFen;
+    other_settled_fen: OtherSettledFen;
+    remaining_fen: RemainingFen;
+  }
+  export interface ExternalFollowup {
+    status: Status7;
+    obligation_count: ObligationCount1;
+    completion_status_counts: CompletionStatusCounts;
+    basis_issue_count: BasisIssueCount;
+    scope_period: ScopePeriod;
+    scope_semantics: ScopeSemantics;
+    fact_issues: FactIssues;
+  }
+  export interface CompletionStatusCounts {
+    [k: string]: number;
+  }
+  export interface FileJobFollowup {
+    total_count: TotalCount;
+    status_counts: StatusCounts;
+    issue_count: IssueCount;
+  }
+  export interface StatusCounts {
+    [k: string]: number;
+  }
+  export interface TaxImportMappingFollowup {
+    status: Status8;
+    blocking_scope: BlockingScope;
+    mapping_fact_ids: MappingFactIds;
+    calculation_ids: CalculationIds;
+    issues: Issues5;
+  }
+  export interface TaxImportMappingIssue {
+    code: Code3;
+    category: Category1;
+    field: Field1;
+    message: Message2;
+    employee_id?: EmployeeId1;
+    component_codes?: ComponentCodes;
+    amount_fen?: AmountFen;
+  }
+  export interface BriefChecks {
+    material_completeness: MaterialCompleteness;
+    issues: Issues7;
+    attention_count: AttentionCount;
+    items: Items;
+  }
+  export interface MaterialCompleteness {
+    closed: Closed;
+    satisfied: Satisfied;
+    issues: Issues6;
+    coverage_digest?: CoverageDigest1;
+  }
+  export interface ValidationItem {
+    key: Key;
+    label: Label;
+    state: State3;
+    text: Text;
+  }
+}
+
+export namespace DashboardCloseReviewContract {
+  export type SchemaVersion = 1;
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type Period = string;
+  export type State = "prepared" | "closed" | "covered" | "unprepared" | "stale";
+  export type PreviewDigest = string | null;
+  export type CloseDigest = string | null;
+  export type Reason = string | null;
+  export type Period1 = string;
+  export type Digest = string;
+  export type PresentationContract = "ai-accounting-kernel/2/close-review/1";
+  export type Period2 = string;
+  export type VoucherCount = number;
+  export type LineCount = number;
+  export type TotalDebitFen = string;
+  export type TotalCreditFen = string;
+  export type MonthRevenueFen = string;
+  export type MonthExpenseFen = string;
+  export type MonthResultFen = string;
+  export type EndingAssetsFen = string | null;
+  export type EndingLiabilitiesFen = string | null;
+  export type EndingEquityFen = string | null;
+  export type FundsTotalFen = string | null;
+  export type BankFen = string | null;
+  export type CashFen = string | null;
+  export type PaymentPlatformFen = string | null;
+  export type ActualReceiptsFen = string;
+  export type ActualPaymentsFen = string;
+  export type InternalTransferFen = string;
+  export type VoucherBalanced = boolean;
+  export type FinancialPositionBalanced = boolean | null;
+  export type FinancialPositionComplete = boolean;
+  export type Kind = string;
+  export type Label = string;
+  export type Action = "business" | "correction" | "opening" | "state";
+  export type Reversal = boolean;
+  export type Count = number;
+  export type AmountLabel = string;
+  export type BusinessAmountFen = string | null;
+  export type JournalTotalFen = string;
+  export type BusinessSummary = CloseReviewBusinessSummary[];
+  export type Category = string;
+  export type InventoryId = number;
+  export type Expected = number;
+  export type Received = number;
+  export type NoBusiness = boolean;
+  export type SourceType = "voucher" | "calculation" | "fact" | "evidence" | "inventory";
+  export type Id = string;
+  export type Revision = number | null;
+  export type Digest1 = string | null;
+  export type Name = string | null;
+  export type MediaType = string | null;
+  export type MaterialSummary = CloseReviewMaterialSummary[];
+  export type PolicyCount = number;
+  export type PayrollConfirmationCount = number;
+  export type EvidenceCount = number;
+  export type Summary = string;
+  export type CloseIssueCount = number;
+  export type SettlementIssueCount = number;
+  export type ExternalIssueCount = number;
+  export type FileIssueCount = number;
+  export type FollowupCount = number;
+  export type Section = "vouchers" | "adopted_bases" | "policies" | "payroll_confirmations" | "evidence";
+  export type Label1 = string;
+  export type TotalCount = number;
+  export type BlockSize = number;
+  export type RootDigest = string;
+  export type Index = number;
+  export type FirstKey = string;
+  export type LastKey = string;
+  export type Count1 = number;
+  export type Digest2 = string;
+  export type Keys = string[];
+  export type Blocks = CloseReviewBlock[];
+  export type Collections = CloseReviewDirectory[];
+  export type Section1 = "vouchers" | "adopted_bases" | "policies" | "payroll_confirmations" | "evidence";
+  export type Key = string;
+  export type Section2 = "vouchers" | "adopted_bases" | "policies" | "payroll_confirmations" | "evidence";
+  export type Title = string;
+  export type Subtitle = string;
+  export type Status = string;
+  export type AmountFen = string | null;
+  export type Count2 = number | null;
+  export type References = CloseReviewSourceReference[];
+  export type Items = CloseReviewDetailItem[];
+  export type TotalCount1 = number;
+  export type ReturnedCount = number;
+  export type HasMore = boolean;
+  export type NextCursor = string | null;
+
+  export interface DashboardCloseReviewResponse {
+    schema_version: SchemaVersion;
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    period: Period;
+    state: State;
+    preview_digest: PreviewDigest;
+    close_digest: CloseDigest;
+    reason: Reason;
+    covered_by: CloseReviewCoveredBy | null;
+    owner_review: OwnerReview | null;
+    collection: CloseReviewCollection | null;
+  }
+  export interface CloseReviewCoveredBy {
+    period: Period1;
+    digest: Digest;
+  }
+  export interface OwnerReview {
+    presentation_contract: PresentationContract;
+    period: Period2;
+    accounting_summary: CloseReviewAccountingSummary;
+    business_summary: BusinessSummary;
+    material_summary: MaterialSummary;
+    adopted_basis_summary: CloseReviewAdoptedBasisSummary;
+    owner_confirmation: CloseReviewSourceReference;
+    followup_summary: CloseReviewFollowupSummary;
+    collections: Collections;
+  }
+  export interface CloseReviewAccountingSummary {
+    voucher_count: VoucherCount;
+    line_count: LineCount;
+    total_debit_fen: TotalDebitFen;
+    total_credit_fen: TotalCreditFen;
+    month_revenue_fen: MonthRevenueFen;
+    month_expense_fen: MonthExpenseFen;
+    month_result_fen: MonthResultFen;
+    ending_assets_fen: EndingAssetsFen;
+    ending_liabilities_fen: EndingLiabilitiesFen;
+    ending_equity_fen: EndingEquityFen;
+    funds_total_fen: FundsTotalFen;
+    bank_fen: BankFen;
+    cash_fen: CashFen;
+    payment_platform_fen: PaymentPlatformFen;
+    actual_receipts_fen: ActualReceiptsFen;
+    actual_payments_fen: ActualPaymentsFen;
+    internal_transfer_fen: InternalTransferFen;
+    voucher_balanced: VoucherBalanced;
+    financial_position_balanced: FinancialPositionBalanced;
+    financial_position_complete: FinancialPositionComplete;
+  }
+  export interface CloseReviewBusinessSummary {
+    kind: Kind;
+    label: Label;
+    action: Action;
+    reversal: Reversal;
+    count: Count;
+    amount_label: AmountLabel;
+    business_amount_fen: BusinessAmountFen;
+    journal_total_fen: JournalTotalFen;
+  }
+  export interface CloseReviewMaterialSummary {
+    category: Category;
+    inventory_id: InventoryId;
+    expected: Expected;
+    received: Received;
+    no_business: NoBusiness;
+    confirmation: CloseReviewSourceReference;
+  }
+  export interface CloseReviewSourceReference {
+    source_type: SourceType;
+    id: Id;
+    revision: Revision;
+    digest: Digest1;
+    name: Name;
+    media_type: MediaType;
+  }
+  export interface CloseReviewAdoptedBasisSummary {
+    policy_count: PolicyCount;
+    payroll_confirmation_count: PayrollConfirmationCount;
+    evidence_count: EvidenceCount;
+    summary: Summary;
+  }
+  export interface CloseReviewFollowupSummary {
+    close_issue_count: CloseIssueCount;
+    settlement_issue_count: SettlementIssueCount;
+    external_issue_count: ExternalIssueCount;
+    file_issue_count: FileIssueCount;
+    followup_count: FollowupCount;
+  }
+  export interface CloseReviewDirectory {
+    section: Section;
+    label: Label1;
+    total_count: TotalCount;
+    block_size: BlockSize;
+    root_digest: RootDigest;
+    blocks: Blocks;
+  }
+  export interface CloseReviewBlock {
+    index: Index;
+    first_key: FirstKey;
+    last_key: LastKey;
+    count: Count1;
+    digest: Digest2;
+    keys: Keys;
+  }
+  export interface CloseReviewCollection {
+    section: Section1;
+    items: Items;
+    page: CloseReviewPage;
+  }
+  export interface CloseReviewDetailItem {
+    key: Key;
+    section: Section2;
+    title: Title;
+    subtitle: Subtitle;
+    status: Status;
+    amount_fen: AmountFen;
+    count: Count2;
+    references: References;
+  }
+  export interface CloseReviewPage {
+    total_count: TotalCount1;
+    returned_count: ReturnedCount;
+    has_more: HasMore;
+    next_cursor: NextCursor;
+  }
+}
+
+export namespace BrowserJobsContract {
+  export type SchemaVersion = 1;
+  export type CompanyId = string;
+  export type DatabaseId = string;
+  export type Id = string;
+  export type Kind = string;
+  export type Status = "pending" | "running" | "succeeded" | "failed";
+  export type Attempts = number;
+  export type LastError = string | null;
+  export type DownloadAvailable = boolean;
+  export type DownloadFileName = string | null;
+  export type DeliveryStatus = "pending" | "unavailable" | "external" | "invalid" | "verified";
+  export type DeliveryMessage = string | null;
+  export type Year = number;
+  export type Quarter = number;
+  export type CarryForwardFactId = string | null;
+  export type Items = BrowserJob[];
+
+  export interface BrowserJobsResponse {
+    schema_version: SchemaVersion;
+    company_id: CompanyId;
+    database_id: DatabaseId;
+    items: Items;
+  }
+  export interface BrowserJob {
+    id: Id;
+    kind: Kind;
+    status: Status;
+    attempts: Attempts;
+    last_error: LastError;
+    download_available: DownloadAvailable;
+    download_file_name: DownloadFileName;
+    delivery_status: DeliveryStatus;
+    delivery_message: DeliveryMessage;
+    report_source?: BrowserReportSource;
+  }
+  export interface BrowserReportSource {
+    year: Year;
+    quarter: Quarter;
+    carry_forward_fact_id: CarryForwardFactId;
+  }
+}
+
+export namespace BrowserSecurityStatusContract {
+  export type BrowserSecurityStatusResponse = BrowserSecurityRequestState | BrowserSecuritySessionStatus;
+  export type SchemaVersion = 1;
+  export type RequestId = string;
+  export type Kind =
+    "bootstrap_owner" | "login" | "approve_period_close" | "change_password" | "recover" | "replace_recovery_code";
+  export type Status = "starting" | "waiting_for_user" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+  export type CatalogInstanceId = string;
+  export type ErrorCode = string | null;
+  export type OperationCommitted = boolean | null;
+  export type LoginCompleted = boolean;
+  export type RecoveryCodeAcknowledged = boolean;
+  export type BrowserAuthenticated = boolean;
+  export type RecoveryCode = string | null;
+  export type SchemaVersion1 = 1;
+  export type CatalogInstanceId1 = string;
+  export type Provisioned = boolean;
+  export type LoginName = string | null;
+  export type Active = boolean;
+  export type Authenticated = boolean;
+  export type OwnerId = string;
+
+  export interface BrowserSecurityRequestState {
+    schema_version: SchemaVersion;
+    request_id: RequestId;
+    kind: Kind;
+    status: Status;
+    catalog_instance_id: CatalogInstanceId;
+    error_code: ErrorCode;
+    operation_committed: OperationCommitted;
+    login_completed: LoginCompleted;
+    recovery_code_acknowledged: RecoveryCodeAcknowledged;
+    browser_authenticated?: BrowserAuthenticated;
+    recovery_code?: RecoveryCode;
+  }
+  export interface BrowserSecuritySessionStatus {
+    schema_version: SchemaVersion1;
+    catalog_instance_id: CatalogInstanceId1;
+    provisioned: Provisioned;
+    login_name: LoginName;
+    active: Active;
+    authenticated: Authenticated;
+    owner_id?: OwnerId;
+  }
+}
+
+export namespace ReportExportReceiptContract {
+  export type Status = "queued";
+  export type JobId = string;
+  export type PreviewDigest = string;
+
+  export interface ReportExportReceipt {
+    status: Status;
+    job_id: JobId;
+    preview_digest: PreviewDigest;
+  }
+}
+
 export type DashboardContextResponse = DashboardContextContract.DashboardContextResponse;
+export type DashboardBriefResponse = DashboardBriefContract.DashboardBriefResponse;
 export type DashboardFundsResponse = DashboardFundsContract.DashboardFundsResponse;
+export type DashboardEmployeesResponse = DashboardEmployeesContract.DashboardEmployeesResponse;
+export type DashboardAssetsResponse = DashboardAssetsContract.DashboardAssetsResponse;
+export type DashboardBusinessStatusResponse = DashboardBusinessStatusContract.DashboardBusinessStatusResponse;
+export type DashboardQuarterlyReportResponse = DashboardQuarterlyReportContract.DashboardQuarterlyReportResponse;
+export type DashboardPeriodPreparationResponse = DashboardPeriodPreparationContract.DashboardPeriodPreparationResponse;
+export type DashboardCloseReviewResponse = DashboardCloseReviewContract.DashboardCloseReviewResponse;
+export type BrowserJobsResponse = BrowserJobsContract.BrowserJobsResponse;
+export type BrowserSecurityStatusResponse = BrowserSecurityStatusContract.BrowserSecurityStatusResponse;
+export type ReportExportReceiptResponse = ReportExportReceiptContract.ReportExportReceiptResponse;

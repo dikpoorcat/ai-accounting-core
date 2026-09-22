@@ -63,9 +63,9 @@ Schema 标有 `x-registration-command` 的记录由对应类型化命令核对�
 
 关账前处理核算缺项、对账差异、逐项资料遗漏和相关待更正。已关账月份是冻结终态，不根据最新员工资料或外部办理进度重新打开。关账流程：
 
-1. 单月使用 `preview_close`；连续历史月份使用 `preview_close_range(from_period, through_period)`。先补齐整批事实、核对每家公司的冻结清单和负责人确认依据，准备完毕后再请求密码。
-2. 连续历史关账使用 `finance_local_security(action="request", payload={"kind":"approve_close_batches", "batches":[...]})`，按安全 Schema 提供每家公司的身份、数据库身份、明确起止月份、`calculation_hash` 和三个版本。一个原生窗口显示所有目标，一次密码确认整批；不得拆成逐月弹窗。单月原 `approve_period_close` 仍可使用。密码只在原生窗口输入。
-3. 通过安全 `status` 取得各公司批准后，用 `close_range`（单月为 `close`）提交对应原预览及 `approval_id`。每家公司在同一事务完整关账并一次消费批准；跨公司成功情况分别记录。响应丢失、中断或部分成功先复用原安全请求状态、批准及幂等键，不重新要求密码；过期、会话失效或核算／资料版本变化才重建预览。不得扩大负责人已确认范围；截止月后的月份保持开放。
+1. 按公司逐月使用 `preview_close`，依据返回的 `review_locator` 引导负责人查看经营简报中的同版月度核对。摘要、主要金额、资料覆盖及实际政策、工资和原件依据由内核提供，不能用 AI 自写摘要代替。页面只读，不逐笔勾选。
+2. 核对后使用 `finance_local_security(action="request", payload={"kind":"approve_period_close", ...})`，按安全 Schema 提供同一公司、数据库、月份、`preview_digest` 和三个业务版本。密码只在本机安全窗口输入；窗口展示同版摘要并签发整月批准，不执行关账。
+3. 通过安全 `status` 取得批准后，用 `close` 提交原预览及 `approval_id`。响应丢失先查原状态，复用幂等键；预览替换、业务或读取修复版本变化、过期或会话失效后重新核对和批准。连续月份逐月完成；服务重启后未冻结的预览重新准备，已冻结内容从原记录读取。
 4. 检查自动备份任务直至实际成功，并核验便携公司包。每家公司独立 `<统一社会信用代码>.finance-company.zip`；首次备份无 previous，后续滚动保留上一版。活动 SQLite 文件不能直接复制充当备份。
 
 ## 回复

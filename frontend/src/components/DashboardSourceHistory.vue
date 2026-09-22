@@ -23,11 +23,17 @@ async function load(more = false) {
   const valid = () => mounted && generation === version && selection() === key && controller === request;
   try {
     const options = { section: props.section, cursor: more ? current?.page.next_cursor ?? undefined : undefined, expected_version: props.snapshotVersion };
-    const response = props.endpoint === "assets"
-      ? await fetchAssetsDashboard(props.period, request.signal, { ...options, asset_id: props.entityId })
-      : await fetchEmployeesDashboard(props.period, request.signal, { ...options, section: "settlement_events", employee_id: props.entityId });
-    if (!valid() || !response.data) return;
-    const next = response.data.collections[props.section];
+    let next: DashboardCollection | undefined;
+    if (props.endpoint === "assets") {
+      const response = await fetchAssetsDashboard(props.period, request.signal, { ...options, asset_id: props.entityId });
+      if (!valid() || !response.data) return;
+      next = props.section === "source_history" ? response.data.collections.source_history : response.data.collections.settlement_events;
+    } else {
+      const response = await fetchEmployeesDashboard(props.period, request.signal, { ...options, section: "settlement_events", employee_id: props.entityId });
+      if (!valid() || !response.data) return;
+      next = response.data.collections.settlement_events;
+    }
+    if (!next) return;
     collection.value = { ...next, items: [...(more ? current?.items ?? [] : []), ...next.items] };
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) { invalidate(); notice.value = "来源资料已更新，正在重新读取。"; emit("changed"); } else error.value = dashboardErrorMessage(caught); } }
   finally { if (valid()) loading.value = false; }

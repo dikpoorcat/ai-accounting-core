@@ -186,10 +186,20 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     employee_response = dashboard.employees("2026-01")
     employee = next(
         item
-        for item in employee_response["data"]["employees"]["items"]
+        for item in employee_response["data"]["collections"]["employees"]["items"]
         if item["employee_id"] == "employee"
     )
-    source = next(item for item in employee["payroll_sources"] if item["source_id"] == "january")
+    source_response = dashboard.employees(
+        "2026-01",
+        section="payroll_sources",
+        employee_id=employee["employee_id"],
+        expected_version=employee_response["snapshot_version"],
+    )
+    source = next(
+        item
+        for item in source_response["data"]["collections"]["payroll_sources"]["items"]
+        if item["source_id"] == "january"
+    )
     assert source["calculation_id"] == events[0]["calculation_id"]
     employee_net = next(item for item in source["obligations"] if item["name"] == "net")
     assert employee_net["remaining_fen"] == net["remaining_fen"]
@@ -229,7 +239,9 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     assert funds["outflow_fen"] == brief["funds_overview"]["outflow_fen"] == 100_000
     payment_voucher = next(item for item in original_vouchers.values() if item["kind"] == "payment")
     payments = [
-        item for item in funds["movements"] if item["reference"] == str(payment_voucher["number"])
+        item
+        for item in funds["collections"]["movements"]["items"]
+        if item["reference"] == str(payment_voucher["number"])
     ]
     assert len(payments) == 1 and payments[0]["signed_amount_fen"] == -100_000
     for response in (brief_response, employee_response, funds_response):

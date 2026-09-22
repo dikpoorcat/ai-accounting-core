@@ -85,6 +85,13 @@ def native_samples(root):
     )
     finish_payment(call, references, evidence)
     add("company_with_period", "dashboard_context", call("dashboard_context"))
+    brief = call("dashboard_brief", period="2026-01")
+    add("brief", "dashboard_brief", brief)
+    add(
+        "deferred_brief",
+        "dashboard_brief",
+        call("dashboard_brief", period="2026-01", preparation="deferred"),
+    )
     add("cash_funds", "dashboard_funds", call("dashboard_funds", period="2026-01"))
     add(
         "deferred_funds",
@@ -114,6 +121,37 @@ def native_samples(root):
             limit=1,
         ),
     )
+    add("employees", "dashboard_employees", call("dashboard_employees", period="2026-01"))
+    add("assets", "dashboard_assets", call("dashboard_assets", period="2026-01"))
+    add(
+        "business_status",
+        "dashboard_business_status",
+        call(
+            "dashboard_business_status",
+            period="2026-01",
+            subject_id=references["expense"],
+        ),
+    )
+    add(
+        "quarterly_report",
+        "dashboard_quarterly_report",
+        call("dashboard_quarterly_report", year=2026, quarter=1),
+    )
+    add(
+        "deferred_quarterly_report",
+        "dashboard_quarterly_report",
+        call("dashboard_quarterly_report", year=2026, quarter=1, preparation="deferred"),
+    )
+    add(
+        "period_preparation",
+        "dashboard_period_preparation",
+        call(
+            "dashboard_period_preparation",
+            period="2026-01",
+            expected_read_version=brief["read_context"]["read_version"],
+            as_of=brief["read_context"]["as_of"],
+        ),
+    )
 
     bank_path = root / "banks"
     bank_path.mkdir()
@@ -135,7 +173,7 @@ def native_samples(root):
     add("bank_funds", "dashboard_funds", bank_response)
     # Generated entity IDs are random; pick the account outside the first page
     # from the actual ordered response, rather than assuming bank-b sorts last.
-    filtered_account = bank_response["data"]["accounts"][-1]["account_id"]
+    filtered_account = bank_response["data"]["collections"]["accounts"]["items"][-1]["account_id"]
     add(
         "filtered_bank_funds",
         "dashboard_funds",

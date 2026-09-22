@@ -9,9 +9,6 @@ export type BankStatementState = DashboardFundsContract.BankStatementRow["state"
 export interface FundsQuery {
   section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";
   cursor?: string;
-  after_movement?: string;
-  after_statement?: string;
-  after_investment?: string;
   expected_version?: string;
   movement_account_type?: FundAccount["type"];
   movement_account_id?: string;

@@ -115,10 +115,16 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         payment_id = "batch"
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-02")
-    employees = response["data"]["employees"]["items"]
+    employees = response["data"]["collections"]["employees"]["items"]
     for employee in employees:
         person = employee["employee_id"]
-        source = next(s for s in employee["payroll_sources"] if s["source_id"] == "wage-" + person)
+        sources = dashboard.employees(
+            "2026-02",
+            section="payroll_sources",
+            employee_id=person,
+            expected_version=response["snapshot_version"],
+        )["data"]["collections"]["payroll_sources"]["items"]
+        source = next(s for s in sources if s["source_id"] == "wage-" + person)
         assert "movements" not in source
         collection = dashboard.employees(
             "2026-02",
@@ -138,9 +144,15 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         assert employee["name"] == "合成人员" + person
         assert employee["field_sources"]["name"]
     earlier_response = dashboard.employees("2026-01")
-    earlier = earlier_response["data"]["employees"]["items"]
-    assert all("movements" not in source for item in earlier for source in item["payroll_sources"])
+    earlier = earlier_response["data"]["collections"]["employees"]["items"]
     for employee in earlier:
+        sources = dashboard.employees(
+            "2026-01",
+            section="payroll_sources",
+            employee_id=employee["employee_id"],
+            expected_version=earlier_response["snapshot_version"],
+        )["data"]["collections"]["payroll_sources"]["items"]
+        assert all("movements" not in source for source in sources)
         movements = dashboard.employees(
             "2026-01",
             section="settlement_events",

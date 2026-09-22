@@ -222,19 +222,17 @@ v9 将提交并发令牌与已存说明的内容有效性分开，保存时仍�
 ```
 
 `close-preview.json` 增加 `owner_confirmation`，引用本次实际完整性确认的证据摘要。
-`close-window.json` 提供 `company_id`、`database_id`、`period`、`calculation_hash`（填关账预览
+`close-window.json` 提供 `company_id`、`database_id`、`period`、`preview_digest`（填关账预览
 `digest`）和完整 `epochs`；`database_id` 从本目标 `company_context.identity` 读取。
 CLI 的 `security close` 自动指定操作类型。完成窗口取得 `approval_id`；MCP 可用
 `finance_local_security(action="status", payload={"request_id":"窗口请求ID"})` 读取结果。
 `close.json` 使用同一月份、`owner_confirmation`、预览 `digest` 作为 `preview_digest`、`epochs`、
 `approval_id` 和 `request_id`。缺资料或核对失败按事实补齐，不通过空清单、零额或伪造无业务确认绕过。
 
-连续历史月份可用 `preview_close_range` →
-`finance_local_security(action="request", payload={"kind":"approve_close_batches","batches":[...]})`
-→ `close_range`，公司与范围必须与每份预览及批准完全一致。具体窗口结构取当前 schema，
-不得把一份公司的批准用于另一公司或扩大月份范围。
-每个 `batches` 项包含本目标 `company_id`、`database_id`、`from_period`、`through_period`、
-`calculation_hash`（范围预览 `digest`）及完整 `epochs`。
+连续月份逐月执行 `preview_close` → 页面核对 → 原生 `approve_period_close` → `close`。
+页面使用预览返回的 `review_locator`，显示内核提供的金额、资料覆盖和实际采用依据；
+密码窗口显示同版摘要。新预览或业务／读取修复版本变化使旧核对失效，不能扩大批准范围。
+已关账核对内容读取当月冻结版本，不能拿后续月份的批准冒充当月批准。
 
 新关账封存当时已有管理版本；闭期之后的 `update_period_commentary` 明确作为后补说明保存。
 既有关闭月份及其摘要不改写。完整恢复保留原封存；原件重记形成的是新库本次封存，

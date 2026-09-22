@@ -1023,7 +1023,7 @@ def test_business_status_v3_exposes_review_and_exact_registered_entity(company):
         request_id="save-status",
     )
     response = Dashboard(engine).business_status("2026-01", "expense-status")
-    assert response["schema_version"] == 3
+    assert response["schema_version"] == 4
     checks = response["data"]["duplicate_checks"]
     assert checks["status"] == "clear"
     assert checks["strong_candidates"] == checks["weak_candidates"] == []

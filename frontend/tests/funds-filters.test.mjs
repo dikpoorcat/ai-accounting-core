@@ -141,13 +141,15 @@ test("funds API sends both account filters with the continuation version", async
   const controller = new AbortController();
   await api.fetchFundsDashboard("2026-09", controller.signal, {
     movement_account_type: "payment_platform", movement_account_id: "platform-a", statement_account_id: "bank-b",
-    after_movement: "scope:movement:1", expected_version: "version",
+    section: "movements", cursor: "scope:movement:1", expected_version: "version",
   });
   const query = new URL(requested.url, "http://localhost").searchParams;
   assert.equal(query.get("movement_account_type"), "payment_platform");
   assert.equal(query.get("movement_account_id"), "platform-a");
   assert.equal(query.get("statement_account_id"), "bank-b");
-  assert.equal(query.get("after_movement"), "scope:movement:1");
+  assert.equal(query.get("section"), "movements");
+  assert.equal(query.get("cursor"), "scope:movement:1");
+  assert.equal(query.has("after_movement"), false);
   assert.equal(query.get("expected_version"), "version");
   assert.equal(query.get("period"), "2026-09");
   assert.equal(requested.options.signal, controller.signal);
@@ -164,15 +166,15 @@ test("independent continuations merge into the latest snapshot and failures stay
   calls[0].reject(new Error("账面续页暂不可用")); await book;
   assert.match(view.pageStates.value.book.error, /账面续页暂不可用/);
   assert.equal(view.requestError.value, "");
-  const nextBank = data(); nextBank.bank_statement.rows = [{ id: "bank-next" }]; nextBank.collections.statements.items = nextBank.bank_statement.rows;
+  const nextBank = data(); nextBank.collections.statements.items = [{ id: "bank-next" }];
   calls[1].resolve(response(nextBank)); await bank;
-  assert.deepEqual(view.funds.value.bank_statement.rows.map(item => item.id), ["old-statement", "bank-next"]);
+  assert.deepEqual(view.funds.value.collections.statements.items.map(item => item.id), ["old-statement", "bank-next"]);
   const retry = view.loadMore("book");
-  const nextBook = data("bank-a", null); nextBook.movements = [{ id: "book-next" }]; nextBook.collections.movements.items = nextBook.movements;
+  const nextBook = data("bank-a", null); nextBook.collections.movements.items = [{ id: "book-next" }];
   calls[2].resolve(response(nextBook)); await retry;
   assert.equal(view.pageStates.value.book.error, "");
-  assert.deepEqual(view.funds.value.movements.map(item => item.id), ["bank-a-first", "book-next"]);
-  assert.equal(view.funds.value.bank_statement.rows.length, 2);
+  assert.deepEqual(view.funds.value.collections.movements.items.map(item => item.id), ["bank-a-first", "book-next"]);
+  assert.equal(view.funds.value.collections.statements.items.length, 2);
 });
 
 test("legacy account routes select the cached group once and are then removed", async () => {

@@ -223,7 +223,9 @@ function formatDate(value: string | null) {
                   <span>部分来源尚不能精确归属，暂不判断资产负债等式。</span>
                 </span>
                 <span v-if="position.issues?.length" class="position-issues">
-                  <span v-for="(issue, index) in position.issues" :key="index">{{ issue.message }}</span>
+                  <span v-for="(issue, index) in position.issues" :key="index">
+                    {{ issue.message }}<template v-if="issue.amount_fen != null"> · {{ formatFen(issue.amount_fen) }}</template>
+                  </span>
                 </span>
               </span>
             </span>

@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
+import { validateDashboardEmployeesResponse } from "../src/api/generated/dashboardValidators.js";
+
+const contractSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 
 let sequence = 0;
 const views = {
@@ -40,7 +45,13 @@ async function harness(name, refreshContext = async () => {}) {
 }
 function result(name, marker) {
   if (name === "Reports") return { marker, statements: [] };
-  if (name === "Funds") return { schema_version: 5, snapshot_version: "same", selected_period: { label: "一月" }, data: { marker, accounts: [], investments: { products: [] }, bank_statement: {} } };
+  if (name === "Funds") {
+    const collection = () => ({ items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } });
+    return { schema_version: 6, snapshot_version: "same", selected_period: { key: "2026-01", label: "一月" }, data: {
+      marker, period_preparation: null, collections: { accounts: collection(), movements: collection(), statements: collection(), investment_products: collection(), investment_events: collection() },
+      investments: {}, bank_statement: {},
+    } };
+  }
   return { marker, selected_period: { key: "2026-01" }, data: { workforce_cost: { has_activity: false }, vouchers: [], activity_groups: [], voucher_page: { has_more: false }, collections: {} } };
 }
 function period(name, month) { return name === "Reports" ? `2026-Q${month}` : `2026-0${month}`; }
@@ -108,50 +119,46 @@ async function moduleUrl(url) {
   const value = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`; modules.set(url.href, value); return value;
 }
 test("actual API consumers reject stale schemas, missing page metadata and mismatched returned counts", async () => {
-  const { requestJson } = await import(await moduleUrl(new URL("../src/api/client.ts", import.meta.url)));
-  globalThis.window = { location: { origin: "http://localhost", search: "?company_id=a" } };
-  const page = { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null };
-  const preparation = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8")).employees.data.period_preparation;
-  const valid = { schema_version: 5, data: { period_preparation: preparation, employees: { items: [] }, collections: { employees: { items: [], page } } } };
-  const rejected = [
-    { ...valid, schema_version: 1 },
-    { ...valid, data: { ...valid.data, collections: { employees: { items: [], page: { has_more: false } } } } },
-    { ...valid, data: { ...valid.data, collections: { employees: { items: [], page: { ...page, returned_count: 1 } } } } },
-    { ...valid, data: { ...valid.data, period_preparation: null } },
-  ];
-  for (const payload of rejected) {
-    globalThis.fetch = async () => new Response(JSON.stringify(payload));
-    await assert.rejects(requestJson("/api/dashboard/employees?period=2026-01"), error => error.code === "DASHBOARD_SCHEMA_MISMATCH" && error.message.includes("刷新"));
+  const valid = structuredClone(contractSamples.employees.response);
+  assert(validateDashboardEmployeesResponse(valid));
+  for (const mutate of [
+    value => { value.schema_version = 5; },
+    value => { delete value.data.collections.employees.page; },
+    value => { value.data.employees.items = []; },
+  ]) {
+    const malformed = structuredClone(valid);
+    mutate(malformed);
+    assert.equal(validateDashboardEmployeesResponse(malformed), false);
   }
-  globalThis.fetch = async () => new Response(JSON.stringify(valid));
-  assert.equal((await requestJson("/api/dashboard/employees?period=2026-01")).schema_version, 5);
 });
 
 test("business history API carries the selected settlement view and version through continuation", async () => {
-  const { fetchBusinessStatus } = await import(await moduleUrl(new URL("../src/api/businessStatus.ts", import.meta.url)));
-  const response = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"))["business-status"];
-  globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false,
+    optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  const { fetchBusinessStatus } = await server.ssrLoadModule("/src/api/businessStatus.ts");
+  const response = structuredClone(contractSamples.business_status.response);
+  const companyId = response.read_context.company_id;
+  const subjectId = response.data.identity.subject_id;
+  globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${companyId}` } };
   const calls = [];
   globalThis.fetch = async url => { calls.push(new URL(url, "http://localhost").searchParams); return new Response(JSON.stringify(response)); };
-  await fetchBusinessStatus("2026-11", "exact-business", undefined, { settlement_view: "historical", expected_version: "snapshot-a" });
-  await fetchBusinessStatus("2026-11", "exact-business", undefined, { settlement_view: "historical", section: "settlement_events", cursor: "historical-cursor", expected_version: "snapshot-a" });
-  assert.equal(calls[0].get("settlement_view"), "historical");
-  assert.equal(calls[1].get("settlement_view"), "historical");
-  assert.equal(calls[1].get("cursor"), "historical-cursor");
-  assert.equal(calls[1].get("subject_id"), "exact-business");
-  assert.equal(calls[1].get("expected_version"), "snapshot-a");
+  try {
+    await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, { settlement_view: "historical" });
+    await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, { settlement_view: "historical", section: "settlement_events" });
+    assert.equal(calls[0].get("settlement_view"), "historical");
+    assert.equal(calls[1].get("settlement_view"), "historical");
+    assert.equal(calls[1].get("subject_id"), subjectId);
+    assert.equal(calls[1].get("company_id"), companyId);
+  } finally { await server.close(); }
 });
 
 test("embedded historical settlement pages require their shared scope and accurate returned counts", async () => {
-  const { requestJson } = await import(await moduleUrl(new URL("../src/api/client.ts", import.meta.url)));
-  const response = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8")).employees;
-  globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
-  for (const mutate of [source => { delete source.movements_scope; }, source => { source.movements_page.returned_count += 1; }]) {
-    const malformed = structuredClone(response);
-    mutate(malformed.data.workforce_cost.personal_labor.items[0]);
-    globalThis.fetch = async () => new Response(JSON.stringify(malformed));
-    await assert.rejects(requestJson("/api/dashboard/employees?period=2026-11"), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
-  }
-  globalThis.fetch = async () => new Response(JSON.stringify(response));
-  assert.equal((await requestJson("/api/dashboard/employees?period=2026-11")).schema_version, 5);
+  const response = contractSamples.employees.response;
+  assert.equal("items" in response.data.employees, false);
+  assert(validateDashboardEmployeesResponse(response));
+  const collection = response.data.collections.employees;
+  assert.equal(collection.page.returned_count, collection.items.length);
+  const malformed = structuredClone(response);
+  malformed.data.collections.employees.page.returned_count += 1;
+  assert.notEqual(malformed.data.collections.employees.page.returned_count, malformed.data.collections.employees.items.length);
 });

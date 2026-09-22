@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import uuid
+from decimal import Decimal
 
 from pydantic import SecretStr
 
@@ -38,6 +39,50 @@ _LABELS = {
     "repeat_password": "再次输入新密码",
     "recovery_code": "恢复码",
 }
+
+
+def _owner_review_text(review):
+    def money(value):
+        return "—" if value is None else f"¥{Decimal(value) / 100:,.2f}"
+
+    accounting = review["accounting_summary"]
+    businesses = review["business_summary"]
+    materials = review["material_summary"]
+    basis = review["adopted_basis_summary"]
+    lines = [
+        f"本月凭证：{accounting['voucher_count']} 张 / {accounting['line_count']} 行",
+        f"借方合计：{money(accounting['total_debit_fen'])}",
+        f"贷方合计：{money(accounting['total_credit_fen'])}",
+        f"本月收入：{money(accounting['month_revenue_fen'])}",
+        f"本月费用：{money(accounting['month_expense_fen'])}",
+        f"本月结果：{money(accounting['month_result_fen'])}",
+        f"实际收款：{money(accounting['actual_receipts_fen'])}",
+        f"实际付款：{money(accounting['actual_payments_fen'])}",
+        f"内部转款：{money(accounting['internal_transfer_fen'])}",
+        "",
+        "业务摘要：",
+    ]
+    lines.extend(
+        f"{item['label']}{'（冲正）' if item['reversal'] else ''}："
+        f"{item['count']} 项 / {item['amount_label']} "
+        f"{money(item['business_amount_fen'])} / 凭证金额 {money(item['journal_total_fen'])}"
+        for item in businesses
+    )
+    lines.extend(
+        [
+            "",
+            "资料覆盖："
+            + "；".join(
+                f"{item['category']} {item['received']}/{item['expected']}"
+                + ("（无业务确认）" if item["no_business"] else "")
+                for item in materials
+            ),
+            "实际采用依据："
+            f"政策 {basis['policy_count']} 项，工资确认 {basis['payroll_confirmation_count']} 项，"
+            f"保全依据 {basis['evidence_count']} 项",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def safe_error(exc):
@@ -97,11 +142,8 @@ class SecurityForm:
         if self.request.kind == "approve_period_close":
             text += (
                 f"\n关账月份：{facts['period_month']}"
-                f"\n预览指纹：{self.request.calculation_hash}"
                 "\n本次验证仅授权该月份的当前关账预览，不执行关账。"
             )
-        if self.request.kind == "approve_close_batches":
-            text += "\n一次密码确认仅批准以下公司及明确范围，各公司分别执行一次。"
         if self.request.kind in {"change_password", "recover"}:
             text += "\n完成后旧会话和旧恢复码失效，需要重新登录。"
         if self.request.kind in {"bootstrap_owner", "change_password", "recover"}:
@@ -109,35 +151,44 @@ class SecurityForm:
         if self.request.kind == "replace_recovery_code":
             text += "\n确认后旧恢复码立即失效，请保存新恢复码。"
         ttk.Label(frame, text=text, wraplength=460).grid(sticky="w", pady=(0, 14))
-        if self.request.kind == "approve_close_batches":
-            batch_frame = ttk.Frame(frame)
-            batch_frame.grid(sticky="ew", pady=(0, 12))
+        if self.request.kind == "approve_period_close":
+            review_frame = ttk.Frame(frame)
+            review_frame.grid(sticky="ew", pady=(0, 12))
             listing = tk.Text(
-                batch_frame,
-                height=min(16, 4 * len(facts["batches"])),
+                review_frame,
+                height=14,
                 width=72,
                 wrap="word",
                 font=("Microsoft YaHei UI", 10),
             )
-            scroll = ttk.Scrollbar(batch_frame, orient="vertical", command=listing.yview)
+            scroll = ttk.Scrollbar(review_frame, orient="vertical", command=listing.yview)
             listing.configure(yscrollcommand=scroll.set)
             listing.grid(row=0, column=0, sticky="nsew")
             scroll.grid(row=0, column=1, sticky="ns")
-            listing.insert(
-                "1.0",
-                "\n\n".join(
-                    f"公司：{item['company_name']}\n"
-                    f"期间：{item['from_period']} 至 {item['through_period']}（含起止月）\n"
-                    f"目标库：{item['database_id']}\n预览指纹：{item['calculation_hash']}"
-                    for item in facts["batches"]
-                ),
-            )
+            listing.insert("1.0", _owner_review_text(facts["owner_review"]))
             listing.configure(state="disabled")
+            technical = ttk.Label(
+                frame,
+                text=f"预览指纹：{self.request.preview_digest}",
+                wraplength=460,
+            )
+
+            def toggle_technical():
+                if technical.winfo_ismapped():
+                    technical.grid_remove()
+                    technical_button.configure(text="显示技术详情")
+                else:
+                    technical.grid(sticky="w", pady=(0, 12))
+                    technical_button.configure(text="隐藏技术详情")
+
+            technical_button = ttk.Button(frame, text="显示技术详情", command=toggle_technical)
+            technical_button.grid(sticky="w", pady=(0, 8))
+            technical.grid(sticky="w", pady=(0, 12))
+            technical.grid_remove()
         self.entries = {}
         if self.request.kind in {
             "login",
             "approve_period_close",
-            "approve_close_batches",
             "change_password",
         }:
             fields = ["password"]

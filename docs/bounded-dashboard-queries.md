@@ -26,7 +26,7 @@
 - `job_reference`：支持的有限任务声明中的业务、事实、计算、义务与期间候选。
 - `audit_reference`：受支持审计动作的精确来源出现记录，保留重复出现位置。
 
-它们只定位候选，不保存 adopted、root、settled 或 completed。目录与源记录在原写事务内同步，包含普通／批量关账及相关文件任务。普通读取核验命中的精确叶与来源标记，不在打开连接时全库回填或扫描。显式完整校验比较原始提取结果的完整多重集合；便携包验证包含该检查。
+它们只定位候选，不保存 adopted、root、settled 或 completed。目录与源记录在原写事务内同步，包含单月关账及相关文件任务。普通读取核验命中的精确叶与来源标记，不在打开连接时全库回填或扫描。显式完整校验比较原始提取结果的完整多重集合；便携包验证包含该检查。
 
 凭证选取从所选主体／业务类型的计算及精确凭证身份驱动，再应用冻结／当前选择规则；原凭证到冲正凭证的反查使用专用索引。它保留相关冲正，不为验证主体条件先扫描全部历史凭证。来源历史页的发布追溯和封存反查同样从页内主体、精确引用与期间驱动索引。
 
@@ -48,7 +48,7 @@
 
 ## 页面版本与集合
 
-`brief`、`funds`、`employees`、`assets` 使用 `schema_version: 3`；`context` 保持 2，`quarterly-report`、`business-status` 和 `period-preparation` 使用 2。公开 CLI/MCP `business_status`、`period_readiness` 的完整查询继续存在；页面 summary 明确标识为投影。
+`brief`、`funds`、`employees`、`assets` 使用 `schema_version: 6`；`context` 保持 2，`business-status` 使用 4，`quarterly-report` 和 `period-preparation` 使用 3。只读 `close-review`、浏览器任务列表及安全窗口公开状态使用 1。公开 CLI/MCP `business_status`、`period_readiness` 的完整查询继续存在；页面 summary 明确标识为投影。
 
 每页保留原汇总字段。增长集合位于 `data.collections[section]`：
 
@@ -60,15 +60,15 @@
 | assets | assets、projects、source_history、settlement_events |
 | business-status | events、settlement_events、source_history、file_jobs |
 
-集合包含 `items` 和 `page`。`page.total_count` 是全范围数量，`filtered_count` 是筛选后数量，`returned_count` 是本响应数量；另含 `has_more`、`next_cursor`。默认 100、最多 500。未请求的明细集合可不展开，页面展开时独立请求。原资金三个游标及简报 `after_number` 保留衔接；旧资金 page 的 total_count 保持筛选后含义，新 collections 明确两种总数。
+集合只保留一份 `items` 和 `page`。`page.total_count` 是全范围数量，`filtered_count` 是筛选后数量，`returned_count` 是本响应数量；另含 `has_more`、`next_cursor`。默认 100、最多 500。未请求的明细集合可不展开，页面展开时独立请求；不再同时返回分页别名或重复明细。汇总始终覆盖完整范围，不能由已加载页拼成。
 
 游标绑定公司、数据库、期间、as_of、入口、集合、实体、全部筛选和 snapshot_version。文件任务集合另绑定相关任务状态／结果的 collection_version；工作器更新没有推进业务 epochs 时也不能拼页。版本或范围不匹配使用 `dashboard_snapshot_changed`。
 
-员工实体使用 `employee_id`，资产和项目使用 `asset_id`／`project_id`，业务详情另用 `subject_id`。员工筛选支持 all、in_period、payroll、no_payroll、unknown、ended；资产支持 all、active、fixed、intangible、pending、exited。员工卡片的 payroll_source_page 独立绑定该 employee_id。
+员工实体使用 `employee_id`，资产和项目使用 `asset_id`／`project_id`，业务详情另用 `subject_id`。员工筛选支持 all、in_period、payroll、no_payroll、unknown、ended；资产支持 all、active、fixed、intangible、pending、exited。员工工资来源通过 `payroll_sources` 集合独立请求并绑定该 employee_id。
 
-员工、劳务、资产和项目来源中的历史 `movements` 同样在展开前分页，附 `movements_page` 与精确 `subject_id`，沿用父页 limit。完整义务金额与计数来自共享 summary；已返回的明细不是完整历史。其游标可通过 `business-status` 的 `settlement_events` 继续读取。该入口的 `settlement_view` 仅允许 historical／current，默认 current，游标绑定该选择；历史详情与当前跟进分别标明范围。
+员工、劳务、资产和项目卡片不重复嵌入历史清偿明细；按精确 `subject_id` 从 `business-status` 的 `settlement_events` 集合请求。完整义务金额与计数来自共享 summary，已返回的明细不是完整历史。该入口的 `settlement_view` 仅允许 historical／current，默认 current，游标绑定该选择；历史详情与当前跟进分别标明范围。
 
-上述来源卡片的历史明细沿用共同查询的“该业务相关清偿”范围，包括该业务承接的其他来源，保留每条 `source_business`；`movements_scope` 明示该范围。义务汇总仍按本来源义务展示，不能把相关明细自行加总为本来源付款。适配器不在共享分页之后另行删行，否则会令数量与游标失真。
+清偿明细沿用共同查询的“该业务相关清偿”范围，包括该业务承接的其他来源，保留每条 `source_business` 和明确范围。义务汇总仍按本来源义务展示，不能把相关明细自行加总为本来源付款。适配器不在共享分页之后另行删行，否则会令数量与游标失真。
 
 简报深链使用 `voucher_version_id` 或旧链接的 `voucher_number` 精确定位，二者互斥，结果放在 `data.focused_voucher`。不会循环读取此前各页，也不把焦点凭证追加进当前分页集合。
 
@@ -84,7 +84,7 @@
 
 ## 客户端与成本说明
 
-五页及共享 context 使用单调请求世代。切公司、期间、筛选、刷新和卸载都使旧请求失效；成功、失败、finally、路由回填和下一页合并均检查原上下文。员工 A→B→A 不会因缓存提前返回而留下 B 请求。API 客户端实际检查 schema 版本和分页数量，而非只声明 TypeScript 类型。金额字符串使用 BigInt；null 继续传播。
+五页及共享 context 使用单调请求世代。切公司、期间、筛选、刷新和卸载都使旧请求失效；成功、失败、finally、路由回填和下一页合并均检查原上下文。员工 A→B→A 不会因缓存提前返回而留下 B 请求。API 客户端使用同源生成类型与 Ajv 校验，保留版本、分页数量和最终请求 URL 的关联检查；页面路径不按字段名猜金额。金额字符串使用 BigInt；null 继续传播。
 
 资金历史余额从 `period_balance` 按实际入账期汇总，期初贡献不混入本月发生额。目标账户查询不解码无关账户的历史结果，但类别封签仍核对命中期间内该类别的投影行；不能声称只读取目标账户行。`settlement_change` 聚合全范围待收待付，明细先分页，再批量装载本页业务及真实上游。未知金额保持为空。
 

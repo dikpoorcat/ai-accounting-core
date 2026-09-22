@@ -20,6 +20,7 @@ from .schema_bundle import production_bundle, valid_database_format
 from .security.credentials import WindowsCredentialStore
 from .security.service import credential_target
 from .security.windows import read_protected_json, write_protected_json
+from .types import digest
 
 SERVICE_PROTOCOL = 2
 
@@ -268,7 +269,6 @@ def build_native_security_controller(
     """Build the production private controller around one synthetic or resident service."""
     from .periods import Periods
     from .security.approval import insert_close_approval
-    from .security.batches import CloseBatchHost
     from .security.native import NativeSecurityController
     from .security.transport import launch_native_window
 
@@ -281,37 +281,60 @@ def build_native_security_controller(
             raise KernelError("unknown_company", "公司尚未登记")
         if request["database_id"] != company["database_id"]:
             raise KernelError("company_mismatch", "公司数据库身份不一致")
-        preview = service.close_previews.get(
-            (request["company_id"], request["database_id"], request["calculation_hash"])
+        preview = service.require_active_close_preview(
+            request["company_id"],
+            request["database_id"],
+            request["period"],
+            request["preview_digest"],
         )
-        if (
-            preview is None
-            or preview["manifest"]["period"] != request["period"]
-            or preview["epochs"] != request["epochs"]
-        ):
+        if preview["epochs"] != request["epochs"]:
             raise KernelError("preview_expired", "请先在当前服务重新预览关账")
-        return {"company_name": company["name"], "period_month": request["period"]}
+        return {
+            "company_name": company["name"],
+            "period_month": request["period"],
+            "owner_review": preview["manifest"]["owner_review"],
+        }
 
     def issue_close(request, token, password):
         with service.security.authorized(token):
-            inspect_close(request)
             engine = service.engine(request["company_id"])
-            known = service.close_previews[
-                (request["company_id"], request["database_id"], request["calculation_hash"])
-            ]
-            preview = Periods(engine).preview_close(
-                request["period"], owner_confirmation=known["owner_confirmation"]
+            known = service.require_active_close_preview(
+                request["company_id"],
+                request["database_id"],
+                request["period"],
+                request["preview_digest"],
             )
-            if (
-                preview["digest"] != request["calculation_hash"]
-                or preview["epochs"] != request["epochs"]
-            ):
+            if known["epochs"] != request["epochs"]:
                 raise KernelError("preview_expired", "关账预览已变化，请重新预览并确认")
             authority = service.security.reauthenticate(token, password)
             with engine.store.connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    if engine.store.epochs(connection) != request["epochs"]:
+                    # The password may have remained open while a repair changed
+                    # immutable-source interpretation without advancing a business
+                    # lane.  Rebuild the complete manifest under the company write
+                    # lock and compare its digest, including read_repair_revision.
+                    active = service.require_active_close_preview(
+                        request["company_id"],
+                        request["database_id"],
+                        request["period"],
+                        request["preview_digest"],
+                    )
+                    manifest = Periods(engine)._manifest(
+                        connection,
+                        request["period"],
+                        active["owner_confirmation"],
+                    )
+                    current = engine.store.epochs(connection)
+                    preview_digest = digest(
+                        [
+                            manifest,
+                            current["accounting"],
+                            current["material"],
+                            current["management"],
+                        ]
+                    ).hex()
+                    if preview_digest != request["preview_digest"] or current != request["epochs"]:
                         raise KernelError("preview_expired", "关账预览已变化")
                     result = insert_close_approval(
                         connection,
@@ -320,7 +343,7 @@ def build_native_security_controller(
                         company_id=engine.store.company_id,
                         database_id=engine.store.database_id,
                         period=request["period"],
-                        preview_digest=request["calculation_hash"],
+                        preview_digest=request["preview_digest"],
                         epochs=request["epochs"],
                     )
                     connection.commit()
@@ -337,15 +360,12 @@ def build_native_security_controller(
             catalog_instance_id=service.security.catalog_instance_id,
         )
     )
-    batches = CloseBatchHost(service)
     return NativeSecurityController(
         service.security,
         credential_store=credential_store,
         window_opener=opener,
         close_issuer=issue_close,
         inspect_close=inspect_close,
-        batch_issuer=batches.issue,
-        inspect_batches=batches.inspect,
     )
 
 

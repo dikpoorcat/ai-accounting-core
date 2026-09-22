@@ -13,10 +13,9 @@ _CURRENT_CLOSE = object()
 
 
 class Periods:
-    def __init__(self, engine, *, authorize_close=None, authorize_close_range=None):
+    def __init__(self, engine, *, authorize_close=None):
         self.engine, self.store = engine, engine.store
         self.authorize_close = authorize_close
-        self.authorize_close_range = authorize_close_range
 
     def management(
         self,
@@ -361,6 +360,10 @@ class Periods:
             },
         }
 
+        from .close_review import build_owner_review
+
+        manifest["owner_review"] = build_owner_review(connection, self.engine, manifest)
+
         return require_close_contract(manifest)
 
     def check_readiness(
@@ -678,217 +681,3 @@ class Periods:
                     reason="manifest_digest_mismatch",
                 )
             return manifest
-
-    def _range_snapshot(self, connection, from_period, through_period, owner_confirmation):
-        first, last = YearMonth(from_period), YearMonth(through_period)
-        if first > last:
-            raise KernelError("invalid_close_range", "关账起始月不能晚于截至月")
-        epochs = self.store.epochs(connection)
-        closed = list(connection.execute("SELECT period,digest FROM period_close ORDER BY period"))
-        by_month = {row["period"]: row for row in closed}
-        remaining, prefix = first.ordinal, []
-        while remaining <= last.ordinal and remaining in by_month:
-            row = by_month[remaining]
-            prefix.append(
-                {"period": str(YearMonth.from_ordinal(remaining)), "digest": row["digest"].hex()}
-            )
-            remaining += 1
-        previous = closed[-1] if closed else None
-        if remaining <= last.ordinal and previous is not None:
-            if previous["period"] >= remaining:
-                raise KernelError(
-                    "closed_range_gap", "已有闭期不是连续前缀，不能补写或重开其前方月份"
-                )
-            if remaining != previous["period"] + 1:
-                raise KernelError(
-                    "close_range_not_contiguous",
-                    "待关范围必须紧接当前最后闭期",
-                    next_period=str(YearMonth.from_ordinal(previous["period"] + 1)),
-                )
-        anchor = (
-            None
-            if previous is None
-            else {
-                "period": str(YearMonth.from_ordinal(previous["period"])),
-                "digest": previous["digest"].hex(),
-            }
-        )
-        from .materials import _CompletenessInspectionCache
-
-        inspection_cache = _CompletenessInspectionCache(connection)
-        manifests = []
-        for ordinal in range(remaining, last.ordinal + 1):
-            month = str(YearMonth.from_ordinal(ordinal))
-            try:
-                manifest = self._manifest(
-                    connection,
-                    month,
-                    owner_confirmation,
-                    previous_close=previous,
-                    _inspection_cache=inspection_cache,
-                )
-            except KernelError as error:
-                error.details["closing_period"] = month
-                for issue in error.details.get("fact_issues", ()):
-                    issue.setdefault("closing_period", month)
-                raise
-            manifests.append(manifest)
-            # Only the prior closed boundary is virtual. Facts, publications,
-            # inventories and every readiness check use the unchanged read snapshot.
-            previous = {"period": ordinal, "digest": digest(manifest)}
-        result = {
-            "status": "preview" if manifests else "already_closed",
-            "company_id": self.store.company_id,
-            "database_id": self.store.database_id,
-            "from_period": str(first),
-            "through_period": str(last),
-            "owner_confirmation": owner_confirmation,
-            "epochs": epochs,
-            "closed_prefix": prefix,
-            "previous_close": anchor,
-            "manifests": manifests,
-            "month_count": len(manifests),
-        }
-        result["digest"] = digest(
-            {
-                **result,
-                "epochs": {key: epochs[key] for key in ("accounting", "material", "management")},
-            }
-        ).hex()
-        return result
-
-    def preview_close_range(
-        self,
-        from_period: str,
-        through_period: str,
-        *,
-        owner_confirmation: str,
-    ):
-        """Preview all consecutive months without writing or rolling back any close."""
-        with self.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
-            result = self._range_snapshot(
-                connection, from_period, through_period, owner_confirmation
-            )
-            connection.commit()
-        return result
-
-    def close_range(
-        self,
-        from_period: str,
-        through_period: str,
-        *,
-        owner_confirmation: str,
-        preview_digest: str,
-        epochs: dict,
-        request_id: str,
-        backup_directory: str | None = None,
-    ):
-        """Recheck and publish one company's complete range in one transaction."""
-        first, last = str(YearMonth(from_period)), str(YearMonth(through_period))
-        hashed = digest(
-            [
-                "close_range",
-                first,
-                last,
-                owner_confirmation,
-                preview_digest,
-                epochs,
-                backup_directory,
-            ]
-        )
-        cached = self.engine._cached(request_id, hashed)
-        if cached is not None:
-            return cached
-
-        def operation(connection):
-            preview = self._range_snapshot(connection, first, last, owner_confirmation)
-            if not preview["manifests"]:
-                raise KernelError("already_closed", "请求范围已经全部关账，无需再次批准")
-            if preview["digest"] != preview_digest:
-                raise KernelError("preview_expired", "连续关账预览已变化，请重新核对整个范围")
-            authorization = None
-            if self.authorize_close_range:
-                authorization = self.authorize_close_range(
-                    connection, first, last, preview_digest, epochs
-                )
-            previous_digest = (
-                preview["previous_close"]["digest"] if preview["previous_close"] else None
-            )
-            results = []
-            for prepared in preview["manifests"]:
-                manifest = {**prepared, "previous_close_digest": previous_digest}
-                if authorization is not None:
-                    manifest["approval"] = authorization
-                manifest["close_range"] = {
-                    "from_period": first,
-                    "through_period": last,
-                    "preview_digest": preview_digest,
-                }
-                hashed_manifest = digest(manifest)
-                connection.execute(
-                    "INSERT INTO period_close VALUES(?,?,?)",
-                    (YearMonth(manifest["period"]).ordinal, canonical(manifest), hashed_manifest),
-                )
-                from .read_indexes import sync_close
-
-                sync_close(connection, YearMonth(manifest["period"]).ordinal)
-                result = {"period": manifest["period"], "digest": hashed_manifest.hex()}
-                connection.execute(
-                    "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
-                    (
-                        request_id,
-                        "close_range_month",
-                        canonical(
-                            {
-                                **result,
-                                "from_period": first,
-                                "through_period": last,
-                                "preview_digest": preview_digest,
-                                "actor": self.engine.audit_actor,
-                            }
-                        ),
-                    ),
-                )
-                results.append(result)
-                previous_digest = result["digest"]
-                self.engine.fault("close_range_month:" + manifest["period"], connection)
-            job_id = None
-            if backup_directory:
-                job_id = uuid.uuid4().hex
-                connection.execute(
-                    "INSERT INTO jobs(id,kind,payload,status) VALUES(?,?,?,'pending')",
-                    (
-                        job_id,
-                        "portable_backup",
-                        canonical(
-                            {
-                                "directory": backup_directory,
-                                "rollover": True,
-                                "close_period": last,
-                                "close_digest": previous_digest,
-                            }
-                        ),
-                    ),
-                )
-            return {
-                "status": "closed",
-                "company_id": self.store.company_id,
-                "database_id": self.store.database_id,
-                "from_period": first,
-                "through_period": last,
-                "preview_digest": preview_digest,
-                "closed_prefix": preview["closed_prefix"],
-                "results": results,
-                "backup_job": job_id,
-            }
-
-        return self.engine._write(
-            request_id,
-            hashed,
-            epochs,
-            ("accounting", "material"),
-            "close_range",
-            operation,
-            checked_lanes=("accounting", "material", "management"),
-        )

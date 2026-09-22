@@ -8,6 +8,7 @@ import BusinessStatusDetails from "../BusinessStatusDetails.vue";
 
 const props = defineProps<{
   openItems: BriefOpenItems;
+  items: BriefOpenItem[];
   periodLabel: string;
   periodStatus: string;
   period: string;
@@ -17,7 +18,10 @@ const props = defineProps<{
 defineEmits<{ changed: [] }>();
 
 const isClosed = computed(() => props.periodStatus === "closed");
-const visibleCategories = computed(() => props.openItems.categories.filter((item) => item.count));
+const visibleCategories = computed(() => props.openItems.categories.filter((item) => item.count).map(category => ({
+  ...category,
+  items: props.items.filter(item => item.category_key === category.key),
+})));
 const selectedCategoryKey = ref("");
 const selectedCategory = computed(
   () => visibleCategories.value.find((item) => item.key === selectedCategoryKey.value) || null,

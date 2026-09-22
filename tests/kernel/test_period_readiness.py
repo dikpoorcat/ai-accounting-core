@@ -1,7 +1,7 @@
 """Shared period checks keep close and workflow meanings aligned."""
 
 import pytest
-from test_close_range import ready
+from monthly_close_fixture import close_months, ready
 from test_payroll import payroll, profile
 from test_workflow import obligation, setup_company
 
@@ -39,32 +39,36 @@ def test_missing_required_payroll_is_accounting_incomplete_once(tmp_path):
     ] == payroll
 
 
-def test_range_uses_virtual_previous_close_without_changing_manifest_sources(tmp_path, monkeypatch):
+def test_each_month_uses_actual_previous_close_without_changing_manifest_sources(
+    tmp_path, monkeypatch
+):
     company = setup_company(tmp_path)
     ready(company.engine, company.owner_confirmation, first="2026-01", last="2026-03")
     periods = Periods(company.engine)
     seen = []
     original = periods.check_readiness
 
-    def capture(connection, period, previous_close):
-        seen.append(previous_close)
-        return original(connection, period, previous_close)
+    def capture(connection, period, previous_close, **kwargs):
+        result = original(connection, period, previous_close, **kwargs)
+        seen.append(result["previous_close"])
+        return result
 
     monkeypatch.setattr(periods, "check_readiness", capture)
-    preview = periods.preview_close_range(
-        "2026-01", "2026-03", owner_confirmation=company.owner_confirmation
-    )
+    results = close_months(periods, company.owner_confirmation)
+    manifests = [periods.closed_report(month) for month in ("2026-01", "2026-02", "2026-03")]
 
     assert seen[0] is None
-    for index, previous in enumerate(seen[1:], 1):
-        assert previous["period"] == YearMonth(preview["manifests"][index - 1]["period"]).ordinal
-        assert previous["digest"] == digest(preview["manifests"][index - 1])
-        assert preview["manifests"][index]["previous_close_digest"] == previous["digest"].hex()
+    for index, previous_manifest in enumerate(manifests[:-1], 1):
+        # Each month is checked for preview and again under its own write transaction.
+        previous = seen[2 * index]
+        assert previous["period"] == YearMonth(previous_manifest["period"]).ordinal
+        assert previous["digest"] == digest(previous_manifest)
+        assert manifests[index]["previous_close_digest"] == previous["digest"].hex()
 
     with company.engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         current = original(connection, "2026-01", None)
-    first = preview["manifests"][0]
+    first = results[0][0]["manifest"]
     assert current["close_requirements"]["readiness"] == first["readiness"]
     assert {
         key: value for key, value in current["materials"]["coverage"].items() if key != "issues"
@@ -81,9 +85,7 @@ def test_workflow_same_snapshot_separates_close_from_external_completion(tmp_pat
     with company.engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         checked = periods.check_readiness(connection, "2026-01")
-        before = service._query(
-            connection, "2026-01", as_of="2026-02-25", period_readiness=checked
-        )
+        before = service._query(connection, "2026-01", as_of="2026-02-25", period_readiness=checked)
     assert before["accounting_closed"] is False
     assert before["obligations"][0]["status"] == "due"
     assert before["obligations"][0]["completion_status"] == "due"
@@ -107,10 +109,7 @@ def test_workflow_order_failure_keeps_current_month_followups(tmp_path):
     for index in (0, 1, 4):
         assert current["steps"][index] == baseline["steps"][index]
         assert current["steps"][index]["status"] == "needs_information"
-    assert any(
-        issue["field"] == "missing_payroll"
-        for issue in current["steps"][1]["fact_issues"]
-    )
+    assert any(issue["field"] == "missing_payroll" for issue in current["steps"][1]["fact_issues"])
     order_issues = [
         issue
         for issue in current["steps"][5]["fact_issues"]

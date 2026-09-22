@@ -8,7 +8,6 @@ import {
   type EstablishedAssetItem,
   type AssetsDashboardResponse,
   type FixedAssetItem,
-  type AssetsQuery,
   type UnestablishedAssetItem,
 } from "../api/assets";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -67,11 +66,12 @@ function clearPageRequests() {
 
 const periodOptions = computed(() => context.value?.periods ?? []);
 const data = computed(() => response.value?.data ?? null);
+const projects = computed(() => data.value?.collections.projects?.items ?? []);
 const countQualifier = computed(() => data.value?.unestablished_count ? "已确认 " : "");
 const selectedPeriodView = computed(() => response.value?.selected_period ?? null);
 const allItems = computed<AssetItem[]>(() => {
   if (!data.value) return [];
-  return data.value.collections.assets.items;
+  return data.value.collections.assets?.items ?? [];
 });
 const filteredItems = computed(() => allItems.value);
 const filterLabel = computed(
@@ -212,8 +212,7 @@ function invalidateRequests() {
   response.value = null; loading.value = false;
 }
 
-async function loadMore(section: AssetsQuery["section"] = "assets") {
-  section = section ?? "assets";
+async function loadMore(section: "assets" | "projects" = "assets") {
   const current = response.value;
   const page = current?.data?.collections[section ?? "assets"]?.page;
   if (!current?.data || !page?.has_more || !page.next_cursor || pageLoading.value[section]) return;
@@ -225,10 +224,11 @@ async function loadMore(section: AssetsQuery["section"] = "assets") {
     if (next.snapshot_version !== current.snapshot_version) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); return; }
     const latest = response.value;
     if (!latest.data) return;
+    const previous = latest.data.collections[section];
+    const following = next.data.collections[section];
+    if (!previous || !following) return;
     response.value = { ...latest, data: { ...latest.data,
-      ...(section === "assets" ? { fixed: { ...latest.data.fixed, items: [...latest.data.fixed.items, ...next.data.fixed.items] }, intangible: { ...latest.data.intangible, items: [...latest.data.intangible.items, ...next.data.intangible.items] } } : {}),
-      ...(section === "projects" ? { projects: [...latest.data.projects, ...next.data.projects] } : {}),
-      collections: { ...latest.data.collections, [section!]: { ...next.data.collections[section!], items: [...latest.data.collections[section!].items, ...next.data.collections[section!].items] } },
+      collections: { ...latest.data.collections, [section]: { ...following, items: [...previous.items, ...following.items] } },
     } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(section) !== request) return;
@@ -239,6 +239,10 @@ async function loadMore(section: AssetsQuery["section"] = "assets") {
 
 function isFixedAsset(item: EstablishedAssetItem): item is FixedAssetItem {
   return item.asset_type === "fixed";
+}
+
+function isUnestablishedAsset(item: AssetItem): item is UnestablishedAssetItem {
+  return "selection_status" in item && item.selection_status === "unestablished";
 }
 
 function assetTypeLabel(item: EstablishedAssetItem) {
@@ -566,7 +570,7 @@ onBeforeUnmount(() => {
           <div v-if="filteredItems.length" class="asset-grid">
             <template v-for="item in filteredItems" :key="item.asset_id">
             <article
-              v-if="item.selection_status === 'unestablished'"
+              v-if="isUnestablishedAsset(item)"
               :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
               class="asset-card asset-unestablished dashboard-record-card"
               tabindex="-1"
@@ -642,8 +646,8 @@ onBeforeUnmount(() => {
         <section class="panel">
           <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
           <p class="note">项目来源独立展示；整批结算不分摊为单卡付款。</p>
-          <p v-if="!data.projects.length" class="note">本月没有可展示的项目来源。</p>
-          <details v-for="project in data.projects" :key="project.source_id" class="asset-card dashboard-record-card project-card">
+          <p v-if="!projects.length" class="note">本月没有可展示的项目来源。</p>
+          <details v-for="project in projects" :key="project.source_id" class="asset-card dashboard-record-card project-card">
             <summary class="project-summary">
               <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>展开查看来源与付款</small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
@@ -652,16 +656,11 @@ onBeforeUnmount(() => {
               <p v-for="(issue, issueIndex) in project.settlement.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本项目来源款项尚需核对，请查看精确依据。' }}</p>
               <p>该来源已计入项目成本 {{ formatFen(project.cost_fen) }}，付款情况单独列示。</p>
               <p v-for="obligation in project.settlement.obligations" :key="obligation.key">{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }} · 公司实际付款 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未结金额 {{ formatFen(obligation.remaining_fen) }}</p>
-              <div v-for="movement in project.settlement.movements" :key="movement.id">
-                <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }} · {{ formatFen(movement.amount_fen) }}</p>
-                <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-              </div>
-              <p v-if="project.settlement.movements_page">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ project.settlement.movements_page.total_count }} 项 · 已加载 {{ project.settlement.movements.length }} 项</p>
               <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
-              <BusinessStatusDetails v-if="project.settlement.movements_page?.has_more && project.settlement.subject_id" :subject-id="project.settlement.subject_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" settlement-view="historical" @changed="refresh" />
+              <BusinessStatusDetails :subject-id="project.settlement.subject_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看精确关联的清偿事件" @changed="refresh" />
             </div>
           </details>
-          <DashboardPagination :page="data.collections.projects?.page" :loaded="data.projects.length" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="loadMore('projects')" />
+          <DashboardPagination :page="data.collections.projects?.page" :loaded="projects.length" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="loadMore('projects')" />
         </section>
 
       </template>

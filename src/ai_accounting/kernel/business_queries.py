@@ -42,6 +42,57 @@ _PAYROLL_CONFIRMATION_KINDS = {
 }
 
 
+def business_display_amount(calculation):
+    """Return the explicit owner-facing amount for one exact calculation version."""
+
+    data = calculation["fact"]["data"]
+    values = calculation["outcome"]["values"]
+    spec = {
+        "service_sale": ("gross_fen", "含税收入确认额"),
+        "payroll": ("gross_fen", "税前工资"),
+        "payroll_bounded": ("gross_fen", "税前工资"),
+        "annual_bonus": ("gross_fen", "税前奖金"),
+        "labor": ("gross_fen", "劳务确认毛额"),
+        "labor_accrual": ("gross_fen", "劳务确认毛额"),
+        "labor_project_cost": ("gross_fen", "资本化劳务确认毛额"),
+        "asset": ("cost_fen", "已确认资产成本"),
+        "reimbursed_asset": ("cost_fen", "已确认资产成本"),
+        "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
+        "asset_activation": ("cost_fen", "启用资产成本"),
+        "asset_consumption": ("consumption_fen", "本期折旧摊销"),
+        "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
+        "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
+        "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
+        "loan_interest": ("interest_fen", "本期确认利息"),
+        "loan_drawdown": ("principal_fen", "借款本金"),
+        "project_release": ("released_fen", "转费用成本"),
+        "money_fund_subscription": ("cost_fen", "申购确认成本"),
+        "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
+        "income_tax_assessment": ("change_fen", "本期所得税确认额"),
+        "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
+        "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
+        "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
+    }
+    field, label = spec.get(calculation["kind"], ("amount_fen", "业务确认金额"))
+    amount = values.get(field, data.get(field))
+    if calculation["kind"] == "employee_advance":
+        obligations = values.get("obligations", ())
+        amount = obligations[0]["amount_fen"] if len(obligations) == 1 else None
+        label = "代付转债确认额"
+    elif calculation["kind"] in {
+        "payment",
+        "cash_payment",
+        "platform_payment",
+        "payroll_reserve_payment",
+    }:
+        label = "实际收付款"
+    elif calculation["kind"] in {"funding", "cash_funding", "platform_funding"}:
+        label = "实际投入或借入金额"
+    elif calculation["kind"] == "bank_platform_transfer":
+        label = "内部划转金额"
+    return (amount if type(amount) is int else None), label
+
+
 def _today_china() -> str:
     return datetime.now(_CHINA).date().isoformat()
 
@@ -1285,6 +1336,7 @@ class BusinessQueries:
         summary=False,
         metadata_only=False,
         job_ids=None,
+        include_result=True,
     ):
         reads = self._reads(connection)
         subjects = (
@@ -1570,7 +1622,7 @@ class BusinessQueries:
                     "status": row["status"],
                     "attempts": row["attempts"],
                     "last_error": row["last_error"],
-                    "result": result,
+                    **({"result": result} if include_result else {}),
                     **({"result_issue": result_issue} if result_issue else {}),
                     **({"contract_issues": contract_issues} if contract_issues else {}),
                     "association": association,
@@ -1825,6 +1877,9 @@ class BusinessQueries:
         )
         external, _ = self._external(connection, subject_id, period, as_of, summary=summary)
         settlements = self._settlements(connection, subject_id, selected, summary=summary)
+        if summary:
+            for field in ("business", "movements", "line_relations"):
+                settlements.pop(field, None)
         trace_targets = []
         seen = set()
         for item in (
@@ -1852,6 +1907,16 @@ class BusinessQueries:
                         }
                     )
                     seen.add(key)
+        presented_frozen_adoption = frozen_adoption
+        if summary and frozen_adoption is not None:
+            frozen_calculation = self._calculation(connection, frozen_adoption["calculation_id"])
+            frozen_calculation["fact"] = self._fact(connection, frozen_calculation["fact_id"])
+            frozen_amount, frozen_amount_label = business_display_amount(frozen_calculation)
+            presented_frozen_adoption = {
+                **frozen_adoption,
+                "amount_fen": frozen_amount,
+                "amount_label": frozen_amount_label,
+            }
         result = {
             "identity": {
                 "company_id": self.store.company_id,
@@ -1861,14 +1926,35 @@ class BusinessQueries:
             },
             "period": period,
             "as_of": as_of,
-            "latest_fact": latest,
-            "closure": closure,
+            **(
+                {"latest_source": self._fact_summary(latest)}
+                if summary
+                else {"latest_fact": latest}
+            ),
+            "closure": (
+                {
+                    "state": "exact_close",
+                    "digest": closure["digest"],
+                }
+                if summary and closure["state"] == "exact_close"
+                else {
+                    "state": "covered_by_later_close",
+                    "sealing_boundary": closure["close_period"],
+                    "sealing_digest": closure["digest"],
+                }
+                if summary and closure["state"] == "covered_by_later_close"
+                else closure
+            ),
             "as_posted": {
                 "cutoff_period": selected["cutoff_period"],
                 **selected["through_period"],
             },
-            "current_business_result": current_publication,
-            "frozen_adoption": frozen_adoption,
+            "current_business_result": (
+                self._publication_summary(connection, current_publication)
+                if summary
+                else current_publication
+            ),
+            "frozen_adoption": presented_frozen_adoption,
             "review": {
                 "status": review_status,
                 "latest_matches_publication": matches,
@@ -1891,6 +1977,30 @@ class BusinessQueries:
             },
         }
         if summary:
+            selected_calculation_id = (
+                frozen_adoption["calculation_id"]
+                if frozen_adoption is not None
+                else current_publication["calculation"]["id"]
+                if current_publication is not None
+                else None
+            )
+            if selected_calculation_id is None:
+                result["adopted_basis"] = None
+            else:
+                from .close_review import business_adopted_basis
+
+                result["adopted_basis"] = {
+                    "basis": (
+                        "frozen_adoption" if frozen_adoption is not None else "current_publication"
+                    ),
+                    "calculation_ids": [selected_calculation_id],
+                    **business_adopted_basis(connection, self.engine, [selected_calculation_id]),
+                }
+            current_settlements = self.settlement_summary(
+                connection, period, subject_ids={subject_id}, current=True
+            )
+            for field in ("business", "movements", "line_relations"):
+                current_settlements.pop(field, None)
             result["projection"] = "summary"
             result["review"]["disposition_count"] = connection.execute(
                 "SELECT count(*) FROM disposition WHERE subject_id=?",
@@ -1899,17 +2009,31 @@ class BusinessQueries:
             result["review"]["dispositions"] = []
             result["trace_target_count"] = len(seen)
             result["external"] = self._external_summary(external)
-            result["current_followups"] = {
-                "settlements": self.settlement_summary(
-                    connection, period, subject_ids={subject_id}, current=True
-                )
-            }
+            result["current_followups"] = {"settlements": current_settlements}
         from .duplicates import DuplicateCandidates
         from .entity_references import verify_hits
 
         result["duplicate_checks"] = DuplicateCandidates(self.store).business_detail(
             connection, subject_id, summary=summary
         )
+        if summary:
+            result["duplicate_checks"]["checks"] = [
+                {
+                    key: item[key]
+                    for key in (
+                        "check_id",
+                        "action",
+                        "proposed_subject_id",
+                        "result_fact_id",
+                        "selected_fact_id",
+                        "candidate_digest",
+                        "explanation",
+                        "created_at",
+                    )
+                    if key in item
+                }
+                for item in result["duplicate_checks"]["checks"]
+            ]
         corrections = list(
             connection.execute(
                 "SELECT c.id,c.plan,c.digest,i.action,i.before_fact_id,i.after_fact_id,"
@@ -1982,6 +2106,54 @@ class BusinessQueries:
                 "unestablished_state_selections": through["unestablished_state_selections"],
             },
         }
+
+    @staticmethod
+    def _fact_summary(fact):
+        """Expose immutable source identity without leaking kind-specific fact bags."""
+
+        return {
+            key: fact[key]
+            for key in (
+                "id",
+                "subject_id",
+                "revision",
+                "kind",
+                "period",
+                "evidence",
+                "deleted",
+                "knowledge",
+                "recorded_at",
+            )
+            if key in fact
+        }
+
+    def _publication_summary(self, connection, publication):
+        """Project the adopted result identity; facts and outcome JSON stay internal."""
+
+        if publication is None:
+            return None
+        calculation = dict(publication["calculation"])
+        calculation["fact"] = self._fact(connection, calculation["fact_id"])
+        amount, amount_label = business_display_amount(calculation)
+        result = {
+            "status": publication["status"],
+            "knowledge": publication["knowledge"],
+            "calculation_id": calculation["id"],
+            "subject_id": calculation["subject_id"],
+            "kind": calculation["kind"],
+            "fact_id": calculation["fact_id"],
+            "result_digest": calculation["result_digest"],
+            "posting_period": calculation["posting_period"],
+            "publication_id": calculation["publication_id"],
+            "voucher_id": calculation.get("voucher_id"),
+            "has_journal_lines": publication["publication"]["has_journal_lines"],
+            "current_voucher_version_id": publication.get("current_voucher_version_id"),
+            "amount_fen": amount,
+            "amount_label": amount_label,
+        }
+        if publication.get("payroll_confirmation") is not None:
+            result["payroll_confirmation"] = publication["payroll_confirmation"]
+        return result
 
     @staticmethod
     def _jobs_summary(items):
@@ -2086,7 +2258,7 @@ class BusinessQueries:
                 publications[row["fact_id"]].append(row["id"])
             items = [
                 {
-                    **versions[ident],
+                    **self._fact_summary(versions[ident]),
                     "recorded_at": times.get(("fact", ident)),
                     "trace_targets": [
                         {"calculation_id": calc, "voucher_version_id": None}
@@ -2099,7 +2271,9 @@ class BusinessQueries:
         if section == "file_jobs":
             metadata = self._file_jobs(connection, subjects, period, metadata_only=True)
             keys, page = self._collection_page([item["job_id"] for item in metadata], after, limit)
-            items = self._file_jobs(connection, subjects, period, job_ids=keys)
+            items = self._file_jobs(
+                connection, subjects, period, job_ids=keys, include_result=False
+            )
             page["collection_version"] = digest(metadata).hex()
             return {"items": items, "page": page}
         if current and section == "settlement_events":
@@ -2261,10 +2435,12 @@ class BusinessQueries:
             movement = resolution["settlements"][index]
             direction = event.get("direction", 1)
             amount = movement.get("amount_fen")
+            relation_state = movement.get("state")
             items.append(
                 {
                     "id": key,
-                    **movement,
+                    **{name: value for name, value in movement.items() if name != "state"},
+                    "relation_state": relation_state,
                     "posting_period": event["posting_period"],
                     "voucher_version_id": event.get("voucher_version_id"),
                     "direction": direction,

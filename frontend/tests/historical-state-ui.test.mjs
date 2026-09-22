@@ -56,11 +56,12 @@ test("historical UI separates source uncertainty, missing materials, identity an
       const data = globalThis.historicalUi.funds.data;
       const check = { state: "confirmed", message: "流水已由封存对账精确采用为来源。", statement_calculation_id: "exact-statement", reconciliation_calculation_id: "exact-reconciliation", statement_fact_id: "exact-statement-fact", reconciliation_fact_id: "exact-reconciliation-fact", selection_source: "close_manifest", selection_proof: { manifest: "exact-manifest" }, proof_method: "reconciliation_dependency" };
       Object.assign(data.bank_statement, { coverage_state: "partial", missing_account_count: 0, needs_review_count: 1, unmatched_count: 0 });
-      data.accounts[0].reconciliation.source_check = check;
-      data.bank_statement.rows = [
+      data.collections.accounts.items[0].reconciliation.source_check = check;
+      data.collections.statements.items = [
         { id: "synthetic-confirmed", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "12345", signed_amount_fen: "12345", party: "测试来源", memo: "测试流水", state: "matched", source_check: check },
         { id: "synthetic-unknown", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "100", signed_amount_fen: "100", party: "另一来源", memo: "另一流水", state: "needs_review", source_check: { ...check, state: "unestablished", message: "该来源的历史采用尚不能确认。", proof_method: null } },
       ];
+      data.collections.statements.page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
       data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [{ calculation_id: "preserved-candidate" }] }];
       const html = await render("Funds", "&funds_view=bank"), text = visible(html);
       assert.match(text, /本月实际收款/);
@@ -77,10 +78,11 @@ test("historical UI separates source uncertainty, missing materials, identity an
     });
     await t.test("bank rows stay distinct while a shared payment batch shows every recipient", async () => {
       const data = globalThis.historicalUi.funds.data;
-      data.bank_statement.rows = [
+      data.collections.statements.items = [
         { id: "bank-row-1", reference: "20260710042541917000001", date: "2026-07-10", account_id: "synthetic-bank", account_name: "兴业银行", account_code: "尾号9170", direction: "outflow", amount_fen: "3906617", signed_amount_fen: "-3906617", party: "工资批量代发 · 2 人", memo: "代发工资", state: "matched", batch_payment: { bank_row_count: 2, total_fen: "6290756", items: [{ party: "张三", amount_fen: "2223667" }, { party: "李四", amount_fen: "4067089" }] } },
         { id: "bank-row-2", reference: "20260710042542175500001", date: "2026-07-10", account_id: "synthetic-bank", account_name: "兴业银行", account_code: "尾号9170", direction: "outflow", amount_fen: "2384139", signed_amount_fen: "-2384139", party: "工资批量代发 · 2 人", memo: "代发工资", state: "matched", batch_payment: { bank_row_count: 2, total_fen: "6290756", items: [{ party: "张三", amount_fen: "2223667" }, { party: "李四", amount_fen: "4067089" }] } },
       ];
+      data.collections.statements.page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
       const html = visible(await render("Funds", "&funds_view=bank"));
       assert.equal((html.match(/class="bank-activity-item"/g) ?? []).length, 2);
       assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 4);
@@ -95,16 +97,16 @@ test("historical UI separates source uncertainty, missing materials, identity an
       assert.doesNotMatch(html, /张三、李四/);
     });
     await t.test("employee differing source IDs do not invent temporal changes", async () => {
-      const employee = globalThis.historicalUi.employees.data.employees.items[0];
+      const employee = globalThis.historicalUi.employees.data.collections.employees.items[0];
       assert.ok(employee);
+      employee.has_payroll_activity = true;
       const source = { source_id: "synthetic-wage", kind: "payroll", period: "2026-11", label: "测试工资来源", obligations: [], movements: [], declarations: [] };
       employee.payroll_sources = [source];
       source.disbursements = [{ calculation_id: "different-basis", recording_period: "2026-11", needs_review: true, matches_displayed_wage: false, target_net_fen: "100", held_fen: "0" }];
       const html = visible(await render("Employees"));
-      assert.match(html, /方案依据需复核/);
-      assert.match(html, /方案采用的工资来源与本页展示来源不同/);
+      assert.match(html, /按工资来源期查看款项/);
       assert.doesNotMatch(html, /后来更新的工资|依据变化，需复核/);
-      assert.match(html, /代发方案表示拟发金额，实际付款以上方记录为准/);
+      assert.doesNotMatch(html, /different-basis/);
     });
     await t.test("company-wide unknown asset counts stay qualified on a filtered page with no unknown rows", async () => {
       const data = globalThis.historicalUi.assets.data;

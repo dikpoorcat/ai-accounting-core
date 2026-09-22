@@ -45,6 +45,11 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     assert samples["deferred_funds"]["response"]["data"]["period_preparation"] is None
     assert "movement_page" not in samples["page_accounts"]["response"]["data"]
     assert "page" not in samples["page_accounts"]["response"]["data"]["bank_statement"]
+    brief = samples["brief"]["response"]["data"]
+    assert brief["adopted_basis"]["scope"] == "current_voucher_page"
+    assert brief["adopted_basis"]["calculation_ids"] == [
+        item["calculation_id"] for item in brief["collections"]["vouchers"]["items"]
+    ]
 
 
 @pytest.mark.parametrize("amount", [None, 0, 2**53 + 1, 2**63 - 1, -(2**63)])
@@ -66,8 +71,8 @@ def test_native_and_http_int64_money_in_nested_issues(samples, amount):
     wire_issue = wire["data"]["period_preparation"]["current_followups"]["materials"]["issues"][0]
     assert wire_issue["expected_fen"] == (str(amount) if amount is not None else None)
     assert wire_issue["actual_fen"] == "0" and type(wire_issue["pages"]) is int
-    assert wire["data"]["movements"][0]["amount_fen"] == str(
-        value["data"]["movements"][0]["amount_fen"]
+    assert wire["data"]["collections"]["movements"]["items"][0]["amount_fen"] == str(
+        value["data"]["collections"]["movements"]["items"][0]["amount_fen"]
     )
 
 
@@ -163,7 +168,9 @@ def test_contract_mismatch_is_a_program_error(samples, mutation):
     elif mutation == "bool_count":
         value["data"]["account_count"] = True
     else:
-        value["data"]["movements"][0]["field_sources"]["private-company-file"] = {"amount_fen": 1}
+        value["data"]["collections"]["movements"]["items"][0]["field_sources"][
+            "private-company-file"
+        ] = {"amount_fen": 1}
     with pytest.raises(KernelError) as failure:
         validate_response("dashboard_funds", value)
     message = json.dumps(failure.value.response())
@@ -211,12 +218,14 @@ def test_service_and_http_fail_closed_for_bad_reads(resident, monkeypatch):
 
 def test_invalid_numeric_mapping_keys_are_not_reported_as_list_positions(samples):
     value = copy.deepcopy(samples["cash_funds"]["response"])
-    value["data"]["accounts"][0]["field_sources"] = {6222021234567890123: {}}
+    value["data"]["collections"]["accounts"]["items"][0]["field_sources"] = {
+        6222021234567890123: {}
+    }
     with pytest.raises(KernelError) as failure:
         validate_response("dashboard_funds", value)
     assert "6222021234567890123" not in json.dumps(failure.value.response())
     assert all(
-        path.startswith("data.accounts.0.field_sources.<key>")
+        path.startswith("data.collections.accounts.items.0.field_sources.<key>")
         for path in failure.value.details["paths"]
     )
 

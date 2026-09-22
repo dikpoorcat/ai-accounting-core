@@ -68,7 +68,7 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
 
     monkeypatch.setattr(dashboard, "recorded_times", counted)
     response = Dashboard(company.engine).employees("2026-01")
-    employee = response["data"]["employees"]["items"][0]
+    employee = response["data"]["collections"]["employees"]["items"][0]
     assert len(calls) == 1
     assert employee["name"] == "原姓名" and employee["in_period"] is True
     sources = employee["field_sources"]
@@ -88,7 +88,7 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert response["read_semantics"]["accounting"] == "as_posted"
     assert response["read_semantics"]["business_basis"] == "frozen_adoption"
     brief = Dashboard(company.engine).brief("2026-01")["data"]
-    voucher = brief["vouchers"][0]
+    voucher = brief["collections"]["vouchers"]["items"][0]
     management = voucher["components"][0]["management"]
     assert management["version"] == business["revision"]
     assert management["version_scope"] == "base_profile"
@@ -148,7 +148,9 @@ def test_date_conflict_cannot_claim_a_historical_employee_is_in_period(company):
         employment_start="2025-12",
         employment_end="2026-01-05",
     )
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["employees"]["items"][0]
+    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+        "items"
+    ][0]
     assert employee["period_state"] == "unknown" and employee["in_period"] is None
     assert employee["field_conflicts"][0]["code"] == "employment_interval_conflict"
 
@@ -182,7 +184,9 @@ def test_false_and_empty_management_fields_keep_their_actual_selected_sources(en
         assert selected["field_sources"]["active"]["id"] == account["id"]
         assert selected["note"] == "后补用途"
         assert selected["field_sources"]["note"]["id"] == latest["id"]
-    component = Dashboard(engine).brief("2026-01")["data"]["vouchers"][0]["components"][0]
+    component = Dashboard(engine).brief("2026-01")["data"]["collections"]["vouchers"]["items"][0][
+        "components"
+    ][0]
     metadata = component["management"]
     assert metadata["metadata"]["description"] == "后补说明"
     assert metadata["field_sources"]["description"]["source_type"] == "management"
@@ -229,7 +233,9 @@ def test_payee_and_tax_identity_fallbacks_keep_exact_sources(company):
         assert party["id"] == payee["payee_revision_id"]
         assert party["field_sources"]["name"]["basis"] == "frozen"
         assert party["field_sources"]["name"]["recorded_at"]
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["employees"]["items"][0]
+    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+        "items"
+    ][0]
     assert employee["name"] == "申报姓名" and employee["code"] == "0007"
     assert employee["field_sources"]["name"]["id"] == identity["fact_id"]
     assert employee["field_sources"]["name"]["basis"] == "current_supplement"
@@ -242,8 +248,10 @@ def test_declaration_recording_time_is_separate_from_business_month_and_actual_d
     frozen = frozen_rows(company.engine)
     _, saved = declare(company, period="2026-02", declaration_date="2026-02-06")
     response = Dashboard(company.engine).employees("2026-01")
-    employee = response["data"]["employees"]["items"][0]
-    source = employee["payroll_sources"][0]
+    employee = response["data"]["collections"]["employees"]["items"][0]
+    source = Dashboard(company.engine).employees(
+        "2026-01", section="payroll_sources", employee_id="employee"
+    )["data"]["collections"]["payroll_sources"]["items"][0]
     declaration = source["declarations"][0]
     assert declaration["fact_id"] == saved["fact_id"]
     assert declaration["recording_period"] == "2026-02"
@@ -272,16 +280,20 @@ def test_asset_and_fund_account_fields_reach_the_actual_dashboard_outputs(asset_
     publish("alice-paid")
     asset = profile(engine, "asset", "computer", display_name="工作电脑", display_number="A001")
     bank = profile(engine, "fund_account", "bank", display_name="基本户", active=False)
-    assets = Dashboard(engine).assets("2026-03")["data"]["fixed"]["items"]
+    assets = Dashboard(engine).assets("2026-03", section="assets", asset_filter="fixed")["data"][
+        "collections"
+    ]["assets"]["items"]
     computer = next(item for item in assets if item["asset_id"] == "computer")
     assert computer["name"] == "工作电脑" and computer["code"] == "A001"
     assert computer["field_sources"]["name"]["id"] == asset["id"]
     assert computer["field_sources"]["name"]["recorded_at"]
     funds = Dashboard(engine).funds("2026-03")["data"]
-    account = next(item for item in funds["accounts"] if item["account_id"] == "bank")
+    account = next(
+        item for item in funds["collections"]["accounts"]["items"] if item["account_id"] == "bank"
+    )
     assert account["name"] == "基本户" and account["active"] is False
     assert account["field_sources"]["active"]["id"] == bank["id"]
-    movement = funds["movements"][0]
+    movement = funds["collections"]["movements"]["items"][0]
     assert movement["field_sources"]["account_name"]["id"] == bank["id"]
 
 
@@ -315,7 +327,9 @@ def test_asset_creditor_names_and_single_payee_fallback_keep_later_sources(compa
         return original(connection, references)
 
     monkeypatch.setattr(dashboard, "recorded_times", counted)
-    assets = Dashboard(company.engine).assets("2026-02")["data"]["fixed"]["items"]
+    assets = Dashboard(company.engine).assets("2026-02", section="assets", asset_filter="fixed")[
+        "data"
+    ]["collections"]["assets"]["items"]
     assert len(calls) == 1
     computer = next(item for item in assets if item["asset_id"] == "computer")
     assert computer["source_parties"] == "关账前甲、后来乙"
@@ -329,7 +343,10 @@ def test_asset_creditor_names_and_single_payee_fallback_keep_later_sources(compa
     category = next(
         item for item in brief["open_items"]["categories"] if item["key"] == "employee_payables"
     )
-    item = next(item for item in category["items"] if item["party_key"] == "bob")
+    open_items = Dashboard(company.engine).brief("2026-02", section="open_items")["data"][
+        "collections"
+    ]["open_items"]["items"]
+    item = next(item for item in open_items if item["party_key"] == "bob")
     group = next(item for item in category["groups"] if item["key"] == "bob")
     assert item["party"] == group["party"] == "后来乙"
     assert item["field_sources"] == group["field_sources"]
@@ -342,14 +359,28 @@ def test_asset_creditor_names_and_single_payee_fallback_keep_later_sources(compa
         "bob-paid",
     )
     company.publish("bob-paid")
-    assets = Dashboard(company.engine).assets("2026-03")["data"]["fixed"]["items"]
+    movement_items = Dashboard(company.engine).assets(
+        "2026-03", section="settlement_events", asset_id="computer"
+    )["data"]["collections"]["settlement_events"]["items"]
     movement = next(
-        item for item in assets[0]["settlements"][0]["movements"] if item["source_id"] == "bob-paid"
+        item for item in movement_items if item["settlement_business"]["subject_id"] == "bob-paid"
     )
-    assert movement["party"] == "后来乙"
-    assert movement["field_sources"]["party"]["id"] == bob["payee_revision_id"]
-    assert movement["field_sources"]["party"]["basis"] == "current"
-    assert movement["field_sources"]["party"]["recorded_at"] == sources[1]["recorded_at"]
-    voucher = Dashboard(company.engine).brief("2026-03")["data"]["vouchers"][0]
-    assert voucher["settlements"][0]["field_sources"]["party"] == movement["field_sources"]["party"]
-    assert voucher["lines"][0]["field_sources"]["party"] == [movement["field_sources"]["party"]]
+    assert movement["source_business"] == {
+        "kind": "reimbursed_asset_batch",
+        "subject_id": "batch",
+    }
+    assert movement["recipient_id"] == "bob"
+    assert movement["relation_state"] == "resolved"
+    voucher = Dashboard(company.engine).brief("2026-03")["data"]["collections"]["vouchers"][
+        "items"
+    ][0]
+    voucher_settlement = next(
+        item for item in voucher["settlements"] if item["source_subject_id"] == "batch"
+    )
+    assert voucher_settlement["party"] == "后来乙"
+    assert voucher_settlement["field_sources"]["party"]["id"] == bob["payee_revision_id"]
+    assert voucher_settlement["field_sources"]["party"]["basis"] == "current"
+    assert voucher_settlement["field_sources"]["party"]["recorded_at"] == sources[1]["recorded_at"]
+    assert voucher["lines"][0]["field_sources"]["party"] == [
+        voucher_settlement["field_sources"]["party"]
+    ]

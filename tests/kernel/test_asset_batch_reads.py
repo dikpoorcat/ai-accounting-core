@@ -87,7 +87,9 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     )
     activation_voucher = next(
         row
-        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["vouchers"]
+        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["collections"][
+            "vouchers"
+        ]["items"]
         if row["kind"] == "asset_activation_batch"
     )
     assert {item["asset_id"] for item in activation_voucher["asset_members"]} == {
@@ -96,7 +98,9 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     }
     acquisition_vouchers = [
         row
-        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["vouchers"]
+        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["collections"][
+            "vouchers"
+        ]["items"]
         if row["kind"] == "reimbursed_asset"
     ]
     assert {row["asset"]["asset_id"] for row in acquisition_vouchers} == {
@@ -116,7 +120,9 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     assert cards["month_charge_fen"] == cards["ledger_accumulated_fen"] == 30000
     assert cards["card_net_fen"] == cards["ledger_net_fen"] == 210000
     assert cards["reconciled"]
-    voucher = dashboard.brief("2026-03", section="vouchers")["data"]["vouchers"][0]
+    voucher = dashboard.brief("2026-03", section="vouchers")["data"]["collections"]["vouchers"][
+        "items"
+    ][0]
     assert voucher["kind"] == "asset_consumption_month"
     assert voucher["business_amount_fen"] == 30000
     assert len(voucher["lines"]) == 4

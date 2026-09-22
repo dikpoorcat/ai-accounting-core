@@ -80,12 +80,22 @@ def create_server(service, *, port=0, static_directory=None, token=None):
         def json_reply(self, status, result, **kwargs):
             self.reply(status, json.dumps(result, ensure_ascii=False).encode("utf-8"), **kwargs)
 
+        def contract_reply(self, command, result, **kwargs):
+            from .response_contracts import http_response
+
+            self.json_reply(200, http_response(command, result), **kwargs)
+
+        def security_reply(self, result, **kwargs):
+            self.contract_reply(
+                "browser_security_status", {**result, "schema_version": 1}, **kwargs
+            )
+
         def query_payload(self, query):
             parameters = parse_qs(query, strict_parsing=True, keep_blank_values=True)
             if any(len(values) != 1 for values in parameters.values()):
                 raise ValueError("duplicate query parameter")
             payload = {key: values[0] for key, values in parameters.items()}
-            for field in ("limit", "after_number", "voucher_number", "year", "quarter"):
+            for field in ("limit", "voucher_number", "year", "quarter"):
                 if field in payload:
                     payload[field] = int(payload[field])
             return payload
@@ -209,8 +219,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                             result["request_id"],
                             time.monotonic() + 1800,
                         )
-                        self.json_reply(
-                            200,
+                        self.security_reply(
                             result,
                             cookie=f"finance_window={flow_id}; HttpOnly; SameSite=Strict; Path=/",
                         )
@@ -229,8 +238,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                             cookie_id = secrets.token_urlsafe(32)
                             server.browser_sessions[cookie_id] = owner_token.get_secret_value()
                             server.browser_window_flows.pop(flow_cookie.value)
-                            self.json_reply(
-                                200,
+                            self.security_reply(
                                 {**result, "browser_authenticated": True},
                                 cookie=(
                                     f"finance_session={cookie_id}; "
@@ -238,9 +246,9 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                                 ),
                             )
                         else:
-                            self.json_reply(200, result)
+                            self.security_reply(result)
                     else:
-                        self.json_reply(200, result)
+                        self.security_reply(result)
                     return
                 if path == "/api/local/report-export":
                     if self.headers.get("Origin") != f"http://127.0.0.1:{server.server_port}":
@@ -254,7 +262,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                         result = service.dispatch(
                             "confirm_browser_report_export", payload, session_token=owner_token
                         )
-                        self.json_reply(200, result)
+                        self.contract_reply("report_export_receipt", result)
                     except Exception as exc:
                         self.dashboard_error(exc)
                     return
@@ -345,6 +353,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "quarterly-report",
                     "period-preparation",
                     "business-status",
+                    "close-review",
                 }
                 action = url.path.removeprefix("/api/dashboard/")
                 if action not in endpoints:
@@ -355,20 +364,13 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     self.json_reply(401, {"code": "owner_session_required"})
                     return
                 try:
-                    from .response_contracts import RESPONSE_ADAPTERS, http_response
-
                     command = "dashboard_" + action.replace("-", "_")
                     result = service.dispatch(
                         command,
                         self.query_payload(url.query),
                         session_token=owner_token,
                     )
-                    self.json_reply(
-                        200,
-                        http_response(command, result)
-                        if command in RESPONSE_ADAPTERS
-                        else wire_money(result),
-                    )
+                    self.contract_reply(command, result)
                 except Exception as exc:
                     self.dashboard_error(exc)
                 return
@@ -421,10 +423,22 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     if action == "jobs":
                         from .reports import Reports
 
-                        result = Reports(service.engine(payload["company_id"])).browser_job_results(
-                            result
-                        )
+                        engine = service.engine(payload["company_id"])
+                        result = Reports(engine).browser_job_results(result)
                         service.security.authorize(owner_token)
+                        self.contract_reply(
+                            "browser_jobs",
+                            {
+                                "schema_version": 1,
+                                "company_id": payload["company_id"],
+                                "database_id": engine.store.database_id,
+                                "items": [
+                                    {key: value for key, value in row.items() if key != "result"}
+                                    for row in result
+                                ],
+                            },
+                        )
+                        return
                     self.reply(
                         200, json.dumps(wire_money(result), ensure_ascii=False).encode("utf-8")
                     )

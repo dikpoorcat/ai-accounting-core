@@ -16,18 +16,21 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from pydantic import SecretStr
 
-from ai_accounting.kernel.backup import create_portable, verify_portable
+from ai_accounting.kernel.backup import create_portable, restore_portable, verify_portable
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.daemon import build_native_security_controller
 from ai_accounting.kernel.http import create_server
+from ai_accounting.kernel.integrity import verify_close_integrity, verify_integrity
 from ai_accounting.kernel.jobs import JobRunner
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+from ai_accounting.kernel.read_state import advance_repair_revision
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security import IdentityError, consume_close_approval
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
 from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
 from ai_accounting.kernel.service import LocalService
+from ai_accounting.kernel.types import canonical, digest
 
 PASSWORD = SecretStr("Synthetic-resident-owner-123")
 TAXPAYER = "91310000123456789A"
@@ -236,7 +239,7 @@ def test_security_origin_surface_and_private_capability_are_separate_boundaries(
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows protected capability boundary")
 def test_same_account_capability_reaches_password_and_bound_approval_without_real_window(
-    resident, tmp_path
+    resident, tmp_path, monkeypatch
 ):
     service, _, capability, http, windows = resident
     metadata = tmp_path / "synthetic.service.json"
@@ -311,7 +314,7 @@ def test_same_account_capability_reaches_password_and_bound_approval_without_rea
         "company_id": company["id"],
         "database_id": company["database_id"],
         "period": "2026-09",
-        "calculation_hash": preview["digest"],
+        "preview_digest": preview["digest"],
         "epochs": preview["epochs"],
     }
     status, _, _, approval_request = http.request(
@@ -319,6 +322,58 @@ def test_same_account_capability_reaches_password_and_bound_approval_without_rea
     )
     assert status == 200, approval_request
     assert windows[-1] == approval_request["request_id"]
+    original_reauthenticate = service.security.reauthenticate
+
+    def repair_after_password(token, password):
+        authority = original_reauthenticate(token, password)
+        with engine.store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            advance_repair_revision(connection)
+            connection.commit()
+        return authority
+
+    monkeypatch.setattr(service.security, "reauthenticate", repair_after_password)
+    status, _, _, expired = http.request(
+        "/api/security",
+        {
+            "operation": "native_execute",
+            "request_id": approval_request["request_id"],
+            "password": PASSWORD.get_secret_value(),
+        },
+        headers={"X-Local-Capability": recovered},
+    )
+    assert status == 400 and expired["code"] == "preview_expired"
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM security_close_approval").fetchone()[0] == 0
+    assert (
+        http.request(
+            "/api/security",
+            {
+                "operation": "native_update",
+                "request_id": approval_request["request_id"],
+                "status": "failed",
+                "error_code": "PREVIEW_EXPIRED",
+            },
+            headers={"X-Local-Capability": recovered},
+        )[0]
+        == 200
+    )
+
+    monkeypatch.setattr(service.security, "reauthenticate", original_reauthenticate)
+    preview = service.dispatch(
+        "preview_close",
+        {
+            "company_id": company["id"],
+            "period": "2026-09",
+            "owner_confirmation": proof,
+        },
+        session_token=token,
+    )
+    request.update(preview_digest=preview["digest"], epochs=preview["epochs"])
+    status, _, _, approval_request = http.request(
+        "/api/security", request, headers={"X-Local-Capability": recovered}
+    )
+    assert status == 200, approval_request
     status, _, _, approved = http.request(
         "/api/security",
         {
@@ -381,6 +436,95 @@ def test_same_account_capability_reaches_password_and_bound_approval_without_rea
         ).fetchone()
         assert row["consumed_at"] is not None
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
+        connection.execute("BEGIN")
+        assert verify_integrity(engine, connection)["status"] == "verified"
+
+    portable = create_portable(
+        engine.store.path,
+        tmp_path / "approved-close-backup",
+        request_id="approved-close-backup",
+    )
+    assert verify_portable(portable["path"])["latest_closed_period"] == "2026-09"
+    restored = tmp_path / "approved-close-restored.sqlite"
+    assert (
+        restore_portable(
+            portable["path"],
+            restored,
+            expected_company_id=company["id"],
+            expected_taxpayer_id=TAXPAYER,
+            expected_database_id=company["database_id"],
+        )["latest_closed_period"]
+        == "2026-09"
+    )
+
+    with engine.store.connection(read_only=True) as connection:
+        original_manifest = json.loads(
+            connection.execute("SELECT manifest FROM period_close").fetchone()["manifest"]
+        )
+
+    def replace_close_manifest(manifest):
+        with engine.store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            triggers = list(
+                connection.execute(
+                    "SELECT name,sql FROM sqlite_schema "
+                    "WHERE type='trigger' AND tbl_name IN ('period_close','read_index_source')"
+                )
+            )
+            for name, _ in triggers:
+                connection.execute(f'DROP TRIGGER "{name}"')
+            connection.execute(
+                "UPDATE period_close SET manifest=?,digest=?",
+                (canonical(manifest), digest(manifest)),
+            )
+            connection.execute(
+                "UPDATE read_index_source SET source_digest=? WHERE source_kind='close'",
+                (digest(manifest),),
+            )
+            for _, sql in triggers:
+                connection.execute(sql)
+            connection.commit()
+
+    forged = json.loads(canonical(original_manifest))
+    forged["approval"]["owner_id"] = "forged-owner"
+    replace_close_manifest(forged)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as failure:
+            verify_integrity(engine, connection)
+    assert failure.value.details["reason"] == "close_approval_mismatch"
+
+    missing = json.loads(canonical(original_manifest))
+    missing["approval"] = None
+    replace_close_manifest(missing)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as failure:
+            verify_close_integrity(engine, connection, "2026-09")
+    assert failure.value.details["reason"] == "orphaned_close_approval"
+
+    replace_close_manifest(original_manifest)
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        triggers = list(
+            connection.execute(
+                "SELECT name,sql FROM sqlite_schema "
+                "WHERE type='trigger' AND tbl_name='security_close_approval'"
+            )
+        )
+        for name, _ in triggers:
+            connection.execute(f'DROP TRIGGER "{name}"')
+        connection.execute(
+            "UPDATE security_close_approval SET period=period-1 WHERE id=?", (approval_id,)
+        )
+        for _, sql in triggers:
+            connection.execute(sql)
+        connection.commit()
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as failure:
+            verify_integrity(engine, connection)
+    assert failure.value.details["reason"] == "close_approval_mismatch"
 
 
 def test_direct_private_password_failures_share_persistent_throttle(resident):

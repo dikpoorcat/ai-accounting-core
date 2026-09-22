@@ -12,7 +12,7 @@ from test_engine import close, publish, save
 from test_engine import engine as _engine
 from test_opening_continuation import book as _opening_book
 from test_opening_continuation import complete_members
-from test_payroll import bonus, bonus_sources
+from test_payroll import bonus, bonus_sources, payroll
 from test_payroll_corrections import Company, payment
 from test_payroll_corrections import company as _payroll_company
 from test_payroll_tax_declarations import declare
@@ -70,29 +70,33 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
     dashboard = Dashboard(book, company_name="测试企业")
     data = dashboard.brief("2026-09", limit=500)["data"]
     assert data["voucher_count"] == 501
-    assert len(data["vouchers"]) == 500
+    assert len(data["collections"]["vouchers"]["items"]) == 500
     assert data["total_debit_fen"] == data["position"]["bank_fen"] == 501
-    assert data["voucher_page"] == {"has_more": True, "next_after_number": 500, "total_count": 501}
+    page = data["collections"]["vouchers"]["page"]
+    assert page["has_more"] and page["total_count"] == page["filtered_count"] == 501
+    assert page["returned_count"] == 500
     following = dashboard.brief(
         "2026-09",
-        after_number=500,
+        section="vouchers",
+        cursor=page["next_cursor"],
         limit=500,
         expected_version=dashboard.brief("2026-09")["snapshot_version"],
     )["data"]
-    assert len(following["vouchers"]) == 1
+    assert len(following["collections"]["vouchers"]["items"]) == 1
     assert following["total_debit_fen"] == 501
     assert sum(group["event_count"] for group in following["activity_groups"]) == 501
     assert sum(len(group["rows"]) for group in following["activity_groups"]) == 1
     funds = dashboard.funds("2026-09", limit=500)["data"]
     assert funds["total_fen"] == funds["inflow_fen"] == 501
-    assert len(funds["movements"]) == 500
+    assert len(funds["collections"]["movements"]["items"]) == 500
     following = dashboard.funds(
         "2026-09",
-        after_movement=funds["movement_page"]["next_cursor"],
+        section="movements",
+        cursor=funds["collections"]["movements"]["page"]["next_cursor"],
         limit=500,
         expected_version=dashboard.funds("2026-09")["snapshot_version"],
     )["data"]
-    assert len(following["movements"]) == 1
+    assert len(following["collections"]["movements"]["items"]) == 1
     assert following["inflow_fen"] == 501
 
 
@@ -124,18 +128,21 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
     data = dashboard.funds("2026-09", limit=1)["data"]
     assert data["bank_statement"]["matched_count"] == 2
     assert data["bank_statement"]["transaction_count"] == 2
-    assert len(data["bank_statement"]["rows"]) == 1
-    assert data["bank_statement"]["rows"][0]["party"] == "明确出资人"
-    assert data["accounts"][0]["reconciliation"]["state"] == "complete"
-    assert data["accounts"][0]["active"] is True
+    statement_rows = data["collections"]["statements"]
+    assert len(statement_rows["items"]) == 1
+    assert statement_rows["items"][0]["party"] == "明确出资人"
+    assert data["collections"]["accounts"]["items"][0]["reconciliation"]["state"] == "complete"
+    assert data["collections"]["accounts"]["items"][0]["active"] is True
     second = dashboard.funds(
         "2026-09",
-        after_statement=data["bank_statement"]["page"]["next_cursor"],
+        section="statements",
+        cursor=statement_rows["page"]["next_cursor"],
         limit=1,
         expected_version=dashboard.funds("2026-09")["snapshot_version"],
     )["data"]
-    assert second["bank_statement"]["rows"][0]["signed_amount_fen"] == 600
-    assert second["bank_statement"]["rows"][0]["party"] == "明确出资人"
+    second_rows = second["collections"]["statements"]["items"]
+    assert second_rows[0]["signed_amount_fen"] == 600
+    assert second_rows[0]["party"] == "明确出资人"
     assert second["bank_statement"]["inflow_fen"] == 1000
 
 
@@ -163,8 +170,8 @@ def test_unpublished_or_missing_inventory_is_not_complete(bank_book):
     assert any(
         issue["field"].startswith("materials.") for issue in data["material_completeness"]["issues"]
     )
-    assert data["vouchers"][0]["date"] is None
-    assert data["vouchers"][0]["recognition"]["precision"] == "month"
+    assert data["collections"]["vouchers"]["items"][0]["date"] is None
+    assert data["collections"]["vouchers"]["items"][0]["recognition"]["precision"] == "month"
 
 
 def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
@@ -178,13 +185,19 @@ def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
     january = dashboard.brief("2026-01")["data"]
     february = dashboard.brief("2026-02")["data"]
     assert january["total_debit_fen"] == before["total_debit_fen"] == 100
-    assert january["vouchers"][0]["components"][0]["facts"]["amount"] == 100
+    assert (
+        sum(line["debit_fen"] for line in january["collections"]["vouchers"]["items"][0]["lines"])
+        == 100
+    )
     assert february["position"]["month_expense_fen"] == 25
     # This synthetic calculator supplies no creditor identity for its 2202 line.
     assert february["position"]["liabilities_fen"] is None
     assert february["position"]["equation_valid"] is None
     assert february["position"]["issues"]
-    assert sorted(v["components"][0]["facts"]["amount"] for v in february["vouchers"]) == [100, 125]
+    assert sorted(
+        sum(line["debit_fen"] for line in v["lines"])
+        for v in february["collections"]["vouchers"]["items"]
+    ) == [100, 125]
     with engine.store.connection(read_only=True) as connection:
         assert (
             json.loads(connection.execute("SELECT manifest FROM period_close").fetchone()[0])
@@ -208,9 +221,14 @@ def test_reviewed_no_impact_source_keeps_number_and_displays_new_evidence(engine
     )
     _, reviewed = publish(engine, request="reviewed-publication")
     data = Dashboard(engine).brief("2026-01")["data"]
-    assert data["vouchers"][0]["number"] == str(original["results"][0]["voucher_number"])
-    assert data["vouchers"][0]["calculation_id"] == reviewed["results"][0]["calculation_id"]
-    assert data["vouchers"][0]["evidence"] == [proof]
+    assert data["collections"]["vouchers"]["items"][0]["number"] == str(
+        original["results"][0]["voucher_number"]
+    )
+    assert (
+        data["collections"]["vouchers"]["items"][0]["calculation_id"]
+        == reviewed["results"][0]["calculation_id"]
+    )
+    assert data["collections"]["vouchers"]["items"][0]["evidence"] == [proof]
 
 
 def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
@@ -235,7 +253,7 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
         request_id="person-profile",
     )
     data = Dashboard(company.engine).employees("2026-08")["data"]
-    employee = data["employees"]["items"][0]
+    employee = data["collections"]["employees"]["items"][0]
     assert employee["name"] == "测试人员"
     assert employee["gross_salary_fen"] == 4000000
     assert employee["individual_income_tax_fen"] == 90000
@@ -249,7 +267,10 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     assert data["employees"]["unknown_period_count"] == 1
     assert data["employees"]["in_period_count"] == 0
     assert data["employees"]["detail_reconciled"]
-    assert wire_money(data)["employees"]["items"][0]["individual_income_tax_fen"] == "90000"
+    assert (
+        wire_money(data)["collections"]["employees"]["items"][0]["individual_income_tax_fen"]
+        == "90000"
+    )
 
 
 def test_payroll_open_items_show_the_employee_for_every_payroll_component(payroll_company):
@@ -267,8 +288,9 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
         request_id="open-items-employee-profile",
     )
 
-    categories = Dashboard(company.engine).brief("2026-01")["data"]["open_items"]["categories"]
-    payroll_items = next(item for item in categories if item["key"] == "payroll_payables")["items"]
+    payroll_items = Dashboard(company.engine).brief("2026-01", section="open_items")["data"][
+        "collections"
+    ]["open_items"]["items"]
     by_component = {item["name"]: item for item in payroll_items}
 
     assert set(by_component) == {"net", "tax", "employee_social", "employer_social"}
@@ -290,7 +312,9 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
     company.publish("bonus")
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["employees"]["items"][0]
+    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+        "items"
+    ][0]
     assert employee["annual_bonus_fen"] == 3000000
     assert employee["gross_salary_fen"] == 0
     assert employee["individual_income_tax_fen"] == 90000
@@ -305,29 +329,25 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
     original = dashboard.brief("2026-01")["data"]["open_items"]
-    original_net = next(
-        item
-        for category in original["categories"]
-        for item in category["items"]
-        if item["name"] == "net"
-    )
+    original_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
+        "open_items"
+    ]["items"]
+    original_net = next(item for item in original_items if item["name"] == "net")
     assert original_net["status"] == "open"
     assert original_net["current_status"] == "open"
     assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
     company.save(payment(), "salary-payment")
     company.publish("salary-payment")
-    february = dashboard.employees("2026-02")["data"]["employees"]["items"][0]
+    february = dashboard.employees("2026-02")["data"]["collections"]["employees"]["items"][0]
     assert february["recorded_net_payments_fen"] == 907400
     assert dashboard.funds("2026-02")["data"]["outflow_fen"] == 907400
     january = dashboard.brief("2026-01")["data"]["open_items"]
     assert january["payable_fen"] == original["payable_fen"]
     assert january["current_outstanding"]["payable_fen"] == original["payable_fen"] - 907400
-    january_net = next(
-        item
-        for category in january["categories"]
-        for item in category["items"]
-        if item["name"] == "net"
-    )
+    january_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
+        "open_items"
+    ]["items"]
+    january_net = next(item for item in january_items if item["name"] == "net")
     assert january_net["status"] == "open"
     assert january_net["current_status"] == "settled"
     assert january_net["current_outstanding_fen"] == 0
@@ -339,7 +359,10 @@ def test_closed_actual_declaration_shows_existing_correction_without_reposting(p
     declaration, _ = declare(company, extra=0)
     dashboard = Dashboard(company.engine)
     assert (
-        dashboard.employees("2026-01")["data"]["employees"]["items"][0]["declared_tax_fen"] == 12600
+        dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"][0][
+            "declared_tax_fen"
+        ]
+        == 12600
     )
     company.close("2026-01")
     original_ledger = company.engine.ledger("2026-01")
@@ -359,9 +382,34 @@ def test_closed_actual_declaration_shows_existing_correction_without_reposting(p
         request_id=company.request(),
     )
     assert (
-        dashboard.employees("2026-01")["data"]["employees"]["items"][0]["declared_tax_fen"] == 12700
+        dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"][0][
+            "declared_tax_fen"
+        ]
+        == 12700
     )
     assert company.engine.ledger("2026-01") == original_ledger
+
+
+def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_company):
+    company = payroll_company
+    company.publish("january", "february")
+    company.close("2026-01")
+    company.save(
+        payroll(accounting_gross_salary_fen=1_500_000, tax_reported_salary_fen=1_500_000),
+        "january",
+        revision=1,
+    )
+    company.confirm_payroll("january")
+    company.publish("january", posting_period="2026-02")
+
+    data = Dashboard(company.engine).business_status("2026-01", "january", as_of="2026-02-28")[
+        "data"
+    ]
+
+    assert data["current_business_result"]["amount_fen"] == 1_500_000
+    assert data["current_business_result"]["amount_label"] == "税前工资"
+    assert data["frozen_adoption"]["amount_fen"] == 1_000_000
+    assert data["frozen_adoption"]["amount_label"] == "税前工资"
 
 
 def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path):
@@ -469,8 +517,11 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     assert february["registered_count"] == 2
     assert february["card_cost_fen"] == february["ledger_cost_fen"] == 150000
     assert february["reconciled"]
-    assert all(item["acquisition_date"] is None for item in february["fixed"]["items"])
-    assert all(item["acquisition_reference"] == "1" for item in february["fixed"]["items"])
+    february_assets = Dashboard(book).assets("2026-02", section="assets", asset_filter="fixed")[
+        "data"
+    ]["collections"]["assets"]["items"]
+    assert all(item["acquisition_date"] is None for item in february_assets)
+    assert all(item["acquisition_reference"] == "1" for item in february_assets)
     preview = batches.prepare_consumption_month("2026-03", **options)
     batches.confirm_consumption_month(
         "2026-03",
@@ -511,7 +562,10 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     assert disposed["reconciled"]
     assert disposed["active_count"] == 1
     assert disposed["ledger_net_fen"] == 27500
-    computer = next(item for item in disposed["fixed"]["items"] if item["asset_id"] == "computer")
+    disposed_assets = Dashboard(book).assets("2026-03", section="assets", asset_filter="fixed")[
+        "data"
+    ]["collections"]["assets"]["items"]
+    computer = next(item for item in disposed_assets if item["asset_id"] == "computer")
     assert computer["disposal"]["loss_fen"] == 110000
     assert computer["book_value_fen"] == 0
 
@@ -528,7 +582,10 @@ def test_opening_cards_and_bank_balances_are_not_current_movements(opening_book)
     assert assets["reconciled"]
     assert assets["ledger_net_fen"] == 100000
     assert assets["month_acquired_count"] == 0
-    assert assets["fixed"]["items"][0]["acquisition_date"] is None
+    asset_items = dashboard.assets("2026-01", section="assets", asset_filter="fixed")["data"][
+        "collections"
+    ]["assets"]["items"]
+    assert asset_items[0]["acquisition_date"] is None
 
 
 def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book):
@@ -555,7 +612,7 @@ def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book)
         },
     )
     commit("old-wage-payment")
-    data = Dashboard(book).employees("2026-01")["data"]["employees"]
+    data = Dashboard(book).employees("2026-01")["data"]["collections"]["employees"]
     assert data["items"][0]["recorded_net_payments_fen"] == 50000
     assert not data["items"][0]["has_payroll_activity"]
     assert data["items"][0]["gross_salary_fen"] == 0

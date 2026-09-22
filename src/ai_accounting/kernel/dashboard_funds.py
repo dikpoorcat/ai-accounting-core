@@ -838,7 +838,6 @@ class FundsRead:
             ).fetchone()
         )
         return totals | {
-            "rows": [],
             "unmatched_totals": unmatched,
             "coverage_state": coverage,
             "statement_count": len(statements),
@@ -1077,7 +1076,7 @@ class FundsRead:
                 ).fetchone()
             )
         )
-        return totals | {"products": [], "events": []}
+        return totals
 
     def product_display(self, ident):
         from .dashboard import _display_sources
@@ -1158,8 +1157,6 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 or item["reconciliation"]["state"] in {"attention", "pending"}
                 for item in accounts
             ),
-            "accounts": [],
-            "movements": [],
             "investments": investments,
             "bank_statement": bank,
             "collections": {},
@@ -1225,14 +1222,4 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 read.prepare_bank_items(rows)
             items = [present(row) for row in rows]
         data["collections"][section] = {"items": items, "page": page}
-        if section == "accounts":
-            data["accounts"] = items
-        elif section == "movements":
-            data["movements"] = items
-        elif section == "statements":
-            bank["rows"] = items
-        elif section == "investment_products":
-            investments["products"] = items
-        else:
-            investments["events"] = items
     return data

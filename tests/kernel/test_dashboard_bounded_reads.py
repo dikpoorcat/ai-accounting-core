@@ -341,9 +341,9 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
     first = getattr(dashboard, endpoint)("2026-01", section=section, limit=1)
     collection = first["data"]["collections"][section]
     assert collection["page"]["total_count"] == collection["page"]["filtered_count"] == count
-    items = first["data"][section]["items"] if section == "employees" else collection["items"]
+    items = collection["items"]
     assert len(items) == 1
-    assert collection["page"]["returned_count"] == (0 if section == "employees" else 1)
+    assert collection["page"]["returned_count"] == 1
     assert collection["page"]["has_more"]
     second = getattr(dashboard, endpoint)(
         "2026-01",
@@ -352,11 +352,7 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
         cursor=collection["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
     )
-    next_items = (
-        second["data"][section]["items"]
-        if section == "employees"
-        else second["data"]["collections"][section]["items"]
-    )
+    next_items = second["data"]["collections"][section]["items"]
     assert next_items[0][identity] != items[0][identity]
     first_snapshot = read_probe[0][0]
     source_ids = {key[1] for key in first_snapshot.source_metadata if key[0] == "fact"}

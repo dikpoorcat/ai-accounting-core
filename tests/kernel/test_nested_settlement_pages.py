@@ -64,7 +64,15 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     monkeypatch.setattr(BusinessQueries, "settlement_summary", watched)
     dashboard = Dashboard(engine)
     response = dashboard.employees("2026-01", limit=2)
-    source = response["data"]["employees"]["items"][0]["payroll_sources"][0]
+    employee = response["data"]["collections"]["employees"]["items"][0]
+    sources = dashboard.employees(
+        "2026-01",
+        employee_id=employee["employee_id"],
+        section="payroll_sources",
+        limit=2,
+        expected_version=response["snapshot_version"],
+    )
+    source = sources["data"]["collections"]["payroll_sources"]["items"][0]
     assert source["subject_id"] == "prior-net"
     assert source["settlement_view"] == "historical"
     assert source["movements_scope"] == "business_related_settlement_events"
@@ -81,7 +89,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
         settlement_view="historical",
     )["data"]
     first_page = historical["collections"]["settlement_events"]
-    assert historical["settlements"]["movements"] == []
+    assert "movements" not in historical["settlements"]
     assert historical["settlements"]["movement_count"] == 6
     assert first_page["page"]["total_count"] == 6
     assert first_page["page"]["returned_count"] == len(first_page["items"]) == 2
@@ -101,7 +109,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
             settlement_view="historical",
         )["data"]
         page = following["collections"]["settlement_events"]
-        assert following["settlements"]["movements"] == []
+        assert "movements" not in following["settlements"]
         assert following["settlements"]["movement_count"] == 6
         assert page["page"]["total_count"] == 6
         assert len(page["items"]) <= 2

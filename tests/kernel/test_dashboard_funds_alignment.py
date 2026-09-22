@@ -80,34 +80,47 @@ def test_account_filter_covers_movements_beyond_the_first_500(bank_book):
     _publish_filter_funding(engine, ["bank-a"] * 501 + ["bank-b"] * 2)
     dashboard = Dashboard(engine)
     first_all = dashboard.funds("2026-09", limit=500)["data"]
-    assert {row["account_id"] for row in first_all["movements"]} == {"bank-a"}
+    assert {row["account_id"] for row in first_all["collections"]["movements"]["items"]} == {
+        "bank-a"
+    }
     filters = {"movement_account_type": "bank", "movement_account_id": "bank-b"}
-    first = dashboard.funds("2026-09", **filters, limit=1)
+    first = dashboard.funds("2026-09", **filters, section="movements", limit=1)
     assert first["data"]["total_fen"] == first["data"]["inflow_fen"] == 503
     assert first["data"]["movement_count"] == 503
-    assert first["data"]["movement_page"]["total_count"] == 2
-    assert [row["account_id"] for row in first["data"]["movements"]] == ["bank-b"]
+    assert first["data"]["collections"]["movements"]["page"]["filtered_count"] == 2
+    assert [row["account_id"] for row in first["data"]["collections"]["movements"]["items"]] == [
+        "bank-b"
+    ]
     second = dashboard.funds(
         "2026-09",
         **filters,
+        section="movements",
         limit=1,
-        after_movement=first["data"]["movement_page"]["next_cursor"],
+        cursor=first["data"]["collections"]["movements"]["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
     )["data"]
-    assert len(second["movements"]) == 1 and not second["movement_page"]["has_more"]
-    assert second["movements"][0]["id"] != first["data"]["movements"][0]["id"]
-    assert second["accounts"] == first_all["accounts"][:1]
-    assert second["collections"]["accounts"]["page"]["total_count"] == 2
-    assert second["collections"]["accounts"]["page"]["returned_count"] == 1
+    movement_page = second["collections"]["movements"]
+    assert len(movement_page["items"]) == 1 and not movement_page["page"]["has_more"]
+    assert (
+        movement_page["items"][0]["id"]
+        != first["data"]["collections"]["movements"]["items"][0]["id"]
+    )
+    account_first = dashboard.funds("2026-09", **filters, section="accounts", limit=1)
+    account_page = account_first["data"]["collections"]["accounts"]
+    assert account_page["page"]["total_count"] == 2
+    assert account_page["page"]["returned_count"] == 1
     next_accounts = dashboard.funds(
         "2026-09",
         **filters,
         section="accounts",
         limit=1,
-        cursor=second["collections"]["accounts"]["page"]["next_cursor"],
-        expected_version=first["snapshot_version"],
+        cursor=account_page["page"]["next_cursor"],
+        expected_version=account_first["snapshot_version"],
     )["data"]
-    assert second["accounts"] + next_accounts["accounts"] == first_all["accounts"]
+    assert (
+        account_page["items"] + next_accounts["collections"]["accounts"]["items"]
+        == first_all["collections"]["accounts"]["items"]
+    )
 
 
 def test_bank_filter_covers_all_provided_statement_rows(bank_book):
@@ -122,22 +135,24 @@ def test_bank_filter_covers_all_provided_statement_rows(bank_book):
             subject=f"statement-{account}",
         )
     dashboard = Dashboard(engine)
-    first = dashboard.funds("2026-09", statement_account_id="bank-b", limit=1)
+    first = dashboard.funds("2026-09", statement_account_id="bank-b", section="statements", limit=1)
     bank = first["data"]["bank_statement"]
     assert bank["transaction_count"] == bank["inflow_fen"] == 503
-    assert bank["page"]["total_count"] == 2
-    assert [row["account_id"] for row in bank["rows"]] == ["bank-b"]
+    statements = first["data"]["collections"]["statements"]
+    assert statements["page"]["filtered_count"] == 2
+    assert [row["account_id"] for row in statements["items"]] == ["bank-b"]
     second = dashboard.funds(
         "2026-09",
         statement_account_id="bank-b",
-        after_statement=bank["page"]["next_cursor"],
+        section="statements",
+        cursor=statements["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
         limit=1,
-    )["data"]["bank_statement"]
-    assert not second["page"]["has_more"] and len(second["rows"]) == 1
-    assert second["rows"][0]["id"] != bank["rows"][0]["id"]
+    )["data"]["collections"]["statements"]
+    assert not second["page"]["has_more"] and len(second["items"]) == 1
+    assert second["items"][0]["id"] != statements["items"][0]["id"]
     empty = dashboard.funds("2026-09", statement_account_id="not-this-company")["data"]
-    assert empty["bank_statement"]["page"]["total_count"] == 0
+    assert empty["collections"]["statements"]["page"]["filtered_count"] == 0
     assert empty["bank_statement"]["transaction_count"] == 503
 
 
@@ -159,13 +174,13 @@ def test_movement_filter_requires_matching_account_type_and_identifier(bank_book
     publish("cash")
     dashboard = Dashboard(engine)
     for kind, ident, amount in (("bank", "shared-id", 100), ("cash", "cash-id", 200)):
-        data = dashboard.funds("2026-09", movement_account_type=kind, movement_account_id=ident)[
-            "data"
-        ]
+        data = dashboard.funds(
+            "2026-09", movement_account_type=kind, movement_account_id=ident, section="movements"
+        )["data"]
         assert data["total_fen"] == 300
-        assert data["movement_page"]["total_count"] == 1
-        assert data["movements"][0]["amount_fen"] == amount
-        assert data["movements"][0]["account_type"] == kind
+        assert data["collections"]["movements"]["page"]["filtered_count"] == 1
+        assert data["collections"]["movements"]["items"][0]["amount_fen"] == amount
+        assert data["collections"]["movements"]["items"][0]["account_type"] == kind
     for filters in (
         {"movement_account_id": "shared-id"},
         {"movement_account_type": "bank"},
@@ -181,16 +196,16 @@ def test_funds_cursor_cannot_cross_filters_sections_or_periods(bank_book):
     engine, save, publish, _ = bank_book
     _publish_filter_funding(engine, ["bank-a", "bank-a", "bank-b", "bank-b"])
     dashboard = Dashboard(engine)
-    first = dashboard.funds("2026-09", limit=1)
-    cursor = first["data"]["movement_page"]["next_cursor"]
+    first = dashboard.funds("2026-09", section="movements", limit=1)
+    cursor = first["data"]["collections"]["movements"]["page"]["next_cursor"]
     for changes in (
-        {"movement_account_type": "bank", "movement_account_id": "bank-a"},
-        {"statement_account_id": "bank-a"},
-        {"after_investment": cursor, "after_movement": None},
-        {"after_statement": cursor, "after_movement": None},
+        {"section": "movements", "movement_account_type": "bank", "movement_account_id": "bank-a"},
+        {"section": "movements", "statement_account_id": "bank-a"},
+        {"section": "investment_events"},
+        {"section": "statements"},
     ):
         query = {
-            "after_movement": cursor,
+            "cursor": cursor,
             "expected_version": first["snapshot_version"],
             **changes,
         }
@@ -201,13 +216,19 @@ def test_funds_cursor_cannot_cross_filters_sections_or_periods(bank_book):
     october = dashboard.funds("2026-10")
     with pytest.raises(KernelError) as rejected:
         dashboard.funds(
-            "2026-10", after_movement=cursor, expected_version=october["snapshot_version"]
+            "2026-10",
+            section="movements",
+            cursor=cursor,
+            expected_version=october["snapshot_version"],
         )
     assert rejected.value.code == "dashboard_snapshot_changed"
     refreshed = dashboard.funds("2026-09")
     with pytest.raises(KernelError) as rejected:
         dashboard.funds(
-            "2026-09", after_movement=cursor, expected_version=refreshed["snapshot_version"]
+            "2026-09",
+            section="movements",
+            cursor=cursor,
+            expected_version=refreshed["snapshot_version"],
         )
     assert rejected.value.code == "dashboard_snapshot_changed"
 
@@ -221,21 +242,24 @@ def test_http_fund_filters_and_cursors_are_company_scoped(resident):
     ]
     for company in companies:
         _publish_filter_funding(service.engine(company), ["bank-a", "bank-b", "bank-b"])
-    filters = "period=2026-09&limit=1&movement_account_type=bank&movement_account_id=bank-b"
+    filters = (
+        "period=2026-09&section=movements&limit=1&"
+        "movement_account_type=bank&movement_account_id=bank-b"
+    )
     query = f"/api/dashboard/funds?company_id={companies[0]}&{filters}"
     status, _, _, first = http.request(query, headers=headers)
     assert status == 200 and first["data"]["total_fen"] == "3"
-    assert first["data"]["movement_page"]["total_count"] == 2
-    cursor = first["data"]["movement_page"]["next_cursor"]
+    assert first["data"]["collections"]["movements"]["page"]["filtered_count"] == 2
+    cursor = first["data"]["collections"]["movements"]["page"]["next_cursor"]
     status, _, _, following = http.request(
-        query + f"&after_movement={cursor}&expected_version={first['snapshot_version']}",
+        query + f"&cursor={cursor}&expected_version={first['snapshot_version']}",
         headers=headers,
     )
-    assert status == 200 and not following["data"]["movement_page"]["has_more"]
+    assert status == 200 and not following["data"]["collections"]["movements"]["page"]["has_more"]
     other_query = f"/api/dashboard/funds?company_id={companies[1]}&{filters}"
     _, _, _, other = http.request(other_query, headers=headers)
     status, _, _, rejected = http.request(
-        other_query + f"&after_movement={cursor}&expected_version={other['snapshot_version']}",
+        other_query + f"&cursor={cursor}&expected_version={other['snapshot_version']}",
         headers=headers,
     )
     assert status == 409 and rejected["code"] == "dashboard_snapshot_changed"
@@ -267,7 +291,9 @@ def test_external_funds_exclude_both_bank_transfer_sides(bank_book):
     assert data["outflow_fen"] == 0
     assert data["internal_transfer_fen"] == 200
     assert data["net_change_fen"] == data["total_fen"] == 1000
-    assert sum(account["inflow_fen"] for account in data["accounts"]) == 1200
+    assert (
+        sum(account["inflow_fen"] for account in data["collections"]["accounts"]["items"]) == 1200
+    )
 
 
 def test_bank_platform_transfer_is_always_internal(platform_book):
@@ -313,7 +339,7 @@ def test_reserve_expense_and_refund_follow_actual_funds_directions(bank_book):
     assert data["net_change_fen"] == data["total_fen"] == 800
     reserve = {
         row["component_kinds"][0]: row
-        for row in data["movements"]
+        for row in data["collections"]["movements"]["items"]
         if row["component_kinds"][0].startswith("managed_reserve_")
     }
     assert reserve["managed_reserve_expense"]["direction"] == "outflow"
@@ -356,9 +382,18 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
             request_id=ident,
         )
     data = Dashboard(engine).funds("2026-09")["data"]
-    assert {account["account_id"] for account in data["accounts"]} == {"bank-a", "bank-b"}
-    assert [account["code"] for account in data["accounts"]] == ["001", "001"]
-    assert {row["account_id"] for row in data["movements"]} == {"bank-a", "bank-b"}
+    assert {account["account_id"] for account in data["collections"]["accounts"]["items"]} == {
+        "bank-a",
+        "bank-b",
+    }
+    assert [account["code"] for account in data["collections"]["accounts"]["items"]] == [
+        "001",
+        "001",
+    ]
+    assert {row["account_id"] for row in data["collections"]["movements"]["items"]} == {
+        "bank-a",
+        "bank-b",
+    }
 
 
 def test_bank_coverage_distinguishes_missing_partial_empty_and_review(bank_book):
@@ -375,10 +410,10 @@ def test_bank_coverage_distinguishes_missing_partial_empty_and_review(bank_book)
     assert partial["coverage_state"] == "partial" and partial["missing_account_count"] == 1
     changed = original | {"entries": [banking.entry(amount=123)], "closing_fen": 123}
     save("bank_statement", "statement", changed, revision=1)
-    reviewed = Dashboard(engine).funds("2026-09")["data"]["bank_statement"]
-    assert reviewed["coverage_state"] == "partial"
-    assert reviewed["needs_review_count"] == 1
-    assert reviewed["rows"][0]["state"] == "needs_review"
+    reviewed = Dashboard(engine).funds("2026-09", section="statements")["data"]
+    assert reviewed["bank_statement"]["coverage_state"] == "partial"
+    assert reviewed["bank_statement"]["needs_review_count"] == 1
+    assert reviewed["collections"]["statements"]["items"][0]["state"] == "needs_review"
 
 
 def test_movement_identity_survives_earlier_period_publication(bank_book):
@@ -388,7 +423,9 @@ def test_movement_identity_survives_earlier_period_publication(bank_book):
     before = Dashboard(engine).funds("2026-09")["data"]
     banking.funding(save, publish, subject="earlier", amount=200, day="2026-08-01")
     after = Dashboard(engine).funds("2026-09")["data"]
-    assert [row["id"] for row in before["movements"]] == [row["id"] for row in after["movements"]]
+    assert [row["id"] for row in before["collections"]["movements"]["items"]] == [
+        row["id"] for row in after["collections"]["movements"]["items"]
+    ]
     assert before["opening_fen"] == 0 and after["opening_fen"] == 200
 
 
@@ -409,7 +446,7 @@ def test_investment_confirmation_is_separate_from_actual_receipt(investment_book
     assert investment["closing_cost_fen"] == 6100
     assert investment["investment_income_fen"] == 100
     assert investment["actual_receipts_fen"] == 0
-    assert investment["events"][0]["date"] is None
+    assert february["collections"]["investment_events"]["items"][0]["date"] is None
     save(
         "payment",
         "receipt",
@@ -425,7 +462,7 @@ def test_investment_confirmation_is_separate_from_actual_receipt(investment_book
     paid = Dashboard(engine).funds("2026-02")["data"]
     assert paid["inflow_fen"] == paid["investments"]["actual_receipts_fen"] == 4100
     assert paid["investments"]["event_count"] == 2
-    assert paid["investments"]["events"][-1]["settlement_fen"] == 4100
+    assert paid["collections"]["investment_events"]["items"][-1]["settlement_fen"] == 4100
 
 
 def test_opening_investment_preserves_cost_without_inventing_subscription(opening_book):
@@ -492,15 +529,23 @@ def test_investment_detail_pages_preserve_totals_and_require_same_snapshot(inves
     save("money_fund_subscription", "second", investments.subscription())
     publish("buy", "second")
     dashboard = Dashboard(engine)
-    first = dashboard.funds("2026-01", limit=1)
+    first = dashboard.funds("2026-01", section="investment_events", limit=1)
     details = first["data"]["investments"]
     assert details["subscription_cost_fen"] == 20200
-    assert details["event_count"] == 2 and len(details["events"]) == 1
-    cursor = details["page"]["next_cursor"]
+    events = first["data"]["collections"]["investment_events"]
+    assert details["event_count"] == 2 and len(events["items"]) == 1
+    cursor = events["page"]["next_cursor"]
     second = dashboard.funds(
-        "2026-01", after_investment=cursor, expected_version=first["snapshot_version"], limit=1
+        "2026-01",
+        section="investment_events",
+        cursor=cursor,
+        expected_version=first["snapshot_version"],
+        limit=1,
     )
-    assert second["data"]["investments"]["events"][0]["id"] != details["events"][0]["id"]
+    assert (
+        second["data"]["collections"]["investment_events"]["items"][0]["id"]
+        != events["items"][0]["id"]
+    )
     assert second["data"]["investments"]["subscription_cost_fen"] == 20200
     Entities(engine).update_entity_profile(
         "fund-A",
@@ -511,7 +556,11 @@ def test_investment_detail_pages_preserve_totals_and_require_same_snapshot(inves
     )
     with pytest.raises(KernelError) as failure:
         dashboard.funds(
-            "2026-01", after_investment=cursor, expected_version=first["snapshot_version"], limit=1
+            "2026-01",
+            section="investment_events",
+            cursor=cursor,
+            expected_version=first["snapshot_version"],
+            limit=1,
         )
     assert failure.value.code == "dashboard_snapshot_changed"
 
@@ -532,4 +581,4 @@ def test_payroll_batch_is_one_real_bank_exit_and_names_actual_recipients(payroll
     assert data["outflow_fen"] == fact.amount_fen
     assert data["movement_count"] == 1
     assert data["payment_platform_account_count"] == 0
-    assert data["movements"][0]["party"] == "姓名-one、姓名-two"
+    assert data["collections"]["movements"]["items"][0]["party"] == "姓名-one、姓名-two"

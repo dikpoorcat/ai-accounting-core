@@ -1,5 +1,7 @@
 """The restored Vue routes share one authenticated SQLite service."""
 
+from urllib.parse import quote
+
 import test_resident_service as resident_cases
 from entity_fixture import seed_entities
 from test_resident_service import PASSWORD, cookie_header
@@ -140,7 +142,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 3
+    assert response["schema_version"] == 4
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
     assert response["data"]["collections"]["events"]["page"]["returned_count"] == 1
@@ -216,7 +218,12 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
     status, _, _, jobs = http.request(
         f"/api/local/jobs?company_id={company}&job_id=foreign", headers=headers
     )
-    assert status == 200 and jobs == []
+    assert status == 200 and jobs == {
+        "schema_version": 1,
+        "company_id": company,
+        "database_id": service.engine(company).store.database_id,
+        "items": [],
+    }
 
 
 def _publish_expense(engine, subject, amount, revision=0):
@@ -302,12 +309,14 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
     _publish_expense(engine, "second", 200)
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     status, _, _, first = http.request(base, headers=headers)
-    assert status == 200 and first["data"]["voucher_page"]["has_more"]
-    cursor = first["data"]["voucher_page"]["next_after_number"]
-    following = base + f"&after_number={cursor}&expected_version={first['snapshot_version']}"
+    assert status == 200 and first["data"]["collections"]["vouchers"]["page"]["has_more"]
+    cursor = quote(first["data"]["collections"]["vouchers"]["page"]["next_cursor"], safe="")
+    following = (
+        base + f"&section=vouchers&cursor={cursor}&expected_version={first['snapshot_version']}"
+    )
     status, _, _, page = http.request(following, headers=headers)
     assert status == 200 and page["snapshot_version"] == first["snapshot_version"]
-    assert len(page["data"]["vouchers"]) == 1
+    assert len(page["data"]["collections"]["vouchers"]["items"]) == 1
     _publish_expense(engine, "first", 150, revision=1)
     status, _, _, error = http.request(following, headers=headers)
     assert status == 409 and error["code"] == "dashboard_snapshot_changed"
@@ -330,8 +339,10 @@ def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     assert status == 200, result
     assert result["data"]["focused_voucher"]["voucher_version_id"] == target["id"]
     assert result["data"]["focused_voucher"]["business_amount_fen"] == "200"
-    assert [item["voucher_version_id"] for item in result["data"]["vouchers"]] == [first["id"]]
-    assert result["data"]["voucher_page"]["has_more"]
+    assert [
+        item["voucher_version_id"] for item in result["data"]["collections"]["vouchers"]["items"]
+    ] == [first["id"]]
+    assert result["data"]["collections"]["vouchers"]["page"]["has_more"]
     status, _, _, exact = http.request(
         base + f"&voucher_version_id={target['id']}", headers=headers
     )

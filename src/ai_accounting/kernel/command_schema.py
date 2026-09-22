@@ -11,6 +11,7 @@ from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
 from .catalog import Catalog
+from .close_review import CloseReview
 from .contracts import KernelError, NeedsInformation
 from .discovery import Discovery
 from .display import Display
@@ -70,8 +71,6 @@ def command_models(registry):
         "inventory": Periods.inventory,
         "preview_close": Periods.preview_close,
         "close": Periods.close,
-        "preview_close_range": Periods.preview_close_range,
-        "close_range": Periods.close_range,
         "closed_report": Periods.closed_report,
         "preview_delete": Engine.preview_delete,
         "delete": Engine.delete,
@@ -116,6 +115,7 @@ def command_models(registry):
         "dashboard_business_status": Dashboard.business_status,
         "dashboard_quarterly_report": Dashboard.quarterly_report,
         "dashboard_period_preparation": Dashboard.period_preparation,
+        "dashboard_close_review": CloseReview.read,
         "preview_period_commentary": Display.preview_period_commentary,
         "update_period_commentary": Display.update_period_commentary,
         "find_facts": Discovery.find_facts,
@@ -157,7 +157,7 @@ def command_models(registry):
         if name == "evidence":
             del fields["content"]
             fields["content_base64"] = (str, Field(max_length=((20 * 1024 * 1024 + 2) // 3) * 4))
-        if name in {"close", "close_range"}:
+        if name == "close":
             fields["approval_id"] = (str, Field(min_length=1, max_length=200))
         if name == "inspect_material":
             fields["specification"] = (Specification, ...)

@@ -15,7 +15,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
 from ..types import YearMonth
-from .batches import CloseBatchTarget, batch_approval_exists, read_batch_approval
 from .credentials import WindowsCredentialStore
 from .primitives import IdentityError, normalize_login_name
 from .service import SECOND, secret_text
@@ -24,7 +23,6 @@ WINDOW_TITLES = {
     "bootstrap_owner": "AI 记账内核 - 首次负责人设置",
     "login": "AI 记账内核 - 负责人登录",
     "approve_period_close": "AI 记账内核 - 关账密码确认",
-    "approve_close_batches": "AI 记账内核 - 历史关账批次密码确认",
     "change_password": "AI 记账内核 - 修改负责人密码",
     "recover": "AI 记账内核 - 恢复负责人账号",
     "replace_recovery_code": "AI 记账内核 - 更换恢复码",
@@ -38,7 +36,6 @@ class NativeRequest(BaseModel):
         "bootstrap_owner",
         "login",
         "approve_period_close",
-        "approve_close_batches",
         "change_password",
         "recover",
         "replace_recovery_code",
@@ -47,9 +44,8 @@ class NativeRequest(BaseModel):
     company_id: str | None = None
     database_id: str | None = None
     period: str | None = None
-    calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    preview_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     epochs: dict[str, int] | None = None
-    batches: list[CloseBatchTarget] | None = Field(default=None, min_length=1, max_length=32)
 
     @model_validator(mode="after")
     def close_fields(self):
@@ -57,12 +53,10 @@ class NativeRequest(BaseModel):
             self.company_id,
             self.database_id,
             self.period,
-            self.calculation_hash,
+            self.preview_digest,
             self.epochs,
         )
         if self.kind == "approve_period_close":
-            if self.batches is not None:
-                raise ValueError("unexpected batch context")
             if any(value is None for value in supplied):
                 raise ValueError("close context required")
             YearMonth(self.period)
@@ -70,12 +64,7 @@ class NativeRequest(BaseModel):
                 type(value) is not int or value < 0 for value in self.epochs.values()
             ):
                 raise ValueError("invalid state versions")
-        elif self.kind == "approve_close_batches":
-            if any(value is not None for value in supplied) or not self.batches:
-                raise ValueError("explicit batch contexts required")
-            if len({item.company_id for item in self.batches}) != len(self.batches):
-                raise ValueError("one exact range per company")
-        elif any(value is not None for value in supplied) or self.batches is not None:
+        elif any(value is not None for value in supplied):
             raise ValueError("unexpected close context")
         return self
 
@@ -103,8 +92,6 @@ class NativeSecurityController:
         window_opener=None,
         close_issuer=None,
         inspect_close=None,
-        batch_issuer=None,
-        inspect_batches=None,
     ):
         self.service = service
         self.store = credential_store or WindowsCredentialStore(
@@ -113,8 +100,6 @@ class NativeSecurityController:
         self.window_opener = window_opener
         self.close_issuer = close_issuer
         self.inspect_close = inspect_close
-        self.batch_issuer = batch_issuer
-        self.inspect_batches = inspect_batches
         self._lock = threading.RLock()
         self._records: dict[str, WindowRecord] = {}
 
@@ -179,17 +164,12 @@ class NativeSecurityController:
                 "change_password",
                 "replace_recovery_code",
                 "approve_period_close",
-                "approve_close_batches",
             }:
                 self._token()
             if parsed.kind == "approve_period_close":
                 if self.close_issuer is None or self.inspect_close is None:
                     raise IdentityError("OWNER_SECURITY_CLOSE_UNAVAILABLE")
                 self.inspect_close(parsed.model_dump())
-            if parsed.kind == "approve_close_batches":
-                if self.batch_issuer is None or self.inspect_batches is None:
-                    raise IdentityError("OWNER_SECURITY_CLOSE_UNAVAILABLE")
-                self.inspect_batches(parsed.model_dump(mode="json"))
             for existing in tuple(self._records.values()):
                 self._record(existing.request_id)
                 if existing.status not in TERMINAL:
@@ -213,27 +193,6 @@ class NativeSecurityController:
 
     def status(self, request_id):
         with self._lock:
-            known = self._records.get(request_id) if isinstance(request_id, str) else None
-            if (
-                isinstance(request_id, str)
-                and re.fullmatch(r"[0-9a-f]{32}", request_id)
-                and (known is None or known.request.kind == "approve_close_batches")
-                and batch_approval_exists(self.service, request_id)
-            ):
-                # A committed batch survives a lost native response or daemon restart.
-                authority = self.service.authorize(self._token())
-                result = read_batch_approval(self.service, batch_id=request_id, authority=authority)
-                return {
-                    "request_id": request_id,
-                    "kind": "approve_close_batches",
-                    "status": "succeeded",
-                    "catalog_instance_id": self.service.catalog_instance_id,
-                    "operation_committed": True,
-                    "login_completed": False,
-                    "recovery_code_acknowledged": False,
-                    "error_code": None,
-                    **result,
-                }
             return self._public(self._record(request_id))
 
     def cancel(self, request_id):
@@ -299,13 +258,6 @@ class NativeSecurityController:
             record.result = {
                 key: result[key] for key in ("approval_id", "expires_at") if key in result
             }
-        elif kind == "approve_close_batches":
-            record.result = self.batch_issuer(
-                request.model_dump(mode="json"),
-                self._token(),
-                secrets.get("password"),
-                record.request_id,
-            )
         record.operation_committed = True
         record.recovery_pending = recovery is not None
         if kind in {"change_password", "recover"}:
@@ -344,8 +296,6 @@ class NativeSecurityController:
                 }
                 if record.request.kind == "approve_period_close":
                     facts.update(self.inspect_close(record.request.model_dump()))
-                elif record.request.kind == "approve_close_batches":
-                    facts.update(self.inspect_batches(record.request.model_dump(mode="json")))
                 result = {"request": record.request.model_dump(), "facts": facts}
             elif operation == "native_update":
                 if set(data) - {

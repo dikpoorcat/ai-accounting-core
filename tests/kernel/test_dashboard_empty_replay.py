@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from entity_fixture import save_entity_display_profile
-from test_close_range import ready
+from monthly_close_fixture import ready
 
 from ai_accounting.kernel.backup import verify_portable
 from ai_accounting.kernel.contracts import KernelError
@@ -195,7 +195,7 @@ def assert_dashboard(call, references):
     assert brief["funds_overview"]["cash_fen"] == 87500
     assert brief["management_commentary"] == COMMENTARY
     assert brief["management_commentary_details"]["status"] == "current"
-    by_kind = {voucher["kind"]: voucher for voucher in brief["vouchers"]}
+    by_kind = {voucher["kind"]: voucher for voucher in brief["collections"]["vouchers"]["items"]}
     funding, expense = by_kind["cash_funding"], by_kind["expense"]
     assert funding["components"][0]["parties"] == ["甲出资人"]
     assert funding["funds"][0]["name"] == "办公室现金"

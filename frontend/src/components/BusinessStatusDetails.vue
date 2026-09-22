@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { fetchBusinessStatus, type BusinessStatusData } from "../api/businessStatus";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
-import { businessStateLabel } from "../api/dashboardContracts";
+import { businessStateLabel, type DashboardCollection } from "../api/dashboardContracts";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
@@ -31,6 +31,23 @@ const props = withDefaults(defineProps<{
   presentation?: "default" | "brief";
   briefContext?: BriefStatusContext;
 }>(), { presentation: "default" });
+type BusinessCollectionSection = keyof BusinessStatusData["collections"];
+type AdoptedBasis = NonNullable<BusinessStatusData["adopted_basis"]>;
+type AdoptedSource = AdoptedBasis["evidence"][number];
+
+function adoptedBasisLabel(basis: NonNullable<BusinessStatusData["adopted_basis"]>["basis"]) {
+  return basis === "frozen_adoption" ? "按本月关账时冻结采用" : "按当前正式发布结果采用";
+}
+
+function adoptedEvidenceLabel(source: AdoptedSource) {
+  if (source.name) return source.name;
+  return "已保全原始凭据";
+}
+
+function adoptedPayrollMode(mode: string) {
+  return mode === "explicit_no_change" ? "负责人确认本月无变化" : "负责人确认本月工资或劳务方案";
+}
+
 const emit = defineEmits<{ changed: [] }>();
 const route = useRoute();
 const data = ref<BusinessStatusData | null>(null), error = ref("");
@@ -70,7 +87,7 @@ const compactWarnings = computed(() => {
   }
   const selected = data.value.settlements;
   warnings.push(...selected.issues.map((item) => item.message || "所选月末款项来源待核对"));
-  if ((selected.complete === false || selected.status === "partially_established") && !selected.issues.length) {
+  if (selected.status === "partially_established" && !selected.issues.length) {
     warnings.push("所选月末款项关系尚未完整确认");
   }
   const current = currentFollowupSettlements.value;
@@ -82,7 +99,7 @@ const compactWarnings = computed(() => {
   }
   return [...new Set(warnings)];
 });
-const compactCollections = computed(() => {
+const visibleCollections = computed(() => {
   if (!data.value) return [];
   const labels: Record<string, string> = {
     events: "核算记录",
@@ -90,10 +107,14 @@ const compactCollections = computed(() => {
     source_history: "来源变更",
     file_jobs: "文件记录",
   };
-  return Object.entries(data.value.collections)
-    .filter(([, collection]) => collection.page.total_count > 0)
-    .map(([key, collection]) => ({ key, label: labels[key] || "相关记录", collection }));
+  const result: Array<{ key: BusinessCollectionSection; label: string; collection: DashboardCollection }> = [];
+  for (const key of ["events", "settlement_events", "source_history", "file_jobs"] as const) {
+    const collection = data.value.collections[key];
+    if (collection) result.push({ key, label: labels[key] || "相关记录", collection });
+  }
+  return result;
 });
+const compactCollections = computed(() => visibleCollections.value.filter(item => item.collection.page.total_count > 0));
 const compactCollectionTotal = computed(
   () => compactCollections.value.reduce((total, item) => total + item.collection.page.total_count, 0),
 );
@@ -150,7 +171,7 @@ function invalidate() {
   data.value = null; loading.value = false; error.value = ""; responseVersion.value = ""; notice.value = "";
 }
 function snapshotChanged() { invalidate(); notice.value = "业务资料已更新，正在重新读取。"; emit("changed"); }
-async function load(section?: string) {
+async function load(section?: BusinessCollectionSection) {
   if (section) { await loadCollection(section); return; }
   if (loading.value) return;
   const version = ++generation, key = selection(), request = new AbortController();
@@ -164,7 +185,7 @@ async function load(section?: string) {
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) snapshotChanged(); else error.value = dashboardErrorMessage(caught); } }
   finally { if (valid()) loading.value = false; }
 }
-async function loadCollection(section: string) {
+async function loadCollection(section: BusinessCollectionSection) {
   const current = data.value;
   if (!current || loading.value) return;
   if (!collectionStates.value[section]) collectionStates.value[section] = { loading: false, error: "", notice: "", restart: false };
@@ -189,7 +210,16 @@ async function loadCollection(section: string) {
     }
     if (!valid() || !data.value) return;
     const next = result.data.collections[section], latest = data.value;
-    data.value = { ...latest, collections: { ...latest.collections, [section]: { ...next, items: replace ? next.items : [...latest.collections[section].items, ...next.items] } } };
+    if (!next) return;
+    if (section === "events") {
+      data.value = { ...latest, collections: { ...latest.collections, events: { ...next, items: [...(replace ? [] : latest.collections.events?.items ?? []), ...next.items] } } };
+    } else if (section === "settlement_events") {
+      data.value = { ...latest, collections: { ...latest.collections, settlement_events: { ...next, items: [...(replace ? [] : latest.collections.settlement_events?.items ?? []), ...next.items] } } };
+    } else if (section === "source_history") {
+      data.value = { ...latest, collections: { ...latest.collections, source_history: { ...next, items: [...(replace ? [] : latest.collections.source_history?.items ?? []), ...next.items] } } };
+    } else {
+      data.value = { ...latest, collections: { ...latest.collections, file_jobs: { ...next, items: [...(replace ? [] : latest.collections.file_jobs?.items ?? []), ...next.items] } } };
+    }
     state.restart = false;
     if (replace) state.notice = "文件任务已更新，已重新读取；其他业务资料保持原核算版本。";
   } catch (caught) {
@@ -209,7 +239,7 @@ function periodLabel(value: string | null | undefined) {
   const matched = /^(\d{4})-(\d{2})$/.exec(value);
   return matched ? `${matched[1]} 年 ${Number(matched[2])} 月` : value;
 }
-function label(section: string) { return ({ events: "核算历史", settlement_events: props.settlementView === "historical" ? "相关历史清偿（含关联来源，截至所选月末）" : "当前后续清偿事件", source_history: "来源历史", file_jobs: "文件任务" } as Record<string, string>)[section] ?? "业务详情"; }
+function label(section: BusinessCollectionSection) { return ({ events: "核算历史", settlement_events: props.settlementView === "historical" ? "相关历史清偿（含关联来源，截至所选月末）" : "当前后续清偿事件", source_history: "来源历史", file_jobs: "文件任务" } as Record<string, string>)[section] ?? "业务详情"; }
 function duplicateSignalLabel(code: string) {
   return ({
     same_exact_material_location: "指向同一份原件的同一位置",
@@ -343,6 +373,17 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
           </dl>
         </details>
 
+        <details v-if="data.adopted_basis" class="compact-accounting">
+          <summary><span>查看实际采用依据</span><small>{{ adoptedBasisLabel(data.adopted_basis.basis) }}</small></summary>
+          <p>政策 {{ data.adopted_basis.policies.length }} 项 · 工资及劳务确认 {{ data.adopted_basis.payroll_confirmations.length }} 项 · 原始凭据 {{ data.adopted_basis.evidence.length }} 项</p>
+          <ul class="business-review-list">
+            <li v-for="source in data.adopted_basis.policies" :key="`compact-policy-${source.reference.id}`"><strong>{{ source.label }}</strong><span>{{ source.version || '未单列版本号' }} · {{ source.effective_from || '生效日起点未单列' }}<template v-if="source.effective_to"> 至 {{ source.effective_to }}</template><template v-if="source.official_urls.length"> · <a :href="source.official_urls[0]" target="_blank" rel="noreferrer">官方来源</a></template></span></li>
+            <li v-for="source in data.adopted_basis.payroll_confirmations" :key="`compact-payroll-${source.calculation_reference.id}`"><strong>{{ source.label }}</strong><span>{{ adoptedPayrollMode(source.mode) }} · {{ source.confirmation_references.length }} 项确认事实</span></li>
+            <li v-for="source in data.adopted_basis.evidence" :key="`compact-evidence-${source.id}`"><strong>原始凭据</strong><span>{{ adoptedEvidenceLabel(source) }}</span></li>
+          </ul>
+          <details><summary>内部校验信息</summary><pre>{{ JSON.stringify({ calculation_ids: data.adopted_basis.calculation_ids, policies: data.adopted_basis.policies.map(item => item.reference), payroll_confirmations: data.adopted_basis.payroll_confirmations.map(item => ({ calculation_reference: item.calculation_reference, confirmation_references: item.confirmation_references })), evidence: data.adopted_basis.evidence }, null, 2) }}</pre></details>
+        </details>
+
         <details v-if="compactCollections.length" class="compact-history">
           <summary>
             <span>查看相关记录</span>
@@ -388,6 +429,17 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <h4>当前业务结果</h4>
       <DashboardBusinessRecords v-if="data.current_business_result" :items="[data.current_business_result]" :period="period" :show-business="false" />
       <p v-else>当前没有正式采用的业务结果。</p>
+      <h4>实际采用依据</h4>
+      <template v-if="data.adopted_basis">
+        <p>{{ adoptedBasisLabel(data.adopted_basis.basis) }}。政策 {{ data.adopted_basis.policies.length }} 项，工资及劳务确认 {{ data.adopted_basis.payroll_confirmations.length }} 项，原始凭据 {{ data.adopted_basis.evidence.length }} 项。</p>
+        <ul class="business-review-list">
+          <li v-for="source in data.adopted_basis.policies" :key="`policy-${source.reference.id}`"><strong>{{ source.label }}</strong><span>{{ source.version || '未单列版本号' }} · {{ source.effective_from || '生效日起点未单列' }}<template v-if="source.effective_to"> 至 {{ source.effective_to }}</template><template v-if="source.official_urls.length"> · <a :href="source.official_urls[0]" target="_blank" rel="noreferrer">官方来源</a></template></span></li>
+          <li v-for="source in data.adopted_basis.payroll_confirmations" :key="`payroll-${source.calculation_reference.id}`"><strong>{{ source.label }}</strong><span>{{ adoptedPayrollMode(source.mode) }} · {{ source.confirmation_references.length }} 项确认事实</span></li>
+          <li v-for="source in data.adopted_basis.evidence" :key="`evidence-${source.id}`"><strong>原始凭据</strong><span>{{ adoptedEvidenceLabel(source) }}</span></li>
+        </ul>
+        <details><summary>内部校验信息</summary><pre>{{ JSON.stringify({ calculation_ids: data.adopted_basis.calculation_ids, policies: data.adopted_basis.policies.map(item => item.reference), payroll_confirmations: data.adopted_basis.payroll_confirmations.map(item => ({ calculation_reference: item.calculation_reference, confirmation_references: item.confirmation_references })), evidence: data.adopted_basis.evidence }, null, 2) }}</pre></details>
+      </template>
+      <p v-else>当前没有可列示的实际采用依据。</p>
       <h4>重复业务核对</h4>
       <p v-if="duplicateChecks.unresolved.length" class="incomplete-status" role="status">发现 {{ duplicateChecks.unresolved.length }} 项明显疑似重复，AI 会计须先核对已有资料；仍无法判断时再请负责人确认。</p>
       <p v-else>当前没有尚待核对的明显重复疑点。</p>
@@ -437,7 +489,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <p v-else>所选月份没有冻结采用记录。</p>
       <h4>所选月末款项</h4>
       <p>截至 {{ data.settlements.cutoff_period }} · {{ businessStateLabel(data.settlements.status) }}</p>
-      <p v-if="data.settlements.complete === false || data.settlements.status === 'partially_established' || data.settlements.unestablished_state_selections?.length || data.as_posted.unestablished_state_selections.length" class="incomplete-status" role="status">历史月末款项尚不能完整确定；已有金额不能代表完整清偿结果，请核对下方来源和未建立候选。</p>
+      <p v-if="data.settlements.status === 'partially_established' || data.settlements.issues.length || data.as_posted.unestablished_state_selections.length" class="incomplete-status" role="status">历史月末款项尚不能完整确定；已有金额不能代表完整清偿结果，请核对下方来源和未建立候选。</p>
       <p v-for="(issue, index) in data.settlements.issues" :key="index">{{ issue.message || "款项来源尚待核对。" }}</p>
       <DashboardBusinessRecords :items="data.settlements.obligations" :period="period" :show-business="false" />
       <h4>本项历史业务相关的当前跟进</h4>
@@ -450,14 +502,14 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <p v-else>当前跟进资料尚未提供。</p>
       <h4>外部办理</h4>
       <DashboardBusinessRecords :items="[data.external]" :period="period" :show-business="false" />
-      <details v-for="(collection, section) in data.collections" :key="section">
-        <summary>{{ label(section) }}</summary>
-        <p v-if="collectionStates[section]?.notice" role="status">{{ collectionStates[section].notice }}</p>
-        <template v-if="!collectionStates[section]?.restart">
-          <DashboardBusinessRecords :items="collection.items" :period="period" :show-business="false" />
-          <DashboardPagination :page="collection.page" :loaded="collection.items.length" :loading="collectionStates[section]?.loading" :error="collectionStates[section]?.error" @more="load(section)" @retry="load(section)" />
+      <details v-for="item in visibleCollections" :key="item.key">
+        <summary>{{ label(item.key) }}</summary>
+        <p v-if="collectionStates[item.key]?.notice" role="status">{{ collectionStates[item.key].notice }}</p>
+        <template v-if="!collectionStates[item.key]?.restart">
+          <DashboardBusinessRecords :items="item.collection.items" :period="period" :show-business="false" />
+          <DashboardPagination :page="item.collection.page" :loaded="item.collection.items.length" :loading="collectionStates[item.key]?.loading" :error="collectionStates[item.key]?.error" @more="load(item.key)" @retry="load(item.key)" />
         </template>
-        <p v-else-if="collectionStates[section]?.error" role="alert">{{ collectionStates[section].error }} <button type="button" :disabled="collectionStates[section].loading" @click="load(section)">重新读取文件任务</button></p>
+        <p v-else-if="collectionStates[item.key]?.error" role="alert">{{ collectionStates[item.key].error }} <button type="button" :disabled="collectionStates[item.key].loading" @click="load(item.key)">重新读取文件任务</button></p>
       </details>
       <details><summary>技术依据与字段来源</summary><pre>{{ JSON.stringify(data, null, 2) }}</pre></details>
     </template>

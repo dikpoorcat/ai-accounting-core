@@ -22,7 +22,7 @@ from .account_definitions import (
     PROFIT_ACCOUNTS,
     RECLASS,
 )
-from .business_queries import BusinessQueries
+from .business_queries import BusinessQueries, business_display_amount
 from .contracts import KernelError
 from .dashboard_pages import (
     decode_cursor,
@@ -1058,53 +1058,7 @@ class _Snapshot:
 
     @staticmethod
     def business_amount(calc):
-        data, values = calc["fact"]["data"], calc["outcome"]["values"]
-        # Each nontrivial amount names its business meaning; unrelated values cannot
-        # become a headline simply because their field happens to exist first.
-        spec = {
-            "service_sale": ("gross_fen", "含税收入确认额"),
-            "payroll": ("gross_fen", "税前工资"),
-            "payroll_bounded": ("gross_fen", "税前工资"),
-            "annual_bonus": ("gross_fen", "税前奖金"),
-            "labor": ("gross_fen", "劳务确认毛额"),
-            "labor_accrual": ("gross_fen", "劳务确认毛额"),
-            "labor_project_cost": ("gross_fen", "资本化劳务确认毛额"),
-            "asset": ("cost_fen", "已确认资产成本"),
-            "reimbursed_asset": ("cost_fen", "已确认资产成本"),
-            "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
-            "asset_activation": ("cost_fen", "启用资产成本"),
-            "asset_consumption": ("consumption_fen", "本期折旧摊销"),
-            "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
-            "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
-            "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
-            "loan_interest": ("interest_fen", "本期确认利息"),
-            "loan_drawdown": ("principal_fen", "借款本金"),
-            "project_release": ("released_fen", "转费用成本"),
-            "money_fund_subscription": ("cost_fen", "申购确认成本"),
-            "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
-            "income_tax_assessment": ("change_fen", "本期所得税确认额"),
-            "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
-            "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
-            "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
-        }
-        field, label = spec.get(calc["kind"], ("amount_fen", "业务确认金额"))
-        amount = values.get(field, data.get(field))
-        if calc["kind"] == "employee_advance":
-            own = values.get("obligations", ())
-            amount = own[0]["amount_fen"] if len(own) == 1 else None
-            label = "代付转债确认额"
-        elif calc["kind"] in {
-            "payment",
-            "cash_payment",
-            "platform_payment",
-            "payroll_reserve_payment",
-        }:
-            label = "实际收付款"
-        elif calc["kind"] in {"funding", "cash_funding", "platform_funding"}:
-            label = "实际投入或借入金额"
-        elif calc["kind"] == "bank_platform_transfer":
-            label = "内部划转金额"
-        return (amount if type(amount) is int else None), label
+        return business_display_amount(calc)
 
     def voucher(self, row):
         calc = row["basis"]
@@ -1245,11 +1199,8 @@ class _Snapshot:
                     **_display_sources(profile, purpose="purpose"),
                     **({"description": note_source} if note_source else {}),
                 },
-                "history": [],
             },
-            "facts": data,
             "recognition": recognition,
-            "derived": calc["outcome"]["values"],
             "party_sources": [
                 {"party_id": ident, **self.party_details(ident)} for ident in sorted(party_ids)
             ],
@@ -1458,12 +1409,17 @@ class Dashboard:
                 "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。",
             }
 
-    @staticmethod
-    def _response(snapshot, data):
+    def _response(self, snapshot, data):
+        from .business_queries import _today_china
+
         if snapshot:
             snapshot.attach_recorded_times()
+            read_context = self._read_context(snapshot.connection, snapshot.as_of)
+        else:
+            with self.store.connection(read_only=True) as connection:
+                read_context = self._read_context(connection, _today_china())
         return {
-            "schema_version": 5,
+            "schema_version": 6,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
@@ -1482,6 +1438,7 @@ class Dashboard:
                 "recording_period": "business_recording_period",
                 "recorded_later": "business_recording_period_after_selected_period",
             },
+            "read_context": read_context,
             "data": data,
         }
 
@@ -1538,7 +1495,6 @@ class Dashboard:
         self,
         period: str | None = None,
         *,
-        after_number: int = 0,
         limit: int = 100,
         expected_version: str | None = None,
         section: str | None = None,
@@ -1550,8 +1506,6 @@ class Dashboard:
         if preparation not in {"complete", "deferred"}:
             raise ValueError("不支持的准备检查投影")
         validate_page("brief", section, cursor, limit)
-        if type(after_number) is not int or after_number < 0:
-            raise ValueError("凭证游标必须为非负整数")
         if voucher_version_id is not None and voucher_number is not None:
             raise ValueError("精确凭证定位须只提供一个身份")
         if voucher_number is not None and (type(voucher_number) is not int or voucher_number < 1):
@@ -1560,18 +1514,16 @@ class Dashboard:
             if snap is None:
                 response = self._response(None, None)
                 if preparation == "deferred":
-                    response.update(projection="dashboard_brief_deferred", read_context=None)
+                    response.update(projection="dashboard_brief_deferred")
                 return response
-            self._check_page_version(snap, cursor or after_number, expected_version)
+            self._check_page_version(snap, cursor, expected_version)
             after = (
                 decode_cursor(snap, "brief", section, cursor, {})
                 if section != "file_jobs"
                 else None
             )
             if section in {None, "vouchers"}:
-                rows, page = snap.month_journal.page(
-                    after if section == "vouchers" and after is not None else after_number, limit
-                )
+                rows, page = snap.month_journal.page(after or 0, limit)
             else:
                 rows, page = [], page_keys([], limit=limit, total_count=len(snap.month_journal))[1]
             focused_row = None
@@ -1595,6 +1547,18 @@ class Dashboard:
                 snap.metadata.prime_profiles("asset", asset_ids)
             vouchers = [snap.voucher(row) for row in rows]
             focused = snap.voucher(focused_row) if focused_row else None
+            from .close_review import business_adopted_basis
+
+            page_calculation_ids = [voucher["calculation_id"] for voucher in vouchers]
+            adopted_basis = {
+                "scope": "current_voucher_page",
+                "calculation_ids": page_calculation_ids,
+                **business_adopted_basis(
+                    snap.connection,
+                    self.engine,
+                    page_calculation_ids,
+                ),
+            }
             groups = []
             kind_counts = snap.month_journal.kind_counts()
             for key, label in GROUPS.items():
@@ -1677,23 +1641,49 @@ class Dashboard:
                 + int(bank["coverage_state"] in {"missing", "partial"})
             )
             commentary = snap.commentary.get("current")
+
+            def commentary_item(item):
+                if item is None:
+                    return None
+                return {
+                    key: item[key]
+                    for key in (
+                        "id",
+                        "period",
+                        "revision",
+                        "text",
+                        "context_digest",
+                        "close_digest",
+                        "source",
+                        "evidence_digest",
+                        "digest",
+                        "supplementary",
+                        "content_validity",
+                    )
+                    if key in item
+                }
+
+            commentary_details = {
+                "status": snap.commentary["status"],
+                "current": commentary_item(snap.commentary.get("current")),
+                "frozen": commentary_item(snap.commentary.get("frozen")),
+                "latest": commentary_item(snap.commentary.get("latest")),
+                "supplements": [
+                    commentary_item(item) for item in snap.commentary.get("supplements", ())
+                ],
+            }
             data = {
                 "generated_at": datetime.now(UTC).isoformat(),
                 "management_commentary": (commentary or {}).get("text", ""),
-                "management_commentary_details": snap.commentary,
+                "management_commentary_details": commentary_details,
                 "material_completeness": checks["material_completeness"],
                 "period_preparation": preparation_view(prepared) if prepared is not None else None,
                 "voucher_count": len(snap.month_journal),
                 "line_count": journal_totals["line_count"],
                 "total_debit_fen": debit,
                 "total_credit_fen": credit,
-                "vouchers": vouchers,
                 "focused_voucher": focused,
-                "voucher_page": {
-                    "has_more": page["has_more"],
-                    "next_after_number": page["next_cursor"],
-                    "total_count": page["total_count"],
-                },
+                "adopted_basis": adopted_basis,
                 "activity_groups": groups,
                 "position": position,
                 "funds_overview": {
@@ -1785,10 +1775,8 @@ class Dashboard:
                 },
             }
             data["collections"] = {
-                # Page envelope only: the rows are already carried as data["vouchers"],
-                # and repeating them here duplicated 88 KB of a 279 KB response.
                 **(
-                    {"vouchers": {"items": [], "page": {**page, "returned_count": 0}}}
+                    {"vouchers": {"items": vouchers, "page": page}}
                     if section in {None, "vouchers"}
                     else {}
                 ),
@@ -1842,9 +1830,6 @@ class Dashboard:
         self,
         period: str | None = None,
         *,
-        after_movement: str | None = None,
-        after_statement: str | None = None,
-        after_investment: str | None = None,
         movement_account_type: str | None = None,
         movement_account_id: str | None = None,
         statement_account_id: str | None = None,
@@ -1869,21 +1854,14 @@ class Dashboard:
             "statement_account_id": statement_account_id,
         }
         with self._snapshot(period) as snap:
-            active_cursor = cursor or after_movement or after_statement or after_investment
             if snap is None:
-                if active_cursor:
+                if cursor:
                     raise KernelError(
                         "dashboard_snapshot_changed", "所选公司或期间已变化，请重新加载明细。"
                     )
                 return self._response(None, None)
-            self._check_page_version(snap, active_cursor, expected_version)
-            cursors = {
-                "movements": after_movement,
-                "statements": after_statement,
-                "investment_events": after_investment,
-            }
-            if section:
-                cursors[section] = cursor
+            self._check_page_version(snap, cursor, expected_version)
+            cursors = {section: cursor} if section and cursor is not None else {}
             decoded = {
                 key: decode_cursor(snap, "funds", key, value, filters)
                 for key, value in cursors.items()
@@ -1899,16 +1877,7 @@ class Dashboard:
             data["period_preparation"] = (
                 preparation_view(snap.preparation) if preparation == "complete" else None
             )
-            seal_collections(snap, "funds", data, filters)
-            for name, target, field in (
-                ("movements", data, "movement_page"),
-                ("statements", data["bank_statement"], "page"),
-                ("investment_events", data["investments"], "page"),
-            ):
-                if name in data["collections"]:
-                    page = data["collections"][name]["page"]
-                    target[field] = page | {"total_count": page["filtered_count"]}
-            return self._response(snap, data)
+            return self._response(snap, seal_collections(snap, "funds", data, filters))
 
     @staticmethod
     def _check_page_version(snapshot, cursor, expected_version):
@@ -1967,14 +1936,6 @@ class Dashboard:
                 )
             if section:
                 data["collections"] = {section: data["collections"][section]}
-            for item in data["employees"]["items"]:
-                item["payroll_source_page"] = seal_page(
-                    snap,
-                    "employees",
-                    "payroll_sources",
-                    item["payroll_source_page"],
-                    filters | {"employee_id": item["employee_id"]},
-                )
             data["period_preparation"] = (
                 preparation_view(snap.preparation) if preparation == "complete" else None
             )
@@ -2150,7 +2111,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", data, filters)
             )
-            response["schema_version"] = 3
+            response["schema_version"] = 4
             return response
 
     def quarterly_report(
@@ -2193,10 +2154,10 @@ class Dashboard:
                 reports.browser_report_details(plan, closed, connection=connection),
                 carry_forward_fact_id,
             )
+            response["read_context"] = self._read_context(connection, as_of)
             if preparation == "deferred":
                 response.update(
                     projection="dashboard_quarterly_report_deferred",
-                    read_context=self._read_context(connection, as_of),
                     period_preparations=None,
                 )
             else:
@@ -2620,7 +2581,6 @@ def _open_items(snap, *, historical=None, current=None, after=None, limit=100, s
                 "outstanding_fen": _nullable_sum(
                     source["remaining_fen"] for source in sources_in_category
                 ),
-                "items": rows,
                 "groups": [
                     {
                         "key": ident,
@@ -3187,6 +3147,7 @@ def _employees(
         items.append(
             {
                 "employee_id": ident,
+                "selection_status": "established",
                 "code": code or f"人员 {index}",
                 "name": person["name"],
                 "field_sources": {
@@ -3273,10 +3234,6 @@ def _employees(
                 "other_net_settlements_fen": net_payments[ident] - direct_payments[ident]
                 if net_payments[ident] is not None and direct_payments[ident] is not None
                 else None,
-                "payroll_sources": sorted(
-                    wage_sources[ident], key=lambda item: (item["period"], item["source_id"])
-                ),
-                "payroll_source_page": source_pages[ident],
                 "payroll_periods": sorted(amounts["periods"]),
                 "has_annual_bonus": amounts["annual_bonus_fen"] != 0,
                 **{key: amounts[key] for key in money_keys},
@@ -3302,7 +3259,6 @@ def _employees(
     }
     # The ordinary projections above contain only established amounts. Candidate
     # identities remain in the same page, with their full proof kept separately.
-    established_items = {item["employee_id"]: item for item in items}
     items = [item for item in items if item["employee_id"] not in unestablished_employees]
     for ident in sorted(selected_ids & unestablished_employees.keys()):
         proof = unestablished_employees[ident]
@@ -3313,7 +3269,6 @@ def _employees(
                 "selection_status": "unestablished",
                 "candidate_selections": proof["candidate_selections"],
                 "trace_targets": proof["trace_targets"],
-                "payroll_source_page": source_pages[ident],
                 **dict.fromkeys(
                     (
                         *money_keys,
@@ -3324,11 +3279,6 @@ def _employees(
                         "other_net_settlements_fen",
                     ),
                     None,
-                ),
-                **(
-                    {"established_card": established_items[ident]}
-                    if ident in established_items and established_items[ident]["payroll_sources"]
-                    else {}
                 ),
             }
         )
@@ -3525,7 +3475,7 @@ def _employees(
                     "gross_paid_without_withholding": "已按毛额付款、未扣税",
                     "net_after_withholding": "已确认净额及扣税义务",
                 }[values["withholding_method"]],
-                **_source_settlement(snap, calc, limit=limit),
+                **_source_settlement(snap, calc, limit=limit, include_movements=False),
             }
         )
     capitalized_labor = sum(
@@ -3535,7 +3485,7 @@ def _employees(
         )
         if row["basis"]["kind"] == "labor_project_cost"
     )
-    labor["items"] = sorted(labor_items, key=lambda item: (item["period"], item["source_id"]))
+    labor_items = sorted(labor_items, key=lambda item: (item["period"], item["source_id"]))
     return {
         "employees": {
             **{
@@ -3565,17 +3515,14 @@ def _employees(
             "detail_reconciled": None if unestablished_employees else adjustment == 0,
             "breakdown_available": not unestablished_employees and adjustment == 0,
             "breakdown_reason": employee_cost["reason"],
-            "items": items,
             "identity_note": (
                 "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
             ),
         },
         "_entity_sources": entity_sources,
         "collections": {
-            # Page envelope only. The rows are already carried above as employees.items,
-            # and repeating them here made the response payload byte-for-byte double.
-            "employees": {"items": [], "page": {**employee_page, "returned_count": 0}},
-            "labor_sources": {"items": labor["items"], "page": labor_page},
+            "employees": {"items": items, "page": employee_page},
+            "labor_sources": {"items": labor_items, "page": labor_page},
             **(
                 {
                     "payroll_sources": {
@@ -3971,7 +3918,7 @@ def _assets(
                 {
                     "source_id": source["subject_id"],
                     "label": _name(source["kind"]),
-                    **_source_settlement(snap, source, limit=limit),
+                    **_source_settlement(snap, source, limit=limit, include_movements=False),
                 }
                 for source in source_calculations
             ],
@@ -4038,7 +3985,9 @@ def _assets(
                 "date": disposed["disposal_date"],
                 "book_value_fen": cost - accumulated,
                 "reference": str(references[-1]["number"]) if references else "暂无凭证",
-                "settlement": _source_settlement(snap, disposal, limit=limit),
+                "settlement": _source_settlement(
+                    snap, disposal, limit=limit, include_movements=False
+                ),
             }
             if fixed:
                 detail.update(
@@ -4085,9 +4034,6 @@ def _assets(
             "registered_count": len(rows),
             "unestablished_count": sum(row["status"] == "unestablished" for row in rows),
             "active_count": len(active),
-            "items": [
-                item for item in items if item["asset_type"] == ("fixed" if fixed else "intangible")
-            ],
             "active_cost_fen": sum(row["cost_fen"] for row in active),
             "active_accumulated_fen": sum(row["accumulated_charge_fen"] for row in active),
             "active_net_fen": sum(row["book_value_fen"] for row in active),
@@ -4180,7 +4126,7 @@ def _assets(
             ),
             "cost_fen": calc["outcome"]["values"]["capitalized_fen"],
             "remaining_fen": project_balances[f"project-cost:{calc['subject_id']}"],
-            "settlement": _source_settlement(snap, calc, limit=limit),
+            "settlement": _source_settlement(snap, calc, limit=limit, include_movements=False),
         }
         for calc in candidates
         if calc["id"] in picked_projects
@@ -4233,7 +4179,6 @@ def _assets(
         "pending_intangible_count": intangible["pending_count"],
         "pending_intangible_cost_fen": intangible["pending_cost_fen"],
         "project_cost_fen": project_cost,
-        "projects": sorted(projects, key=lambda item: (item["project_id"], item["source_id"])),
         "reconciliation_scope": "在用及待启用资产、尚未转出项目成本",
         "card_cost_fen": None if unestablished_assets else card_cost,
         "card_accumulated_fen": None if unestablished_assets else card_accumulated,
@@ -4268,7 +4213,10 @@ def _assets(
         "_entity_sources": entity_sources,
         "collections": {
             "assets": {"items": items, "page": asset_page},
-            "projects": {"items": projects, "page": project_page},
+            "projects": {
+                "items": sorted(projects, key=lambda item: (item["project_id"], item["source_id"])),
+                "page": project_page,
+            },
         },
     }
 

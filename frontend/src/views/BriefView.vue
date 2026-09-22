@@ -13,6 +13,7 @@ import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.v
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
 import BriefOpenItems from "../components/brief/BriefOpenItems.vue";
 import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue";
+import CloseReviewPanel from "../components/CloseReviewPanel.vue";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen } from "../utils/money";
@@ -36,12 +37,14 @@ let preparationController: AbortController | null = null;
 let preparationAttempt = 0;
 const loading = ref(false);
 type BriefSection = NonNullable<BriefQuery["section"]>;
+type CommentaryItem = NonNullable<NonNullable<Awaited<ReturnType<typeof fetchDeferredBrief>>["data"]>["management_commentary_details"]["latest"]>;
 const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
 const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
 const pageControllers = new Map<BriefSection, AbortController>();
 const updateNotice = ref("");
 const error = ref("");
 const openItemsFocusRequest = ref(0);
+const closeReviewRefreshKey = ref(0);
 let controller: AbortController | null = null;
 let initialized = false;
 let mounted = true;
@@ -64,6 +67,8 @@ const data = computed(() => {
       attention_count: attention, issues: checks.issues, items: [...main.validation.items.filter(item => item.key === "balance"), ...checks.items] },
   };
 });
+const vouchers = computed(() => data.value?.collections.vouchers?.items ?? []);
+const openItemRecords = computed(() => data.value?.collections.open_items?.items ?? []);
 const isClosed = computed(() => response.value?.selected_period?.status === "closed");
 const sectionLinks = computed(() => {
   if (!data.value) return [];
@@ -143,6 +148,16 @@ const hasOverviewNotes = computed(() => Boolean(takeaway.value
   || (data.value?.management_commentary_details?.status === "stale" && data.value.management_commentary_details.latest)
   || data.value?.management_commentary_details?.supplements.length));
 
+function commentaryValidityLabel(item: CommentaryItem) {
+  return ({ current: "与当前账务一致", frozen: "关账时已冻结", stale: "账务变化后已过期", unverifiable: "现有依据无法核验" } as const)[item.content_validity.status];
+}
+
+function commentaryValidityReason(item: CommentaryItem) {
+  if (!item.content_validity.reason) return "";
+  return ({ context_changed: "相关账务或业务说明已变化", missing_basis: "缺少原说明的核验依据", unsupported_contract: "说明依据版本暂不能核验" } as Record<string, string>)[item.content_validity.reason]
+    ?? "具体原因保留在核验记录中";
+}
+
 function queryPeriod() {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
@@ -213,6 +228,7 @@ async function loadData(period: string | null) {
       target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {});
     if (isCurrent(generation, selection) && controller === request) {
       response.value = result;
+      closeReviewRefreshKey.value += 1;
       loading.value = false;
       await nextTick();
       if (isCurrent(generation, selection) && controller === request) {
@@ -241,10 +257,8 @@ async function loadMore(section: BriefSection = "vouchers", restart = false) {
     if (!valid() || !next.data || !response.value?.data) return;
     const latest = response.value, before = latest.data!;
     const collection = next.data.collections[section];
-    const groups = (next.data.activity_groups ?? []).map(group => ({ ...group, rows: [...(before.activity_groups.find(item => item.key === group.key)?.rows ?? []), ...group.rows] }));
-    for (const group of before.activity_groups) if (!groups.some(item => item.key === group.key)) groups.push(group);
+    if (!collection) return;
     response.value = { ...latest, data: { ...before,
-      ...(section === "vouchers" ? { vouchers: [...before.vouchers, ...next.data.vouchers], voucher_page: next.data.voucher_page, activity_groups: groups } : {}),
       collections: { ...before.collections, [section]: { ...collection, items: [...(restart ? [] : before.collections[section]?.items ?? []), ...collection.items] } },
     } };
   } catch (caught) {
@@ -463,14 +477,16 @@ onBeforeUnmount(() => {
             <template v-if="takeaway">
               <span>经营说明</span>
               <p>{{ takeaway }}</p>
+              <small v-if="data.management_commentary_details?.current">{{ commentaryValidityLabel(data.management_commentary_details.current) }}</small>
             </template>
             <details v-if="data.management_commentary_details?.status === 'stale' && data.management_commentary_details.latest">
               <summary>账务已更新，查看之前的经营说明</summary>
               <p>{{ data.management_commentary_details.latest.text }}</p>
+              <small>{{ commentaryValidityLabel(data.management_commentary_details.latest) }}<template v-if="commentaryValidityReason(data.management_commentary_details.latest)"> · {{ commentaryValidityReason(data.management_commentary_details.latest) }}</template></small>
             </details>
             <details v-if="data.management_commentary_details?.supplements.length">
               <summary>关账后的补充说明</summary>
-              <p v-for="note in data.management_commentary_details.supplements" :key="note.id">{{ note.text }}</p>
+              <div v-for="note in data.management_commentary_details.supplements" :key="note.id"><p>{{ note.text }}</p><small>{{ commentaryValidityLabel(note) }}<template v-if="commentaryValidityReason(note)"> · {{ commentaryValidityReason(note) }}</template></small></div>
             </details>
           </div>
         </div>
@@ -511,14 +527,24 @@ onBeforeUnmount(() => {
       </div>
 
       <div id="activity" class="brief-content-section section-anchor" tabindex="-1">
+        <details v-if="data.adopted_basis?.scope === 'current_voucher_page'" class="trust-proof voucher-page-basis">
+          <summary>当前凭证页采用依据 · 政策 {{ data.adopted_basis.policies.length }} 项 · 工资确认 {{ data.adopted_basis.payroll_confirmations.length }} 项 · 原始凭据 {{ data.adopted_basis.evidence.length }} 项</summary>
+          <p>以下依据只覆盖当前已加载的凭证页，不代表全月全部凭证的采用依据。</p>
+          <ul>
+            <li v-for="source in data.adopted_basis.policies" :key="`brief-policy-${source.reference.id}`"><strong>{{ source.label }}</strong> · {{ source.version || '未单列版本号' }} · {{ source.effective_from || '生效日起点未单列' }}<template v-if="source.effective_to"> 至 {{ source.effective_to }}</template><template v-if="source.official_urls.length"> · <a :href="source.official_urls[0]" target="_blank" rel="noreferrer">官方来源</a></template></li>
+            <li v-for="source in data.adopted_basis.payroll_confirmations" :key="`brief-payroll-${source.calculation_reference.id}`"><strong>{{ source.label }}</strong> · {{ source.confirmation_references.length }} 项确认事实</li>
+            <li v-for="source in data.adopted_basis.evidence" :key="`brief-evidence-${source.id}`"><strong>{{ source.name || '原始凭据' }}</strong><template v-if="source.media_type"> · {{ source.media_type }}</template></li>
+          </ul>
+          <details><summary>内部校验信息</summary><pre>{{ JSON.stringify({ calculation_ids: data.adopted_basis.calculation_ids, policies: data.adopted_basis.policies.map(item => item.reference), payroll_confirmations: data.adopted_basis.payroll_confirmations.map(item => ({ calculation_reference: item.calculation_reference, confirmation_references: item.confirmation_references })), evidence: data.adopted_basis.evidence.map(item => ({ source_type: item.source_type, id: item.id, revision: item.revision, digest: item.digest })) }, null, 2) }}</pre></details>
+        </details>
         <BriefActivityWorkbench
           :groups="data.activity_groups"
-          :vouchers="data.vouchers"
+          :vouchers="vouchers"
           :voucher-count="data.voucher_count"
           :focused-voucher="data.focused_voucher"
         >
           <template #pagination>
-            <DashboardPagination compact item-label="张凭证" :page="data.collections.vouchers?.page" :loaded="data.vouchers.length" :loading="sectionLoading.vouchers" :error="sectionErrors.vouchers" @retry="loadMore()" @more="loadMore()" />
+            <DashboardPagination compact item-label="张凭证" :page="data.collections.vouchers?.page" :loaded="vouchers.length" :loading="sectionLoading.vouchers" :error="sectionErrors.vouchers" @retry="loadMore()" @more="loadMore()" />
           </template>
         </BriefActivityWorkbench>
       </div>
@@ -533,6 +559,7 @@ onBeforeUnmount(() => {
       <div id="open-items" class="brief-content-section section-anchor" tabindex="-1">
         <BriefOpenItems
           :open-items="data.open_items"
+          :items="openItemRecords"
           :period-label="response?.selected_period?.short_label || ''"
           :period-status="response?.selected_period?.status || ''"
           :period="selectedPeriod"
@@ -540,6 +567,7 @@ onBeforeUnmount(() => {
           :focus-request="openItemsFocusRequest"
           @changed="refresh"
         />
+        <DashboardPagination compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItemRecords.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
       </div>
 
       <section id="validation" class="monthly-review brief-content-section section-anchor" tabindex="-1" aria-labelledby="monthly-review-title">
@@ -553,6 +581,12 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="monthly-review-grid">
+          <CloseReviewPanel
+            v-if="typeof route.query.company_id === 'string' && selectedPeriod"
+            :company-id="route.query.company_id"
+            :period="selectedPeriod"
+            :refresh-key="closeReviewRefreshKey"
+          />
           <article
             id="validation-checks"
             :class="['trust-footer', 'section-anchor', data.validation.state]"
@@ -583,7 +617,7 @@ onBeforeUnmount(() => {
             </div></details>
             <details v-if="data.position.issues.length" class="trust-proof" open>
               <summary>财务位置有 {{ data.position.issues.length }} 条来源需要核对</summary>
-              <ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul>
+              <ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<template v-if="issue.amount_fen != null"> · {{ formatFen(issue.amount_fen) }}</template><details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul>
             </details>
             <details v-if="data.validation.issues?.length" class="trust-proof" open>
               <summary>{{ isClosed ? '当前仍需完善的核算依据' : '关账前需要处理的核算事项' }}</summary>
@@ -599,12 +633,12 @@ onBeforeUnmount(() => {
               <summary>本月资料：{{ data.material_completeness.satisfied ? "已逐项核对" : "还有待处理项目" }}</summary>
               <ul v-if="data.material_completeness.issues.length">
                 <li v-for="(issue, index) in data.material_completeness.issues" :key="index">
-                  <strong v-if="issue.location">{{ issue.source_name }} {{ issue.location }}：</strong>{{ issue.message }}
-                  <span v-if="issue.excerpt"> {{ issue.excerpt }}</span>
-                  <span v-if="issue.difference_fen != null">差额 {{ formatFen(issue.difference_fen) }} 元</span>
+                  {{ issue.message }}
+                  <span v-if="issue.actual_fen != null"> · 实际 {{ formatFen(issue.actual_fen) }}</span>
+                  <span v-if="issue.expected_fen != null"> · 应为 {{ formatFen(issue.expected_fen) }}</span>
+                  <details><summary>查看核对位置</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
                 </li>
               </ul>
-              <p v-if="data.material_completeness.company_notes">公司业务说明：{{ data.material_completeness.company_notes.path }}</p>
             </details>
             <details class="trust-proof">
               <summary>查看检查依据</summary>

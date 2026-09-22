@@ -52,11 +52,6 @@
     },
     {
       "type": "table",
-      "name": "security_close_batch",
-      "sql": "CREATE TABLE security_close_batch(\n        id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,\n        owner_id TEXT NOT NULL REFERENCES security_owner(id),\n        session_id TEXT NOT NULL REFERENCES security_session(id),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        targets TEXT NOT NULL CHECK(json_valid(targets)),\n        digest BLOB NOT NULL CHECK(length(digest)=32),\n        confirmed_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,\n        CHECK(expires_at>confirmed_at)\n    ) STRICT"
-    },
-    {
-      "type": "table",
       "name": "security_identity_import",
       "sql": "CREATE TABLE security_identity_import(\n        source_catalog_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE\n          REFERENCES security_owner(id), imported_at INTEGER NOT NULL\n    ) STRICT"
     },
@@ -137,16 +132,6 @@
     },
     {
       "type": "trigger",
-      "name": "security_close_batch_no_delete",
-      "sql": "CREATE TRIGGER security_close_batch_no_delete BEFORE DELETE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'retained close batch'); END"
-    },
-    {
-      "type": "trigger",
-      "name": "security_close_batch_no_update",
-      "sql": "CREATE TRIGGER security_close_batch_no_update BEFORE UPDATE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'immutable close batch'); END"
-    },
-    {
-      "type": "trigger",
       "name": "security_import_no_delete",
       "sql": "CREATE TRIGGER security_import_no_delete BEFORE DELETE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
     },
@@ -156,5 +141,5 @@
       "sql": "CREATE TRIGGER security_import_no_update BEFORE UPDATE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
     }
   ],
-  "sha256": "8f7df70cc99c95b58a23b52c442b578ea3838c32431b07345203bcf68a478f6e"
+  "sha256": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
 }

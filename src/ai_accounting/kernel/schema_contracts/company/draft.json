@@ -1342,11 +1342,6 @@
     },
     {
       "type": "table",
-      "name": "security_close_batch_receipt",
-      "sql": "CREATE TABLE security_close_batch_receipt(\n        batch_id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,\n        company_id TEXT NOT NULL, database_id TEXT NOT NULL,\n        from_period INTEGER NOT NULL CHECK(from_period BETWEEN 0 AND 119987),\n        through_period INTEGER NOT NULL CHECK(through_period BETWEEN from_period AND 119987),\n        preview_digest BLOB NOT NULL CHECK(length(preview_digest)=32),\n        target_digest BLOB NOT NULL CHECK(length(target_digest)=32),\n        consumed_at INTEGER NOT NULL\n    ) STRICT"
-    },
-    {
-      "type": "table",
       "name": "settlement_change",
       "sql": "CREATE TABLE settlement_change(publication_id TEXT NOT NULL REFERENCES calculation_publication(id),\n item_no INTEGER NOT NULL,posting_period INTEGER NOT NULL,obligation_key TEXT,source_subject_id TEXT,\n category TEXT CHECK(category IN('receivable','payable') OR category IS NULL),\n account TEXT,counterparty_id TEXT,component TEXT,\n change_kind TEXT NOT NULL CHECK(change_kind IN('source','payment','other')),\n amount INTEGER,state TEXT NOT NULL CHECK(state IN('resolved','unresolved')),\n source_calculation_id TEXT REFERENCES calculation,source_digest BLOB,\n CHECK(source_digest IS NULL OR length(source_digest)=32),\n CHECK(state<>'resolved' OR amount IS NOT NULL),PRIMARY KEY(publication_id,item_no)) STRICT"
     },
@@ -4719,17 +4714,7 @@
       "type": "trigger",
       "name": "security_approval_sealed",
       "sql": "CREATE TRIGGER security_approval_sealed BEFORE UPDATE ON security_close_approval\n        WHEN OLD.consumed_at IS NOT NULL OR NEW.consumed_at IS NULL\n          OR NEW.id IS NOT OLD.id OR NEW.catalog_instance_id IS NOT OLD.catalog_instance_id\n          OR NEW.company_id IS NOT OLD.company_id OR NEW.database_id IS NOT OLD.database_id\n          OR NEW.period IS NOT OLD.period OR NEW.preview_digest IS NOT OLD.preview_digest\n          OR NEW.accounting_epoch IS NOT OLD.accounting_epoch\n          OR NEW.material_epoch IS NOT OLD.material_epoch\n          OR NEW.management_epoch IS NOT OLD.management_epoch\n          OR NEW.owner_id IS NOT OLD.owner_id OR NEW.session_id IS NOT OLD.session_id\n          OR NEW.credential_version IS NOT OLD.credential_version\n          OR NEW.confirmed_at IS NOT OLD.confirmed_at OR NEW.expires_at IS NOT OLD.expires_at\n        BEGIN SELECT RAISE(ABORT,'sealed close approval'); END"
-    },
-    {
-      "type": "trigger",
-      "name": "security_close_batch_receipt_no_delete",
-      "sql": "CREATE TRIGGER security_close_batch_receipt_no_delete\n        BEFORE DELETE ON security_close_batch_receipt\n        BEGIN SELECT RAISE(ABORT,'retained close batch receipt'); END"
-    },
-    {
-      "type": "trigger",
-      "name": "security_close_batch_receipt_no_update",
-      "sql": "CREATE TRIGGER security_close_batch_receipt_no_update\n        BEFORE UPDATE ON security_close_batch_receipt\n        BEGIN SELECT RAISE(ABORT,'immutable close batch receipt'); END"
     }
   ],
-  "sha256": "9346c33ee8b11b43c334befc1136c20210b4586321bccdd81469dfd6b1ffe3ab"
+  "sha256": "2010d74acad9bbf61749275df8ddadb0e385801fd0615a32b5c1315c1ee40b48"
 }

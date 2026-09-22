@@ -114,6 +114,7 @@ def consume_close_approval(
         raise IdentityError("IDENTITY_CLOSE_APPROVAL_INVALID")
     return {
         "approval_id": approval_id,
+        "preview_digest": preview_digest,
         "owner_id": authority.owner_id,
         "catalog_instance_id": authority.catalog_instance_id,
         "credential_version": authority.credential_version,

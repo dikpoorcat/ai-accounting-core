@@ -29,7 +29,7 @@ def test_statement_page_and_summary_do_not_decode_complete_parent(bank_book, mon
     monkeypatch.setattr(engine.store, "facts", watched)
     with Dashboard(engine)._snapshot("2026-09") as snap:
         data = funds(snap, sections={"statements"}, limit=2)
-        assert len(data["bank_statement"]["rows"]) == 2
+        assert len(data["collections"]["statements"]["items"]) == 2
         assert data["bank_statement"]["transaction_count"] == count
         assert data["collections"]["statements"]["page"]["filtered_count"] == count
         assert data["bank_statement"]["unmatched_totals"] == {
@@ -40,7 +40,8 @@ def test_statement_page_and_summary_do_not_decode_complete_parent(bank_book, mon
         assert loaded == set()
     with Dashboard(engine)._snapshot("2026-09") as snap:
         summary = funds(snap, summary_only=True)
-        assert summary["bank_statement"]["rows"] == summary["movements"] == []
+        assert summary["collections"] == {}
+        assert "rows" not in summary["bank_statement"] and "movements" not in summary
         assert (
             summary["bank_statement"]["unmatched_totals"]
             == data["bank_statement"]["unmatched_totals"]
@@ -71,7 +72,8 @@ def test_movement_expansion_is_limited_after_filtering(bank_book, monkeypatch):
             filters={"movement_account_type": "bank", "movement_account_id": "bank-b"},
         )
         assert page["inflow_fen"] == 41
-        assert {row["account_id"] for row in page["movements"]} == {"bank-b"}
-        assert len(loaded) == len(page["movements"]) == 2
+        movements = page["collections"]["movements"]["items"]
+        assert {row["account_id"] for row in movements} == {"bank-b"}
+        assert len(loaded) == len(movements) == 2
         assert page["collections"]["movements"]["page"]["total_count"] == 41
         assert page["collections"]["movements"]["page"]["filtered_count"] == 4

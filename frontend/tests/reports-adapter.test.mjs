@@ -40,11 +40,11 @@ function dashboardContext(companyId, periods = [["2026-01", "open"]]) {
 
 test("chosen immutable continuation source follows the company through preview and export", async () => {
   globalThis.window = { location: { origin: "http://127.0.0.1:7000", search: "?company_id=company-a" } };
-  const report = {
-    schema_version: 3, period_preparations: [], period: { year: 2026, quarter: 3 },
-    export: { available: true, preview_digest: "digest", epochs: { accounting: 1, material: 2, management: 3 } },
-    carry_forward: { selected_fact_id: "immutable-source", options: [] },
-  };
+  const generatedSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
+  const report = structuredClone(generatedSamples.quarterly_report.response);
+  report.read_context.company_id = "company-a";
+  report.carry_forward.selected_fact_id = "immutable-source";
+  report.export = { ...report.export, available: true, preview_digest: "digest", epochs: { accounting: 1, material: 2, management: 3 } };
   globalThis.fetch = async (url, options) => {
     if (url.startsWith("/api/dashboard/")) {
       const query = new URL(url, window.location.origin).searchParams;
@@ -54,14 +54,16 @@ test("chosen immutable continuation source follows the company through preview a
     }
     assert.equal(url, "/api/local/report-export");
     assert.deepEqual(JSON.parse(options.body), {
-      company_id: "company-a", year: 2026, quarter: 3,
+      company_id: "company-a", year: report.period.year, quarter: report.period.quarter,
       preview_digest: "digest", epochs: report.export.epochs,
       request_id: "request-one", carry_forward_fact_id: "immutable-source",
     });
-    return new Response(JSON.stringify({ job_id: "job" }));
+    return new Response(JSON.stringify({ status: "queued", job_id: "job", preview_digest: "digest" }));
   };
-  const preview = await reports.fetchQuarterlyReport(2026, 3, undefined, "immutable-source");
-  assert.deepEqual(await reports.requestQuarterlyExport("company-a", preview, "request-one"), { job_id: "job" });
+  const preview = await reports.fetchDeferredQuarterlyReport("company-a", report.period.year, report.period.quarter, undefined, "immutable-source");
+  assert.deepEqual(await reports.requestQuarterlyExport("company-a", preview, "request-one"), {
+    status: "queued", job_id: "job", preview_digest: "digest",
+  });
 });
 
 test("invalid report delivery retains the service reason and is not described as a completed file", async () => {
