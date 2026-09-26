@@ -409,6 +409,10 @@ def test_file_failure_is_retryable_and_work_runs_outside_sql_write_transaction(s
 
     outcomes = run_export_jobs(company.engine, fault=fail)
     assert outcomes[0]["status"] == "failed"
+    assert outcomes[0]["error_code"] == "storage_unavailable"
+    assert (
+        company.engine.jobs(job_id=outcomes[0]["job_id"])[0]["error_code"] == "storage_unavailable"
+    )
     assert not (tmp_path / "retry").exists()
     assert run_export_jobs(company.engine)[0]["status"] == "succeeded"
 

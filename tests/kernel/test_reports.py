@@ -304,7 +304,9 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
         if stage == "files_published":
             raise RuntimeError("simulated crash after durable files")
 
-    assert run_report_jobs(book[0], fault=fault)[0]["status"] == "failed"
+    failed = run_report_jobs(book[0], fault=fault)[0]
+    assert failed["status"] == "failed" and failed["error_code"] == "job_failed"
+    assert book[0].jobs(job_id=failed["job_id"])[0]["error_code"] == "job_failed"
     manifest_before = (tmp_path / "export" / "manifest.json").read_bytes()
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"
     assert (tmp_path / "export" / "manifest.json").read_bytes() == manifest_before
@@ -316,7 +318,7 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
         connection.commit()
     next((tmp_path / "export").glob("*.xlsx")).write_bytes(b"corruption")
     result = run_report_jobs(book[0])[0]
-    assert result["status"] == "failed" and "KernelError" in result["error"]
+    assert result["status"] == "failed" and result["error_code"] == "job_failed"
 
 
 def test_export_preview_epoch_expiration_is_atomic(book, tmp_path):

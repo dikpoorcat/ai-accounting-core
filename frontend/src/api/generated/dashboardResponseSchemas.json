@@ -1,4 +1,4074 @@
 {
+  "workflow": {
+    "$defs": {
+      "ActualCompletionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "completion_status": {
+            "enum": [
+              "submitted",
+              "confirmed_complete"
+            ],
+            "title": "Completion Status",
+            "type": "string"
+          },
+          "completion_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Date"
+          },
+          "source_facts": {
+            "items": {
+              "$ref": "#/$defs/ExternalAdoptedFact"
+            },
+            "title": "Source Facts",
+            "type": "array"
+          },
+          "adopted_evidence_digests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Adopted Evidence Digests",
+            "type": "array"
+          },
+          "accepted_calculations": {
+            "items": {
+              "$ref": "#/$defs/ExternalAdoptedCalculation"
+            },
+            "title": "Accepted Calculations",
+            "type": "array"
+          },
+          "previous_completion_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Completion Fact Id"
+          },
+          "known_as_of": {
+            "title": "Known As Of",
+            "type": "boolean"
+          },
+          "current_fact": {
+            "title": "Current Fact",
+            "type": "boolean"
+          },
+          "confirmation_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Recorded At"
+          },
+          "completion_time_basis": {
+            "enum": [
+              "actual_date",
+              "confirmation_recorded_at",
+              "unestablished"
+            ],
+            "title": "Completion Time Basis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "calculation_id",
+          "fact_id",
+          "completion_status",
+          "completion_date",
+          "source_facts",
+          "adopted_evidence_digests",
+          "accepted_calculations",
+          "previous_completion_fact_id",
+          "known_as_of",
+          "current_fact",
+          "confirmation_recorded_at",
+          "completion_time_basis"
+        ],
+        "title": "ActualCompletionRecord",
+        "type": "object"
+      },
+      "BusinessWorkArea": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "materials": {
+            "$ref": "#/$defs/WorkMaterialStatus"
+          },
+          "accounting": {
+            "$ref": "#/$defs/WorkAccountingStatus"
+          },
+          "close_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Close Issues",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/$defs/WorkSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "materials",
+          "accounting",
+          "close_issues",
+          "sources"
+        ],
+        "title": "BusinessWorkArea",
+        "type": "object"
+      },
+      "CalculationTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculation_id"
+        ],
+        "title": "CalculationTarget",
+        "type": "object"
+      },
+      "DuplicateSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "same_exact_material_location",
+              "same_complete_signature_and_evidence",
+              "same_complete_actual_money",
+              "same_complete_signature",
+              "shared_evidence",
+              "same_material_location_different_signature",
+              "same_actual_money_coordinates"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "source_locations": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSourceLocation"
+            },
+            "title": "Source Locations",
+            "type": "array"
+          },
+          "distinct_locations_proven": {
+            "title": "Distinct Locations Proven",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "matched_fields"
+        ],
+        "title": "DuplicateSignal",
+        "type": "object"
+      },
+      "DuplicateSourceLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateSourceLocation",
+        "type": "object"
+      },
+      "ExactClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "exact_close",
+            "title": "State",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "digest"
+        ],
+        "title": "ExactClosure",
+        "type": "object"
+      },
+      "ExternalAdoptedCalculation": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "calculation_id"
+        ],
+        "title": "ExternalAdoptedCalculation",
+        "type": "object"
+      },
+      "ExternalAdoptedFact": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "subject_id",
+          "fact_id"
+        ],
+        "title": "ExternalAdoptedFact",
+        "type": "object"
+      },
+      "FileReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "obligation": {
+            "title": "Obligation",
+            "type": "string"
+          }
+        },
+        "title": "FileReference",
+        "type": "object"
+      },
+      "LaterClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "covered_by_later_close",
+            "title": "State",
+            "type": "string"
+          },
+          "sealing_boundary": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Sealing Boundary",
+            "type": "string"
+          },
+          "sealing_digest": {
+            "title": "Sealing Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "sealing_boundary",
+          "sealing_digest"
+        ],
+        "title": "LaterClosure",
+        "type": "object"
+      },
+      "OpenClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "open",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OpenClosure",
+        "type": "object"
+      },
+      "ReadinessIssue": {
+        "additionalProperties": false,
+        "description": "Fields emitted by material, accounting, report and close checkers.\n\nCheckers may attach the listed diagnostics. Adding a diagnostic requires an\nexplicit contract change; monetary values cannot fall through an open map.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "semantics": {
+            "title": "Semantics",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "inventory_id": {
+            "minimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "drawdown_id": {
+            "title": "Drawdown Id",
+            "type": "string"
+          },
+          "bank_account_id": {
+            "title": "Bank Account Id",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "obligation_kind": {
+            "title": "Obligation Kind",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "member_location": {
+            "title": "Member Location",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "amount_field": {
+            "title": "Amount Field",
+            "type": "string"
+          },
+          "amount_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Amount Fields",
+            "type": "array"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "period_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "period_end_exclusive": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period End Exclusive",
+            "type": "string"
+          },
+          "pages": {
+            "minimum": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "voucher_number": {
+            "title": "Voucher Number",
+            "type": "integer"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "obligation_key": {
+            "title": "Obligation Key",
+            "type": "string"
+          },
+          "allocation_index": {
+            "minimum": 0,
+            "title": "Allocation Index",
+            "type": "integer"
+          },
+          "source_index": {
+            "minimum": 0,
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "row": {
+            "minimum": 0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "affected_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Affected Lines",
+            "type": "array"
+          },
+          "line_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line No"
+          },
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "allowed_precision": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Precision",
+            "type": "array"
+          },
+          "reusable_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reusable Sources",
+            "type": "array"
+          },
+          "expected_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fen"
+          },
+          "actual_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Fen"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/SelectionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "trace_targets": {
+            "items": {
+              "$ref": "#/$defs/CalculationTarget"
+            },
+            "title": "Trace Targets",
+            "type": "array"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "dimension": {
+            "enum": [
+              "bank",
+              "platform"
+            ],
+            "title": "Dimension",
+            "type": "string"
+          },
+          "expected_direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Expected Direction",
+            "type": "string"
+          },
+          "candidate_subject_id": {
+            "title": "Candidate Subject Id",
+            "type": "string"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
+          "review_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Review Period",
+            "type": "string"
+          },
+          "origin_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Origin Periods",
+            "type": "array"
+          },
+          "responsibility": {
+            "enum": [
+              "direct",
+              "closed_followup",
+              "unassigned"
+            ],
+            "title": "Responsibility",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "ReadinessIssue",
+        "type": "object"
+      },
+      "ReportPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "quarter": {
+            "title": "Quarter",
+            "type": "integer"
+          },
+          "quarter_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Quarter Start",
+            "type": "string"
+          },
+          "quarter_end": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Quarter End",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "quarter",
+          "quarter_start",
+          "quarter_end",
+          "label"
+        ],
+        "title": "ReportPeriod",
+        "type": "object"
+      },
+      "SelectionCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "has_journal_lines": {
+            "title": "Has Journal Lines",
+            "type": "boolean"
+          },
+          "trace_only": {
+            "const": true,
+            "title": "Trace Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest",
+          "kind",
+          "has_journal_lines",
+          "trace_only"
+        ],
+        "title": "SelectionCandidate",
+        "type": "object"
+      },
+      "SettlementFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Cutoff Period",
+            "type": "string"
+          },
+          "current_cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Current Cutoff Period",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "obligation_count": {
+            "minimum": 0,
+            "title": "Obligation Count",
+            "type": "integer"
+          },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "unestablished_state_selection_count": {
+            "minimum": 0,
+            "title": "Unestablished State Selection Count",
+            "type": "integer"
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "source_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Amount Fen"
+          },
+          "paid_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Fen"
+          },
+          "other_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Settled Fen"
+          },
+          "remaining_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Fen"
+          }
+        },
+        "required": [
+          "status",
+          "obligation_count",
+          "followup_count",
+          "complete",
+          "unestablished_state_selection_count",
+          "movement_count",
+          "source_amount_fen",
+          "paid_fen",
+          "other_settled_fen",
+          "remaining_fen"
+        ],
+        "title": "SettlementFollowup",
+        "type": "object"
+      },
+      "TaxImportMappingFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unsupported",
+              "pending_publication",
+              "not_applicable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "mapping_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mapping Fact Ids",
+            "type": "array"
+          },
+          "calculation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation Ids",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/TaxImportMappingIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "blocking_scope",
+          "mapping_fact_ids",
+          "calculation_ids",
+          "issues"
+        ],
+        "title": "TaxImportMappingFollowup",
+        "type": "object"
+      },
+      "TaxImportMappingIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "management_fact",
+              "capability",
+              "publication"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "component_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Codes",
+            "type": "array"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "code",
+          "category",
+          "field",
+          "message"
+        ],
+        "title": "TaxImportMappingIssue",
+        "type": "object"
+      },
+      "WorkAccountingStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unestablished"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "fact_count": {
+            "minimum": 0,
+            "title": "Fact Count",
+            "type": "integer"
+          },
+          "calculation_count": {
+            "minimum": 0,
+            "title": "Calculation Count",
+            "type": "integer"
+          },
+          "pending_count": {
+            "minimum": 0,
+            "title": "Pending Count",
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "fact_count",
+          "calculation_count",
+          "pending_count",
+          "issues"
+        ],
+        "title": "WorkAccountingStatus",
+        "type": "object"
+      },
+      "WorkClose": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "closed",
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "closure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OpenClosure"
+              },
+              {
+                "$ref": "#/$defs/ExactClosure"
+              },
+              {
+                "$ref": "#/$defs/LaterClosure"
+              }
+            ],
+            "title": "Closure"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "closure"
+        ],
+        "title": "WorkClose",
+        "type": "object"
+      },
+      "WorkExternal": {
+        "additionalProperties": false,
+        "properties": {
+          "obligations": {
+            "items": {
+              "$ref": "#/$defs/WorkflowObligation"
+            },
+            "title": "Obligations",
+            "type": "array"
+          },
+          "settlements": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettlementFollowup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "obligations",
+          "settlements"
+        ],
+        "title": "WorkExternal",
+        "type": "object"
+      },
+      "WorkFileJob": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "failed",
+              "succeeded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "attempts": {
+            "minimum": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "association": {
+            "anyOf": [
+              {
+                "enum": [
+                  "company",
+                  "direct_source",
+                  "period_scope"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Association"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ReportPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/$defs/FileReference"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "verified_when_succeeded": {
+            "title": "Verified When Succeeded",
+            "type": "boolean"
+          },
+          "current_file_availability": {
+            "const": "not_checked",
+            "title": "Current File Availability",
+            "type": "string"
+          },
+          "result_issue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReadinessIssue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contract_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Contract Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "status",
+          "attempts",
+          "error_code",
+          "error_message",
+          "association",
+          "period",
+          "references",
+          "verified_when_succeeded",
+          "current_file_availability",
+          "result_issue",
+          "contract_issues"
+        ],
+        "title": "WorkFileJob",
+        "type": "object"
+      },
+      "WorkFiles": {
+        "additionalProperties": false,
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/WorkFileJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "tax_import_mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TaxImportMappingFollowup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "jobs",
+          "tax_import_mapping"
+        ],
+        "title": "WorkFiles",
+        "type": "object"
+      },
+      "WorkInventory": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "id": {
+            "minimum": 0,
+            "title": "Id",
+            "type": "integer"
+          },
+          "expected": {
+            "minimum": 0,
+            "title": "Expected",
+            "type": "integer"
+          },
+          "received": {
+            "minimum": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "no_business": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "No Business",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "category",
+          "id",
+          "expected",
+          "received",
+          "no_business"
+        ],
+        "title": "WorkInventory",
+        "type": "object"
+      },
+      "WorkMaterialStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unestablished"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "inventory": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkInventory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_count": {
+            "minimum": 0,
+            "title": "Source Count",
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "inventory",
+          "source_count",
+          "issues"
+        ],
+        "title": "WorkMaterialStatus",
+        "type": "object"
+      },
+      "WorkSections": {
+        "additionalProperties": false,
+        "properties": {
+          "materials_and_accounting": {
+            "items": {
+              "$ref": "#/$defs/BusinessWorkArea"
+            },
+            "maxItems": 6,
+            "minItems": 6,
+            "title": "Materials And Accounting",
+            "type": "array"
+          },
+          "close": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkClose"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "external": {
+            "$ref": "#/$defs/WorkExternal"
+          },
+          "files": {
+            "$ref": "#/$defs/WorkFiles"
+          }
+        },
+        "required": [
+          "materials_and_accounting",
+          "close",
+          "external",
+          "files"
+        ],
+        "title": "WorkSections",
+        "type": "object"
+      },
+      "WorkSource": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "lane": {
+            "enum": [
+              "accounting",
+              "material",
+              "management"
+            ],
+            "title": "Lane",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "kind",
+          "fact_id",
+          "calculation_id",
+          "pending",
+          "work_area",
+          "lane"
+        ],
+        "title": "WorkSource",
+        "type": "object"
+      },
+      "WorkflowObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "obligation_fact_id": {
+            "title": "Obligation Fact Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Start Period",
+            "type": "string"
+          },
+          "end_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "End Period",
+            "type": "string"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "status": {
+            "enum": [
+              "not_applicable",
+              "completed",
+              "due",
+              "pending"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "actual_completion_status": {
+            "enum": [
+              "not_applicable",
+              "completed",
+              "due",
+              "pending"
+            ],
+            "title": "Actual Completion Status",
+            "type": "string"
+          },
+          "basis_review_status": {
+            "enum": [
+              "not_applicable",
+              "not_reviewed",
+              "reviewed",
+              "difference_identified",
+              "outdated",
+              "unestablished"
+            ],
+            "title": "Basis Review Status",
+            "type": "string"
+          },
+          "basis_review_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Review Calculation Id"
+          },
+          "basis_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Basis Issues",
+            "type": "array"
+          },
+          "recorded_completions": {
+            "items": {
+              "$ref": "#/$defs/ActualCompletionRecord"
+            },
+            "title": "Recorded Completions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "obligation_fact_id",
+          "kind",
+          "start_period",
+          "end_period",
+          "due_date",
+          "status",
+          "actual_completion_status",
+          "basis_review_status",
+          "basis_review_calculation_id",
+          "basis_issues",
+          "recorded_completions"
+        ],
+        "title": "WorkflowObligation",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "as_of": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+        "title": "As Of",
+        "type": "string"
+      },
+      "as_of_semantics": {
+        "const": "current_knowledge",
+        "title": "As Of Semantics",
+        "type": "string"
+      },
+      "period": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Period"
+      },
+      "period_selection": {
+        "enum": [
+          "explicit",
+          "earliest_open_source",
+          "closed_issue_carry",
+          "latest_processed_background",
+          "empty"
+        ],
+        "title": "Period Selection",
+        "type": "string"
+      },
+      "sections": {
+        "$ref": "#/$defs/WorkSections"
+      },
+      "fact_issues": {
+        "items": {
+          "$ref": "#/$defs/ReadinessIssue"
+        },
+        "title": "Fact Issues",
+        "type": "array"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "as_of",
+      "as_of_semantics",
+      "period",
+      "period_selection",
+      "sections",
+      "fact_issues"
+    ],
+    "title": "WorkflowResponse",
+    "type": "object"
+  },
+  "period_readiness": {
+    "$defs": {
+      "ActualCompletionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "completion_status": {
+            "enum": [
+              "submitted",
+              "confirmed_complete"
+            ],
+            "title": "Completion Status",
+            "type": "string"
+          },
+          "completion_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Date"
+          },
+          "source_facts": {
+            "items": {
+              "$ref": "#/$defs/ExternalAdoptedFact"
+            },
+            "title": "Source Facts",
+            "type": "array"
+          },
+          "adopted_evidence_digests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Adopted Evidence Digests",
+            "type": "array"
+          },
+          "accepted_calculations": {
+            "items": {
+              "$ref": "#/$defs/ExternalAdoptedCalculation"
+            },
+            "title": "Accepted Calculations",
+            "type": "array"
+          },
+          "previous_completion_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Completion Fact Id"
+          },
+          "known_as_of": {
+            "title": "Known As Of",
+            "type": "boolean"
+          },
+          "current_fact": {
+            "title": "Current Fact",
+            "type": "boolean"
+          },
+          "confirmation_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Recorded At"
+          },
+          "completion_time_basis": {
+            "enum": [
+              "actual_date",
+              "confirmation_recorded_at",
+              "unestablished"
+            ],
+            "title": "Completion Time Basis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "calculation_id",
+          "fact_id",
+          "completion_status",
+          "completion_date",
+          "source_facts",
+          "adopted_evidence_digests",
+          "accepted_calculations",
+          "previous_completion_fact_id",
+          "known_as_of",
+          "current_fact",
+          "confirmation_recorded_at",
+          "completion_time_basis"
+        ],
+        "title": "ActualCompletionRecord",
+        "type": "object"
+      },
+      "AdoptedReadinessSources": {
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "calculations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts",
+          "calculations"
+        ],
+        "title": "AdoptedReadinessSources",
+        "type": "object"
+      },
+      "CalculationTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculation_id"
+        ],
+        "title": "CalculationTarget",
+        "type": "object"
+      },
+      "DuplicateSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "same_exact_material_location",
+              "same_complete_signature_and_evidence",
+              "same_complete_actual_money",
+              "same_complete_signature",
+              "shared_evidence",
+              "same_material_location_different_signature",
+              "same_actual_money_coordinates"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "source_locations": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSourceLocation"
+            },
+            "title": "Source Locations",
+            "type": "array"
+          },
+          "distinct_locations_proven": {
+            "title": "Distinct Locations Proven",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "matched_fields"
+        ],
+        "title": "DuplicateSignal",
+        "type": "object"
+      },
+      "DuplicateSourceLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateSourceLocation",
+        "type": "object"
+      },
+      "ExactClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "exact_close",
+            "title": "State",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "digest"
+        ],
+        "title": "ExactClosure",
+        "type": "object"
+      },
+      "ExternalAdoptedCalculation": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "calculation_id"
+        ],
+        "title": "ExternalAdoptedCalculation",
+        "type": "object"
+      },
+      "ExternalAdoptedFact": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "subject_id",
+          "fact_id"
+        ],
+        "title": "ExternalAdoptedFact",
+        "type": "object"
+      },
+      "FileJob": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "attempts": {
+            "minimum": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "result_issue": {
+            "$ref": "#/$defs/ReadinessIssue"
+          },
+          "contract_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Contract Issues",
+            "type": "array"
+          },
+          "association": {
+            "enum": [
+              "direct_source",
+              "period_scope"
+            ],
+            "title": "Association",
+            "type": "string"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/$defs/FileReference"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ReportPeriod"
+              }
+            ],
+            "title": "Period"
+          },
+          "verified_when_succeeded": {
+            "title": "Verified When Succeeded",
+            "type": "boolean"
+          },
+          "current_file_availability": {
+            "const": "not_checked",
+            "title": "Current File Availability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "status",
+          "attempts",
+          "error_code",
+          "error_message",
+          "association",
+          "references",
+          "period",
+          "verified_when_succeeded",
+          "current_file_availability"
+        ],
+        "title": "FileJob",
+        "type": "object"
+      },
+      "FileReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "obligation": {
+            "title": "Obligation",
+            "type": "string"
+          }
+        },
+        "title": "FileReference",
+        "type": "object"
+      },
+      "FullAccountingFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "unpublished": {
+            "items": {
+              "$ref": "#/$defs/UnpublishedBusiness"
+            },
+            "title": "Unpublished",
+            "type": "array"
+          },
+          "pending_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Subject Id"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "unpublished",
+          "pending_subject_id"
+        ],
+        "title": "FullAccountingFollowup",
+        "type": "object"
+      },
+      "FullCloseRequirements": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "readiness": {
+            "additionalProperties": {
+              "$ref": "#/$defs/AdoptedReadinessSources"
+            },
+            "title": "Readiness",
+            "type": "object"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "readiness"
+        ],
+        "title": "FullCloseRequirements",
+        "type": "object"
+      },
+      "FullExternalFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "completed",
+              "followup_required",
+              "unestablished"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "obligations": {
+            "items": {
+              "$ref": "#/$defs/WorkflowObligation"
+            },
+            "title": "Obligations",
+            "type": "array"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          },
+          "scope_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Scope Period",
+            "type": "string"
+          },
+          "scope_semantics": {
+            "const": "obligation_interval_includes_selected_period",
+            "title": "Scope Semantics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "obligations",
+          "fact_issues",
+          "scope_period",
+          "scope_semantics"
+        ],
+        "title": "FullExternalFollowup",
+        "type": "object"
+      },
+      "FullMaterialFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "inventories": {
+            "additionalProperties": {
+              "$ref": "#/$defs/MaterialInventory"
+            },
+            "propertyNames": {
+              "enum": [
+                "bank",
+                "payroll",
+                "transactions",
+                "tax",
+                "assets",
+                "financing"
+              ]
+            },
+            "title": "Inventories",
+            "type": "object"
+          },
+          "coverage": {
+            "$ref": "#/$defs/MaterialCoverage"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "inventories",
+          "coverage"
+        ],
+        "title": "FullMaterialFollowup",
+        "type": "object"
+      },
+      "FullPeriodCurrentFollowups": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "affects_frozen_readiness": {
+            "const": false,
+            "title": "Affects Frozen Readiness",
+            "type": "boolean"
+          },
+          "materials": {
+            "$ref": "#/$defs/FullMaterialFollowup"
+          },
+          "accounting": {
+            "$ref": "#/$defs/FullAccountingFollowup"
+          },
+          "close_requirements": {
+            "$ref": "#/$defs/FullCloseRequirements"
+          },
+          "settlements": {
+            "$ref": "#/$defs/SettlementFollowup"
+          },
+          "external": {
+            "$ref": "#/$defs/FullExternalFollowup"
+          },
+          "file_jobs": {
+            "items": {
+              "$ref": "#/$defs/FileJob"
+            },
+            "title": "File Jobs",
+            "type": "array"
+          },
+          "tax_import_mapping": {
+            "$ref": "#/$defs/TaxImportMappingFollowup"
+          }
+        },
+        "required": [
+          "knowledge",
+          "affects_frozen_readiness",
+          "materials",
+          "accounting",
+          "close_requirements",
+          "settlements",
+          "external",
+          "file_jobs",
+          "tax_import_mapping"
+        ],
+        "title": "FullPeriodCurrentFollowups",
+        "type": "object"
+      },
+      "FullReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "order_failure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrderFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "previous_close": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PreviousClose"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materials": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FullMaterialFollowup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accounting": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FullAccountingFollowup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "close_requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FullCloseRequirements"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "period",
+          "order_failure",
+          "issues",
+          "previous_close",
+          "materials",
+          "accounting",
+          "close_requirements"
+        ],
+        "title": "FullReadiness",
+        "type": "object"
+      },
+      "FullRecordedReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "source": {
+            "const": "exact_period_manifest",
+            "title": "Source",
+            "type": "string"
+          },
+          "readiness": {
+            "$ref": "#/$defs/RecordedValue_dict_str__AdoptedReadinessSources__"
+          },
+          "inventories": {
+            "$ref": "#/$defs/RecordedValue_dict_Literal__bank____payroll____transactions____tax____assets____financing____Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0______"
+          },
+          "material_coverage": {
+            "$ref": "#/$defs/RecordedValue_MaterialCoverageContent_"
+          },
+          "previous_close_digest": {
+            "$ref": "#/$defs/RecordedValue_Union_str__NoneType__"
+          }
+        },
+        "required": [
+          "status",
+          "source",
+          "readiness",
+          "inventories",
+          "material_coverage",
+          "previous_close_digest"
+        ],
+        "title": "FullRecordedReadiness",
+        "type": "object"
+      },
+      "InspectedFileSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "item_count": {
+            "minimum": 0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "unprocessed_count": {
+            "minimum": 0,
+            "title": "Unprocessed Count",
+            "type": "integer"
+          },
+          "unknown_period_count": {
+            "minimum": 0,
+            "title": "Unknown Period Count",
+            "type": "integer"
+          },
+          "issue_count": {
+            "minimum": 0,
+            "title": "Issue Count",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_fact_id",
+          "item_count",
+          "unprocessed_count",
+          "unknown_period_count",
+          "issue_count",
+          "status"
+        ],
+        "title": "InspectedFileSummary",
+        "type": "object"
+      },
+      "LaterClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "covered_by_later_close",
+            "title": "State",
+            "type": "string"
+          },
+          "sealing_boundary": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Sealing Boundary",
+            "type": "string"
+          },
+          "sealing_digest": {
+            "title": "Sealing Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "sealing_boundary",
+          "sealing_digest"
+        ],
+        "title": "LaterClosure",
+        "type": "object"
+      },
+      "MaterialCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "closed_through": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Through"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/$defs/MaterialCoverageRow"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "source_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Versions",
+            "type": "array"
+          },
+          "resolution_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Resolution Versions",
+            "type": "array"
+          },
+          "group_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Group Versions",
+            "type": "array"
+          },
+          "allocation_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allocation Versions",
+            "type": "array"
+          },
+          "inventory_versions": {
+            "items": {
+              "$ref": "#/$defs/MaterialInventoryReference"
+            },
+            "title": "Inventory Versions",
+            "type": "array"
+          },
+          "file_summaries": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InspectedFileSummary"
+                },
+                {
+                  "$ref": "#/$defs/UnallocatedFileSummary"
+                }
+              ]
+            },
+            "title": "File Summaries",
+            "type": "array"
+          },
+          "file_status": {
+            "enum": [
+              "complete",
+              "needs_information"
+            ],
+            "title": "File Status",
+            "type": "string"
+          },
+          "fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fact Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "coverage_digest": {
+            "title": "Coverage Digest",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "closed_through",
+          "coverage",
+          "source_versions",
+          "resolution_versions",
+          "group_versions",
+          "allocation_versions",
+          "inventory_versions",
+          "file_summaries",
+          "file_status",
+          "fact_ids",
+          "status",
+          "coverage_digest",
+          "issues"
+        ],
+        "title": "MaterialCoverage",
+        "type": "object"
+      },
+      "MaterialCoverageContent": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "closed_through": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Through"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/$defs/MaterialCoverageRow"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "source_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Versions",
+            "type": "array"
+          },
+          "resolution_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Resolution Versions",
+            "type": "array"
+          },
+          "group_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Group Versions",
+            "type": "array"
+          },
+          "allocation_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allocation Versions",
+            "type": "array"
+          },
+          "inventory_versions": {
+            "items": {
+              "$ref": "#/$defs/MaterialInventoryReference"
+            },
+            "title": "Inventory Versions",
+            "type": "array"
+          },
+          "file_summaries": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InspectedFileSummary"
+                },
+                {
+                  "$ref": "#/$defs/UnallocatedFileSummary"
+                }
+              ]
+            },
+            "title": "File Summaries",
+            "type": "array"
+          },
+          "file_status": {
+            "enum": [
+              "complete",
+              "needs_information"
+            ],
+            "title": "File Status",
+            "type": "string"
+          },
+          "fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fact Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "coverage_digest": {
+            "title": "Coverage Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "closed_through",
+          "coverage",
+          "source_versions",
+          "resolution_versions",
+          "group_versions",
+          "allocation_versions",
+          "inventory_versions",
+          "file_summaries",
+          "file_status",
+          "fact_ids",
+          "status",
+          "coverage_digest"
+        ],
+        "title": "MaterialCoverageContent",
+        "type": "object"
+      },
+      "MaterialCoverageRow": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "recognition_period": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recognition Period"
+          },
+          "origin_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Origin Periods",
+            "type": "array"
+          },
+          "review_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Review Period",
+            "type": "string"
+          },
+          "responsibility": {
+            "enum": [
+              "direct",
+              "closed_followup",
+              "unassigned"
+            ],
+            "title": "Responsibility",
+            "type": "string"
+          },
+          "joint_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Joint Periods",
+            "type": "array"
+          },
+          "group_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Group Ids",
+            "type": "array"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_fact_id",
+          "location",
+          "amount_fen",
+          "recognition_period",
+          "origin_periods",
+          "review_period",
+          "responsibility",
+          "complete"
+        ],
+        "title": "MaterialCoverageRow",
+        "type": "object"
+      },
+      "MaterialInventory": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "title": "Id",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "category": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "expected": {
+            "minimum": 0,
+            "title": "Expected",
+            "type": "integer"
+          },
+          "received": {
+            "minimum": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "no_business": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "No Business",
+            "type": "integer"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "period",
+          "category",
+          "expected",
+          "received",
+          "no_business",
+          "evidence_digest"
+        ],
+        "title": "MaterialInventory",
+        "type": "object"
+      },
+      "MaterialInventoryReference": {
+        "additionalProperties": false,
+        "properties": {
+          "inventory_id": {
+            "minimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "content_digest": {
+            "title": "Content Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "inventory_id",
+          "period",
+          "category",
+          "content_digest"
+        ],
+        "title": "MaterialInventoryReference",
+        "type": "object"
+      },
+      "OpenClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "open",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OpenClosure",
+        "type": "object"
+      },
+      "OrderDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "title": "OrderDetails",
+        "type": "object"
+      },
+      "OrderFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "already_closed",
+              "earlier_period_open"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/$defs/OrderDetails"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "title": "OrderFailure",
+        "type": "object"
+      },
+      "PreparationReadSemantics": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "frozen_readiness": {
+            "const": "exact_period_manifest_only",
+            "title": "Frozen Readiness",
+            "type": "string"
+          },
+          "current_followups": {
+            "const": "never_changes_frozen_readiness",
+            "title": "Current Followups",
+            "type": "string"
+          }
+        },
+        "required": [
+          "knowledge",
+          "frozen_readiness",
+          "current_followups"
+        ],
+        "title": "PreparationReadSemantics",
+        "type": "object"
+      },
+      "PreviousClose": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "digest"
+        ],
+        "title": "PreviousClose",
+        "type": "object"
+      },
+      "ReadinessIssue": {
+        "additionalProperties": false,
+        "description": "Fields emitted by material, accounting, report and close checkers.\n\nCheckers may attach the listed diagnostics. Adding a diagnostic requires an\nexplicit contract change; monetary values cannot fall through an open map.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "semantics": {
+            "title": "Semantics",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "inventory_id": {
+            "minimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "drawdown_id": {
+            "title": "Drawdown Id",
+            "type": "string"
+          },
+          "bank_account_id": {
+            "title": "Bank Account Id",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "obligation_kind": {
+            "title": "Obligation Kind",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "member_location": {
+            "title": "Member Location",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "amount_field": {
+            "title": "Amount Field",
+            "type": "string"
+          },
+          "amount_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Amount Fields",
+            "type": "array"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "period_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "period_end_exclusive": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period End Exclusive",
+            "type": "string"
+          },
+          "pages": {
+            "minimum": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "voucher_number": {
+            "title": "Voucher Number",
+            "type": "integer"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "obligation_key": {
+            "title": "Obligation Key",
+            "type": "string"
+          },
+          "allocation_index": {
+            "minimum": 0,
+            "title": "Allocation Index",
+            "type": "integer"
+          },
+          "source_index": {
+            "minimum": 0,
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "row": {
+            "minimum": 0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "affected_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Affected Lines",
+            "type": "array"
+          },
+          "line_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line No"
+          },
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "allowed_precision": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Precision",
+            "type": "array"
+          },
+          "reusable_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reusable Sources",
+            "type": "array"
+          },
+          "expected_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fen"
+          },
+          "actual_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Fen"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/SelectionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "trace_targets": {
+            "items": {
+              "$ref": "#/$defs/CalculationTarget"
+            },
+            "title": "Trace Targets",
+            "type": "array"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "dimension": {
+            "enum": [
+              "bank",
+              "platform"
+            ],
+            "title": "Dimension",
+            "type": "string"
+          },
+          "expected_direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Expected Direction",
+            "type": "string"
+          },
+          "candidate_subject_id": {
+            "title": "Candidate Subject Id",
+            "type": "string"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
+          "review_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Review Period",
+            "type": "string"
+          },
+          "origin_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Origin Periods",
+            "type": "array"
+          },
+          "responsibility": {
+            "enum": [
+              "direct",
+              "closed_followup",
+              "unassigned"
+            ],
+            "title": "Responsibility",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "ReadinessIssue",
+        "type": "object"
+      },
+      "RecordedValue_MaterialCoverageContent_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "recorded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/MaterialCoverageContent"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ],
+        "title": "RecordedValue",
+        "type": "object"
+      },
+      "RecordedValue_Union_str__NoneType__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "recorded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ],
+        "title": "RecordedValue",
+        "type": "object"
+      },
+      "RecordedValue_dict_Literal__bank____payroll____transactions____tax____assets____financing____Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0______": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "recorded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "bank",
+                "payroll",
+                "transactions",
+                "tax",
+                "assets",
+                "financing"
+              ]
+            },
+            "title": "Value",
+            "type": "object"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ],
+        "title": "RecordedValue",
+        "type": "object"
+      },
+      "RecordedValue_dict_str__AdoptedReadinessSources__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "recorded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "$ref": "#/$defs/AdoptedReadinessSources"
+            },
+            "title": "Value",
+            "type": "object"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ],
+        "title": "RecordedValue",
+        "type": "object"
+      },
+      "ReportPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "quarter": {
+            "title": "Quarter",
+            "type": "integer"
+          },
+          "quarter_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Quarter Start",
+            "type": "string"
+          },
+          "quarter_end": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Quarter End",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "quarter",
+          "quarter_start",
+          "quarter_end",
+          "label"
+        ],
+        "title": "ReportPeriod",
+        "type": "object"
+      },
+      "SelectionCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "has_journal_lines": {
+            "title": "Has Journal Lines",
+            "type": "boolean"
+          },
+          "trace_only": {
+            "const": true,
+            "title": "Trace Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest",
+          "kind",
+          "has_journal_lines",
+          "trace_only"
+        ],
+        "title": "SelectionCandidate",
+        "type": "object"
+      },
+      "SettlementFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Cutoff Period",
+            "type": "string"
+          },
+          "current_cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Current Cutoff Period",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "obligation_count": {
+            "minimum": 0,
+            "title": "Obligation Count",
+            "type": "integer"
+          },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "unestablished_state_selection_count": {
+            "minimum": 0,
+            "title": "Unestablished State Selection Count",
+            "type": "integer"
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "source_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Amount Fen"
+          },
+          "paid_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Fen"
+          },
+          "other_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Settled Fen"
+          },
+          "remaining_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Fen"
+          }
+        },
+        "required": [
+          "status",
+          "obligation_count",
+          "followup_count",
+          "complete",
+          "unestablished_state_selection_count",
+          "movement_count",
+          "source_amount_fen",
+          "paid_fen",
+          "other_settled_fen",
+          "remaining_fen"
+        ],
+        "title": "SettlementFollowup",
+        "type": "object"
+      },
+      "TaxImportMappingFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unsupported",
+              "pending_publication",
+              "not_applicable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "mapping_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mapping Fact Ids",
+            "type": "array"
+          },
+          "calculation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation Ids",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/TaxImportMappingIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "blocking_scope",
+          "mapping_fact_ids",
+          "calculation_ids",
+          "issues"
+        ],
+        "title": "TaxImportMappingFollowup",
+        "type": "object"
+      },
+      "TaxImportMappingIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "management_fact",
+              "capability",
+              "publication"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "component_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Codes",
+            "type": "array"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "code",
+          "category",
+          "field",
+          "message"
+        ],
+        "title": "TaxImportMappingIssue",
+        "type": "object"
+      },
+      "UnallocatedFileSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "needs_information",
+            "title": "Status",
+            "type": "string"
+          },
+          "allocation_required": {
+            "const": true,
+            "title": "Allocation Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_fact_id",
+          "status",
+          "allocation_required"
+        ],
+        "title": "UnallocatedFileSummary",
+        "type": "object"
+      },
+      "UnavailableReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unavailable",
+            "title": "Status",
+            "type": "string"
+          },
+          "reason": {
+            "const": "no_exact_period_manifest",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "UnavailableReadiness",
+        "type": "object"
+      },
+      "UnpublishedBusiness": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "UnpublishedBusiness",
+        "type": "object"
+      },
+      "WorkflowObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "obligation_fact_id": {
+            "title": "Obligation Fact Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Start Period",
+            "type": "string"
+          },
+          "end_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "End Period",
+            "type": "string"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "status": {
+            "enum": [
+              "not_applicable",
+              "completed",
+              "due",
+              "pending"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "actual_completion_status": {
+            "enum": [
+              "not_applicable",
+              "completed",
+              "due",
+              "pending"
+            ],
+            "title": "Actual Completion Status",
+            "type": "string"
+          },
+          "basis_review_status": {
+            "enum": [
+              "not_applicable",
+              "not_reviewed",
+              "reviewed",
+              "difference_identified",
+              "outdated",
+              "unestablished"
+            ],
+            "title": "Basis Review Status",
+            "type": "string"
+          },
+          "basis_review_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Review Calculation Id"
+          },
+          "basis_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Basis Issues",
+            "type": "array"
+          },
+          "recorded_completions": {
+            "items": {
+              "$ref": "#/$defs/ActualCompletionRecord"
+            },
+            "title": "Recorded Completions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "obligation_fact_id",
+          "kind",
+          "start_period",
+          "end_period",
+          "due_date",
+          "status",
+          "actual_completion_status",
+          "basis_review_status",
+          "basis_review_calculation_id",
+          "basis_issues",
+          "recorded_completions"
+        ],
+        "title": "WorkflowObligation",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "period": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+        "title": "Period",
+        "type": "string"
+      },
+      "as_of": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+        "title": "As Of",
+        "type": "string"
+      },
+      "as_of_semantics": {
+        "const": "current_knowledge",
+        "title": "As Of Semantics",
+        "type": "string"
+      },
+      "closure": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/OpenClosure"
+          },
+          {
+            "$ref": "#/$defs/ExactClosure"
+          },
+          {
+            "$ref": "#/$defs/LaterClosure"
+          }
+        ],
+        "title": "Closure"
+      },
+      "frozen_readiness": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FullRecordedReadiness"
+          },
+          {
+            "$ref": "#/$defs/UnavailableReadiness"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Frozen Readiness"
+      },
+      "readiness": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FullReadiness"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "current_followups": {
+        "$ref": "#/$defs/FullPeriodCurrentFollowups"
+      },
+      "read_semantics": {
+        "$ref": "#/$defs/PreparationReadSemantics"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "period",
+      "as_of",
+      "as_of_semantics",
+      "closure",
+      "frozen_readiness",
+      "readiness",
+      "current_followups",
+      "read_semantics"
+    ],
+    "title": "PeriodReadinessResponse",
+    "type": "object"
+  },
   "dashboard_context": {
     "$defs": {
       "DashboardCompany": {
@@ -3069,12 +7139,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -3103,7 +7199,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -3137,9 +7234,38 @@
             "title": "End Period",
             "type": "string"
           },
-          "completion_status": {
-            "title": "Completion Status",
+          "actual_completion_status": {
+            "enum": [
+              "not_applicable",
+              "completed",
+              "due",
+              "pending"
+            ],
+            "title": "Actual Completion Status",
             "type": "string"
+          },
+          "basis_review_status": {
+            "enum": [
+              "not_applicable",
+              "not_reviewed",
+              "reviewed",
+              "difference_identified",
+              "outdated",
+              "unestablished"
+            ],
+            "title": "Basis Review Status",
+            "type": "string"
+          },
+          "basis_review_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Review Calculation Id"
           },
           "due_date": {
             "anyOf": [
@@ -3172,7 +7298,9 @@
           "label",
           "start_period",
           "end_period",
-          "completion_status",
+          "actual_completion_status",
+          "basis_review_status",
+          "basis_review_calculation_id",
           "due_date",
           "issue_count",
           "fact_issues"
@@ -3200,7 +7328,7 @@
             "title": "Attempts",
             "type": "integer"
           },
-          "last_error": {
+          "error_code": {
             "anyOf": [
               {
                 "type": "string"
@@ -3209,7 +7337,18 @@
                 "type": "null"
               }
             ],
-            "title": "Last Error"
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "result_issue": {
             "$ref": "#/$defs/ReadinessIssue"
@@ -3263,7 +7402,8 @@
           "kind",
           "status",
           "attempts",
-          "last_error",
+          "error_code",
+          "error_message",
           "association",
           "references",
           "period",
@@ -4721,6 +8861,18 @@
             "title": "Domain",
             "type": "string"
           },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -5253,6 +9405,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -5323,6 +9480,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -6553,7 +10711,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 6,
+        "const": 7,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -7619,12 +11777,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -7653,7 +11837,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -8973,6 +13158,18 @@
             "title": "Domain",
             "type": "string"
           },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -9475,6 +13672,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -9545,6 +13747,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -9809,7 +14012,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 6,
+        "const": 7,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -11179,12 +15382,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -11213,7 +15442,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -12319,6 +16549,18 @@
             "title": "Domain",
             "type": "string"
           },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -12814,6 +17056,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -12884,6 +17131,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -13736,7 +17984,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 6,
+        "const": 7,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -14800,12 +19048,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -14834,7 +19108,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -16409,6 +20684,18 @@
             "title": "Domain",
             "type": "string"
           },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -16904,6 +21191,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -16974,6 +21266,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -17757,7 +22050,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 6,
+        "const": 7,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -19623,12 +23916,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -19655,7 +23974,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "as_of",
           "as_of_semantics",
@@ -19684,7 +24004,7 @@
             "title": "Attempts",
             "type": "integer"
           },
-          "last_error": {
+          "error_code": {
             "anyOf": [
               {
                 "type": "string"
@@ -19693,7 +24013,18 @@
                 "type": "null"
               }
             ],
-            "title": "Last Error"
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "result_issue": {
             "$ref": "#/$defs/ReadinessIssue"
@@ -19747,7 +24078,8 @@
           "kind",
           "status",
           "attempts",
-          "last_error",
+          "error_code",
+          "error_message",
           "association",
           "references",
           "period",
@@ -20191,6 +24523,18 @@
           },
           "domain": {
             "title": "Domain",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
             "type": "string"
           },
           "category": {
@@ -21397,7 +25741,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 4,
+        "const": 5,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -21725,12 +26069,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -21759,7 +26129,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -22183,6 +26554,18 @@
           },
           "domain": {
             "title": "Domain",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
             "type": "string"
           },
           "category": {
@@ -23172,6 +27555,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -23242,6 +27630,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -23380,7 +27769,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 3,
+        "const": 4,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -23770,12 +28159,38 @@
             "title": "Obligation Count",
             "type": "integer"
           },
-          "completion_status_counts": {
+          "actual_completion_status_counts": {
             "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "title": "Completion Status Counts",
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "completed",
+                "due",
+                "pending"
+              ]
+            },
+            "title": "Actual Completion Status Counts",
+            "type": "object"
+          },
+          "basis_review_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "not_applicable",
+                "not_reviewed",
+                "reviewed",
+                "difference_identified",
+                "outdated",
+                "unestablished"
+              ]
+            },
+            "title": "Basis Review Status Counts",
             "type": "object"
           },
           "basis_issue_count": {
@@ -23804,7 +28219,8 @@
         "required": [
           "status",
           "obligation_count",
-          "completion_status_counts",
+          "actual_completion_status_counts",
+          "basis_review_status_counts",
           "basis_issue_count",
           "scope_period",
           "scope_semantics",
@@ -24245,6 +28661,18 @@
             "title": "Domain",
             "type": "string"
           },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -24666,6 +29094,11 @@
             "title": "Obligation Count",
             "type": "integer"
           },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
           "complete": {
             "title": "Complete",
             "type": "boolean"
@@ -24736,6 +29169,7 @@
         "required": [
           "status",
           "obligation_count",
+          "followup_count",
           "complete",
           "unestablished_state_selection_count",
           "movement_count",
@@ -24909,7 +29343,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 3,
+        "const": 4,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -24968,7 +29402,7 @@
             "title": "Attempts",
             "type": "integer"
           },
-          "last_error": {
+          "error_code": {
             "anyOf": [
               {
                 "type": "string"
@@ -24977,7 +29411,18 @@
                 "type": "null"
               }
             ],
-            "title": "Last Error"
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "download_available": {
             "title": "Download Available",
@@ -25025,7 +29470,8 @@
           "kind",
           "status",
           "attempts",
-          "last_error",
+          "error_code",
+          "error_message",
           "download_available",
           "download_file_name",
           "delivery_status",
@@ -25069,7 +29515,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 1,
+        "const": 2,
         "title": "Schema Version",
         "type": "integer"
       },

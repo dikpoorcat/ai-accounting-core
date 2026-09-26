@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from .build import calculator_build_id
+from .contracts import KernelError
 from .diagnostics import error_response
 from .security.primitives import IdentityError
 
@@ -91,13 +92,19 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             )
 
         def query_payload(self, query):
-            parameters = parse_qs(query, strict_parsing=True, keep_blank_values=True)
+            try:
+                parameters = parse_qs(query, strict_parsing=True, keep_blank_values=True)
+            except ValueError as exc:
+                raise KernelError("invalid_command", "查询参数格式不正确") from exc
             if any(len(values) != 1 for values in parameters.values()):
-                raise ValueError("duplicate query parameter")
+                raise KernelError("invalid_command", "查询参数不能重复")
             payload = {key: values[0] for key, values in parameters.items()}
             for field in ("limit", "voucher_number", "year", "quarter"):
                 if field in payload:
-                    payload[field] = int(payload[field])
+                    try:
+                        payload[field] = int(payload[field])
+                    except ValueError as exc:
+                        raise KernelError("invalid_command", f"{field} 必须是整数") from exc
             return payload
 
         def dashboard_error(self, exc):
@@ -157,11 +164,11 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     return
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
-                    raise ValueError("object required")
+                    raise KernelError("invalid_command", "请求必须是 JSON 对象")
                 path = urlsplit(self.path).path
                 if path == "/api/browser-session":
                     if set(payload) != {"ticket"}:
-                        raise ValueError("invalid ticket request")
+                        raise KernelError("invalid_command", "票据请求字段不正确")
                     ticket = server.browser_tickets.pop(payload["ticket"], None)
                     if ticket is None or ticket[1] < time.monotonic():
                         self.json_reply(401, {"code": "session_ticket_expired"})
@@ -201,7 +208,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                         "cancel",
                         "session_status",
                     }:
-                        raise ValueError("invalid security window request")
+                        raise KernelError("invalid_command", "安全窗口请求字段不正确")
                     with service.catalog.connection(read_only=True):
                         pass
                     result = service.security_controller.dispatch(
@@ -271,7 +278,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     return
                 if path == "/api/command":
                     if set(payload) != {"command", "payload"}:
-                        raise ValueError("invalid command envelope")
+                        raise KernelError("invalid_command", "命令请求字段不正确")
                     result = service.dispatch(
                         payload["command"], payload["payload"], session_token=self.session_token()
                     )
@@ -282,7 +289,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     result = service.security_controller.dispatch(operation, payload, private=True)
                 elif path == "/api/browser-ticket":
                     if payload:
-                        raise ValueError("unexpected ticket fields")
+                        raise KernelError("invalid_command", "浏览器票据请求不接受字段")
                     owner_token = self.session_token()
                     if owner_token:
                         try:
@@ -294,7 +301,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     result = {"url": f"http://127.0.0.1:{server.server_port}/#ticket={ticket_id}"}
                 elif path == "/api/shutdown":
                     if payload:
-                        raise ValueError("unexpected shutdown fields")
+                        raise KernelError("invalid_command", "停止服务请求不接受字段")
                     result = {"status": "stopping"}
                     threading.Thread(target=server.shutdown, daemon=True).start()
                 else:
@@ -381,12 +388,12 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     service.security.authorize(self.session_token())
                     payload = self.query_payload(url.query)
                     if set(payload) != {"company_id"}:
-                        raise ValueError("company is required")
+                        raise KernelError("invalid_command", "必须提供 company_id")
                     job_id = url.path.removeprefix("/api/local/report-export/").removesuffix(
                         "/download"
                     )
                     if not job_id or "/" in job_id or len(job_id) > 200:
-                        raise ValueError("invalid job identity")
+                        raise KernelError("invalid_command", "任务标识不正确")
                     name, content = Reports(
                         service.engine(payload["company_id"])
                     ).download_browser_report(job_id)
@@ -429,7 +436,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                         self.contract_reply(
                             "browser_jobs",
                             {
-                                "schema_version": 1,
+                                "schema_version": 2,
                                 "company_id": payload["company_id"],
                                 "database_id": engine.store.database_id,
                                 "items": [

@@ -103,7 +103,7 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
 
     forbid_preparation(monkeypatch)
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 6
+    assert deferred["schema_version"] == complete["schema_version"] == 7
     assert deferred["projection"] == "dashboard_brief_deferred"
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
@@ -165,7 +165,7 @@ def test_deferred_report_keeps_open_and_closed_sources_and_export_contract(book,
         with monkeypatch.context() as guard:
             forbid_preparation(guard)
             deferred = dashboard.quarterly_report(2026, 1, preparation="deferred")
-        assert deferred["schema_version"] == complete["schema_version"] == 3
+        assert deferred["schema_version"] == complete["schema_version"] == 4
         assert deferred["projection"] == "dashboard_quarterly_report_deferred"
         assert_context(deferred, book[0])
         assert deferred["period_preparations"] is None
@@ -202,7 +202,7 @@ def test_preparation_restores_original_checks_inside_the_validated_read_snapshot
         "2026-03", expected_read_version=context["read_version"], as_of=context["as_of"]
     )
     assert calls == [("2026-03", DAY)]
-    assert result["schema_version"] == 3
+    assert result["schema_version"] == 4
     assert result["projection"] == "dashboard_period_preparation_result"
     assert result["read_context"] == context and result["period"] == "2026-03"
     assert result["data"]["period_preparation"] == complete["data"]["period_preparation"]
@@ -282,7 +282,7 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 6
+    assert result["schema_version"] == 7
     assert result["projection"] == "dashboard_brief_deferred"
     assert result["read_context"]["company_id"] == "empty"
     assert result["read_context"]["database_id"] == "empty-db"

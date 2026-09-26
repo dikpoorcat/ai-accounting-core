@@ -190,7 +190,7 @@ CREATE TABLE audit(id INTEGER PRIMARY KEY,request_id TEXT NOT NULL,action TEXT N
 CREATE TABLE jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL
  CHECK(json_valid(payload)),
  status TEXT NOT NULL CHECK(status IN('pending','running','succeeded','failed')),
- attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT,result TEXT) STRICT;
+ attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT,error_code TEXT,result TEXT) STRICT;
 CREATE TRIGGER frozen_job_payload BEFORE UPDATE OF id,kind,payload ON jobs
  BEGIN SELECT RAISE(ABORT,'immutable job payload'); END;
 CREATE TRIGGER retained_job BEFORE DELETE ON jobs

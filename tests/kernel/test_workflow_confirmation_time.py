@@ -46,7 +46,8 @@ def command(company, fact, subject="completion"):
 
 
 def item(service, day):
-    return service.query("2026-09", as_of=day)["obligations"][0]
+    obligations = service.query("2026-09", as_of=day)["sections"]["external"]["obligations"]
+    return next(value for value in obligations if value["id"] == "obligation-0")
 
 
 @pytest.mark.parametrize("batch", [False, True])
@@ -69,9 +70,9 @@ def test_same_month_unknown_completion_uses_single_or_batch_confirmation(
     before = item(service, "2026-09-10")
     assert before["status"] == "due"
     recorded = before["recorded_completions"][0]
-    assert recorded["basis_current"] and not recorded["known_as_of"]
+    assert not recorded["known_as_of"]
     assert recorded["completion_time_basis"] == "confirmation_recorded_at"
-    assert not before["basis_review_required"]
+    assert before["basis_review_status"] == "not_reviewed"
     now = item(service, "2026-09-11")
     assert now["status"] == "completed"
     assert now["recorded_completions"][0] == {
@@ -132,7 +133,7 @@ def test_missing_confirmation_audit_keeps_unknown_day_unestablished(tmp_path):
     result = item(service, "2099-01-01")
     assert result["status"] == "due"
     recorded = result["recorded_completions"][0]
-    assert recorded["basis_current"]
+    assert recorded["fact_id"] == version.id
     assert not recorded["known_as_of"]
     assert recorded["confirmation_recorded_at"] is None
     assert recorded["completion_time_basis"] == "unestablished"
@@ -174,9 +175,10 @@ def test_recording_correction_uses_exact_new_fact_id_and_keeps_old_record_visibl
     )
     assert saved["fact_id"] != old["fact_id"]
     pending = item(service, "2026-09-11")
-    assert pending["basis_review_required"]
+    assert pending["basis_review_status"] == "not_reviewed"
     assert pending["recorded_completions"][0]["known_as_of"]
-    assert not pending["recorded_completions"][0]["basis_current"]
+    assert pending["actual_completion_status"] == "due"
+    assert not pending["recorded_completions"][0]["current_fact"]
     company.publish("completion")
     assert item(service, "2026-09-11")["status"] == "due"
     assert item(service, "2026-09-20")["status"] == "completed"
@@ -190,10 +192,10 @@ def test_changed_basis_keeps_actual_completion_and_requests_review(tmp_path, mon
     company.publish("completion")
     company.save(payroll(), "new-unpublished-payroll")
     result = item(service, "2026-09-11")
-    assert result["status"] == "due" and result["basis_review_required"]
+    assert result["status"] == "completed" and result["basis_review_status"] == "not_reviewed"
     recorded = result["recorded_completions"][0]
-    assert recorded["known_as_of"] and not recorded["basis_current"]
-    assert recorded["status"] == "confirmed_complete"
+    assert recorded["known_as_of"]
+    assert recorded["completion_status"] == "confirmed_complete"
     assert recorded["completion_date"] is None
 
 
@@ -217,8 +219,9 @@ def test_all_obligations_share_one_audit_read(tmp_path, monkeypatch):
     monkeypatch.setattr(company.engine.store, "connection", traced_connection)
     result = service.query("2026-09", as_of="2026-09-11")
     assert result["as_of_semantics"] == "current_knowledge"
-    assert len(result["obligations"]) == 3
-    assert all(value["status"] == "completed" for value in result["obligations"])
+    obligations = result["sections"]["external"]["obligations"]
+    assert len(obligations) == 3
+    assert all(value["status"] == "completed" for value in obligations)
     audit_queries = [
         query
         for query in queries

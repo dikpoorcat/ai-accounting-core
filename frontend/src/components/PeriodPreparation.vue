@@ -79,9 +79,15 @@ const settlementHeadline = computed(() => {
 const externalPendingCount = computed(() => {
   const external = props.preparation.current_followups.external;
   const completed =
-    (external.completion_status_counts.completed ?? 0) +
-    (external.completion_status_counts.not_applicable ?? 0);
+    (external.actual_completion_status_counts.completed ?? 0) +
+    (external.actual_completion_status_counts.not_applicable ?? 0);
   return Math.max(0, external.obligation_count - completed);
+});
+const externalReviewPendingCount = computed(() => {
+  const external = props.preparation.current_followups.external;
+  const checked = (external.basis_review_status_counts.reviewed ?? 0) +
+    (external.basis_review_status_counts.not_applicable ?? 0);
+  return Math.max(0, external.obligation_count - checked);
 });
 const fileFailedCount = computed(
   () => props.preparation.current_followups.file_jobs.status_counts.failed ?? 0,
@@ -102,6 +108,7 @@ const hasFollowup = computed(
   () =>
     !settlementComplete.value ||
     externalPendingCount.value > 0 ||
+    externalReviewPendingCount.value > 0 ||
     fileFailedCount.value > 0 ||
     fileProcessingCount.value > 0 ||
     props.preparation.current_followups.file_jobs.issue_count > 0 ||
@@ -175,12 +182,12 @@ function focusSettlements() {
         >
       </component>
       <article
-        :class="['followup-card', { attention: externalPendingCount > 0 }]"
+        :class="['followup-card', { attention: externalPendingCount > 0 || externalReviewPendingCount > 0 }]"
       >
         <span>申报与外部事项</span>
         <strong>{{
           preparation.current_followups.external.obligation_count
-            ? `${externalPendingCount} 项待办`
+            ? `${externalPendingCount} 项待办理`
             : "暂无"
         }}</strong>
         <small
@@ -188,7 +195,7 @@ function focusSettlements() {
           {{
             preparation.current_followups.external.obligation_count
           }}
-          项；按实际完成依据判断</small
+          项；{{ externalReviewPendingCount }} 项账务待核对</small
         >
       </article>
       <article

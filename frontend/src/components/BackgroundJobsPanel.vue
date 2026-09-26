@@ -86,7 +86,8 @@ onBeforeUnmount(() => { controller?.abort(); downloadController?.abort(); });
         <p>{{ fileMessage(job) }}</p>
         <button v-if="localJobDownloadAvailable(job)" class="dashboard-action" :disabled="Boolean(downloadingId)" @click="download(job)">{{ downloadingId === job.id ? "正在下载…" : "下载报表" }}</button>
         <RouterLink v-if="job.kind === 'report_export' && (job.delivery_status === 'invalid' || (job.status === 'failed' && job.attempts >= 3))" :to="reportTarget(job)">到财务报表重新生成</RouterLink>
-        <details><summary>{{ job.last_error ? "供核对的失败详情" : "供核对的处理详情" }}</summary><pre>{{ JSON.stringify(job, null, 2) }}</pre></details>
+        <p v-if="job.error_message">{{ job.error_message }}</p>
+        <details><summary>{{ job.error_code ? "供核对的失败详情" : "供核对的处理详情" }}</summary><pre>{{ JSON.stringify(job, null, 2) }}</pre></details>
       </li>
     </ul>
   </section>

@@ -51,6 +51,7 @@ from .types import ActualDate, YearMonth, digest
 
 KIND_NAMES = {
     "external_completion": "外部办理完成依据",
+    "external_basis_review": "外部办理与账务核对",
     "payroll_disbursement_basis": "工资代发金额依据",
     "service_sale": "服务收入",
     "expense": "费用",
@@ -1419,7 +1420,7 @@ class Dashboard:
             with self.store.connection(read_only=True) as connection:
                 read_context = self._read_context(connection, _today_china())
         return {
-            "schema_version": 6,
+            "schema_version": 7,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
@@ -1481,7 +1482,7 @@ class Dashboard:
                 reads.connection, period, as_of=as_of, summary=True
             )
             return {
-                "schema_version": 3,
+                "schema_version": 4,
                 "projection": "dashboard_period_preparation_result",
                 "read_context": context,
                 "period": period,
@@ -1724,7 +1725,6 @@ class Dashboard:
                 },
                 "open_items": _open_items(
                     snap,
-                    current=prepared["current_followups"]["settlements"] if prepared else None,
                     after=after if section == "open_items" else None,
                     limit=limit,
                     summary_only=section not in {None, "open_items"},
@@ -2005,7 +2005,7 @@ class Dashboard:
             return self._response(snap, seal_collections(snap, "assets", data, filters))
 
     def _external_collection(self, snap, after, limit):
-        from .workflow import Workflow
+        from .workflow import LABELS, Workflow
 
         keys = [
             row[0]
@@ -2022,7 +2022,25 @@ class Dashboard:
             reads=snap.reads,
             obligation_ids=set(keys),
         )
-        return {"items": items, "page": page}
+        return {
+            "items": [
+                {
+                    "obligation_id": item["id"],
+                    "kind": item["kind"],
+                    "label": LABELS[item["kind"]],
+                    "start_period": item["start_period"],
+                    "end_period": item["end_period"],
+                    "actual_completion_status": item["actual_completion_status"],
+                    "basis_review_status": item["basis_review_status"],
+                    "basis_review_calculation_id": item["basis_review_calculation_id"],
+                    "due_date": item["due_date"],
+                    "issue_count": len(item["basis_issues"]),
+                    "fact_issues": item["basis_issues"],
+                }
+                for item in items
+            ],
+            "page": page,
+        }
 
     def _business_collection(
         self,
@@ -2111,7 +2129,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", data, filters)
             )
-            response["schema_version"] = 4
+            response["schema_version"] = 5
             return response
 
     def quarterly_report(
@@ -4313,7 +4331,7 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
         "cash_ending_year_to_date_fen": "累计现金余额勾稽",
     }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "close_state": details.get("close_state", "closed" if exportable else "open"),
         "readiness_state": "ready" if ready else "blocked",
         "carry_forward": {

@@ -582,7 +582,8 @@ def run_export_jobs(engine, *, limit: int = 10, fault=None) -> list[dict]:
                     connection.rollback()
                     break
                 connection.execute(
-                    "UPDATE jobs SET status='running',attempts=attempts+1,last_error=NULL "
+                    "UPDATE jobs SET status='running',attempts=attempts+1,"
+                    "last_error=NULL,error_code=NULL "
                     "WHERE id=?",
                     (job["id"],),
                 )
@@ -615,18 +616,21 @@ def run_export_jobs(engine, *, limit: int = 10, fault=None) -> list[dict]:
                     Path(payload["output_directory"]), job["id"], plan, template[0]
                 )
                 fault("files_published", job["id"])
-                status, error = "succeeded", None
+                status, error, error_code = "succeeded", None, None
             except Exception as exc:
+                from .diagnostics import job_error_code
+
                 result, status = None, "failed"
                 error = f"{type(exc).__name__}: {exc}"[:500]
+                error_code = job_error_code(exc)
             with engine.store.connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "UPDATE jobs SET status=?,last_error=?,result=? WHERE id=?",
-                    (status, error, canonical(result) if result else None, job["id"]),
+                    "UPDATE jobs SET status=?,last_error=?,error_code=?,result=? WHERE id=?",
+                    (status, error, error_code, canonical(result) if result else None, job["id"]),
                 )
                 connection.commit()
             outcomes.append(
-                {"job_id": job["id"], "status": status, "result": result, "error": error}
+                {"job_id": job["id"], "status": status, "result": result, "error_code": error_code}
             )
     return outcomes

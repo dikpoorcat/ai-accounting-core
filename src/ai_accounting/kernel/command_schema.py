@@ -94,6 +94,7 @@ def command_models(registry):
         "verify_integrity": Maintenance.verify_integrity,
         "repair_read_indexes": Maintenance.repair_read_indexes,
         "jobs": Engine.jobs,
+        "request_result": Engine.request_result,
         "retry_job": Engine.retry_job,
         "operations": Catalog.operations,
         "inspect_material": Materials.inspect,
@@ -218,7 +219,53 @@ def command_schemas(registry):
     return {name: model.json_schema() for name, model in command_models(registry).items()}
 
 
-def validate_command(models, command, payload):
+def _registration_missing_issue(error, command, payload, registry):
+    if command not in {"save_fact", "amend_fact", "save_facts"} or registry is None:
+        return None
+    location = error["loc"]
+    if "data" not in location:
+        return None
+    field_path = location[location.index("data") + 1 :]
+    if not field_path:
+        return None
+    item = payload
+    prefix = ""
+    if command == "save_facts":
+        if len(location) < 2 or location[0] != "facts" or type(location[1]) is not int:
+            return None
+        index = location[1]
+        facts = payload.get("facts")
+        if not isinstance(facts, list) or index >= len(facts):
+            return None
+        item = facts[index]
+        prefix = f"facts.{index}."
+    if not isinstance(item, dict):
+        return None
+    kind = item.get("kind")
+    model = registry.models.get(kind) if isinstance(kind, str) else None
+    if model is None:
+        return None
+    field = ".".join(map(str, field_path))
+    field_info = model.model_fields.get(str(field_path[0]))
+    extra = field_info.json_schema_extra if field_info else None
+    metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
+    semantics = metadata.get(
+        "role", "accounting" if model.lane == "accounting" else "management"
+    )
+    precision = metadata.get("precision")
+    if precision is None and field_path[0] == "period":
+        precision = "month"
+    source = item.get("subject_id")
+    return {
+        "field": prefix + field,
+        "message": "缺少必需管理资料" if semantics == "management" else "缺少必需核算事实",
+        "semantics": semantics,
+        "reusable_sources": [source] if isinstance(source, str) and source else [],
+        "allowed_precision": [precision] if isinstance(precision, str) else [],
+    }
+
+
+def validate_command(models, command, payload, *, registry=None):
     if command not in models:
         raise KernelError("unknown_command", "不支持该业务命令")
     if not isinstance(payload, dict):
@@ -228,8 +275,25 @@ def validate_command(models, command, payload):
         return value.model_dump(mode="json")
     except ValidationError as exc:
         errors = exc.errors(include_input=False, include_url=False, include_context=False)
-        for error in errors:
-            if error["type"] == "missing" and "data" in error["loc"]:
-                path = error["loc"][error["loc"].index("data") + 1 :]
-                raise NeedsInformation(".".join(map(str, path)), "缺少必需核算事实") from exc
+        missing = [
+            issue
+            for error in errors
+            if error["type"] == "missing"
+            if (issue := _registration_missing_issue(error, command, payload, registry)) is not None
+        ]
+        if missing:
+            facts = payload.get("facts") if command == "save_facts" else [payload]
+            kinds = (
+                {
+                    item["kind"]
+                    for item in facts
+                    if isinstance(item, dict) and isinstance(item.get("kind"), str)
+                }
+                if isinstance(facts, list)
+                else set()
+            )
+            resolution = {"fact_kind": next(iter(kinds))} if len(kinds) == 1 else None
+            raise NeedsInformation(
+                missing, "缺少必需事实", resolution=resolution, registry=registry
+            ) from exc
         raise KernelError("invalid_command", "命令字段或类型不符合接口约定", issues=errors) from exc

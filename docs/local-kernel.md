@@ -115,7 +115,8 @@ STDIO MCP 使用同一服务：
 | `integrity.py`、`projections.py`、`period_balances.py`、`settlement_projection.py`、`maintenance.py`、`read_state.py` | 权威内容核验、当前余额四表、期间余额与清偿贡献投影、校验封印、受控维修和读取修复计数 |
 | `dashboard*.py`、`display.py`、`provenance.py` | 五页只读投影、内容采用及历史补充资料的精确来源 |
 | `periods.py` | 资料覆盖、业务模块声明的月末义务、关账清单和冻结查询 |
-| `workflow.py` | 已确认外部义务、实际完成依据和跨月待办 |
+| `workflow.py` | 外部义务、真实办理、账务核对和精确依据 |
+| `worklist.py` | 公司工作起点、自动选月及六类业务状态 |
 | `payroll_tax_declarations.py` | 实际工资申报税额及明确采用的代发口径，保留未代发差额 |
 | `reports.py`、`exports.py` | 财务三表、分类核对、银行代发与提交后可重试文件任务 |
 | `runtime.py`、`backup.py`、`catalog.py` | 受控 SQLite 连接、完整公司备份与目录身份绑定 |
@@ -209,54 +210,32 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 常驻服务启动时恢复后台任务；失败有明确状态并最多自动尝试三次，必要时可显式重试。
 账务提交不随文件生成失败撤销。
 `jobs` 可跨会话查询待运行、失败或完成任务及产物位置；关账成功与便携包生成成功是独立状态。
-季度三表须在首次相关关账前确认并启用报表口径；每月分类及季末内部所得税口径先检查，外部实际申报在关账后办理。
+季度三表须在首次相关关账前确认并启用报表口径；每月分类及季末内部所得税口径先检查，外部实际申报与账务核对分别登记，财报办理等待相关期间关闭。
 具体闭环见 [季度三表与冻结导出](local-kernel-reports.md)。
 
-## 外部义务与流程状态
+## 工作清单、外部办理与恢复
 
-`workflow` 按 `period` 和明确的查询日 `as_of` 返回月度步骤及跨月义务；
-`as_of_semantics=current_knowledge` 表示按当前事实、正式复核及当前关账状态判断过去业务日，
-不是还原当时系统知识。当前已关账状态不按 `as_of` 截断，完成列表也不是全部历史修订。
-`obligation_basis` 按 `obligation_id` 返回可用于确认外部完成的当前正式计算集合。
-生成文件、资料齐全、工资计提和实际申报是独立事实，不能彼此代替完成状态。
+`workflow(company_id, as_of, period?)` 是公司级工作起点，`period_readiness(company_id, period, as_of?)` 读取明确月份。两者和看板共用当前期间检查；清单不再是固定九步。银行、工资、普通业务、税务、资产、融资各有资料与核算状态，另列关账、实际办理和文件交付。详细原件及业务按需查询，汇总不依赖已加载页。
 
-`external_obligation` 使用 `obligation_kind`、`start_period`、`end_period` 确定事项身份范围。
-`applicability_confirmed=true` 必须有证据；`applicability` 为 `required` 或显式 `not_applicable`。
-未登记事项仍属于适用范围未明确，工资资料清单的 `no_business` 不能替代不适用确认。
-`due_date` 是可空的管理期限：有来源时保存实际截止日，未知时不推定到期，也不编造日期。
+省略月份时，从已登记事实、资料、正式入账及已建事项选最早开放待处理月；未来月不自动选入。闭期真实问题由开放月承接，办理和文件任务在公司范围保留；没有开放任务时用最近处理月作背景。空公司没有可靠月份时返回 `period=null`，不能解释为全部完成。选月不根据成立日期补造空月，不逐月执行完整关账检查。
 
-真实外部提交使用 `external_completion`，保存 `obligation_id`、当时的 `obligation_fact_id`，
-以及明确接受的 `accepted_calculations`（每个业务身份对应一个确切计算版本）。
-`completion_status` 区分 `submitted` 与 `confirmed_complete`，均须引用真实完成凭据。
-`date_status=known` 时提供 `completion_date`；历史完成日期未建立时使用 `not_established` 并保留空日期。
-`period` 是记录所属月，不能把它的月末当作实际完成日。日期未知时，流程使用该确切事实版本的
-不可变确认审计时间作为已获知完成的保守上界，按固定 UTC+08 自然日与 `as_of` 比较；
-查询确认日及之后可以显示已完成，查询更早日期则不能提前显示。没有对应确认审计时保持未建立。
-已知 `completion_date` 仍按实际业务日判断，不以较晚的录入时间替代。
-返回的 `recorded_completions` 分别提供 `basis_current`（依据是否仍有效）、`known_as_of`
-（按当前知识判断指定业务日是否已能证明完成）和 `confirmation_recorded_at`（精确事实的系统确认时间）。
-有实际完成日的记录也返回确认时间；`completion_time_basis` 指明采用实际日、确认时间或无法建立。
-该确认时间不代表负责人最早知悉日；无可信或唯一审计关联时为空。
-`completion_date` 始终保留原值；幂等重放及后续重算不会改写最初确认时间。
-已有完成记录但依据变化时，记录继续可见，义务的 `basis_review_required` 标明需要复核；
-查询时间元数据不进入纯业务计算结果，也不替代真实申报凭据。
+`as_of_semantics=current_knowledge` 表示按当前事实、正式核对及当前关账判断指定业务日，不还原当时的系统知识。当前关账不按查询日截断。普通未结款项不是到期付款指令，未知期限不会被推定逾期。
 
-工资、奖金、劳务等来源必须全部形成对应的正式结果，才能取得完整申报依据。
-有效工资档案还要求覆盖月份有明确工资事实和正式处理；零工资可以显式确认，
-离开工资核算范围使用档案有效期，不从缺记录推断无薪酬。
-同一员工月份检查也用于关账，防止工资整月漏建。空计算集合另需
-`no_reportable_activity_confirmed=true`，该确认不能绕过已知缺失或未发布工资。
+`external_obligation` 以 `obligation_kind/start_period/end_period` 声明精确范围。六类义务为社保申报、个税申报、季度税务、季度财报、年度所得税和年度工商报告。`applicability_confirmed` 及不适用结论须有证据；资料清单的无业务不能代替适用性。`due_date` 是可空管理期限，不补造日期。
 
-重算保留原提交接受的版本和实际日期，只重新判断 `basis_current`。
-核算等价判断遵循 [核算等价合同](accounting-equivalence.md)，原完整结果摘要和真实已接受版本仍保留；
-只调整 `due_date` 不使原提交失效。
-结果等价的新计算版本经正式复核后，原提交仍有效：`accepted_calculations` 保留真实采用的旧版本，
-`reviewed_calculations` 单独记录此次复核的当前版本；未发布的复核不能消除待办或绕过关账检查。
-新的实际提交使用新业务身份，录入错误才使用有证据的 `amend_fact`，实际付款不随工资或流程重算改写。
-季度税费及报表完成须先关闭覆盖月份，完成事实记录在覆盖期之后，不能反向阻止这些月份关账。
-它明确接受当次当前正式计算，并不等同于旧关账清单；闭期更正后旧关账快照保持不变，
-原提交依据可以因此过期。第 2—4 步依据实际核算和外部完成情况显示状态，不因材料齐全自动完成。
-季度核算集合排除外部提交及其流程复核，避免流程自己的状态变更制造重新申报义务。
+`obligation_basis` 返回当前可核对的 `candidate_calculations` 和 `fact_issues`，不是已经采用的申报依据。`external_completion` 单独记录真实办理，绑定义务精确版本，保存 `source_facts`、实际采用的 `accepted_calculations` 或办理凭据 `adopted_evidence_digests`。可以先登记实际个税、社保资料，不要求先发布工资；空计算集合不能自己证明无业务。`completion_status` 区分 `submitted` 与 `confirmed_complete`。真实补报另建事实，以 `previous_completion_fact_id` 精确接续。
+
+`date_status=known` 时记录真实 `completion_date`；未知时保留空日期。记录所属月不能代替实际日期。日期未知时，以该精确事实版本不可变确认审计的 UTC+08 自然日作为获知完成的保守上界；缺少可信唯一关联时保持未建立。`recorded_completions` 返回 `known_as_of`、`confirmation_recorded_at` 和 `completion_time_basis`。幂等重放、重算和后续核对不改写原确认时间。
+
+`external_basis_review` 引用办理事实、义务及正式账务的精确版本，明确核对来源、原采用结果与当前核对结果，表达一致、差异或尚无法核对。它通过统一预览和发布产生无分录结果，不生成税额算法或伪造申报。实际个税及社保明细按保存的精确人员、月份、个人和单位金额核对；工资人员范围、未发布来源及无业务依据仍分别检查。
+
+接口分别提供 `actual_completion_status` 和 `basis_review_status`：可以已申报而账务待核对。后续账务变化让核对过期，不抹去办理；新补报需要自己的核对，不能继承原办理的结论。等价比较遵守 [核算等价合同](accounting-equivalence.md)，正式引用保留精确版本。季度税务可先保存真实申报，季度财报须等待范围内核算和关账完成，空月可被后续关账覆盖，不补造批准。
+
+实际办理、实际扣税、真实缴款和文件生成彼此独立。外部办理或核对未完成、个税文件映射问题不增加关账门槛，冻结内容不随新工作状态回写。
+
+版本化 `agent_operating_protocol` 随 `schema` 发布。泛化开始展示完整清单，明确事项直接处理；先查资料再问，老板回答只适用于刚展示的公司、期间和事项。实际推进后更新进度，未推进不反复刷新；中断和公司切换重新读取上下文，不沿用另一公司的候选、预览或批准。
+
+响应丢失时重放原载荷及原请求键；`request_result(company_id, submitted_request_id)` 核对现有请求与审计后返回 `committed` 和原回执，或 `unknown`。未知不代表失败，不能另记一笔。目录创建和恢复继续查询 `operations`。任务持久保存 `error_code`，公开直白安全说明，本地保留原异常；自动尝试耗尽后先处理原因，再显式重试原任务。技术故障、待重算和过期预览不能当作老板缺少业务事实。
 
 ## 实际工资申报税额与代发口径
 

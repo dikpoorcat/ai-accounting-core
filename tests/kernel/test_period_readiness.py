@@ -9,6 +9,7 @@ from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.types import YearMonth, digest
+from ai_accounting.kernel.worklist import Worklist
 
 
 def test_missing_required_payroll_is_accounting_incomplete_once(tmp_path):
@@ -79,22 +80,20 @@ def test_workflow_same_snapshot_separates_close_from_external_completion(tmp_pat
     company = setup_company(tmp_path)
     company.save(obligation(), "unfiled")
     ready(company.engine, company.owner_confirmation, first="2026-01", last="2026-01")
-    periods = Periods(company.engine)
     service = workflow.Workflow(company.engine)
 
     with company.engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        checked = periods.check_readiness(connection, "2026-01")
-        before = service._query(connection, "2026-01", as_of="2026-02-25", period_readiness=checked)
-    assert before["accounting_closed"] is False
-    assert before["obligations"][0]["status"] == "due"
-    assert before["obligations"][0]["completion_status"] == "due"
+        before = Worklist(company.engine).query(connection, period="2026-01", as_of="2026-02-25")
+    assert before["sections"]["close"]["status"] != "closed"
+    assert before["sections"]["external"]["obligations"][0]["status"] == "due"
+    assert before["sections"]["external"]["obligations"][0]["actual_completion_status"] == "due"
 
     company.close("2026-01")
     after = service.query("2026-01", as_of="2026-02-25")
-    assert after["accounting_closed"] is True
-    assert after["obligations"][0]["status"] == "closed"
-    assert after["obligations"][0]["completion_status"] == "due"
+    assert after["sections"]["close"]["status"] == "closed"
+    assert after["sections"]["external"]["obligations"][0]["status"] == "due"
+    assert after["sections"]["external"]["obligations"][0]["actual_completion_status"] == "due"
 
 
 def test_workflow_order_failure_keeps_current_month_followups(tmp_path):
@@ -106,14 +105,14 @@ def test_workflow_order_failure_keeps_current_month_followups(tmp_path):
     company.save(payroll(), "january")
     current = service.query("2026-02", as_of="2026-03-01")
 
-    for index in (0, 1, 4):
-        assert current["steps"][index] == baseline["steps"][index]
-        assert current["steps"][index]["status"] == "needs_information"
-    assert any(issue["field"] == "missing_payroll" for issue in current["steps"][1]["fact_issues"])
+    assert [item["id"] for item in current["sections"]["materials_and_accounting"]] == [
+        item["id"] for item in baseline["sections"]["materials_and_accounting"]
+    ]
+    assert any(
+        issue["field"] == "missing_payroll" for issue in current["sections"]["close"]["issues"]
+    )
     order_issues = [
-        issue
-        for issue in current["steps"][5]["fact_issues"]
-        if issue.get("code") == "earlier_period_open"
+        issue for issue in current["fact_issues"] if issue.get("code") == "earlier_period_open"
     ]
     assert order_issues == [
         {

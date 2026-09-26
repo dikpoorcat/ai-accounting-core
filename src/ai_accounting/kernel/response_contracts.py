@@ -25,12 +25,22 @@ from .close_review import (
     CloseReviewSourceReference,
 )
 from .contracts import KernelError
-from .response_types import Version1, Version2, Version3, Version4, Version6, WireFen
+from .response_types import Version1, Version2, Version4, Version5, Version7, WireFen
 
 Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")]
 Day = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")]
 Count = Annotated[int, Field(ge=0)]
 AccountType = Literal["bank", "cash", "payment_platform"]
+WorkArea = Literal["bank", "payroll", "transactions", "tax", "assets", "financing"]
+ActualCompletionStatus = Literal["not_applicable", "completed", "due", "pending"]
+BasisReviewStatus = Literal[
+    "not_applicable",
+    "not_reviewed",
+    "reviewed",
+    "difference_identified",
+    "outdated",
+    "unestablished",
+]
 CoverageState = Literal["missing", "partial", "complete", "not_applicable"]
 T = TypeVar("T")
 
@@ -189,6 +199,7 @@ class ReadinessIssue(ResponseObject):
     location: NotRequired[str | None]
     semantics: NotRequired[str]
     domain: NotRequired[str]
+    work_area: NotRequired[WorkArea]
     category: NotRequired[str]
     inventory_id: NotRequired[Count]
     subject_id: NotRequired[str]
@@ -320,6 +331,7 @@ class SettlementFollowup(ResponseObject):
     current_cutoff_period: NotRequired[Month]
     issues: NotRequired[list[ReadinessIssue]]
     obligation_count: Count
+    followup_count: Count
     complete: bool
     unestablished_state_selection_count: Count
     movement_count: Count
@@ -332,7 +344,8 @@ class SettlementFollowup(ResponseObject):
 class ExternalFollowup(ResponseObject):
     status: Literal["completed", "followup_required", "unestablished"]
     obligation_count: Count
-    completion_status_counts: dict[str, Count]
+    actual_completion_status_counts: dict[ActualCompletionStatus, Count]
+    basis_review_status_counts: dict[BasisReviewStatus, Count]
     basis_issue_count: Count
     scope_period: Month
     scope_semantics: Literal["obligation_interval_includes_selected_period"]
@@ -618,7 +631,7 @@ class FundsData(ResponseObject):
 
 
 class FundsDashboardResponse(ResponseObject):
-    schema_version: Version6
+    schema_version: Version7
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1146,7 +1159,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version6
+    schema_version: Version7
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1287,7 +1300,8 @@ class FileJob(ResponseObject):
     kind: str
     status: str
     attempts: Count
-    last_error: str | None
+    error_code: str | None
+    error_message: str | None
     result_issue: NotRequired[ReadinessIssue]
     contract_issues: NotRequired[list[ReadinessIssue]]
     association: Literal["direct_source", "period_scope"]
@@ -1303,7 +1317,9 @@ class ExternalObligation(ResponseObject):
     label: str
     start_period: Month
     end_period: Month
-    completion_status: str
+    actual_completion_status: ActualCompletionStatus
+    basis_review_status: BasisReviewStatus
+    basis_review_calculation_id: str | None
     due_date: Day | None
     issue_count: Count
     fact_issues: list[ReadinessIssue]
@@ -1566,7 +1582,7 @@ class EmployeesData(ResponseObject):
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version6
+    schema_version: Version7
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1788,7 +1804,7 @@ class AssetsData(ResponseObject):
 
 
 class DashboardAssetsResponse(ResponseObject):
-    schema_version: Version6
+    schema_version: Version7
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1893,7 +1909,8 @@ class BusinessStatusCurrentFollowups(ResponseObject):
 class ExternalSummary(ResponseObject):
     status: str
     obligation_count: Count
-    completion_status_counts: dict[str, Count]
+    actual_completion_status_counts: dict[ActualCompletionStatus, Count]
+    basis_review_status_counts: dict[BasisReviewStatus, Count]
     basis_issue_count: Count
     as_of: Day
     as_of_semantics: Literal["current_knowledge"]
@@ -2042,7 +2059,7 @@ class BusinessStatusData(ResponseObject):
 
 
 class DashboardBusinessStatusResponse(ResponseObject):
-    schema_version: Version4
+    schema_version: Version5
     snapshot_version: str
     selected_period: DashboardPeriod
     read_semantics: ReadSemantics
@@ -2166,7 +2183,7 @@ class ReportTechnical(ResponseObject):
 
 
 class DashboardQuarterlyReportResponse(ResponseObject):
-    schema_version: Version3
+    schema_version: Version4
     close_state: Literal["open", "closed"]
     readiness_state: Literal["ready", "blocked"]
     carry_forward: CarryForward
@@ -2202,7 +2219,7 @@ class PeriodPreparationData(ResponseObject):
 
 
 class DashboardPeriodPreparationResponse(ResponseObject):
-    schema_version: Version3
+    schema_version: Version4
     projection: Literal["dashboard_period_preparation_result"]
     read_context: DashboardReadContext
     period: Month
@@ -2220,7 +2237,8 @@ class BrowserJob(ResponseObject):
     kind: str
     status: Literal["pending", "running", "succeeded", "failed"]
     attempts: Count
-    last_error: str | None
+    error_code: str | None
+    error_message: str | None
     download_available: bool
     download_file_name: str | None
     delivery_status: Literal["pending", "unavailable", "external", "invalid", "verified"]
@@ -2229,7 +2247,7 @@ class BrowserJob(ResponseObject):
 
 
 class BrowserJobsResponse(ResponseObject):
-    schema_version: Version1
+    schema_version: Version2
     company_id: str
     database_id: str
     items: list[BrowserJob]
@@ -2280,7 +2298,302 @@ class ReportExportReceipt(ResponseObject):
     preview_digest: str
 
 
+class MaterialInventory(ResponseObject):
+    id: Count
+    period: int
+    category: WorkArea
+    expected: Count
+    received: Count
+    no_business: Annotated[int, Field(ge=0, le=1)]
+    evidence_digest: str
+
+
+class MaterialInventoryReference(ResponseObject):
+    inventory_id: Count
+    period: Month
+    category: WorkArea
+    content_digest: str
+
+
+class MaterialCoverageRow(ResponseObject):
+    source_id: str
+    source_fact_id: str
+    location: str
+    amount_fen: WireFen | None
+    recognition_period: Month | None
+    origin_periods: list[Month]
+    review_period: Month
+    responsibility: Literal["direct", "closed_followup", "unassigned"]
+    joint_periods: NotRequired[list[Month]]
+    group_ids: NotRequired[list[str]]
+    complete: bool
+
+
+class InspectedFileSummary(ResponseObject):
+    source_id: str
+    source_fact_id: str
+    item_count: Count
+    unprocessed_count: Count
+    unknown_period_count: Count
+    issue_count: Count
+    status: Literal["complete", "needs_information"]
+
+
+class UnallocatedFileSummary(ResponseObject):
+    source_id: str
+    source_fact_id: str
+    status: Literal["needs_information"]
+    allocation_required: TrueValue
+
+
+class MaterialCoverageContent(ResponseObject):
+    period: Month
+    closed_through: Month | None
+    coverage: list[MaterialCoverageRow]
+    source_versions: list[str]
+    resolution_versions: list[str]
+    group_versions: list[str]
+    allocation_versions: list[str]
+    inventory_versions: list[MaterialInventoryReference]
+    file_summaries: list[InspectedFileSummary | UnallocatedFileSummary]
+    file_status: Literal["complete", "needs_information"]
+    fact_ids: list[str]
+    status: Literal["complete", "needs_information"]
+    coverage_digest: str
+
+
+class MaterialCoverage(MaterialCoverageContent):
+    issues: list[ReadinessIssue]
+
+
+class FullMaterialFollowup(CheckFollowup):
+    inventories: dict[WorkArea, MaterialInventory]
+    coverage: MaterialCoverage
+
+
+class UnpublishedBusiness(ResponseObject):
+    id: str
+    kind: str
+
+
+class FullAccountingFollowup(CheckFollowup):
+    unpublished: list[UnpublishedBusiness]
+    pending_subject_id: str | None
+
+
+class AdoptedReadinessSources(ResponseObject):
+    facts: list[str]
+    calculations: list[str]
+
+
+class FullCloseRequirements(CheckFollowup):
+    readiness: dict[str, AdoptedReadinessSources]
+
+
+class PreviousClose(ResponseObject):
+    period: int
+    digest: str
+
+
+class FullReadiness(Readiness):
+    previous_close: PreviousClose | None
+    materials: FullMaterialFollowup | None
+    accounting: FullAccountingFollowup | None
+    close_requirements: FullCloseRequirements | None
+
+
+class RecordedValue(ResponseObject, Generic[T]):  # noqa: UP046
+    status: Literal["recorded"]
+    value: T
+
+
+class FullRecordedReadiness(ResponseObject):
+    status: Literal["ready"]
+    source: Literal["exact_period_manifest"]
+    readiness: RecordedValue[dict[str, AdoptedReadinessSources]]
+    inventories: RecordedValue[dict[WorkArea, Count]]
+    material_coverage: RecordedValue[MaterialCoverageContent]
+    previous_close_digest: RecordedValue[str | None]
+
+
+class ExternalAdoptedFact(ResponseObject):
+    kind: str
+    subject_id: str
+    fact_id: str
+
+
+class ExternalAdoptedCalculation(ResponseObject):
+    subject_id: str
+    calculation_id: str
+
+
+class ActualCompletionRecord(ResponseObject):
+    subject_id: str
+    calculation_id: str
+    fact_id: str
+    completion_status: Literal["submitted", "confirmed_complete"]
+    completion_date: Day | None
+    source_facts: list[ExternalAdoptedFact]
+    adopted_evidence_digests: list[str]
+    accepted_calculations: list[ExternalAdoptedCalculation]
+    previous_completion_fact_id: str | None
+    known_as_of: bool
+    current_fact: bool
+    confirmation_recorded_at: str | None
+    completion_time_basis: Literal["actual_date", "confirmation_recorded_at", "unestablished"]
+
+
+class WorkflowObligation(ResponseObject):
+    id: str
+    obligation_fact_id: str
+    kind: str
+    start_period: Month
+    end_period: Month
+    due_date: Day | None
+    status: ActualCompletionStatus
+    actual_completion_status: ActualCompletionStatus
+    basis_review_status: BasisReviewStatus
+    basis_review_calculation_id: str | None
+    basis_issues: list[ReadinessIssue]
+    recorded_completions: list[ActualCompletionRecord]
+
+
+class FullExternalFollowup(ResponseObject):
+    status: Literal["completed", "followup_required", "unestablished"]
+    obligations: list[WorkflowObligation]
+    fact_issues: list[ReadinessIssue]
+    scope_period: Month
+    scope_semantics: Literal["obligation_interval_includes_selected_period"]
+
+
+class FullPeriodCurrentFollowups(ResponseObject):
+    knowledge: Literal["current_knowledge"]
+    affects_frozen_readiness: FalseValue
+    materials: FullMaterialFollowup
+    accounting: FullAccountingFollowup
+    close_requirements: FullCloseRequirements
+    settlements: SettlementFollowup
+    external: FullExternalFollowup
+    file_jobs: list[FileJob]
+    tax_import_mapping: TaxImportMappingFollowup
+
+
+class PeriodReadinessResponse(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    period: Month
+    as_of: Day
+    as_of_semantics: Literal["current_knowledge"]
+    closure: Closure
+    frozen_readiness: FullRecordedReadiness | UnavailableReadiness | None
+    readiness: FullReadiness | None
+    current_followups: FullPeriodCurrentFollowups
+    read_semantics: PreparationReadSemantics
+
+
+class WorkInventory(ResponseObject):
+    category: WorkArea
+    id: Count
+    expected: Count
+    received: Count
+    no_business: Annotated[int, Field(ge=0, le=1)]
+
+
+class WorkMaterialStatus(ResponseObject):
+    status: Literal["ready", "needs_information", "unestablished"]
+    inventory: WorkInventory | None
+    source_count: Count
+    issues: list[ReadinessIssue]
+
+
+class WorkAccountingStatus(ResponseObject):
+    status: Literal["ready", "needs_information", "unestablished"]
+    fact_count: Count
+    calculation_count: Count
+    pending_count: Count
+    issues: list[ReadinessIssue]
+
+
+class WorkSource(ResponseObject):
+    subject_id: str
+    kind: str
+    fact_id: str
+    calculation_id: str | None
+    pending: bool
+    work_area: WorkArea
+    lane: Literal["accounting", "material", "management"]
+
+
+class BusinessWorkArea(ResponseObject):
+    id: WorkArea
+    label: str
+    materials: WorkMaterialStatus
+    accounting: WorkAccountingStatus
+    close_issues: list[ReadinessIssue]
+    sources: list[WorkSource]
+
+
+class WorkClose(ResponseObject):
+    status: Literal["closed", "ready", "needs_information"]
+    issues: list[ReadinessIssue]
+    closure: Closure
+
+
+class WorkExternal(ResponseObject):
+    obligations: list[WorkflowObligation]
+    settlements: SettlementFollowup | None
+
+
+class WorkFileJob(ResponseObject):
+    job_id: str
+    kind: str
+    status: Literal["pending", "running", "failed", "succeeded"]
+    attempts: Count
+    error_code: str | None
+    error_message: str | None
+    association: Literal["company", "direct_source", "period_scope"] | None
+    period: Month | ReportPeriod | None
+    references: list[FileReference]
+    verified_when_succeeded: bool
+    current_file_availability: Literal["not_checked"]
+    result_issue: ReadinessIssue | None
+    contract_issues: list[ReadinessIssue]
+
+
+class WorkFiles(ResponseObject):
+    jobs: list[WorkFileJob]
+    tax_import_mapping: TaxImportMappingFollowup | None
+
+
+class WorkSections(ResponseObject):
+    materials_and_accounting: Annotated[list[BusinessWorkArea], Field(min_length=6, max_length=6)]
+    close: WorkClose | None
+    external: WorkExternal
+    files: WorkFiles
+
+
+class WorkflowResponse(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    as_of: Day
+    as_of_semantics: Literal["current_knowledge"]
+    period: Month | None
+    period_selection: Literal[
+        "explicit",
+        "earliest_open_source",
+        "closed_issue_carry",
+        "latest_processed_background",
+        "empty",
+    ]
+    sections: WorkSections
+    fact_issues: list[ReadinessIssue]
+
+
 RESPONSE_ADAPTERS = {
+    "workflow": TypeAdapter(WorkflowResponse),
+    "period_readiness": TypeAdapter(PeriodReadinessResponse),
     "dashboard_context": TypeAdapter(DashboardContextResponse),
     "dashboard_brief": TypeAdapter(DashboardBriefResponse),
     "dashboard_funds": TypeAdapter(FundsDashboardResponse),

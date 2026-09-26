@@ -142,7 +142,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 4
+    assert response["schema_version"] == 5
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
     assert response["data"]["collections"]["events"]["page"]["returned_count"] == 1
@@ -219,7 +219,7 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
         f"/api/local/jobs?company_id={company}&job_id=foreign", headers=headers
     )
     assert status == 200 and jobs == {
-        "schema_version": 1,
+        "schema_version": 2,
         "company_id": company,
         "database_id": service.engine(company).store.database_id,
         "items": [],

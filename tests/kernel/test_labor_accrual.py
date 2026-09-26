@@ -225,14 +225,17 @@ def test_unpaid_labor_enters_export_and_filing_basis_without_claiming_completion
         "labor-filing",
     )
     workflow = Workflow(company.engine)
-    assert workflow.obligation_basis("labor-filing")["accepted_calculations"] == [
+    assert workflow.obligation_basis("labor-filing")["candidate_calculations"] == [
         {
             "subject_id": "labor",
             "calculation_id": company.current("labor", "labor_accrual").id,
         }
     ]
-    assert workflow.query("2026-01", as_of="2026-02-05")["obligations"][0]["status"] != (
-        "completed"
+    assert (
+        workflow.query("2026-01", as_of="2026-02-05")["sections"]["external"]["obligations"][0][
+            "actual_completion_status"
+        ]
+        != "completed"
     )
     template = evidence(company, template_bytes())
     inventory(company)

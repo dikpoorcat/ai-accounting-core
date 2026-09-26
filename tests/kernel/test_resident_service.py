@@ -739,6 +739,7 @@ def test_background_failures_stop_after_three_attempts_across_restart(tmp_path):
     failed = job(store)
     assert failed["status"] == "failed" and failed["attempts"] == 3
     assert failed["last_error"]
+    assert failed["error_code"] == "storage_unavailable"
     assert failed["result"] is None
 
 
@@ -749,6 +750,7 @@ def test_interrupted_last_attempt_becomes_visible_failure_without_retry(tmp_path
     failed = job(store)
     assert failed["status"] == "failed" and failed["attempts"] == 3
     assert failed["last_error"] == "interrupted_retry_exhausted"
+    assert failed["error_code"] == "interrupted_retry_exhausted"
     assert not (tmp_path / "backups").exists()
 
 

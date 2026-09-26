@@ -1011,7 +1011,7 @@ def test_public_prepare_save_and_reuse_repeat_authoritative_check(company):
         assert connection.execute("SELECT 1 FROM subject WHERE id='expense-b'").fetchone() is None
 
 
-def test_business_status_v3_exposes_review_and_exact_registered_entity(company):
+def test_business_status_exposes_review_and_exact_registered_entity(company):
     engine, party = company
     proof = evidence(engine, "business-status")
     saved = engine.save_fact(
@@ -1023,7 +1023,7 @@ def test_business_status_v3_exposes_review_and_exact_registered_entity(company):
         request_id="save-status",
     )
     response = Dashboard(engine).business_status("2026-01", "expense-status")
-    assert response["schema_version"] == 4
+    assert response["schema_version"] == 5
     checks = response["data"]["duplicate_checks"]
     assert checks["status"] == "clear"
     assert checks["strong_candidates"] == checks["weak_candidates"] == []

@@ -257,9 +257,9 @@ def test_pending_changed_plan_blocks_only_its_own_source_and_not_quarter_basis(s
     company, export, template = setup
     _, declaration = declare(company)
     adopt(company, declaration)
-    company.save(obligation("quarterly_tax_and_reports"), "quarter")
+    company.save(obligation("quarterly_financial_report"), "quarter")
     company.close("2026-01")
-    accepted = Workflow(company.engine).obligation_basis("quarter")["accepted_calculations"]
+    accepted = Workflow(company.engine).obligation_basis("quarter")["candidate_calculations"]
     assert [item["subject_id"] for item in accepted] == ["january"]
     actual, _ = declare(company, subject="other-declared", employee_id="other")
     # A metadata-only declaration revision must not rewrite closed accounting.

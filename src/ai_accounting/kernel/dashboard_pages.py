@@ -103,10 +103,6 @@ def seal_collections(snapshot, endpoint, data, filters):
 def preparation_view(value):
     """A labelled page projection, never a replacement for period_readiness."""
 
-    def nullable_sum(values):
-        items = list(values)
-        return None if any(item is None for item in items) else sum(items)
-
     def readiness(part):
         if part is None:
             return None
@@ -114,8 +110,6 @@ def preparation_view(value):
 
     followups = value["current_followups"]
     settlements = followups["settlements"]
-    obligations = settlements["obligations"]
-    unknown = settlements.get("unestablished_state_selections", ())
     frozen = value["frozen_readiness"]
     return {
         **{
@@ -157,29 +151,7 @@ def preparation_view(value):
             "close_requirements": {
                 key: followups["close_requirements"][key] for key in ("status", "issues")
             },
-            "settlements": {
-                key: settlements[key]
-                for key in ("status", "cutoff_period", "current_cutoff_period", "issues")
-                if key in settlements
-            }
-            | {
-                "obligation_count": len(obligations),
-                "complete": settlements.get("complete", True),
-                "unestablished_state_selection_count": len(unknown),
-                "movement_count": settlements.get("movement_count", 0),
-                "source_amount_fen": None
-                if unknown
-                else nullable_sum(item["source_amount_fen"] for item in obligations),
-                "paid_fen": None
-                if unknown
-                else nullable_sum(item["paid_fen"] for item in obligations),
-                "other_settled_fen": None
-                if unknown
-                else nullable_sum(item["other_settled_fen"] for item in obligations),
-                "remaining_fen": None
-                if unknown
-                else nullable_sum(item["remaining_fen"] for item in obligations),
-            },
+            "settlements": settlements,
             "external": followups["external"],
             "file_jobs": followups["file_jobs"],
             "tax_import_mapping": followups["tax_import_mapping"],

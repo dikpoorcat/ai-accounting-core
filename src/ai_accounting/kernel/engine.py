@@ -69,6 +69,57 @@ class Engine:
         with self.store.connection(read_only=True) as connection:
             return self._replay(connection, key, request_hash)
 
+    def request_result(self, submitted_request_id: str) -> dict:
+        """Recover a committed result from one company-local read snapshot.
+
+        This proves consistency of the saved request and audit records. It
+        cannot validate an original payload digest that was never retained by
+        the caller; resubmission must still use the original idempotency key.
+        """
+        if (
+            not isinstance(submitted_request_id, str)
+            or not submitted_request_id
+            or len(submitted_request_id) > 200
+        ):
+            raise KernelError(
+                "invalid_request_id", "request id must be nonempty and at most 200 chars"
+            )
+        with self.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            request = connection.execute(
+                "SELECT digest,result FROM request WHERE id=?", (submitted_request_id,)
+            ).fetchone()
+            audits = connection.execute(
+                "SELECT action,payload FROM audit WHERE request_id=? LIMIT 2",
+                (submitted_request_id,),
+            ).fetchall()
+            if request is None and not audits:
+                return {
+                    "status": "unknown",
+                    "company_id": self.store.company_id,
+                    "database_id": self.store.database_id,
+                    "submitted_request_id": submitted_request_id,
+                }
+            if request is None or len(audits) != 1 or len(request["digest"]) != 32:
+                raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
+            try:
+                result = json.loads(request["result"])
+                audit_payload = json.loads(audits[0]["payload"])
+            except (TypeError, ValueError):
+                raise KernelError("request_content_invalid", "请求记录与审计记录不一致") from None
+            from .provenance import _result
+
+            if not audits[0]["action"] or _result(audit_payload) != result:
+                raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
+            return {
+                "status": "committed",
+                "company_id": self.store.company_id,
+                "database_id": self.store.database_id,
+                "submitted_request_id": submitted_request_id,
+                "action": audits[0]["action"],
+                "result": result,
+            }
+
     @staticmethod
     def _replay(connection, key, request_hash):
         row = connection.execute("SELECT digest,result FROM request WHERE id=?", (key,)).fetchone()
@@ -185,9 +236,37 @@ class Engine:
         except ValidationError as exc:
             missing = [e for e in exc.errors() if e["type"] == "missing"]
             if missing:
-                issue = missing[0]
+                issues = []
+                for issue in missing:
+                    field = ".".join(map(str, issue["loc"]))
+                    top = str(issue["loc"][0]) if issue["loc"] else ""
+                    field_info = model.model_fields.get(top)
+                    field_extra = field_info.json_schema_extra if field_info else None
+                    metadata = (
+                        field_extra.get("x-accounting-fact", {})
+                        if isinstance(field_extra, dict)
+                        else {}
+                    )
+                    semantics = metadata.get(
+                        "role", "accounting" if model.lane == "accounting" else "management"
+                    )
+                    precision = metadata.get("precision")
+                    issues.append({
+                        "field": field,
+                        "message": (
+                            "缺少必需管理资料"
+                            if semantics == "management"
+                            else "缺少必需核算事实"
+                        ),
+                        "semantics": semantics,
+                        "reusable_sources": [subject_id],
+                        "allowed_precision": [precision] if isinstance(precision, str) else [],
+                    })
                 raise NeedsInformation(
-                    ".".join(map(str, issue["loc"])), "缺少必需核算事实", sources=(subject_id,)
+                    issues,
+                    "缺少必需事实",
+                    resolution={"fact_kind": kind},
+                    registry=self.store.registry,
                 ) from exc
             raise KernelError(
                 "invalid_fact",
@@ -616,7 +695,8 @@ class Engine:
         dependencies = {sid: set() for sid in facts}
         for sid, version in facts.items():
             if any(
-                period.ordinal not in closed for period in version.fact.required_closed_periods()
+                not closed or period.ordinal > max(closed)
+                for period in version.fact.required_closed_periods()
             ):
                 raise KernelError("awaiting_close", "该业务须等待所依据期间关账")
             for read in self._reads(version):
@@ -1453,17 +1533,19 @@ class Engine:
     def retry_job(self, job_id: str, *, request_id: str):
         """An explicit retry starts one new bounded attempt cycle for a failed job."""
         from .backup import _worker_lock
+        from .diagnostics import job_error_message, public_job_code
 
         def operation(connection):
             row = connection.execute(
-                "SELECT status,attempts,last_error FROM jobs WHERE id=?", (job_id,)
+                "SELECT status,attempts,error_code FROM jobs WHERE id=?", (job_id,)
             ).fetchone()
             if row is None:
                 raise KernelError("unknown_job", "后台任务不存在")
             if row["status"] != "failed":
                 raise KernelError("job_not_failed", "仅失败的任务可以重新尝试")
             connection.execute(
-                "UPDATE jobs SET status='pending',attempts=0,last_error=NULL,result=NULL "
+                "UPDATE jobs SET status='pending',attempts=0,"
+                "last_error=NULL,error_code=NULL,result=NULL "
                 "WHERE id=?",
                 (job_id,),
             )
@@ -1471,7 +1553,8 @@ class Engine:
                 "status": "pending",
                 "job_id": job_id,
                 "previous_attempts": row["attempts"],
-                "previous_error": row["last_error"],
+                "previous_error_code": public_job_code(row["error_code"]),
+                "previous_error_message": job_error_message(public_job_code(row["error_code"])),
             }
 
         with _worker_lock(self.store.path) as acquired:
@@ -1482,6 +1565,7 @@ class Engine:
             )
 
     def jobs(self, *, status: str | None = None, limit: int = 50, job_id: str | None = None):
+        from .diagnostics import job_error_message, public_job_code
         if status not in (None, "pending", "running", "succeeded", "failed"):
             raise ValueError("unknown job status")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1490,15 +1574,21 @@ class Engine:
             raise ValueError("invalid job identity")
         with self.store.connection(read_only=True) as connection:
             rows = connection.execute(
-                "SELECT id,kind,status,attempts,last_error,result FROM jobs "
+                "SELECT id,kind,status,attempts,error_code,result FROM jobs "
                 "WHERE (? IS NULL OR status=?) AND (? IS NULL OR id=?) "
                 "ORDER BY rowid DESC LIMIT ?",
                 (status, status, job_id, job_id, limit),
             )
-            return [
-                {**dict(row), "result": json.loads(row["result"]) if row["result"] else None}
-                for row in rows
-            ]
+            result = []
+            for row in rows:
+                code = public_job_code(row["error_code"]) if row["status"] == "failed" else None
+                result.append({
+                    **dict(row),
+                    "error_code": code,
+                    "error_message": job_error_message(code),
+                    "result": json.loads(row["result"]) if row["result"] else None,
+                })
+            return result
 
     def ledger(self, period: str, *, after_number: int = 0, limit: int = 100):
         if type(limit) is not int or not 1 <= limit <= 500:

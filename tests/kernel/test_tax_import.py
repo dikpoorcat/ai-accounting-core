@@ -279,7 +279,9 @@ def test_frozen_tax_export_retries_after_file_publication_without_new_submission
         if stage == "files_published":
             raise RuntimeError("simulated crash after durable files")
 
-    assert tax_import.run_tax_import_jobs(instance.engine, fault=crash)[0]["status"] == "failed"
+    failed = tax_import.run_tax_import_jobs(instance.engine, fault=crash)[0]
+    assert failed["status"] == "failed" and failed["error_code"] == "job_failed"
+    assert instance.engine.jobs(job_id=failed["job_id"])[0]["error_code"] == "job_failed"
     retry = tax_import.run_tax_import_jobs(instance.engine)[0]
     assert retry["status"] == "succeeded", retry
     replay = service.confirm(
@@ -363,4 +365,4 @@ def test_retry_verifies_contents_even_when_file_checksum_manifest_was_changed(tm
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     result = tax_import.run_tax_import_jobs(instance.engine)[0]
     assert result["status"] == "failed"
-    assert "BIFF8内容" in result["error"]
+    assert result["error_code"] == "job_failed"

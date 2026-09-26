@@ -22,6 +22,7 @@ export function businessStateLabel(status: string | null | undefined) {
     needs_information: "需要补充资料", needs_review: "需要复核", blocked: "尚有条件待处理", pending: "待处理", incomplete: "尚未完整", complete: "已完整",
     succeeded: "文件生成成功", failed: "文件处理失败", running: "处理中", recorded: "已记录", not_recorded: "未记录", unavailable: "无法提供",
     settled: "已结清", over_settled: "超额结算", partial: "部分结算", open: "尚未结算", resolved: "关系已确认", unresolved: "关系尚待确认",
+    due: "已到办理期限", not_reviewed: "账务尚待核对", reviewed: "账务已核对一致", difference_identified: "账务核对存在差异", outdated: "账务依据已变化，须重新核对",
   };
   return status ? labels[status] ?? "状态待核对" : "未知";
 }

@@ -8,9 +8,8 @@
 ## 一致快照与时间口径
 
 公共查询各自在一个只读 SQLite 事务中完成。Dashboard 已持有连接时调用
-`BusinessQueries._period_readiness(connection, period, as_of=...)`；Workflow 组合调用
-`Workflow._query(connection, period, as_of=..., period_readiness=...)`。同一响应不跨连接
-拼接准备状态。
+`BusinessQueries._period_readiness(connection, period, as_of=...)`；`workflow` 通过
+`Worklist.query` 复用同一期间读取，并组合公司级外部事项和任务。同一响应不跨连接拼接准备状态。
 
 `period` 是账面还原截止月份。`latest_fact` 与 `current_business_result` 表示查询时当前知识，
 不按月份或 `as_of` 回放旧 current；事实所属月、实际 `posting_period` 和正式发布时间分别
@@ -43,19 +42,17 @@
 | 核算完成 | `period_readiness.*.accounting` | 应建事实存在，且相关事实已正式发布、无 pending |
 | 关账业务条件 | `period_readiness.*.close_requirements` | 快照、银行及领域关账检查；不包含付款、全部申报或文件任务 |
 | 实际付款与其他清偿 | `business_status.settlements` | 截止月份按义务稳定键累计的来源、付款、非现金及其他清偿 |
-| 申报及其他外部事项 | `business_status.external`、`period_readiness.current_followups.external` | 按真实完成依据得到的 `completion_status` |
+| 申报及其他外部事项 | `business_status.external`、`period_readiness.current_followups.external` | 分别返回 `actual_completion_status` 与 `basis_review_status` |
 | 文件生成 | `file_jobs` | 冻结任务计划、执行状态和执行时校验结论；不表示付款或申报完成 |
 
-`Workflow.status/steps` 是兼容字段，闭期可继续显示 `closed`。新页面判断实际完成只使用
-义务的 `completion_status`；`accounting_closed` 只说明核算边界。缺少当前完成依据时即使
-月份已关账也仍显示待办。
+`workflow` 版本 1 的 `sections` 分为六类资料与核算、关账、实际办理、文件交付，没有旧步骤或兼容别名。实际申报已完成而账务未核对时，两种状态同时保留；核算关闭不能消除当前外部待办。省略月份时选最早已有来源的开放待处理月，已关闭月份的问题由开放月承接，公司级未办事项和活动／失败文件任务始终保留。
 
 有效工资档案覆盖月份但没有工资事实时，`accounting.issues` 和关账检查来源中均保留
 `missing_payroll`，聚合问题只出现一次。可调用工资准备入口不表示事实已建立或已发布，
 查询也不会自动准备工资。
 
-前期未关闭只阻断关账顺序，不清空当前月份的业务检查。Workflow 的资料、工资和交易步骤
-仍返回实际缺项，关闭步骤保留顺序阻断；正式关账入口的异常顺序不变。
+前期未关闭只阻断关账顺序，不清空当前月份的业务检查。工作清单六类业务
+仍返回实际缺项，关账区保留顺序阻断；正式关账入口的异常顺序不变。
 
 ## 闭期与当前后续事项
 
@@ -65,7 +62,7 @@
 - `exact_close`：`closure={state,digest}`。冻结结论只投影当月 manifest 实际保存的内容；
   `frozen_readiness={status:"ready",source:"exact_period_manifest",...}`，其中 `readiness`、
   `inventories`、`material_coverage`、`previous_close_digest` 每项均包装为
-  `{status:"recorded",value}` 或 `{status:"not_recorded"}`；`readiness` 为 null。
+  `{status:"recorded",value}`；必需依据缺失属于内容错误。当前关账准备 `readiness` 为 null。
 - `covered_by_later_close`：
   `closure={state,sealing_boundary,sealing_digest}`，记录最早更晚闭期边界；当月没有
   manifest，因此 `frozen_readiness={status:"unavailable",reason:"no_exact_period_manifest"}`，
@@ -80,7 +77,9 @@
 范围与截止期间；不混入无关的后来业务。它与 `business_status.settlements` 的历史月末余额
 分别表达，不进入冻结结论或关账门禁。`current_followups.external` 只包含事项起止期间覆盖
 所选月份的已登记义务；其他月份尚未完成的事项不计入所选月待办。页面应把冻结卡片和当前待办分区展示，不能把当前问题
-渲染成原关账失败，也不能因 legacy `closed` 清空当前外部事项。
+渲染成原关账失败，也不能因核算关闭清空当前外部事项。
+
+完整 `period_readiness` 使用严格响应版本 1。`current_followups.settlements` 返回完整计数、未结数量及金额摘要，未知金额保持 null；业务详情通过明确的清偿查询取得。期间任务不携带原始结果袋，保留精确来源、执行时核验和局部问题。
 
 ## 来源与文件任务
 
@@ -95,12 +94,14 @@
 - `report_export` 只用 `plan.report_fact_ids` 建立直接业务关联，季度 `plan.period` 与
   `plan.source_closes` 只能建立期间范围关联。
 
-查询不递归扫描任意 JSON，不把 `excluded_sources` 当采用来源，不关联公司备份，不读取或
+业务详情不递归扫描任意 JSON，不把 `excluded_sources` 当采用来源，不关联公司备份，不读取或
 重验外部文件。`succeeded` 只表示任务执行时完成校验；当前下载可用性继续调用既有专用
 校验入口。
 
 任务计划的集合或关联字段损坏时按任务隔离：保留能够证明的业务或期间关联并附局部问题；
 无法证明关联则跳过或标记未知。损坏的无关任务不能中断普通业务查询。
+
+公司工作清单另外列出全部活动和失败任务，以及各类最近的成功产物。关账备份保留真实月份，手工备份保持公司级。公开错误使用稳定 `error_code/error_message`，原始异常仅留本机诊断；任务成功不代表现有文件仍可下载。
 
 ## 五页接入
 
@@ -117,7 +118,7 @@ Reports 两个窄消费者共同调用。分类缺少精确交易方或科目映
 展示取得、启用、摊销及清偿，不用凭证金额反推生命周期。财务报表页复用同一期间准备结论，
 但报表自身勾稽、接续资料和导出预览仍由 Reports 合同判断。
 
-适配层只做标签、排序和页面分组。已有五页响应字段需兼容保留时，可以从共享结果投影；
+适配层只做标签、排序和页面分组。五页使用生成合同，从共享结果投影；
 不得通过投影改变 `result_digest`、凭证方向、义务稳定键、完成状态或任务关联级别。
 
 定向接入验证至少覆盖：闭期后冲正与替换、冲正后无分录结果、无影响复核不重复、无本月事件、

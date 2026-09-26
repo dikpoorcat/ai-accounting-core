@@ -369,6 +369,8 @@ class Catalog:
                 raise
 
     def recover_operations(self):
+        from .diagnostics import operation_error
+
         with self.connection(read_only=True) as connection:
             pending = [
                 row[0]
@@ -382,24 +384,38 @@ class Catalog:
             try:
                 results.append(self._resume(operation_id))
             except Exception as exc:
+                code, message = operation_error(getattr(exc, "code", type(exc).__name__))
                 results.append(
                     {
                         "operation_id": operation_id,
                         "status": "failed",
-                        "code": getattr(exc, "code", type(exc).__name__),
+                        "code": code,
+                        "message": message,
                     }
                 )
         return results
 
     def operations(self):
+        from .diagnostics import operation_error
+
         with self.connection(read_only=True) as connection:
-            return [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT id,taxpayer_id,kind,status,attempts,last_error "
-                    "FROM company_operation ORDER BY rowid"
-                )
-            ]
+            rows = connection.execute(
+                "SELECT id,taxpayer_id,kind,status,attempts,last_error "
+                "FROM company_operation ORDER BY rowid"
+            )
+            result = []
+            for row in rows:
+                code, message = operation_error(row["last_error"])
+                result.append({
+                    "id": row["id"],
+                    "taxpayer_id": row["taxpayer_id"],
+                    "kind": row["kind"],
+                    "status": row["status"],
+                    "attempts": row["attempts"],
+                    "error_code": code if row["status"] == "failed" else None,
+                    "error_message": message if row["status"] == "failed" else None,
+                })
+            return result
 
     def company_settings(self, company_id: str):
         with self.connection(read_only=True) as connection:

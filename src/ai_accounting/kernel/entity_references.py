@@ -207,7 +207,14 @@ BUSINESS_PATHS = {
     "company_workflow_scope_v2": "calendar_policy_id",
     "external_completion": (
         "obligation_id obligation_fact_id accepted_calculations.*.subject_id "
-        "accepted_calculations.*.calculation_id"
+        "accepted_calculations.*.calculation_id source_facts.*.subject_id "
+        "source_facts.*.fact_id adopted_evidence_digests.* previous_completion_fact_id"
+    ),
+    "external_basis_review": (
+        "completion_id completion_fact_id obligation_id obligation_fact_id "
+        "source_facts.*.subject_id source_facts.*.fact_id "
+        "adopted_calculations.*.subject_id adopted_calculations.*.calculation_id "
+        "reviewed_calculations.*.subject_id reviewed_calculations.*.calculation_id"
     ),
     "opening_bank": "package_id",
     "opening_cash": "package_id",

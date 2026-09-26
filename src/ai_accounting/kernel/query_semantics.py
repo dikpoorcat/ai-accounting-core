@@ -933,3 +933,33 @@ def classify_financial_position(rows: Iterable[Mapping[str, Any]]) -> dict:
         "complete": not issues,
         "issues": issues,
     }
+
+
+def project_settlement_followup(summary):
+    """The bounded period view shared by native reads and the preparation page."""
+
+    obligations = summary["obligations"]
+    unknown = summary.get("unestablished_state_selections", ())
+
+    def nullable_sum(field):
+        values = [item[field] for item in obligations]
+        return None if unknown or any(value is None for value in values) else sum(values)
+
+    return {
+        "status": summary["status"],
+        "cutoff_period": summary["cutoff_period"],
+        "current_cutoff_period": summary.get("current_cutoff_period"),
+        "issues": summary["issues"],
+        "obligation_count": len(obligations),
+        "followup_count": sum(
+            item["remaining_fen"] is None or item["remaining_fen"] != 0
+            for item in obligations
+        ),
+        "complete": summary.get("complete", True),
+        "unestablished_state_selection_count": len(unknown),
+        "movement_count": summary.get("movement_count", 0),
+        "source_amount_fen": nullable_sum("source_amount_fen"),
+        "paid_fen": nullable_sum("paid_fen"),
+        "other_settled_fen": nullable_sum("other_settled_fen"),
+        "remaining_fen": nullable_sum("remaining_fen"),
+    }

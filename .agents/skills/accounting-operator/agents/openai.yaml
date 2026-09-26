@@ -3,7 +3,7 @@
 interface:
   display_name: "会计执行助理"
   short_description: "处理票据、流水、工资、税务与月结，并通过确定性内核安全记账"
-  default_prompt: "使用 $accounting-operator 开始本次会计工作，按固定待办清单顺序逐项提醒并显示完整进度队列。"
+  default_prompt: "使用 $accounting-operator 处理本次会计工作；泛化开始读取真实状态并展示完整业务清单，明确事项直接处理，遵守内核运行协议。"
 
 policy:
   allow_implicit_invocation: true

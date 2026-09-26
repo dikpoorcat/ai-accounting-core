@@ -1,176 +1,35 @@
 <!-- @format -->
 
-# 多公司运行手册
+# 多公司本地运行
 
-> **已退役实现**：本文描述的 PostgreSQL 17 多库集群、数据库角色与 `pg_dump`／`pg_restore` 备份，
-> 以及 `finance-catalog`／`finance-company`／`finance-backup`／`finance-dashboard`／`finance-mcp`
-> 命令行入口均已退役，正文中的旧命令名只作历史说明，不应再调用。
-> 当前内核是 SQLite 本地服务：入口为 `finance-local`，MCP 为 `finance_local_schema`／
-> `finance_local_command`／`finance_local_security`，公司库 v13、目录库 v3，不依赖 PostgreSQL、ORM 或 Alembic。
-> 名称对应：`finance_list_companies`→`companies`，`finance_create_company`→`create_company`，
-> `finance_get_close_backup_configuration`→`company_settings`，`finance_configure_close_backup`→`configure_backup`，
-> `finance_backup`→`backup`（持久任务，用 `jobs`／`run_jobs` 推进和查询），
-> `finance_confirm_accounting_period_close`→`close`（需 `approval_id`）。
-> `finance_preview_company_profile_change`／`finance_confirm_company_profile_change`、
-> `finance_preview_company_status_change`／`finance_confirm_company_status_change`、
-> `finance_prepare_close_backup` 在当前内核**没有对应入口**：公司资料与状态不可变更，也没有独立的关账备份准备命令。
+当前系统供一位本地负责人管理多家公司。一个资料根目录有一份 SQLite 目录库，每家公司有独立业务库，且每个业务库只含一家企业。公共命令绑定 `company_id`，不接受调用者提供数据库 URL、文件路径或 SQL 来选择业务库。目录保存公司索引、负责人身份与配置；公司库保存本公司的事实、证据、计算、凭证、任务和审计。
 
-## 架构与权限
+## 结构与开发库
 
-多公司模式在同一 PostgreSQL 17 集群中使用：
+目录库和公司库使用 `ai-accounting-kernel/2` 体系，各自核对类别、`draft / 0` 结构合同及 SQLite 实际 SQL 指纹。本阶段只用新建的同结构合成库和格式 2 便携公司包验证，不升级旧目录 v1–v3、旧公司 v1–v13 或旧备份，也不覆盖已存在文件。第 9 阶段才冻结首个正式版本，之后结构变化须走明确前向迁移。
 
-- `finance_catalog`：唯一负责人账号、会话、恢复码、身份审计、公司路由、资料投影和生命周期动作。
-- `finance`：迁移前已有公司的业务数据库，物理名称保持不变；它不必是当前默认公司。
-- `finance_company_<32位UUID>`：系统为后续公司生成的业务数据库。公共 MCP、CLI 和看板均不接受调用者提供数据库名、URL 或 SQL。
+启动入口见[本地会计工作台启动](local-kernel-startup.md)。当前不使用 PostgreSQL、Alembic、`pg_dump` 或旧 `finance-company` 系列命令。原数据库、原件和旧备份继续保全，不因本开发基线可新建而清理。
 
-每个业务数据库只有一个 `Organization`，并保存不可复制的数据库身份 UUID。业务归因只保存目录实例、负责人账号、会话和凭据版本快照，不跨数据库建立身份外键。
+## 公司创建、切换与恢复
 
-至少区分运行角色与迁移/供应角色，另保留既有只读备份角色：
+`companies` 列出目录登记的公司。`create_company` 接收明确的统一社会信用代码和名称，返回持久目录操作结果；`operations` 可查看创建或恢复操作的状态、尝试次数、稳定错误码与安全说明。失败后先核对原操作及目标文件，不以另建空公司掩盖身份或结构错误。
 
-- 运行角色：连接 `finance_catalog` 和已登记业务库，不拥有 `CREATEDB`。
-- 迁移/供应角色：运行 Alembic，并只在本地集群创建公司数据库；拥有 `CREATEDB`，但不是超级用户且不拥有创建角色权限。
-- 备份角色：仅可连接目录和已登记业务库并执行只读备份，不拥有建库、建角色或写入权限。
+负责人在页面选择公司；CLI 和 MCP 的每个业务命令显式传 `company_id`。切换公司后重新读取 `company_context`、`workflow` 和相关事实；上家公司的对象、游标、预览、批准、候选与回答范围不能沿用。浏览器的五页资料按选定公司和数据库身份读取。
 
-`.env` 的连接设置如下；URL 中的主机、端口和集群必须一致：
+`restore_company` 接受已验证的格式 2 单公司便携 ZIP、明确的统一社会信用代码与名称，并在新的目标公司位置恢复。恢复检查包、业务库身份、结构、内容和目标路径；已有文件不覆盖。目录负责人身份不从公司包复制。恢复后重新核对公司身份、实际业务、关账和备份配置。当前不导入旧格式或转换旧业务资料。
 
-```dotenv
-DATABASE_URL=postgresql+psycopg://runtime:...@127.0.0.1:5432/finance_catalog
-FINANCE_COMPANY_DATABASE_URL=postgresql+psycopg://runtime:...@127.0.0.1:5432/finance
-FINANCE_MIGRATION_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:5432/finance
-FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:5432/postgres
-```
+## 备份与任务
 
-正式环境会拒绝运行角色与迁移角色相同的配置。仓库不保存任何真实密码。
+每家公司可通过 `company_settings` 查看自己的关账备份位置，再用 `configure_backup` 依据当前配置修订号设置目录。关账和显式 `backup` 都产生持久任务；常驻服务执行备份，`jobs(job_id=...)` 查询任务。`pending`、`running` 和中间 SQLite 文件不算交付，只有 `succeeded` 且结果指向已验证 ZIP 才算完成。
 
-## 双基线与旧库边界
+首次初始备份应在该公司的已配置备份目录生成 `<统一社会信用代码>.finance-company.zip`，每家公司单独一包。第一次只有当前版；后来成功滚动时才出现 `.previous.finance-company.zip`。备份格式 2 记录公司和数据库身份、结构合同及内容摘要。便携包不包含目录库负责人秘密。
 
-目录库和业务库分别只有一个空库基线：`0001_catalog_baseline_v2` 与
-`0001_business_baseline_v4`。旧业务 revision `0001`–`0022`、旧目录 revision
-`0001`–`0004` 以及 `migrate-single-database` 过渡入口均已移除。
+失败任务公开 `error_code` 和安全 `error_message`，原始 `last_error` 只供本机诊断。处理明确原因后可以用 `retry_job` 对同一失败 job 重新尝试；自动尝试次数有限。文件生成或备份完成不代表外部申报、付款或资料办理已完成。
 
-这些新基线不支持旧库原地升级，也不接受通过 SQL 搬运业务行。需要重建已有系统时，只读导出
-登记公司，验证私有回放包，在空目标中创建双基线，重新设置负责人并登录，然后按类型化入口回放
-和验证。完整执行顺序及拒绝边界见[双基线空库回放手册](empty-database-replay.md)。未登记的旧副本
-库不属于回放范围，不自动删除。
+## 会计工作与关账
 
-基线发布后的前向迁移仍须部署到每个已登记业务库，例如 v4 →
-`0002_atomic_corrections`；这条有效链允许保留业务数据升级，不要求重新回放。
-更新代码后先执行 `finance-company check-schema`，检查目录和各公司是否达到各自 head。
-运行端不为未升级的库隐藏新审计字段或保留旧执行路径；详细恢复步骤见
-[本机数据库版本检查](windows-local-operations.md#代码更新后的数据库版本检查)。
+泛化工作从 `workflow(company_id, as_of, period?)` 开始：六类业务分别列资料与核算状态，另列关账、实际办理及文件交付。`period_readiness` 查明确月份。实际申报办理和账务核对分别保存与展示；外部办理可先发生，后续核对过期也不抹去真实完成。季度税务办理与财务报表报送是不同事项。
 
-## 公司生命周期
+正式事实使用类型化入口、证据和预览确认。请求丢失响应时沿用原键重试，或用 `request_result` 查询公司库保存的 `committed` 原结果；`unknown` 不是失败结论。缺少影响处理的事实返回 `needs_information` 与具体 `fact_issues`，先查可复用资料。技术错误不作为向负责人的业务提问。
 
-登录后 AI 使用以下 MCP 工具：
-
-- `finance_list_companies(include_archived)`
-- `finance_create_company(request)`
-- `finance_preview_company_profile_change` / `finance_confirm_company_profile_change`
-- `finance_preview_company_status_change` / `finance_confirm_company_status_change`
-- `finance_get_close_backup_configuration`
-- `finance_configure_close_backup`
-
-创建必须显式提供幂等键、名称、18 位统一社会信用代码、首个资料生效日、月度/季度申报周期和 `0.07`/`0.05`/`0.01` 城建税率；确认说明选填。数据库名与身份由系统生成。失败数据库不会自动删除，同一幂等键可在 `attention_required` 状态下恢复重试。
-
-创建请求可用 `make_primary=true` 把新公司设为默认公司；目录库只允许一个默认公司。公司列表和未显式指定 `org_id` 的看板上下文优先选择该公司，不通过伪造创建时间控制顺序。
-
-资料确认必须携带 preview 返回的同一计算哈希、幂等键和公司业务库内的证据；说明选填且不参与计算哈希。资料版本不可变，只能从未来自然月边界生效；涉及季度税务口径时只能从季度边界生效，也不得覆盖已关账或已确认税期。
-
-公司状态只允许 `active` 与 `archived`。归档公司仍可查询、查看看板和备份，但所有业务写入及资料修改稳定拒绝；恢复为 `active` 后重新允许写入。不提供公共物理删除工具。
-
-## 看板
-
-多公司模式的 `/api/dashboard/context` 返回 schema v2、公司列表、当前公司、公司状态和可用期间。所有数据及报表请求必须携带 `org_id`。前端切换公司时会取消旧请求，并清除不适用于新公司的月份或季度；归档公司显示只读标识。
-
-默认显示公司选择器。固定公司兼容模式仍可使用：
-
-```powershell
-.\.venv\Scripts\finance-dashboard.exe --org-id <公司UUID>
-```
-
-## 独立备份与移交
-
-### 关账自动单公司备份
-
-首次关账前，负责人与 AI 确定一个本机目录，AI 调用
-`finance_configure_close_backup`，显式提交绝对路径、幂等键和负责人的确认说明。目录不存在时只会
-创建路径的最后一级；父目录必须已经存在。该位置按当前公司以不可变版本记录在目录库中，后续
-改位置只为该公司追加新版本；目录库继续保留历史关账所用位置版本及备份尝试的审计归因。
-
-生产环境中新建公司、公司导入和空库回放共用数据库访问配置：同时赋予运行账号必要的业务权限
-及 `finance_backup` 的连接权限，完成后才把公司交给运行环境。备份角色仍仅继承
-`pg_read_all_data`、`pg_monitor`，不创建或提升角色，也不授予业务写入权限。
-
-会计模式关账前自动调用 `finance_prepare_close_backup`：按目录库登记检查权限，发现缺失的
-CONNECT 时，先核验本机同一集群、数据库版本、公司和目录绑定及数据库所有权，再通过部署账号
-幂等补齐。仅修复已登记库的连接权限；未登记库的额外权限、身份不符或未知数据库版本会阻断，
-不扩大访问范围或修改业务。公司创建、导入和关账按相同顺序持有访问配置锁，避免登记发布与
-权限检查交错。`finance_get_close_backup_configuration` 保持只读，真实连接失败时不再报告 ready。
-
-`finance_confirm_accounting_period_close` 在写入前执行同一准备检查：检查目录、专用凭据、
-PostgreSQL 17 `pg_dump`/`pg_restore`，并以真实备份账号验证权限及只读快照；未就绪时不会关账。
-短暂连接故障在连接层最多尝试三次；认证和权限错误立即分类返回，已开始执行的业务或快照体
-不会被连接层重放。这些准备不要求负责人管理数据库权限。关账业务事务提交后，系统使用只读
-`REPEATABLE READ` 导出快照，复制该公司实际引用的证据，验证清单和所有摘要，并生成
-`<统一社会信用代码>.finance-company.zip`。发布前，系统把已验证的当前包滚动为
-`<统一社会信用代码>.previous.finance-company.zip`，再以写穿方式原子发布新当前包，最终只保留
-当前版和上一版两个正式包，并清理能够验证为同一 `org_id` 的其他旧命名包。新包生成或滚动失败
-时不会丢失原当前包。包内不含目录库身份秘密，可以按下文的 `verify-portable`、`unpack` 和
-`import-company` 流程恢复或移交；误关最新月份时应停止服务并从上一版整库恢复，不得只删除该月
-凭证或原地改写已过账数据。
-
-自动备份与业务库事务不能组成跨数据库/文件系统原子事务。若故障发生在关账提交之后，关账仍
-明确返回 `posted`，同时 `close_backup.status=failed`；AI 使用完全相同的关账幂等请求重试即可
-继续备份，不会生成第二次关账。每个关账的尝试次数、结果、文件摘要和所用位置版本都在目录库审计。
-
-部署可通过 `FINANCE_POSTGRES_BIN_DIR` 指定 PostgreSQL 17 客户端目录；未指定时依次从 `PATH`、
-`C:\Program Files\PostgreSQL\17\bin` 和 `C:\PostgreSQL\17\bin` 发现。
-
-### 手工停止服务备份与移交
-
-以下命令分别生成目录包、单公司包或全部相互独立的包：
-
-```powershell
-.\.venv\Scripts\finance-backup.exe create --backup-root D:\Protected\finance-backups --purpose daily --catalog --pg-bin-dir C:\PostgreSQL\17\bin
-.\.venv\Scripts\finance-backup.exe create --backup-root D:\Protected\finance-backups --purpose handoff --org-id <公司UUID> --pg-bin-dir C:\PostgreSQL\17\bin
-.\.venv\Scripts\finance-backup.exe create --backup-root D:\Protected\finance-backups --purpose daily --all --pg-bin-dir C:\PostgreSQL\17\bin
-```
-
-公司包只包含该业务数据库和它实际引用的内容寻址证据，清单记录 artifact 类型、`org_id`、数据库身份、schema revision 和摘要；包内不得出现负责人密码哈希、恢复码或会话秘密表。目录包才包含本机身份和生命周期数据。
-
-`create` 生成的 `.complete` 目录只是中间产物。公司手工备份（包括正式库启用后的初始备份）
-必须继续封装并验证为单个便携 ZIP 才算完成；完成品按
-`<统一社会信用代码>.finance-company.zip` 命名。多家公司必须各自生成独立 ZIP，不得合并。
-初始备份只有这一份当前版 ZIP；后续成功关账滚动时才产生
-`<统一社会信用代码>.previous.finance-company.zip`。目录库备份不伪装成公司便携 ZIP。
-
-目录形式的已验证公司包必须按以下步骤封装、逐字节验证，并可在传输后受控解包：
-
-```powershell
-.\.venv\Scripts\finance-backup.exe pack `
-  --backup-root D:\Protected\finance-backups `
-  --backup-directory D:\Protected\finance-backups\<handoff-backup-id>.complete `
-  --output E:\<统一社会信用代码>.finance-company.zip
-
-.\.venv\Scripts\finance-backup.exe verify-portable `
-  --file E:\<统一社会信用代码>.finance-company.zip
-
-.\.venv\Scripts\finance-backup.exe unpack `
-  --file E:\<统一社会信用代码>.finance-company.zip `
-  --output-root D:\Protected\finance-import
-```
-
-`unpack` 会验证 ZIP 路径、清单摘要、数据库归档和每份证据，并输出可直接传给 `import-company --backup-directory` 的 `.complete` 目录。便携 ZIP 本身不含目录库负责人身份。
-
-目标实例由其当前负责人登录后导入 `handoff` 公司包：
-
-```powershell
-.\.venv\Scripts\finance-company.exe import-company `
-  --backup-root D:\Protected\finance-backups `
-  --backup-directory D:\Protected\finance-backups\<handoff-backup-id> `
-  --pg-bin-dir C:\PostgreSQL\17\bin
-```
-
-导入会创建新的物理数据库，并验证当前 business head、唯一企业、数据库身份、证据摘要及不存在身份秘密表；经摘要复验的证据会安装到目标内容寻址目录并重写库内路径。目标目录存在相同 `org_id` 或纳税人识别号时拒绝。导出不改变源公司；对方确认导入成功后，源端负责人再单独归档。
-
-手工 `create` 仍用于升级前、整套目录或明确移交场景，并继续要求停止服务和确认无目标运行连接；关账自动单公司备份则在业务事务提交后使用 PostgreSQL 一致性在线快照，不停止 MCP。两类备份都验证 `pg_dump` 归档、证据和内容摘要。备份目录所在介质、加密、异地复制与保留周期由负责人决定；备份角色只应获准连接目录及已登记业务数据库。
+关账按公司逐月执行 `preview_close`、同版页面核对、负责人本机密码批准和 `close`。整月批准只用于该公司、该月份及当前预览；发生变化时重新核对。已关账内容冻结，后续更正由开放月承接。外部申报、缴税、文件交付可继续待办，不推定为关账已完成的事项。

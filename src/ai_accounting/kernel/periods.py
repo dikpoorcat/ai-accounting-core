@@ -9,6 +9,12 @@ from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInfo
 from .types import YearMonth, canonical, digest
 
 MATERIAL_CATEGORIES = ("transactions", "payroll", "bank", "tax", "assets", "financing")
+READINESS_WORK_AREAS = {
+    "bank_accounts": "bank",
+    "platform_movements": "transactions",
+    "payroll_presence": "payroll",
+}
+ASSET_FINANCING_READINESS_FIELDS = {"loan_drawdown", "loan_interest"}
 _CURRENT_CLOSE = object()
 
 
@@ -483,6 +489,17 @@ class Periods:
             reads = tuple(required_reads(YearMonth(period)))
             context = Context({read: self.store.select(connection, read) for read in reads})
             found = list(evaluate(YearMonth(period), context))
+            for issue in found:
+                if "work_area" not in issue:
+                    area = READINESS_WORK_AREAS.get(name)
+                    if name == "assets_and_financing":
+                        area = (
+                            "financing"
+                            if issue.get("field") in ASSET_FINANCING_READINESS_FIELDS
+                            else "assets"
+                        )
+                    if area is not None:
+                        issue["work_area"] = area
             readiness_issues.extend(found)
             issues.extend(found)
             used = [item for _read, items in context.trace().selections for item in items]
@@ -531,6 +548,7 @@ class Periods:
         for account in sorted(bank_accounts - reconciled):
             issue = {
                 "field": "bank_reconciliation",
+                "work_area": "bank",
                 "bank_account_id": account,
                 "message": "银行账户尚未完成对账",
             }

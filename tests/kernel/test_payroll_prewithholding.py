@@ -201,14 +201,14 @@ def test_prestart_is_social_filing_basis_but_not_wage_tax_basis_or_tax_export(tm
             kind,
         )
     workflow = Workflow(instance.engine)
-    with pytest.raises(KernelError) as error:
-        workflow.obligation_basis("individual_income_tax")
-    assert error.value.code == "basis_unpublished"
+    pending_tax = workflow.obligation_basis("individual_income_tax")
+    assert pending_tax["candidate_calculations"] == []
+    assert any(item["field"] == "unpublished_basis" for item in pending_tax["fact_issues"])
     instance.publish("july")
     social = workflow.obligation_basis("contribution_declaration")
     tax = workflow.obligation_basis("individual_income_tax")
-    assert len(social["accepted_calculations"]) == 1
-    assert not tax["accepted_calculations"]
+    assert len(social["candidate_calculations"]) == 1
+    assert not tax["candidate_calculations"]
     exported = TaxImport(instance.engine).preview("2026-07")
     assert not exported["rows_fen"]
     assert exported["excluded_sources"][0]["reason"] == "withholding_not_started"
@@ -217,8 +217,12 @@ def test_prestart_is_social_filing_basis_but_not_wage_tax_basis_or_tax_export(tm
     invalid = ExternalCompletion.model_validate_json(
         __import__("json").dumps(
             {
-                **tax,
-                "accepted_calculations": social["accepted_calculations"],
+                "obligation_id": tax["obligation_id"],
+                "obligation_fact_id": tax["obligation_fact_id"],
+                "obligation_kind": tax["obligation_kind"],
+                "start_period": tax["start_period"],
+                "end_period": tax["end_period"],
+                "accepted_calculations": social["candidate_calculations"],
                 "period": "2026-08",
                 "completion_status": "confirmed_complete",
                 "date_status": "not_established",

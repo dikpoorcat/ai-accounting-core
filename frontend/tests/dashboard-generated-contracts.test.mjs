@@ -7,6 +7,8 @@ import * as validators from "../src/api/generated/dashboardValidators.js";
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const schemas = JSON.parse(readFileSync(new URL("../src/api/generated/dashboardResponseSchemas.json", import.meta.url), "utf8"));
 const validatorNames = {
+  workflow: "validateWorkflowResponse",
+  period_readiness: "validatePeriodReadinessResponse",
   dashboard_context: "validateDashboardContextResponse",
   dashboard_brief: "validateDashboardBriefResponse",
   dashboard_funds: "validateDashboardFundsResponse",
@@ -28,7 +30,7 @@ function findField(value, predicate) {
 }
 
 test("generated validators accept all current synthetic backend response branches", () => {
-  assert.equal(Object.keys(samples).length, 26);
+  for (const name of ["empty_workflow", "open_workflow", "empty_readiness", "open_readiness", "frozen_readiness"]) assert(samples[name], name);
   for (const [name, sample] of Object.entries(samples)) {
     const validate = validators[validatorNames[sample.command]];
     assert(validate, `${name}: missing generated validator`);
@@ -41,7 +43,7 @@ test("the explicit generated manifest covers every browser-visible response cont
     "browser_jobs", "browser_security_status", "dashboard_assets", "dashboard_brief",
     "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
-    "dashboard_quarterly_report", "report_export_receipt",
+    "dashboard_quarterly_report", "period_readiness", "report_export_receipt", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
   for (const key of Object.keys(schemas)) assert(source.includes(`["${key}"`), key);
@@ -71,13 +73,14 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    dashboard_context: 2, dashboard_brief: 6, dashboard_funds: 6,
-    dashboard_employees: 6, dashboard_assets: 6, dashboard_business_status: 4,
-    dashboard_quarterly_report: 3, dashboard_period_preparation: 3,
+    workflow: 1, period_readiness: 1,
+    dashboard_context: 2, dashboard_brief: 7, dashboard_funds: 7,
+    dashboard_employees: 7, dashboard_assets: 7, dashboard_business_status: 5,
+    dashboard_quarterly_report: 4, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {
     assert.equal(sample.response.schema_version, versions[sample.command], name);
-    if (sample.command !== "dashboard_context") {
+    if (sample.command.startsWith("dashboard_") && sample.command !== "dashboard_context") {
       assert.equal(typeof sample.response.read_context.company_id, "string", name);
       assert.equal(typeof sample.response.read_context.database_id, "string", name);
       assert.equal(typeof sample.response.read_context.as_of, "string", name);

@@ -235,6 +235,11 @@ def test_close_directly_adopts_latest_no_entry_result(state_review_engine):
     readiness = BusinessQueries(state_review_engine).period_readiness("2026-01", as_of="2026-02-01")
     current = readiness["current_followups"]["settlements"]
     assert current["status"] == "established"
+    with state_review_engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        current = BusinessQueries(state_review_engine).settlements(
+            connection, "2026-01", current=True
+        )
     assert [
         item["calculation_id"] for item in current["business"] if item["subject_id"] == "charge"
     ] == [second["results"][0]["calculation_id"]]
@@ -534,7 +539,8 @@ def test_payment_job_uses_only_frozen_direct_sources_and_does_not_read_files(
             "kind": "payment_export",
             "status": "pending",
             "attempts": 0,
-            "last_error": None,
+            "error_code": None,
+            "error_message": None,
             "result": None,
             "association": "direct_source",
             "references": [source],
@@ -746,9 +752,18 @@ def test_malformed_job_collections_are_isolated_to_the_associated_job(engine):
 
     assert set(jobs) == {ident for ident, _kind, _plan in plans}
     assert all(item["association"] == "period_scope" for item in jobs.values())
-    assert all(item["result"] is None and item["result_issue"] for item in jobs.values())
-    assert all(item["contract_issues"] for item in jobs.values())
     assert all(item["verified_when_succeeded"] is False for item in jobs.values())
+    assert all("result" not in item for item in jobs.values())
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        detail = BusinessQueries(engine).business_collection(
+            connection, None, "2026-01", section="file_jobs"
+        )
+    detailed_jobs = {item["job_id"]: item for item in detail["items"]}
+    assert set(detailed_jobs) == set(jobs)
+    assert all(item["result_issue"] for item in detailed_jobs.values())
+    assert all(item["contract_issues"] for item in detailed_jobs.values())
+    assert all("result" not in item for item in detailed_jobs.values())
 
 
 def test_as_of_changes_no_as_posted_accounting_or_settlement_amount(domain_book):
@@ -782,7 +797,7 @@ def test_external_obligation_is_related_before_any_completion(domain_book):
         "quarter-obligation",
         {
             "period": "2026-01",
-            "obligation_kind": "quarterly_tax_and_reports",
+            "obligation_kind": "quarterly_financial_report",
             "start_period": "2026-01",
             "end_period": "2026-01",
             "due_date": "2026-02-20",
@@ -817,7 +832,7 @@ def test_external_completion_is_not_an_accounting_state_event(domain_book):
         "quarter-obligation",
         {
             "period": "2026-01",
-            "obligation_kind": "quarterly_tax_and_reports",
+            "obligation_kind": "quarterly_financial_report",
             "start_period": "2026-01",
             "end_period": "2026-01",
             "due_date": "2026-02-20",
@@ -831,9 +846,13 @@ def test_external_completion_is_not_an_accounting_state_event(domain_book):
         "external_completion",
         "completion",
         {
-            **basis,
             "period": "2026-02",
+            "obligation_id": basis["obligation_id"],
             "obligation_fact_id": saved_obligation["fact_id"],
+            "obligation_kind": basis["obligation_kind"],
+            "start_period": basis["start_period"],
+            "end_period": basis["end_period"],
+            "accepted_calculations": basis["candidate_calculations"],
             "completion_status": "confirmed_complete",
             "date_status": "known",
             "completion_date": "2026-02-10",
@@ -914,7 +933,7 @@ def test_period_readiness_external_followups_exclude_other_months(domain_book):
         assert external["scope_semantics"] == ("obligation_interval_includes_selected_period")
     assert full["current_followups"]["external"]["obligations"] == []
     assert summary["current_followups"]["external"]["obligation_count"] == 0
-    assert summary["current_followups"]["external"]["completion_status_counts"] == {}
+    assert summary["current_followups"]["external"]["actual_completion_status_counts"] == {}
 
     february = queries.period_readiness("2026-02", as_of="2026-03-25")
     assert [item["id"] for item in february["current_followups"]["external"]["obligations"]] == [
@@ -1015,10 +1034,20 @@ def test_closed_period_current_followups_include_only_related_later_settlement(d
     publish_businesses("payment")
 
     result = BusinessQueries(engine).period_readiness("2026-01", as_of="2026-02-01")
-    settlements = result["current_followups"]["settlements"]
+    summary = result["current_followups"]["settlements"]
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        settlements = BusinessQueries(engine).settlements(
+            connection, "2026-01", current=True
+        )
     obligations = settlements["obligations"]
 
     assert result["closure"]["state"] == "exact_close"
+    assert summary["current_cutoff_period"] == "2026-02"
+    assert summary["obligation_count"] == 1
+    assert summary["source_amount_fen"] == 100
+    assert summary["paid_fen"] == 100
+    assert summary["remaining_fen"] == 0
     assert settlements["scope_period"] == "2026-01"
     assert settlements["current_cutoff_period"] == "2026-02"
     assert settlements["cutoff_semantics"] == ("current_published_relations_independent_of_as_of")

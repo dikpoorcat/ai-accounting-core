@@ -390,7 +390,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     assert nets["560201"] == 660000
     assert nets["5602"] == 78200
     funds = execute("dashboard_funds", {"period": month})
-    assert funds["schema_version"] == 6
+    assert funds["schema_version"] == 7
     mapping_check = funds["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]
     assert mapping_check["status"] == "needs_information"
     assert mapping_check["blocking_scope"] == "tax_import_file"
@@ -486,7 +486,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
         "dashboard_business_status",
         {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"},
     )
-    assert wage_details["schema_version"] == 4
+    assert wage_details["schema_version"] == 5
     current_confirmation = wage_details["data"]["current_business_result"]["payroll_confirmation"]
     frozen_confirmation = wage_details["data"]["frozen_adoption"]["payroll_confirmation"]
     assert current_confirmation["confirmation_revision"] == 2
@@ -639,6 +639,7 @@ def business_contract(value):
 
 
 def readiness_contract(value):
+    assert value["schema_version"] == 1
     assert value["as_of_semantics"] == "current_knowledge"
     assert value["closure"]["state"] == "open"
     assert value["current_followups"]["affects_frozen_readiness"] is False
@@ -646,6 +647,165 @@ def readiness_contract(value):
         key: value[key]
         for key in ("company_id", "database_id", "period", "as_of", "closure", "readiness")
     }
+
+
+def verify_stage8_workflow(call, other_company_id):
+    """Use packaged commands for real completion, separate review and lost-response recovery."""
+    company = call(
+        "create_company", {"taxpayer_id": "91310000123456789D", "name": "运行包流程合成企业"}
+    )
+    cid = company["id"]
+
+    def execute(command, payload):
+        return call(command, {"company_id": cid, **payload})
+
+    empty = execute("workflow", {"as_of": "2026-02-28"})
+    assert empty["schema_version"] == 1 and empty["period"] is None
+    assert {item["id"] for item in empty["sections"]["materials_and_accounting"]} == {
+        "bank", "payroll", "transactions", "tax", "assets", "financing"
+    }
+    evidence = execute(
+        "evidence",
+        {
+            "content_base64": base64.b64encode(b"Synthetic external filing and review").decode(),
+            "media_type": "text/plain",
+            "name": "合成外部办理确认",
+            "request_id": "stage8-evidence",
+        },
+    )["digest"]
+    obligation = execute(
+        "save_fact",
+        {
+            "kind": "external_obligation", "subject_id": "stage8-obligation",
+            "data": {
+                "period": "2026-01", "obligation_kind": "quarterly_tax",
+                "start_period": "2026-01", "end_period": "2026-01",
+                "due_date": "2026-02-20", "applicability_confirmed": True,
+            },
+            "evidence": [evidence], "expected_revision": 0,
+            "request_id": "stage8-obligation-request",
+        },
+    )
+    before = execute("workflow", {"period": "2026-01", "as_of": "2026-02-28"})
+    assert before["schema_version"] == 1
+    assert before["sections"]["external"]["obligations"][0]["actual_completion_status"] == "due"
+    basis = execute("obligation_basis", {"obligation_id": "stage8-obligation"})
+    assert basis["obligation_fact_id"] == obligation["fact_id"]
+    completion_request = {
+        "kind": "external_completion", "subject_id": "stage8-completion",
+        "data": {
+            "period": "2026-02", "obligation_id": basis["obligation_id"],
+            "obligation_fact_id": basis["obligation_fact_id"],
+            "obligation_kind": basis["obligation_kind"],
+            "start_period": basis["start_period"], "end_period": basis["end_period"],
+            "no_reportable_activity_confirmed": True,
+            "completion_status": "confirmed_complete", "date_status": "known",
+            "completion_date": "2026-02-10",
+        },
+        "evidence": [evidence], "expected_revision": 0,
+        "request_id": "stage8-completion-request",
+    }
+    saved = execute("save_fact", completion_request)
+    assert execute("save_fact", completion_request) == saved
+    receipt = execute(
+        "request_result", {"submitted_request_id": completion_request["request_id"]}
+    )
+    assert receipt == {
+        "status": "committed", "company_id": cid,
+        "database_id": company["database_id"],
+        "submitted_request_id": completion_request["request_id"],
+        "action": "confirm_fact", "result": saved,
+    }
+    assert call(
+        "request_result",
+        {"company_id": other_company_id,
+         "submitted_request_id": completion_request["request_id"]},
+    )["status"] == "unknown"
+    preview = execute("preview", {"subjects": ["stage8-completion"]})
+    execute("confirm", {
+        "subjects": ["stage8-completion"], "preview_digest": preview["digest"],
+        "epochs": preview["epochs"], "request_id": "stage8-completion-publish",
+    })
+    completed = execute("workflow", {"period": "2026-01", "as_of": "2026-02-28"})
+    item = completed["sections"]["external"]["obligations"][0]
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "not_reviewed"
+    review = execute("save_fact", {
+        "kind": "external_basis_review", "subject_id": "stage8-review",
+        "data": {
+            "period": "2026-02", "completion_id": "stage8-completion",
+            "completion_fact_id": saved["fact_id"],
+            "obligation_id": basis["obligation_id"],
+            "obligation_fact_id": basis["obligation_fact_id"],
+            "obligation_kind": basis["obligation_kind"],
+            "start_period": basis["start_period"], "end_period": basis["end_period"],
+            "reviewed_calculations": [], "review_result": "matched",
+        },
+        "evidence": [evidence], "expected_revision": 0,
+        "request_id": "stage8-review-request",
+    })
+    assert review["fact_id"]
+    review_preview = execute("preview", {"subjects": ["stage8-review"]})
+    execute("confirm", {
+        "subjects": ["stage8-review"], "preview_digest": review_preview["digest"],
+        "epochs": review_preview["epochs"], "request_id": "stage8-review-publish",
+    })
+    after = execute("workflow", {"period": "2026-01", "as_of": "2026-02-28"})
+    item = after["sections"]["external"]["obligations"][0]
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "reviewed"
+    return cid
+
+
+def verify_stage8_job_recovery(call, validation, company_id):
+    """Exercise failed durable backup, public diagnostics and explicit retry."""
+    blocker = validation / "stage8-blocked-backup"
+    blocker.write_text("synthetic directory blocker", encoding="utf-8")
+    queued = call("backup", {
+        "company_id": company_id, "directory": str(blocker),
+        "request_id": "stage8-failing-backup",
+    })
+    deadline = time.monotonic() + 30
+    while True:
+        job = call("jobs", {"company_id": company_id, "job_id": queued["job_id"]})[0]
+        if job["status"] == "failed" and job["attempts"] == 3:
+            break
+        assert time.monotonic() < deadline, "Synthetic backup did not reach failed state"
+        time.sleep(0.1)
+    assert job["attempts"] == 3
+    assert job["error_code"] and job["error_message"]
+    assert "last_error" not in job and str(blocker) not in job["error_message"]
+    workflow = call("workflow", {
+        "company_id": company_id, "period": "2026-01", "as_of": "2026-02-28"
+    })
+    assert any(
+        item["job_id"] == queued["job_id"] and item["status"] == "failed"
+        for item in workflow["sections"]["files"]["jobs"]
+    )
+    resident_root = validation / "companies"
+    _RUNNERS[resident_root].stop()
+    blocker.unlink()
+    retry = call("retry_job", {
+        "company_id": company_id, "job_id": queued["job_id"],
+        "request_id": "stage8-retry-backup",
+    })
+    assert retry["status"] == "pending"
+    assert retry["previous_error_code"] == job["error_code"]
+    assert retry["previous_error_message"] == job["error_message"]
+    from ai_accounting.kernel.jobs import JobRunner
+
+    runner = JobRunner(_SERVICES[resident_root][0].catalog, interval=0.1)
+    _RUNNERS[resident_root] = runner
+    runner.start()
+    deadline = time.monotonic() + 30
+    while True:
+        retried = call("jobs", {"company_id": company_id, "job_id": queued["job_id"]})[0]
+        if retried["status"] == "succeeded":
+            break
+        assert retried["status"] != "failed", retried
+        assert time.monotonic() < deadline, "Explicit backup retry did not complete"
+        time.sleep(0.1)
+    assert Path(retried["result"]["path"]).is_file()
 
 
 def start_resident(root, *, native_smoke=False):
@@ -987,7 +1147,9 @@ def main():
         not {"preview_managed_reserve_settlement", "confirm_managed_reserve_settlement"}
         & schema["command_schemas"].keys()
     )
-    assert {"business_status", "period_readiness"} <= schema["command_schemas"].keys()
+    assert {"business_status", "period_readiness", "workflow", "request_result"} <= (
+        schema["command_schemas"].keys()
+    )
     for command in (
         "preview",
         "confirm",
@@ -1143,8 +1305,22 @@ def main():
     assert assert_current_formats(_SERVICES[restored_root][0], company_id) == database_formats
     restored_business = call("business_status", business_request, root=restored_root)
     restored_readiness = call("period_readiness", readiness_request, root=restored_root)
+    restored_workflow_request = {
+        "company_id": company_id, "period": "2026-09", "as_of": "2026-09-30"
+    }
+    restored_workflow = call("workflow", restored_workflow_request, root=restored_root)
+    restored_receipt_request = {
+        "company_id": company_id, "submitted_request_id": "package-publish"
+    }
+    restored_receipt = call("request_result", restored_receipt_request, root=restored_root)
+    assert restored_workflow["schema_version"] == 1
+    assert restored_receipt["status"] == "committed"
+    assert restored_receipt["result"] == published
     assert business_contract(restored_business) == business
     assert readiness_contract(restored_readiness) == readiness
+
+    stage8_company_id = verify_stage8_workflow(call, company_id)
+    verify_stage8_job_recovery(call, validation, stage8_company_id)
 
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES
 
@@ -1474,6 +1650,7 @@ def main():
             company_id,
             close_company_id,
             reserve_company_id,
+            stage8_company_id,
         }
 
     default_environment = {
@@ -1566,6 +1743,14 @@ def main():
                     for command, payload, extract, expected in (
                         ("business_status", business_request, business_contract, business),
                         ("period_readiness", readiness_request, readiness_contract, readiness),
+                        (
+                            "workflow", restored_workflow_request,
+                            lambda value: value, restored_workflow,
+                        ),
+                        (
+                            "request_result", restored_receipt_request,
+                            lambda value: value, restored_receipt,
+                        ),
                     ):
                         result = await session.call_tool(
                             "finance_local_command", {"command": command, "payload": payload}
@@ -1645,10 +1830,10 @@ def main():
             assert response.status == 200, (action, wire_dashboard)
             expected_version = {
                 "context": 2,
-                "business-status": 4,
-                "quarterly-report": 3,
-                "period-preparation": 3,
-            }.get(action, 6)
+                "business-status": 5,
+                "quarterly-report": 4,
+                "period-preparation": 4,
+            }.get(action, 7)
             assert wire_dashboard["schema_version"] == expected_version
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id
@@ -1723,6 +1908,8 @@ def main():
                 "dashboard_seven_authenticated_queries": True,
                 "database_formats": database_formats,
                 "cli_mcp_business_status_and_period_readiness": True,
+                "stage8_external_completion_review_and_request_result": True,
+                "stage8_failed_job_and_explicit_retry": True,
                 "dashboard_current_schemas_and_collections": True,
                 "dashboard_integer_cent_strings": True,
                 "relative_cmd_and_powershell_launchers": True,

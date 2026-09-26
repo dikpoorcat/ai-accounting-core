@@ -36,7 +36,7 @@ def test_actual_repair_invalidates_pages_and_deferred_checks_but_noop_does_not(b
     assert result["changed"] is True and result["read_repair_revision"] == 1
     after = dashboard.funds("2026-03", preparation="deferred", limit=1)
     assert after["snapshot_version"] != before["snapshot_version"]
-    assert after["schema_version"] == 6
+    assert after["schema_version"] == 7
     with pytest.raises(KernelError) as error:
         dashboard.funds("2026-03", expected_version=before["snapshot_version"])
     assert error.value.code == "dashboard_snapshot_changed"

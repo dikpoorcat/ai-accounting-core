@@ -28,6 +28,69 @@ from .tax_import import TaxImport
 from .workflow import Workflow
 
 OPERATING_PROTOCOL = {
+    "version": 1,
+    "work_entry": {
+        "generic_start": (
+            "泛化开始先绑定公司、读取company_context，再调用workflow，as_of使用当前实际日期。"
+            "用户没有指定月份时省略period，由内核选择最早真实待处理月；空状态才询问起始月份。"
+            "开场说明公司、月份、当前事项，并完整展示银行、工资、普通业务、税务、资产、融资。"
+            "同时分别说明关账、实际办理和文件交付，不以一个完成覆盖所有状态。"
+        ),
+        "specific_request": "明确交办某件业务时直接查证并处理，不先插入无关完整清单。",
+        "priority": (
+            "已到期且条件齐的事项优先，其他事项按真实依赖推进。"
+            "报税和报社保可先登记真实办理，再核对账务；财报须等待相关期间核算并关账。"
+            "某项缺资料时保留待办并继续其他独立事项，不自动执行真实外部申报或银行付款。"
+            "未知期限不推定逾期，普通未结余额不是付款指令。"
+        ),
+        "progress": (
+            "事实保存、正式发布、关账、实际办理和文件交付分别以系统状态为准。"
+            "完成一项业务后重读workflow并更新进度；同一步没有推进不反复刷清单。"
+            "pending或running任务不能说已经交付，文件产物核验通过后才能提供。"
+        ),
+    },
+    "owner_answers": {
+        "lookup_first": (
+            "先查原件、公司说明、对象、事实、正式结果和任务，再问仍会改变处理的缺项。"
+            "已有唯一明确依据时直接复用；仍有歧义时说明具体范围和有依据的建议，不能补造同意。"
+        ),
+        "scope": (
+            "老板回答只覆盖刚展示的公司、期间、对象和事项。没有变化须形成精确工资复用依据；"
+            "都完成了只对应已列明的外部事项；没有业务只对应明确的资料类别和月份。"
+            "保存原话证据并使用相应类型化入口，不用一个通用已确认标记替代正式事实。"
+            "回答范围不唯一或切公司后，先重新说明范围再确认，不能扩大到未展示事项。"
+        ),
+    },
+    "recovery": {
+        "errors": (
+            "依status、code、fact_issues及resolution处理，不解析中文message猜下一步。"
+            "needs_information先查reusable_sources；技术错误、能力限制和待重算不能直接追问老板。"
+            "resolution只说明有依据的处理入口，不意味着缺少的事实已经成立。"
+        ),
+        "requests": (
+            "响应丢失且原请求仍在时，重发原载荷与原request_id；不能生成新键重复写入。"
+            "只知道请求编号时用request_result查询；unknown只表示未观察到提交，不能认定失败。"
+            "载荷无法可靠恢复时先查真实业务状态，不猜原载荷。"
+            "预览失效须重新读取、预览和核对，改变内容后使用新request_id。"
+        ),
+        "jobs": (
+            "查询精确job_id；pending/running等待同一任务。自动尝试耗尽后按error_code处理原因，"
+            "原因消除后才显式retry_job，不无限开始新的重试周期。目录创建恢复用operations。"
+        ),
+        "resume": (
+            "中断后重新读取schema、公司上下文、workflow、请求回执和相关任务。"
+            "同目录服务重连保留原请求；目录身份变化不得自动重放。"
+            "开放月关账预览在服务重启后重新准备；已经提交的关账从回执和冻结内容确认。"
+        ),
+        "company_switch": (
+            "切换公司及切回都重新绑定company_id并读取company_context和workflow。"
+            "不得沿用另一公司的对象、候选、游标、预览、批准或未提交载荷；只保留明确业务意图。"
+        ),
+    },
+    "user_facing_language_policy": (
+        "默认用直白、简短的简体中文说明公司、事项、结果、仍需处理什么。"
+        "状态必须来自内核；内部编号、哈希和JSON只供技术详情，不用它们代替业务名称。"
+    ),
     "company_binding": "先列出公司并明确当前company_id；公司切换不能沿用另一公司的业务身份或预览。",
     "evidence_first": "先核对已提供资料及既有事实；正式确认事实必须引用实际采用的不可变证据。",
     "typed_facts": "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。",
@@ -90,7 +153,7 @@ OPERATING_PROTOCOL = {
         "save_display_profile只保存单笔业务说明；"
         "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
         "复用稳定业务身份，记录证据文件名和具体来源位置；不只保留内部编号。"
-        "资料后补同时维护私有重放补充清单，不因展示资料缺项阻断核算。"
+        "资料后补保留实际来源，不因展示资料缺项阻断核算。"
         "不从工资生效月推断入职日。月度经营结论先preview_period_commentary读取核算上下文，"
         "再用同一context_digest调用update_period_commentary；闭期补充显示为后补说明，"
         "context_digest只用于提交并发校验；已存说明按独立content_digest及精确来源判断有效性，"
@@ -111,7 +174,11 @@ OPERATING_PROTOCOL = {
         "闭期资料新问题由后续开放月持续承接，直至真实处置完成；不能确认已知后忽略或挪到远期。"
         "同一文件内未来行仅在所属月阻断，file_status仅供诊断，不作为所有月份的门禁。"
     ),
-    "external_actions": "申报、付款和导出是不同事实；文件生成不能视为实际付款或外部提交完成。",
+    "external_actions": (
+        "申报、扣税、缴款和文件交付是不同事实。external_completion保存真实办理与原采用依据；"
+        "external_basis_review保存其与正式账务的精确核对。已申报可以仍待核对或存在差异，"
+        "后续账务变化不能抹掉实际办理。季度税务和季度财报分开，复核不能冒充再次申报。"
+    ),
 }
 
 
@@ -270,7 +337,7 @@ class LocalService:
         from .command_schema import validate_command
         from .response_contracts import validate_response
 
-        payload = validate_command(self.command_models, command, payload)
+        payload = validate_command(self.command_models, command, payload, registry=self.registry)
         if command == "schema":
             return self._dispatch(command, payload)
         authority = self.security.authorize(session_token, request_id=payload.get("request_id"))
@@ -300,6 +367,31 @@ class LocalService:
                     name: model.json_schema() for name, model in self.command_models.items()
                 },
                 "response_schemas": response_schemas(),
+                "error_handling": {
+                    "version": 1,
+                    "needs_information": {
+                        "status": "needs_information",
+                        "issues_field": "fact_issues",
+                        "issue_semantics": "保留核算／管理语义、允许精度和可复用来源；先查资料再问",
+                        "resolution": (
+                            "只在已知下一步时返回 command、fact_kind 或 candidates 单一目标"
+                        ),
+                    },
+                    "rejected": {
+                        "status": "rejected",
+                        "code_field": "code",
+                        "rule": (
+                            "预览失效、来源待发布、错误入口、能力限制和技术故障分别处理，"
+                            "不直接追问老板"
+                        ),
+                    },
+                    "lost_response": (
+                        "先以原请求和原请求键重放，或读取 request_result；unknown 不表示失败"
+                    ),
+                    "changed_content": "重新读取和预览；载荷变化后使用新请求键",
+                    "company_operations": "目录级创建、恢复查询 operations",
+                    "jobs": "读取 error_code 和 error_message；只有核验成功的产物才算交付",
+                },
                 "publication_contract": {
                     "immutable": True,
                     "chain": "one_unforked_chain_per_subject",
@@ -484,6 +576,7 @@ class LocalService:
             "confirm": engine.confirm,
             "overview": engine.overview,
             "jobs": engine.jobs,
+            "request_result": engine.request_result,
             "retry_job": engine.retry_job,
             "ledger": engine.ledger,
             "trace": engine.trace,

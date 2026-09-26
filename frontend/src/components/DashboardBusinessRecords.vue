@@ -13,7 +13,11 @@ function title(value: unknown) {
   const names: Record<string, string> = { net: "个人应付净额", tax: "应缴税款", primary: "来源款项", withheld_tax: "已扣税款", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return text(item.label) || text(item.title) || names[name] || name || "业务记录";
 }
-function state(value: unknown) { const item = record(value); return text(item.relation_state) || text(item.settlement_status) || text(item.status) || text(item.selection_status) || text(item.completion_status) || text(record(item.review).status); }
+function state(value: unknown) { const item = record(value); return text(item.relation_state) || text(item.settlement_status) || text(item.status) || text(item.selection_status) || text(record(item.review).status); }
+function actualCompletion(value: unknown) {
+  const status = text(record(value).actual_completion_status);
+  return status === "completed" ? "已办理" : status === "pending" ? "尚未办理" : businessStateLabel(status);
+}
 function issues(value: unknown) { const item = record(value); return ["issues", "fact_issues", "source_issues", "contract_issues"].flatMap(key => Array.isArray(item[key]) ? item[key] as unknown[] : []).concat(item.result_issue ? [item.result_issue] : []); }
 function candidates(value: unknown) { const item = record(value); return Array.isArray(item.candidate_selections) ? item.candidate_selections as unknown[] : []; }
 function payrollConfirmation(value: unknown) {
@@ -36,7 +40,11 @@ function hasAmount(value: unknown) { return Object.prototype.hasOwnProperty.call
     <article v-for="(item, index) in items" :key="index">
       <strong>{{ title(item) }}</strong>
       <p v-if="text(record(item).period)">{{ text(record(item).period) }}</p>
-      <p v-if="state(item)">{{ businessStateLabel(state(item)) }}</p>
+      <template v-if="text(record(item).actual_completion_status)">
+        <p>{{ actualCompletion(item) }}</p>
+        <p>账务核对：{{ businessStateLabel(text(record(item).basis_review_status)) }}</p>
+      </template>
+      <p v-else-if="state(item)">{{ businessStateLabel(state(item)) }}</p>
       <p v-if="record(item).source_business">来源业务：{{ localBusinessName(text(record(record(item).source_business).kind)) }}</p>
       <template v-if="record(item).selection_status === 'unestablished'">
         <strong>冻结采用未建立</strong>

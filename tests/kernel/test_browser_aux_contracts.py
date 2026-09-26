@@ -28,7 +28,7 @@ def test_browser_jobs_are_projected_without_changing_native_results(
         f"/api/local/jobs?company_id={company['id']}&job_id={queued['job_id']}", headers=headers
     )
     assert status == 200, response
-    assert response["schema_version"] == 1
+    assert response["schema_version"] == 2
     assert response["company_id"] == company["id"]
     assert response["database_id"] == company["database_id"]
     assert len(response["items"]) == 1

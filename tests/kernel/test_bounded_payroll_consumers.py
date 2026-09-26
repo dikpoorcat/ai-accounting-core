@@ -6,7 +6,7 @@ from test_payroll import contribution_policy, income_tax_policy, opening, payrol
 from test_payroll_corrections import Company
 from test_workflow import obligation
 
-from ai_accounting.kernel.contracts import KernelError, NeedsInformation
+from ai_accounting.kernel.contracts import NeedsInformation
 from ai_accounting.kernel.domains.payroll import PayrollBounded
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.periods import Periods
@@ -46,24 +46,29 @@ def test_unpublished_bounded_wage_is_not_missing_person_or_empty_external_basis(
     company.save(obligation(), "obligation")
     workflow = Workflow(company.engine)
     before = workflow.query("2026-01", as_of="2026-02-25")
+    payroll_area = next(
+        item for item in before["sections"]["materials_and_accounting"] if item["id"] == "payroll"
+    )
     payroll_issues = [
         item
-        for step in before["steps"]
-        for item in step["fact_issues"]
+        for item in payroll_area["accounting"]["issues"]
         if item.get("domain") == "payroll"
     ]
     assert any(item["field"] == "unpublished_payroll" for item in payroll_issues)
     assert not any(item["field"] == "missing_payroll" for item in payroll_issues)
-    with pytest.raises(KernelError) as unpublished:
-        workflow.obligation_basis("obligation")
-    assert unpublished.value.code == "basis_unpublished"
+    unpublished = workflow.obligation_basis("obligation")
+    assert unpublished["candidate_calculations"] == []
+    assert any(item["field"] == "unpublished_basis" for item in unpublished["fact_issues"])
     company.publish("bounded-january")
     basis = workflow.obligation_basis("obligation")
-    assert [item["subject_id"] for item in basis["accepted_calculations"]] == ["bounded-january"]
+    assert [item["subject_id"] for item in basis["candidate_calculations"]] == [
+        "bounded-january"
+    ]
+    assert basis["fact_issues"] == []
     assert company.current("bounded-january", "payroll_bounded").values["tax_state"] is None
     # Publishing an exact zero-tax outcome never records an actual external filing.
     state = workflow.query("2026-01", as_of="2026-02-25")
-    assert state["obligations"][0]["status"] == "due"
+    assert state["sections"]["external"]["obligations"][0]["actual_completion_status"] == "due"
 
 
 def test_exact_net_export_includes_bounded_wage_and_still_requires_payee(bounded_company):

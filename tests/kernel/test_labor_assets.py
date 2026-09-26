@@ -439,7 +439,7 @@ def test_labor_filing_basis_includes_capitalized_cost_without_social_or_fake_com
         "filing",
     )
     basis = Workflow(company.engine).obligation_basis("filing")
-    assert basis["accepted_calculations"] == [
+    assert basis["candidate_calculations"] == [
         {
             "subject_id": "labor-cost",
             "calculation_id": company.current("labor-cost", "labor_project_cost").id,

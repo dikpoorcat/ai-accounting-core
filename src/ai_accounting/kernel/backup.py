@@ -746,7 +746,8 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1, _bundle=None) -> li
                         connection.rollback()
                         break
                     connection.execute(
-                        "UPDATE jobs SET status='running',attempts=attempts+1,last_error=NULL "
+                        "UPDATE jobs SET status='running',attempts=attempts+1,"
+                        "last_error=NULL,error_code=NULL "
                         "WHERE id=?",
                         (job["id"],),
                     )
@@ -776,22 +777,28 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1, _bundle=None) -> li
                         request_id=job["id"],
                         _bundle=bundle,
                     )
-                    status, error = "succeeded", None
+                    status, error, error_code = "succeeded", None, None
                 except Exception as exc:
+                    from .diagnostics import job_error_code
+
                     result = None
                     status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
+                    error_code = job_error_code(exc)
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     connection.execute(
-                        "UPDATE jobs SET status=?,last_error=?,result=? WHERE id=?",
-                        (status, error, _json(result) if result is not None else None, job["id"]),
+                        "UPDATE jobs SET status=?,last_error=?,error_code=?,result=? WHERE id=?",
+                        (
+                            status, error, error_code,
+                            _json(result) if result is not None else None, job["id"],
+                        ),
                     )
                     connection.commit()
                 except BaseException:
                     connection.rollback()
                     raise
                 outcomes.append(
-                    {"id": job["id"], "status": status, "result": result, "error": error}
+                    {"id": job["id"], "status": status, "result": result, "error_code": error_code}
                 )
         finally:
             connection.close()

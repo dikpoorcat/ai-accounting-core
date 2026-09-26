@@ -14,7 +14,7 @@ def test_dashboard_current_and_frozen_wage_details_retain_monthly_plan_evidence(
     dashboard = Dashboard(company.engine)
 
     current_response = dashboard.business_status("2026-01", "january", as_of="2026-02-01")
-    assert current_response["schema_version"] == 4
+    assert current_response["schema_version"] == 5
     current = current_response["data"]
     source = current["current_business_result"]["payroll_confirmation"]
 

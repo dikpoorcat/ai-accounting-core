@@ -400,7 +400,7 @@ def test_biff8_original_includes_hidden_rows_sheets_and_exact_fen():
     assert all(item["hidden"] for item in result["items"])
 
 
-def test_workflow_step_remains_incomplete_until_actual_rows_are_resolved(company):
+def test_worklist_material_area_remains_incomplete_until_actual_rows_are_resolved(company):
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
     from ai_accounting.kernel.workflow import Workflow
 
@@ -417,8 +417,24 @@ def test_workflow_step_remains_incomplete_until_actual_rows_are_resolved(company
             request_id=company.request(),
         )
     service = Workflow(company.engine)
-    step = service.query("2026-01", as_of="2026-01-31")["steps"][4]
-    assert step["status"] == "needs_information"
-    assert any(item.get("code") == "material_item_unresolved" for item in step["fact_issues"])
+    area = next(
+        item
+        for item in service.query("2026-01", as_of="2026-01-31")["sections"][
+            "materials_and_accounting"
+        ]
+        if item["id"] == "transactions"
+    )
+    assert area["materials"]["status"] == "needs_information"
+    assert any(
+        item.get("code") == "material_item_unresolved"
+        for item in area["materials"]["issues"]
+    )
     company.resolve(source, "CSV!B2", [company.expense("expense", 1000)])
-    assert service.query("2026-01", as_of="2026-01-31")["steps"][4]["status"] == "ready"
+    area = next(
+        item
+        for item in service.query("2026-01", as_of="2026-01-31")["sections"][
+            "materials_and_accounting"
+        ]
+        if item["id"] == "transactions"
+    )
+    assert area["materials"]["status"] == "ready"

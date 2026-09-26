@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 
 import pytest
 import test_resident_service as resident_cases
+from entity_fixture import seed_registration_entities
 from monthly_close_fixture import ready
 from test_dashboard_transport import authenticated
 from test_resident_service import PASSWORD
@@ -14,6 +15,44 @@ from ai_accounting.kernel.read_state import advance_repair_revision
 from ai_accounting.kernel.service import LocalService
 
 resident = resident_cases.resident
+
+
+def test_owner_review_keeps_unsettled_business_after_summary_projection(resident):
+    _, engine, _, proof, _, execute, _, _ = prepared_company(resident, prepare=False)
+    fields = {
+        "period": "2026-01",
+        "counterparty_id": "supplier",
+        "amount_fen": 12345,
+        "expense_class": "administration",
+        "creditor_kind": "supplier",
+    }
+    seed_registration_entities(engine, "expense", fields)
+    engine.save_fact(
+        "expense",
+        "unpaid-expense",
+        fields,
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="unpaid-expense",
+    )
+    preview = engine.preview(["unpaid-expense"])
+    engine.confirm(
+        ["unpaid-expense"],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="publish-expense",
+    )
+    from material_fixture import supporting_text
+
+    from ai_accounting.kernel.periods import Periods
+
+    supporting_text(engine, proof)
+    Periods(engine).inventory(
+        "2026-01", "transactions", evidence=[proof], expected=1,
+        no_business=False, confirmation_evidence=proof, request_id="expense-materials",
+    )
+    preview = execute("preview_close", period="2026-01", owner_confirmation=proof)
+    assert preview["manifest"]["owner_review"]["followup_summary"]["followup_count"] == 1
 
 
 def prepared_company(resident, *, prepare=True):

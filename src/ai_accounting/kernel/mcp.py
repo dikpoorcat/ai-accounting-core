@@ -13,7 +13,7 @@ def serve(root: Path):
     mcp = FastMCP(
         "local-accounting-kernel",
         instructions=(
-            "Call finance_local_schema first and follow agent_operating_protocol. "
+            "Call finance_local_schema first and follow its versioned agent_operating_protocol. "
             "Bind each request to the selected company. Submit typed facts and evidence, "
             "never free journal entries. Do not infer missing accounting facts."
         ),

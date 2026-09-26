@@ -23,13 +23,13 @@
 `report_income_tax_confirmation` 是季度末的**内部计税口径确认**：
 明确 `not_applicable`、`zero` 或 `assessed`，提供说明与证据，金额与当年累计所得税费用核对。
 `assessed` 必须引用该季度有效的 `income_tax_assessment` 不可变计算版本。
-此事实不会自行生成所得税分录，也不代表实际完成纳税申报；实际申报完成依据归 `workflow`。
+此事实不会自行生成所得税分录，也不代表实际完成纳税申报；真实办理用 `external_completion` 保存，办理后的账务核对用 `external_basis_review`。
 
 这些报表来源通过 `save_fact` 确认即可，不需再调用 `preview/confirm` 发布零分录。
 已配置报表口径时，每月关账在同一只读快照中调用同一报表计算，检查本月及累计范围的分类。
 季末还要求上述内部 CIT 确认。缺项会给出 `fact_issues`，补齐后重新预览关账。
 `Registry.register_snapshot_readiness` 只负责查询适配，不在通用关账器中硬编码报表业务。
-外部实际申报在关账后执行，不反过来形成关账循环。
+外部实际申报可以先于账务办理；财务报表报送仍等待对应期间核算和关账。办理与核对分别留痕，不反过来形成关账循环。
 
 ## 查询和导出
 

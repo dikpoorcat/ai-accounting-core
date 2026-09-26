@@ -1068,16 +1068,18 @@ def build_owner_review(
         settlement_issues = len(followups["settlements"].get("issues", ()))
         external_issues = len(followups["external"].get("fact_issues", ()))
         file_issues = followups["file_jobs"].get("issue_count", 0)
-        settlement_followups = sum(
-            item.get("remaining_fen") is None or item.get("remaining_fen") != 0
-            for item in followups["settlements"].get("obligations", ())
-        )
-        external_counts = followups["external"].get("completion_status_counts", {})
+        settlement_followups = followups["settlements"]["followup_count"]
+        external_counts = followups["external"].get("actual_completion_status_counts", {})
         external_followups = max(
             0,
             followups["external"].get("obligation_count", 0)
             - external_counts.get("completed", 0)
             - external_counts.get("not_applicable", 0),
+        )
+        review_counts = followups["external"].get("basis_review_status_counts", {})
+        external_followups += sum(
+            count for state, count in review_counts.items()
+            if state not in {"reviewed", "not_applicable"}
         )
         file_followups = sum(
             count

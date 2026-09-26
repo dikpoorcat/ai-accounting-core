@@ -119,6 +119,7 @@ export const localBusinessNames: Record<string, string> = {
   report_income_tax_confirmation: "报表所得税确认",
   external_obligation: "外部申报及办理事项",
   external_completion: "外部事项完成确认",
+  external_basis_review: "外部办理与账务核对",
   continuation_report_profile: "接续企业报表口径",
   report_carry_forward: "接账前财务报表累计依据",
   opening_bank: "银行存款期初",

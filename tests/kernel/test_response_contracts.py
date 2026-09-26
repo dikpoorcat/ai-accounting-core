@@ -52,6 +52,54 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     ]
 
 
+def test_workflow_preserves_actual_event_without_claiming_a_review(samples):
+    before = samples["actual_tax_unreviewed"]["response"]
+    after = samples["actual_tax_reviewed"]["response"]
+    old = before["sections"]["external"]["obligations"][0]
+    new = after["sections"]["external"]["obligations"][0]
+    assert old["actual_completion_status"] == new["actual_completion_status"] == "completed"
+    assert old["basis_review_status"] == "not_reviewed"
+    assert new["basis_review_status"] == "reviewed"
+    assert old["recorded_completions"] == new["recorded_completions"]
+    bad = copy.deepcopy(before)
+    bad["sections"]["external"]["obligations"][0]["basis_review_status"] = "all_done"
+    with pytest.raises(KernelError, match="读取结果不符合接口合同"):
+        validate_response("workflow", bad)
+
+
+@pytest.mark.parametrize(
+    "command,sample",
+    [
+        ("workflow", "open_workflow"),
+        ("period_readiness", "open_readiness"),
+    ],
+)
+def test_native_work_contracts_enforce_nested_money(samples, command, sample):
+    value = copy.deepcopy(samples[sample]["response"])
+    summary = (
+        value["sections"]["external"]["settlements"]
+        if command == "workflow"
+        else value["current_followups"]["settlements"]
+    )
+    for amount in (None, 0, -(2**63), 2**63 - 1):
+        summary["remaining_fen"] = amount
+        native = validate_response(command, value)
+        wire = http_response(command, native)
+        encoded = (
+            wire["sections"]["external"]["settlements"]
+            if command == "workflow"
+            else wire["current_followups"]["settlements"]
+        )
+        assert encoded["remaining_fen"] == (None if amount is None else str(amount))
+        assert type(encoded["obligation_count"]) is int
+    for amount in (True, 1.0, "1", 2**63, -(2**63) - 1):
+        summary["remaining_fen"] = amount
+        with pytest.raises(KernelError) as error:
+            validate_response(command, value)
+        assert error.value.code == "response_contract_mismatch"
+        assert all("remaining_fen" in path for path in error.value.details["paths"])
+
+
 @pytest.mark.parametrize("amount", [None, 0, 2**53 + 1, 2**63 - 1, -(2**63)])
 def test_native_and_http_int64_money_in_nested_issues(samples, amount):
     value = copy.deepcopy(samples["cash_funds"]["response"])

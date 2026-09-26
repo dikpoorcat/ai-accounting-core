@@ -705,7 +705,8 @@ def run_tax_import_jobs(engine, *, limit: int = 10, fault=None):
                     connection.rollback()
                     break
                 connection.execute(
-                    "UPDATE jobs SET status='running',attempts=attempts+1,last_error=NULL "
+                    "UPDATE jobs SET status='running',attempts=attempts+1,"
+                    "last_error=NULL,error_code=NULL "
                     "WHERE id=?",
                     (row["id"],),
                 )
@@ -728,18 +729,21 @@ def run_tax_import_jobs(engine, *, limit: int = 10, fault=None):
                 fault("before_files", row["id"])
                 result = _render_tax_plan(Path(payload["output_directory"]), row["id"], plan)
                 fault("files_published", row["id"])
-                status, error = "succeeded", None
+                status, error, error_code = "succeeded", None, None
             except Exception as exc:
+                from .diagnostics import job_error_code
+
                 result, status, error = None, "failed", f"{type(exc).__name__}: {exc}"[:500]
+                error_code = job_error_code(exc)
             with engine.store.connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "UPDATE jobs SET status=?,result=?,last_error=? WHERE id=?",
-                    (status, canonical(result) if result else None, error, row["id"]),
+                    "UPDATE jobs SET status=?,result=?,last_error=?,error_code=? WHERE id=?",
+                    (status, canonical(result) if result else None, error, error_code, row["id"]),
                 )
                 connection.commit()
             outcomes.append(
-                {"job_id": row["id"], "status": status, "result": result, "error": error}
+                {"job_id": row["id"], "status": status, "result": result, "error_code": error_code}
             )
     return outcomes
 

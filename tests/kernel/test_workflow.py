@@ -1,10 +1,11 @@
-"""External completion is durable evidence tied to a version, not a remembered tick."""
+"""External submissions remain real events while accounting reviews follow their own basis."""
 
 import json
+from collections import defaultdict
 
 import pytest
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
-from test_payroll_corrections import Company, payment
+from test_payroll_corrections import Company
 
 from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -16,8 +17,6 @@ from ai_accounting.kernel.storage import Store
 
 def setup_company(tmp_path):
     company = Company.__new__(Company)
-    from collections import defaultdict
-
     company.engine = Engine(
         Store.create(
             tmp_path / "company.sqlite",
@@ -46,33 +45,349 @@ def obligation(kind="individual_income_tax"):
 
 
 def confirmation_clock(monkeypatch, engine, timestamp):
-    """Fix only SQLite's audit clock in synthetic confirmation transactions."""
-
     def fixed_clock(stage, connection):
         if stage == "published":
-            # Test-only UDF defaults require this on the isolated connection;
-            # production keeps trusted_schema disabled and SQLite's own clock.
             connection.execute("PRAGMA trusted_schema=ON")
             connection.create_function("strftime", 2, lambda fmt, when: timestamp)
 
     monkeypatch.setattr(engine, "fault", fixed_clock)
 
 
-def test_external_unfiled_work_is_a_todo_and_closed_steps_stay_final(tmp_path):
-    company = setup_company(tmp_path)
-    company.save(obligation(), "unfiled")
-    service = workflow.Workflow(company.engine)
-    before = service.query("2026-01", as_of="2026-02-25")
-    assert before["obligations"][0]["status"] == "due"
-    company.close("2026-01")
-    after = service.query("2026-01", as_of="2026-03-25")
-    assert all(
-        item["status"] == "closed" and not item["fact_issues"] for item in after["steps"][:6]
+def completion_from_basis(basis, **changes):
+    data = {
+        "period": "2026-02",
+        "obligation_id": basis["obligation_id"],
+        "obligation_fact_id": basis["obligation_fact_id"],
+        "obligation_kind": basis["obligation_kind"],
+        "start_period": basis["start_period"],
+        "end_period": basis["end_period"],
+        "accepted_calculations": basis.get("candidate_calculations", []),
+        "completion_status": "confirmed_complete",
+        "date_status": "known",
+        "completion_date": "2026-02-10",
+    }
+    data.update(changes)
+    return workflow.ExternalCompletion.model_validate_json(json.dumps(data))
+
+
+def save_completion(company, fact, subject="completion", *, adopted_basis=False):
+    receipt = company.engine.register_evidence(
+        b"external receipt",
+        "text/plain",
+        "external receipt",
+        request_id=company.request(),
+    )["digest"]
+    evidence = [receipt]
+    if adopted_basis:
+        source = company.engine.register_evidence(
+            b"actual submitted return",
+            "text/plain",
+            "submitted return",
+            request_id=company.request(),
+        )["digest"]
+        evidence.append(source)
+        fact = fact.model_copy(update={"adopted_evidence_digests": (source,)})
+    return company.engine.save_fact(
+        fact.kind,
+        subject,
+        fact.model_dump(mode="json"),
+        evidence=evidence,
+        expected_revision=0,
+        request_id=company.request(),
     )
-    assert not after["fact_issues"]
 
 
-def test_company_scope_generates_versioned_period_obligations_without_inventing_deadlines(tmp_path):
+def external_item(company, day="2026-02-28", period="2026-01"):
+    result = workflow.Workflow(company.engine).query(period, as_of=day)
+    return next(
+        item for item in result["sections"]["external"]["obligations"] if item["id"] == "obligation"
+    )
+
+
+def review_from_completion(completion, completion_fact_id, reviewed, result):
+    return workflow.ExternalBasisReview(
+        period="2026-02",
+        completion_id="completion",
+        completion_fact_id=completion_fact_id,
+        obligation_id=completion.obligation_id,
+        obligation_fact_id=completion.obligation_fact_id,
+        obligation_kind=completion.obligation_kind,
+        start_period=completion.start_period,
+        end_period=completion.end_period,
+        source_facts=completion.source_facts,
+        adopted_calculations=completion.accepted_calculations,
+        reviewed_calculations=tuple(workflow.AcceptedCalculation(**item) for item in reviewed),
+        review_result=result,
+    )
+
+
+def test_actual_filing_before_payroll_remains_complete_and_review_is_separate(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    service = workflow.Workflow(company.engine)
+    basis = service.obligation_basis("obligation")
+    assert basis["candidate_calculations"] == []
+    completion = completion_from_basis(
+        basis, accepted_calculations=(), adopted_evidence_digests=("placeholder",)
+    )
+    # The exact source digest must be among the saved evidence.
+    original = save_completion(company, completion)
+    with pytest.raises(KernelError) as error:
+        company.publish("completion")
+    assert error.value.code == "invalid_adopted_evidence"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM calculation_current WHERE subject_id='completion'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    submitted = company.engine.register_evidence(
+        b"actual submitted wage tax return",
+        "text/plain",
+        "submitted return",
+        request_id=company.request(),
+    )["digest"]
+    receipt = company.engine.register_evidence(
+        b"external filing receipt",
+        "text/plain",
+        "filing receipt",
+        request_id=company.request(),
+    )["digest"]
+    corrected = completion.model_copy(update={"adopted_evidence_digests": (submitted,)})
+    saved = company.engine.amend_fact(
+        corrected.kind,
+        "completion",
+        corrected.model_dump(mode="json"),
+        evidence=(submitted, receipt),
+        expected_revision=1,
+        recording_error_confirmed=True,
+        request_id=company.request(),
+    )
+    assert saved["fact_id"] != original["fact_id"]
+    company.publish("completion")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "not_reviewed"
+    assert item["recorded_completions"][0]["fact_id"] == saved["fact_id"]
+    assert item["recorded_completions"][0]["adopted_evidence_digests"]
+    assert len(item["recorded_completions"]) == 1
+
+
+def test_bad_source_recording_is_amended_before_real_completion_can_publish(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    incorrect = completion_from_basis(
+        basis,
+        accepted_calculations=(),
+        source_facts=(
+            {
+                "subject_id": "missing-source",
+                "fact_id": "f_missing",
+                "kind": "payroll_tax_declaration_actual",
+            },
+        ),
+    )
+    original = save_completion(company, incorrect)
+    with pytest.raises(NeedsInformation) as error:
+        company.publish("completion")
+    assert error.value.issues[0]["field"] == "source_facts"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM calculation_current WHERE subject_id='completion'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    corrected = incorrect.model_copy(
+        update={"source_facts": (), "no_reportable_activity_confirmed": True}
+    )
+    receipt = company.engine.register_evidence(
+        b"confirmed no activity receipt",
+        "text/plain",
+        "no activity filing receipt",
+        request_id=company.request(),
+    )["digest"]
+    amended = company.engine.amend_fact(
+        corrected.kind,
+        "completion",
+        corrected.model_dump(mode="json"),
+        evidence=(receipt,),
+        expected_revision=1,
+        recording_error_confirmed=True,
+        request_id=company.request(),
+    )
+    assert amended["fact_id"] != original["fact_id"]
+    company.publish("completion")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert [record["fact_id"] for record in item["recorded_completions"]] == [
+        amended["fact_id"]
+    ]
+    with company.engine.store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_revision WHERE subject_id='completion'"
+            ).fetchone()[0]
+            == 2
+        )
+
+
+def test_saved_rejected_completion_cannot_be_bypassed_by_another_root(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    incorrect = completion_from_basis(
+        basis, accepted_calculations=(), adopted_evidence_digests=("missing-adoption",)
+    )
+    save_completion(company, incorrect, "recorded-error")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["recorded-error"])
+    assert error.value.code == "invalid_adopted_evidence"
+
+    later = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
+    )
+    save_completion(company, later, "separate-root")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["separate-root"])
+    assert error.value.code == "completion_continuation_required"
+
+
+def test_published_review_needs_exact_adopted_accounting_basis(tmp_path):
+    company = setup_company(tmp_path)
+    for fact, subject in (
+        (profile(), "profile"),
+        (contribution_policy(), "contributions"),
+        (income_tax_policy(), "income-tax"),
+        (opening(), "opening"),
+        (payroll(), "january"),
+        (obligation(), "obligation"),
+    ):
+        company.save(fact, subject)
+    company.confirm_payroll("january")
+    company.publish("january")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    assert len(basis["candidate_calculations"]) == 1
+    completion = completion_from_basis(basis)
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    reviewed = basis["candidate_calculations"]
+    review = review_from_completion(completion, saved["fact_id"], reviewed, "matched")
+    company.save(review, "review")
+    company.publish("review")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "reviewed"
+
+    changed = payroll().model_copy(update={"accounting_gross_salary_fen": 1100000})
+    company.save(changed, "january", revision=1)
+    company.confirm_payroll("january")
+    company.publish("january")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "outdated"
+
+
+def test_raw_submitted_document_cannot_be_rubber_stamped_as_matched(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation("quarterly_tax"), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis,
+        obligation_kind="quarterly_tax",
+        accepted_calculations=(),
+        adopted_evidence_digests=("placeholder",),
+    )
+    saved = save_completion(company, completion, adopted_basis=True)
+    company.publish("completion")
+    review = review_from_completion(completion, saved["fact_id"], [], "matched")
+    company.save(review, "review")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["review"])
+    assert error.value.code == "review_not_proven"
+
+
+def test_financial_report_requires_close_but_quarterly_tax_does_not(tmp_path):
+    company = setup_company(tmp_path)
+    tax = company.save(obligation("quarterly_tax"), "tax-obligation")
+    report = company.save(obligation("quarterly_financial_report"), "report-obligation")
+    for subject, kind, source in (
+        ("tax-completion", "quarterly_tax", tax),
+        ("report-completion", "quarterly_financial_report", report),
+    ):
+        fact = workflow.ExternalCompletion(
+            period="2026-02",
+            obligation_id=subject.replace("-completion", "-obligation"),
+            obligation_fact_id=source["fact_id"],
+            obligation_kind=kind,
+            start_period="2026-01",
+            end_period="2026-01",
+            no_reportable_activity_confirmed=True,
+            completion_status="submitted",
+            date_status="known",
+            completion_date="2026-02-10",
+        )
+        save_completion(company, fact, subject)
+    company.publish("tax-completion")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["report-completion"])
+    assert error.value.code == "awaiting_close"
+
+
+def test_real_supplemental_submission_links_previous_exact_fact(tmp_path):
+    company = setup_company(tmp_path)
+    first_obligation = company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    original = completion_from_basis(
+        basis,
+        no_reportable_activity_confirmed=True,
+        accepted_calculations=(),
+    )
+    first = save_completion(company, original, "z-original")
+    company.publish("z-original")
+    followup = original.model_copy(
+        update={
+            "period": "2026-03",
+            "completion_date": "2026-03-02",
+            "previous_completion_fact_id": first["fact_id"],
+        }
+    )
+    save_completion(company, followup, "a-supplement")
+    company.publish("a-supplement")
+    assert first_obligation["fact_id"] == basis["obligation_fact_id"]
+    item = external_item(company, day="2026-03-10")
+    assert item["actual_completion_status"] == "completed"
+    assert len(item["recorded_completions"]) == 2
+    assert item["recorded_completions"][1]["previous_completion_fact_id"] == first["fact_id"]
+
+
+def test_supplement_cannot_precede_original_actual_completion(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    original = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
+    )
+    first = save_completion(company, original)
+    company.publish("completion")
+    earlier = original.model_copy(
+        update={
+            "period": "2026-03",
+            "completion_date": "2026-02-01",
+            "previous_completion_fact_id": first["fact_id"],
+        }
+    )
+    save_completion(company, earlier, "invalid-supplement")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["invalid-supplement"])
+    assert error.value.code == "invalid_completion_continuation"
+
+
+def test_company_scope_generates_six_versioned_obligations_without_deadlines(tmp_path):
     company = setup_company(tmp_path)
     company.save(
         workflow.FilingCalendarPolicy(
@@ -87,7 +402,7 @@ def test_company_scope_generates_versioned_period_obligations_without_inventing_
                     cycle="monthly"
                     if kind in workflow.MONTHLY_PAYROLL_OBLIGATIONS
                     else "quarterly"
-                    if kind == "quarterly_tax_and_reports"
+                    if kind in {"quarterly_tax", "quarterly_financial_report"}
                     else "annual",
                 )
                 for kind in workflow.SOURCES
@@ -112,304 +427,73 @@ def test_company_scope_generates_versioned_period_obligations_without_inventing_
     service = workflow.Workflow(company.engine)
     plan = service.prepare_obligations("2026-02")
     assert plan["status"] == "ready"
-    assert len(plan["candidates"]) == 5
+    assert len(plan["candidates"]) == 6
     assert all(item["data"]["due_date"] is None for item in plan["candidates"])
-    quarter = next(
-        item["data"]
-        for item in plan["candidates"]
-        if item["data"]["obligation_kind"] == "quarterly_tax_and_reports"
-    )
-    assert (quarter["start_period"], quarter["end_period"]) == ("2026-01", "2026-03")
-    result = service.confirm_obligations(
+    for kind in ("quarterly_tax", "quarterly_financial_report"):
+        quarter = next(
+            item["data"] for item in plan["candidates"] if item["data"]["obligation_kind"] == kind
+        )
+        assert (quarter["start_period"], quarter["end_period"]) == ("2026-01", "2026-03")
+    confirmed = service.confirm_obligations(
         "2026-02", preview_digest=plan["digest"], request_id=company.request()
     )
-    assert result["source_fact_ids"] == plan["source_fact_ids"]
-    assert len(service.prepare_obligations("2026-02")["reused"]) == 5
+    assert confirmed["source_fact_ids"] == plan["source_fact_ids"]
+    assert len(service.prepare_obligations("2026-02")["reused"]) == 6
 
 
-def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path, monkeypatch):
-    company = setup_company(tmp_path)
-    for fact, subject in (
-        (profile(), "profile"),
-        (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
-        (payroll(), "january"),
-        (obligation(), "obligation"),
-    ):
-        company.save(fact, subject)
-    company.confirm_payroll("january")
-    company.publish("january")
-    company.save(payment(), "actual-pay")
-    company.publish("actual-pay")
-    original_payment = company.current("actual-pay", "payment")
-    service = workflow.Workflow(company.engine)
-    basis = service.obligation_basis("obligation")
-    assert len(basis["accepted_calculations"]) == 1
-    completion = workflow.ExternalCompletion.model_validate_json(
-        __import__("json").dumps(
-            {
-                **basis,
-                "period": "2026-02",
-                "completion_status": "confirmed_complete",
-                "date_status": "not_established",
-                "completion_date": None,
-            }
-        )
-    )
-    with monkeypatch.context() as clock:
-        confirmation_clock(clock, company.engine, "2026-02-20T10:00:00.000Z")
-        company.save(completion, "completion")
-        company.publish("completion")
-    assert service.query("2026-02", as_of="2026-03-01")["obligations"][0]["status"] == "completed"
-    assert company.current("completion", "external_completion").values["completion_date"] is None
-    changed = payroll().model_copy(update={"accounting_gross_salary_fen": 1100000})
-    company.save(changed, "january", revision=1)
-    assert "completion" in company.pending()
-    company.confirm_payroll("january")
-    company.publish("january")
-    revised_payment = company.current("actual-pay", "payment")
-    assert revised_payment.fact_id == original_payment.fact_id
-    assert revised_payment.values["amount_fen"] == original_payment.values["amount_fen"]
-    with company.engine.store.connection(read_only=True) as connection:
-        assert (
-            connection.execute("SELECT count(*) FROM subject WHERE kind='payment'").fetchone()[0]
-            == 1
-        )
-    assert not company.current("completion", "external_completion").values["basis_current"]
-    assert service.query("2026-02", as_of="2026-03-01")["obligations"][0]["status"] == "due"
-    revised = workflow.ExternalCompletion.model_validate_json(
-        __import__("json").dumps(
-            {
-                **service.obligation_basis("obligation"),
-                "period": "2026-02",
-                "completion_status": "submitted",
-                "date_status": "known",
-                "completion_date": "2026-02-21",
-            }
-        )
-    )
-    with pytest.raises(KernelError, match="不可|不"):
-        company.save(revised, "completion", revision=1)
-    company.save(revised, "resubmission")
-    company.publish("resubmission")
-    assert service.query("2026-02", as_of="2026-03-01")["obligations"][0]["status"] == "completed"
-    assert company.current("completion", "external_completion").values["completion_date"] is None
-
-
-def test_typed_direct_completion_cannot_bypass_required_close(tmp_path):
-    company = setup_company(tmp_path)
-    saved = company.save(obligation("quarterly_tax_and_reports"), "obligation")
-    completion = workflow.ExternalCompletion(
-        period="2026-02",
-        obligation_id="obligation",
-        obligation_fact_id=saved["fact_id"],
-        obligation_kind="quarterly_tax_and_reports",
-        start_period="2026-01",
-        end_period="2026-01",
-        accepted_calculations=(),
-        completion_status="submitted",
-        date_status="known",
-        completion_date="2026-02-10",
-    )
-    company.save(completion, "completion")
-    with pytest.raises(KernelError) as error:
-        company.engine.preview(["completion"])
-    assert error.value.code == "awaiting_close"
-
-
-def completion_from_basis(basis, **changes):
-    return workflow.ExternalCompletion.model_validate_json(
-        json.dumps(
-            dict(
-                **basis,
-                period="2026-02",
-                completion_status="confirmed_complete",
-                date_status="known",
-                completion_date="2026-02-10",
-            )
-            | changes
-        )
-    )
-
-
-def test_empty_basis_cannot_hide_a_known_unpublished_payroll(tmp_path):
-    company = setup_company(tmp_path)
-    saved = company.save(obligation(), "obligation")
-    service = workflow.Workflow(company.engine)
-    empty = service.obligation_basis("obligation")
-    company.save(payroll(), "unpublished-payroll")
-    with pytest.raises(KernelError) as error:
-        service.obligation_basis("obligation")
-    assert error.value.code == "basis_unpublished"
-    company.save(completion_from_basis(empty, no_reportable_activity_confirmed=True), "completion")
-    with pytest.raises(NeedsInformation) as error:
-        company.engine.preview(["completion"])
-    assert error.value.issues[0]["field"] == "accepted_calculations"
-    assert saved["fact_id"] == empty["obligation_fact_id"]
-    assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] != "completed"
-
-
-def test_empty_source_requires_explicit_no_activity_and_a_real_completion_evidence(tmp_path):
-    company = setup_company(tmp_path)
-    company.save(obligation(), "obligation")
-    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
-    company.save(completion_from_basis(basis), "unconfirmed-empty")
-    with pytest.raises(NeedsInformation) as error:
-        company.engine.preview(["unconfirmed-empty"])
-    assert error.value.issues[0]["field"] == "no_reportable_activity_confirmed"
-    complete = completion_from_basis(basis, no_reportable_activity_confirmed=True)
-    with pytest.raises(NeedsInformation) as error:
-        company.engine.save_fact(
-            complete.kind,
-            "without-proof",
-            complete.model_dump(mode="json"),
-            evidence=(),
-            expected_revision=0,
-            request_id=company.request(),
-        )
-    assert error.value.issues[0]["field"] == "evidence"
-
-
-def test_new_unpublished_source_invalidates_previously_empty_completion(tmp_path):
-    company = setup_company(tmp_path)
-    company.save(obligation(), "obligation")
-    service = workflow.Workflow(company.engine)
-    company.save(
-        completion_from_basis(
-            service.obligation_basis("obligation"), no_reportable_activity_confirmed=True
-        ),
-        "completion",
-    )
-    company.publish("completion")
-    assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] == "completed"
-    company.save(payroll(), "new-payroll")
-    result = service.query("2026-01", as_of="2026-02-28")
-    assert result["obligations"][0]["status"] == "due"
-    assert result["obligations"][0]["basis_issues"][0]["field"] == "unpublished_basis"
-    assert (
-        company.current("completion", "external_completion").values["completion_date"]
-        == "2026-02-10"
-    )
-
-
-def test_material_complete_does_not_complete_payroll_or_declarations(tmp_path):
-    company = setup_company(tmp_path)
-    for fact, subject in (
-        (profile(), "profile"),
-        (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
-        (payroll(), "january"),
-    ):
-        company.save(fact, subject)
-    periods = Periods(company.engine)
-    for category in MATERIAL_CATEGORIES:
-        evidence = sorted({ev for _, ev in company.materials[category]})
-        periods.inventory(
-            "2026-01",
-            category,
-            evidence=evidence,
-            expected=len(evidence),
-            no_business=not evidence,
-            confirmation_evidence=company.owner_confirmation,
-            request_id=company.request(),
-        )
-    result = workflow.Workflow(company.engine).query("2026-01", as_of="2026-02-28")
-    steps = {item["number"]: item for item in result["steps"]}
-    assert all(steps[number]["status"] == "needs_information" for number in (2, 3, 4))
-    assert any(issue["field"] == "january" for issue in steps[2]["fact_issues"])
-
-
-def test_monthly_obligation_recorded_later_still_requires_actual_completion(tmp_path):
-    company = setup_company(tmp_path)
-    company.save(obligation().model_copy(update={"period": "2026-02"}), "late-obligation")
-    registry = company.engine.store.registry
-    reads, evaluate = workflow.required_reads, workflow.required_work
-    assert "external_monthly_declarations" not in registry.readiness
+def test_later_recorded_monthly_obligation_still_requires_actual_completion(tmp_path):
     from ai_accounting.kernel.contracts import Context
     from ai_accounting.kernel.types import YearMonth
 
+    company = setup_company(tmp_path)
+    company.save(obligation().model_copy(update={"period": "2026-02"}), "late")
     with company.engine.store.connection(read_only=True) as connection:
-        ctx = Context(
+        month = YearMonth("2026-01")
+        context = Context(
             {
                 read: company.engine.store.select(connection, read)
-                for read in reads(YearMonth("2026-01"))
+                for read in workflow.required_reads(month)
             }
         )
-    issues = evaluate(YearMonth("2026-01"), ctx)
-    assert issues[0]["obligation_id"] == "late-obligation"
+    issues = workflow.required_work(month, context)
+    assert issues[0]["obligation_id"] == "late"
 
 
-def test_quarterly_completion_waits_for_close_without_blocking_that_close(tmp_path):
-    company = setup_company(tmp_path)
-    company.save(obligation("quarterly_tax_and_reports"), "quarter")
-    fact_id = company.engine.store.current_fact
-    with company.engine.store.connection(read_only=True) as connection:
-        obligation_id = fact_id(connection, "quarter").id
-    company.save(
-        completion_from_basis(
-            dict(
-                obligation_id="quarter",
-                obligation_fact_id=obligation_id,
-                obligation_kind="quarterly_tax_and_reports",
-                start_period="2026-01",
-                end_period="2026-01",
-                accepted_calculations=[],
-            ),
-            no_reportable_activity_confirmed=True,
-        ),
-        "quarter-completion",
-    )
-    with pytest.raises(KernelError) as error:
-        company.engine.preview(["quarter-completion"])
-    assert error.value.code == "awaiting_close"
-    company.close("2026-01")
-    company.publish("quarter-completion")
-    assert (
-        workflow.Workflow(company.engine).query("2026-01", as_of="2026-02-28")["obligations"][0][
-            "status"
-        ]
-        == "completed"
-    )
+def test_empty_current_basis_is_not_a_claim_of_no_reportable_activity(tmp_path):
+    from pydantic import ValidationError
 
-
-def test_future_completion_does_not_count_before_its_actual_date(tmp_path):
     company = setup_company(tmp_path)
     company.save(obligation(), "obligation")
-    service = workflow.Workflow(company.engine)
-    company.save(
-        completion_from_basis(
-            service.obligation_basis("obligation"),
-            completion_date="2026-02-25",
-            no_reportable_activity_confirmed=True,
-        ),
-        "completion",
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    assert basis["candidate_calculations"] == []
+    with pytest.raises(ValidationError):
+        completion_from_basis(basis, accepted_calculations=())
+    explicit = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
     )
+    save_completion(company, explicit)
     company.publish("completion")
-    assert service.query("2026-01", as_of="2026-02-21")["obligations"][0]["status"] == "due"
-    assert service.query("2026-01", as_of="2026-02-25")["obligations"][0]["status"] == "completed"
+    assert external_item(company)["actual_completion_status"] == "completed"
 
 
-def test_active_employee_cannot_disappear_from_empty_basis_or_month_close(tmp_path):
+def test_unpublished_payroll_and_active_profile_are_visible_without_blocking_real_filing(tmp_path):
     company = setup_company(tmp_path)
     company.save(obligation(), "obligation")
-    service = workflow.Workflow(company.engine)
-    empty = service.obligation_basis("obligation")
     company.save(profile(), "active-employee")
-    with pytest.raises(KernelError) as error:
-        service.obligation_basis("obligation")
-    assert error.value.details["fact_issues"][0]["field"] == "missing_payroll"
-    company.save(completion_from_basis(empty, no_reportable_activity_confirmed=True), "completion")
-    with pytest.raises(NeedsInformation) as error:
-        company.engine.preview(["completion"])
-    assert error.value.issues[0]["field"] == "accepted_calculations"
-    with pytest.raises(KernelError) as error:
+    service = workflow.Workflow(company.engine)
+    basis = service.obligation_basis("obligation")
+    assert any(issue["field"] == "missing_payroll" for issue in basis["fact_issues"])
+    completion = completion_from_basis(
+        basis, accepted_calculations=(), adopted_evidence_digests=("placeholder",)
+    )
+    save_completion(company, completion, adopted_basis=True)
+    company.publish("completion")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "not_reviewed"
+    assert any(issue["field"] == "missing_payroll" for issue in item["basis_issues"])
+    with pytest.raises(KernelError):
         company.close("2026-01")
-    assert any(item["field"] == "missing_payroll" for item in error.value.details["fact_issues"])
-    result = service.query("2026-01", as_of="2026-02-28")
-    assert result["steps"][1]["status"] == "needs_information"
-    assert any(item["field"] == "missing_payroll" for item in result["steps"][1]["fact_issues"])
 
 
 def test_material_no_business_does_not_infer_external_non_applicability(tmp_path):
@@ -425,10 +509,11 @@ def test_material_no_business_does_not_infer_external_non_applicability(tmp_path
             confirmation_evidence=company.owner_confirmation,
             request_id=company.request(),
         )
-    service = workflow.Workflow(company.engine)
-    assert all(
-        item["status"] == "needs_information"
-        for item in service.query("2026-01", as_of="2026-02-28")["steps"][2:4]
+    assert (
+        workflow.Workflow(company.engine).query("2026-01", as_of="2026-02-28")["sections"][
+            "external"
+        ]["obligations"]
+        == []
     )
     for kind in ("contribution_declaration", "individual_income_tax"):
         company.save(
@@ -437,13 +522,83 @@ def test_material_no_business_does_not_infer_external_non_applicability(tmp_path
             ),
             kind,
         )
-    result = service.query("2026-01", as_of="2026-02-28")
-    assert all(item["status"] == "not_applicable" for item in result["steps"][2:4])
-    company.close("2026-01")
+    obligations = workflow.Workflow(company.engine).query("2026-01", as_of="2026-02-28")[
+        "sections"
+    ]["external"]["obligations"]
+    assert {item["actual_completion_status"] for item in obligations} == {"not_applicable"}
 
 
-@pytest.mark.parametrize("invalid_basis", ["subset", "duplicate", "two_versions"])
-def test_completion_accepts_only_one_exact_calculation_set(tmp_path, invalid_basis):
+def test_actual_completion_date_is_not_inferred_from_recording_period(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    fact = completion_from_basis(
+        basis,
+        accepted_calculations=(),
+        no_reportable_activity_confirmed=True,
+        completion_date="2026-02-25",
+    )
+    save_completion(company, fact)
+    company.publish("completion")
+    assert external_item(company, day="2026-02-21")["actual_completion_status"] == "due"
+    assert external_item(company, day="2026-02-25")["actual_completion_status"] == "completed"
+
+
+def test_social_actual_source_can_precede_payroll_and_cannot_prove_matched_review(tmp_path):
+    from test_payroll import actual as contribution_actual
+
+    company = setup_company(tmp_path)
+    saved = company.save(contribution_actual(), "actual-contribution")
+    company.save(obligation("contribution_declaration"), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis,
+        accepted_calculations=(),
+        source_facts=(
+            {
+                "subject_id": "actual-contribution",
+                "fact_id": saved["fact_id"],
+                "kind": "payroll_contribution_actual",
+            },
+        ),
+    )
+    saved_completion = save_completion(company, completion)
+    company.publish("completion")
+    assert external_item(company)["actual_completion_status"] == "completed"
+    review = review_from_completion(completion, saved_completion["fact_id"], [], "matched")
+    company.save(review, "review")
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["review"])
+    assert error.value.code == "review_not_proven"
+
+
+def test_individual_tax_scope_includes_bonus_and_labor_facts(tmp_path):
+    from test_payroll import bonus, labor
+
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    company.save(bonus(), "bonus")
+    company.save(labor(), "labor")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    issues = {
+        item["subject_id"] for item in basis["fact_issues"] if item["field"] == "unpublished_basis"
+    }
+    assert {"bonus", "labor"} <= issues
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    [
+        "duplicate",
+        "missing_calculation",
+        "foreign_subject",
+        "wrong_kind",
+        "wrong_period",
+        "missing_obligation",
+        "foreign_obligation",
+    ],
+)
+def test_completion_rejects_foreign_or_unverifiable_exact_history(tmp_path, forgery):
     company = setup_company(tmp_path)
     for fact, subject in (
         (profile(), "profile"),
@@ -456,68 +611,55 @@ def test_completion_accepts_only_one_exact_calculation_set(tmp_path, invalid_bas
         company.save(fact, subject)
     company.confirm_payroll("january")
     company.publish("january")
-    service = workflow.Workflow(company.engine)
-    basis = service.obligation_basis("obligation")
-    accepted = basis["accepted_calculations"]
-    changed = (
-        []
-        if invalid_basis == "subset"
-        else [
-            *accepted,
-            accepted[0]
-            if invalid_basis == "duplicate"
-            else dict(accepted[0], calculation_id="other"),
-        ]
-    )
-    company.save(completion_from_basis(basis, accepted_calculations=changed), "completion")
-    if invalid_basis == "subset":
-        company.publish("completion")
-        assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] == "due"
-    else:
-        with pytest.raises(KernelError) as error:
-            company.engine.preview(["completion"])
-        assert error.value.code == "duplicate_basis"
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    accepted = [dict(item) for item in basis["candidate_calculations"]]
+    if forgery == "duplicate":
+        accepted.append(dict(accepted[0]))
+    elif forgery == "missing_calculation":
+        accepted[0]["calculation_id"] = "missing-version"
+    elif forgery == "foreign_subject":
+        accepted[0]["subject_id"] = "someone-else"
+    elif forgery == "wrong_kind":
+        accepted[0] = {
+            "subject_id": "completion-other",
+            "calculation_id": "missing-version",
+        }
+    elif forgery == "wrong_period":
+        accepted[0]["subject_id"] = "someone-else"
+    if forgery == "missing_obligation":
+        basis["obligation_fact_id"] = "missing-version"
+    if forgery == "foreign_obligation":
+        other = company.save(obligation(), "other")
+        basis["obligation_fact_id"] = other["fact_id"]
+    fact = completion_from_basis(basis, accepted_calculations=accepted)
+    save_completion(company, fact, "forged")
+    before = company.count("calculation")
+    with pytest.raises(KernelError):
+        company.engine.preview(["forged"])
+    assert company.count("calculation") == before
 
 
-def test_quarterly_basis_is_explicit_current_calculations_not_old_close_manifest(tmp_path):
+def test_quarterly_basis_excludes_external_completion_calculations(tmp_path):
     company = setup_company(tmp_path)
-    for fact, subject in (
-        (profile(), "profile"),
-        (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
-        (payroll(), "january"),
-        (obligation("quarterly_tax_and_reports"), "quarter"),
-    ):
-        company.save(fact, subject)
-    company.confirm_payroll("january")
-    company.publish("january")
-    frozen = company.close("2026-01")
-    service = workflow.Workflow(company.engine)
-    basis = service.obligation_basis("quarter")
-    assert {item["subject_id"] for item in basis["accepted_calculations"]} == {"january"}
-    company.save(completion_from_basis(basis), "completion")
-    company.publish("completion")
-    assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] == "completed"
-    company.save(
-        payroll().model_copy(update={"accounting_gross_salary_fen": 1100000}), "january", 1
+    company.save(obligation("individual_income_tax"), "monthly")
+    monthly_basis = workflow.Workflow(company.engine).obligation_basis("monthly")
+    monthly = completion_from_basis(
+        monthly_basis,
+        accepted_calculations=(),
+        no_reportable_activity_confirmed=True,
     )
-    company.confirm_payroll("january")
-    company.publish("january", posting_period="2026-02")
-    assert Periods(company.engine).closed_report("2026-01") == frozen
-    assert company.current("completion", "external_completion").values["accepted_calculations"] == (
-        basis["accepted_calculations"][0],
-    )
-    assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] == "due"
-    assert (
-        service.obligation_basis("quarter")["accepted_calculations"]
-        != basis["accepted_calculations"]
+    save_completion(company, monthly, "monthly-completion")
+    company.publish("monthly-completion")
+    company.save(obligation("quarterly_financial_report"), "quarter")
+    company.close("2026-01")
+    quarter_basis = workflow.Workflow(company.engine).obligation_basis("quarter")
+    assert not any(
+        item["subject_id"] == "monthly-completion"
+        for item in quarter_basis["candidate_calculations"]
     )
 
 
-def test_explicit_zero_payroll_and_effective_end_satisfy_population_without_inferred_salary(
-    tmp_path,
-):
+def test_explicit_zero_payroll_and_effective_end_leave_no_inferred_next_month_salary(tmp_path):
     company = setup_company(tmp_path)
     for fact, subject in (
         (profile(effective_to="2026-01", social_insurance_participating=False), "profile"),
@@ -534,7 +676,7 @@ def test_explicit_zero_payroll_and_effective_end_satisfy_population_without_infe
     company.close("2026-02")
 
 
-def test_confirmed_submission_preserves_source_and_cannot_silently_lose_it(tmp_path):
+def test_completion_preserves_exact_adopted_source_after_obligation_update(tmp_path):
     company = setup_company(tmp_path)
     for fact, subject in (
         (profile(), "profile"),
@@ -549,26 +691,23 @@ def test_confirmed_submission_preserves_source_and_cannot_silently_lose_it(tmp_p
     company.publish("january")
     service = workflow.Workflow(company.engine)
     basis = service.obligation_basis("obligation")
-    company.save(completion_from_basis(basis), "completion")
+    completion = completion_from_basis(basis)
+    saved = save_completion(company, completion)
     company.publish("completion")
     with pytest.raises(KernelError) as error:
         company.engine.preview_delete("january")
     assert error.value.code == "has_dependents"
     company.save(obligation().model_copy(update={"due_date": "2026-02-25"}), "obligation", 1)
-    company.publish("obligation")
-    old = company.current("completion", "external_completion")
-    assert old.values["obligation_fact_id"] == basis["obligation_fact_id"]
-    assert old.values["completion_date"] == "2026-02-10"
-    assert old.values["basis_current"]
-    assert service.query("2026-01", as_of="2026-02-28")["obligations"][0]["status"] == "completed"
-    assert "completion" not in company.pending()
+    original = company.current("completion", "external_completion")
+    assert original.values["obligation_fact_id"] == basis["obligation_fact_id"]
+    assert external_item(company)["actual_completion_status"] == "completed"
+    assert saved["fact_id"] == original.fact_id
 
 
-@pytest.fixture
-def submitted_payroll(tmp_path, monkeypatch):
+def test_equivalent_new_calculation_keeps_real_submission_and_requires_new_review(tmp_path):
     company = setup_company(tmp_path)
     for fact, subject in (
-        (profile(effective_to="2026-01"), "profile"),
+        (profile(), "profile"),
         (contribution_policy(), "contributions"),
         (income_tax_policy(), "income-tax"),
         (opening(), "opening"),
@@ -579,164 +718,224 @@ def submitted_payroll(tmp_path, monkeypatch):
     company.confirm_payroll("january")
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
-    with monkeypatch.context() as clock:
-        confirmation_clock(clock, company.engine, "2026-02-20T10:00:00.000Z")
-        company.save(
-            completion_from_basis(basis, completion_date=None, date_status="not_established"),
-            "completion",
-        )
-        company.publish("completion")
-    return company
-
-
-def test_equivalent_recalculation_preserves_actual_submission_after_published_review(
-    submitted_payroll,
-):
-    company = submitted_payroll
-    service = workflow.Workflow(company.engine)
-    original_payroll = company.current("january")
-    original_completion = company.current("completion", "external_completion")
+    completion = completion_from_basis(basis)
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    review = review_from_completion(
+        completion, saved["fact_id"], basis["candidate_calculations"], "matched"
+    )
+    company.save(review, "review")
+    company.publish("review")
+    old_payroll = company.current("january")
+    old_completion = company.current("completion", "external_completion")
     ledger = company.engine.ledger("2026-01")
-    # New confirmed evidence and fact version, with exactly the same business data.
     company.save(payroll(), "january", revision=1)
-    assert service.query("2026-01", as_of="2026-03-01")["obligations"][0]["status"] == "due"
     company.confirm_payroll("january")
     company.publish("january")
-    current_payroll = company.current("january")
-    reviewed = company.current("completion", "external_completion")
-    assert current_payroll.id != original_payroll.id
-    assert current_payroll.result_digest == original_payroll.result_digest
+    assert company.current("january").id != old_payroll.id
+    assert company.current("january").result_digest == old_payroll.result_digest
     assert company.engine.ledger("2026-01") == ledger
-    assert reviewed.fact_id == original_completion.fact_id
-    assert (
-        reviewed.values["accepted_calculations"]
-        == original_completion.values["accepted_calculations"]
-    )
-    assert reviewed.values["reviewed_calculations"][0]["calculation_id"] == current_payroll.id
-    assert reviewed.values["basis_current"]
-    assert reviewed.values["completion_date"] is None
-    assert service.query("2026-01", as_of="2026-03-01")["obligations"][0]["status"] == "completed"
-    with company.engine.store.connection(read_only=True) as connection:
-        assert (
-            connection.execute(
-                "SELECT count(*) FROM subject WHERE kind='external_completion'"
-            ).fetchone()[0]
-            == 1
-        )
-        assert (
-            connection.execute(
-                "SELECT count(*) FROM fact_revision WHERE subject_id='completion'"
-            ).fetchone()[0]
-            == 1
-        )
-    # The period readiness uses the same published review, including an unknown date.
-    company.close("2026-01")
+    assert company.current("completion", "external_completion").fact_id == old_completion.fact_id
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "outdated"
 
 
-@pytest.mark.parametrize(
-    "forgery",
-    [
-        "missing_calculation",
-        "another_subject",
-        "wrong_kind",
-        "wrong_period",
-        "missing_obligation",
-        "another_obligation",
-    ],
-)
-def test_external_completion_rejects_unverifiable_or_foreign_history(submitted_payroll, forgery):
-    company = submitted_payroll
-    service = workflow.Workflow(company.engine)
-    basis = service.obligation_basis("obligation")
-    if forgery in {"missing_calculation", "another_subject", "wrong_kind", "wrong_period"}:
-        if forgery == "missing_calculation":
-            accepted_id = "not-a-published-calculation"
-        elif forgery == "another_subject":
-            # Preserve the real ID but falsely attribute it to another stable subject.
-            basis["accepted_calculations"][0]["subject_id"] = "someone-else"
-            accepted_id = basis["accepted_calculations"][0]["calculation_id"]
-        elif forgery == "wrong_kind":
-            accepted_id = company.current("completion", "external_completion").id
-            basis["accepted_calculations"][0]["subject_id"] = "completion"
-        else:
-            company.save(profile(), "profile", revision=1)
-            company.confirm_payroll("january")
-            company.publish("profile")
-            company.save(payroll(period="2026-02"), "february")
-            company.confirm_payroll("february")
-            company.publish("february")
-            accepted_id = company.current("february").id
-            basis["accepted_calculations"][0]["subject_id"] = "february"
-        basis["accepted_calculations"][0]["calculation_id"] = accepted_id
-    elif forgery == "missing_obligation":
-        basis["obligation_fact_id"] = "not-an-obligation-version"
-    else:
-        other = company.save(obligation(), "other-obligation")
-        basis["obligation_fact_id"] = other["fact_id"]
-    company.save(completion_from_basis(basis), "forged-completion")
-    before = company.count("calculation")
-    with pytest.raises(KernelError) as error:
-        company.engine.preview(["forged-completion"])
-    assert error.value.code in {
-        "needs_information",
-        "invalid_accepted_calculation",
-        "invalid_obligation_history",
-    }
-    assert company.count("calculation") == before
-
-
-def test_quarter_review_excludes_monthly_submission_revisions_from_accounting_basis(tmp_path):
+def test_review_must_cover_all_current_calculations_even_if_filing_adopted_subset(tmp_path):
     company = setup_company(tmp_path)
     for fact, subject in (
-        (profile(effective_to="2026-01"), "profile"),
+        (profile(), "profile"),
         (contribution_policy(), "contributions"),
         (income_tax_policy(), "income-tax"),
         (opening(), "opening"),
         (payroll(), "january"),
-        (obligation(), "monthly"),
-        (obligation("quarterly_tax_and_reports"), "quarter"),
+        (obligation(), "obligation"),
     ):
         company.save(fact, subject)
     company.confirm_payroll("january")
     company.publish("january")
-    service = workflow.Workflow(company.engine)
-    company.save(
-        completion_from_basis(
-            service.obligation_basis("monthly"), period="2026-01", completion_date="2026-01-31"
-        ),
-        "monthly-completion",
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis, accepted_calculations=(), adopted_evidence_digests=("placeholder",)
     )
-    company.publish("monthly-completion")
-    company.close("2026-01")
-    basis = service.obligation_basis("quarter")
-    assert [item["subject_id"] for item in basis["accepted_calculations"]] == ["january"]
-    company.save(completion_from_basis(basis), "quarter-completion")
-    company.publish("quarter-completion")
-    old_monthly = company.current("monthly-completion", "external_completion")
-    company.save(payroll(), "january", revision=1)
-    company.confirm_payroll("january")
-    company.publish("january", posting_period="2026-02")
+    saved = save_completion(company, completion, adopted_basis=True)
+    company.publish("completion")
+    review = review_from_completion(completion, saved["fact_id"], [], "matched")
+    company.save(review, "review")
+    company.publish("review")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "outdated"
+
+
+def test_unlinked_second_submission_is_rejected_and_new_link_needs_its_own_review(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    original = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
+    )
+    first = save_completion(company, original)
+    company.publish("completion")
+    review = review_from_completion(original, first["fact_id"], [], "matched")
+    company.save(review, "old-review")
+    company.publish("old-review")
+    assert external_item(company)["basis_review_status"] == "reviewed"
+
+    supplement = original.model_copy(
+        update={
+            "period": "2026-03",
+            "completion_date": "2026-03-02",
+            "previous_completion_fact_id": first["fact_id"],
+        }
+    )
+    save_completion(company, supplement, "supplement")
+    company.publish("supplement")
+    company.publish("completion")
+    item = external_item(company, day="2026-03-10")
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "not_reviewed"
+    assert item["basis_review_calculation_id"] is None
+    assert len(item["recorded_completions"]) == 2
     assert (
-        company.current("monthly-completion", "external_completion").result_digest
-        != old_monthly.result_digest
+        company.current("old-review", "external_basis_review").values["review_result"] == "matched"
     )
-    assert all(
-        item["status"] in {"completed", "closed"}
-        for item in service.query("2026-01", as_of="2026-03-01")["obligations"]
-    )
-    assert company.current("quarter-completion", "external_completion").values[
-        "accepted_calculations"
-    ] == (basis["accepted_calculations"][0],)
-    invalid_basis = dict(
-        basis,
-        accepted_calculations=[
-            {
-                "subject_id": "monthly-completion",
-                "calculation_id": old_monthly.id,
-            }
-        ],
-    )
-    company.save(completion_from_basis(invalid_basis), "invalid-quarter")
+
+    save_completion(company, original, "independent")
     with pytest.raises(KernelError) as error:
-        company.engine.preview(["invalid-quarter"])
-    assert error.value.code == "invalid_accepted_calculation"
+        company.engine.preview(["independent"])
+    assert error.value.code == "completion_continuation_required"
+
+
+def test_latest_published_review_uses_sequence_not_subject_name(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
+    )
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    review = review_from_completion(completion, saved["fact_id"], [], "matched")
+    company.save(review, "z-earlier")
+    company.publish("z-earlier")
+    company.save(review, "a-later")
+    company.publish("a-later")
+    assert (
+        external_item(company)["basis_review_calculation_id"]
+        == company.current("a-later", "external_basis_review").id
+    )
+
+
+def test_social_actual_amounts_are_compared_with_current_payroll_and_changes_show_difference(
+    tmp_path,
+):
+    from test_payroll import actual as contribution_actual
+
+    company = setup_company(tmp_path)
+    for fact, subject in (
+        (profile(), "profile"),
+        (contribution_policy(), "contributions"),
+        (income_tax_policy(), "income-tax"),
+        (opening(), "opening"),
+        (contribution_actual(), "actual-contribution"),
+        (payroll(), "january"),
+        (obligation("contribution_declaration"), "obligation"),
+    ):
+        company.save(fact, subject)
+    company.confirm_payroll("january")
+    company.publish("january")
+    values = company.current("january").values
+    assert (values["employee_contributions_fen"], values["employer_contributions_fen"]) == (
+        100_000,
+        200_000,
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        actual_version = company.engine.store.current_fact(connection, "actual-contribution")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis,
+        accepted_calculations=(),
+        source_facts=(
+            {
+                "subject_id": "actual-contribution",
+                "fact_id": actual_version.id,
+                "kind": "payroll_contribution_actual",
+            },
+        ),
+    )
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    review = review_from_completion(
+        completion, saved["fact_id"], basis["candidate_calculations"], "matched"
+    )
+    company.save(review, "review")
+    company.publish("review")
+    assert external_item(company)["basis_review_status"] == "reviewed"
+
+    company.save(contribution_actual(employee=101_000), "actual-contribution", revision=1)
+    company.confirm_payroll("january")
+    company.publish("january")
+    assert external_item(company)["actual_completion_status"] == "completed"
+    assert external_item(company)["basis_review_status"] == "outdated"
+    changed_basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    corrected_review = review_from_completion(
+        completion,
+        saved["fact_id"],
+        changed_basis["candidate_calculations"],
+        "difference_identified",
+    )
+    company.save(corrected_review, "difference-review")
+    company.publish("difference-review")
+    assert external_item(company)["basis_review_status"] == "difference_identified"
+
+
+def test_financial_report_accepts_later_close_covering_empty_end_month(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation("quarterly_financial_report"), "obligation")
+    company.close("2026-02")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    assert basis["candidate_calculations"] == []
+    completion = completion_from_basis(
+        basis,
+        period="2026-03",
+        completion_date="2026-03-02",
+        accepted_calculations=(),
+        no_reportable_activity_confirmed=True,
+    )
+    save_completion(company, completion)
+    company.publish("completion")
+    assert external_item(company, day="2026-03-10")["actual_completion_status"] == "completed"
+
+
+def test_explicit_no_activity_submission_reconciles_to_later_accounting_difference(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "obligation")
+    basis = workflow.Workflow(company.engine).obligation_basis("obligation")
+    completion = completion_from_basis(
+        basis, accepted_calculations=(), no_reportable_activity_confirmed=True
+    )
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    for fact, subject in (
+        (profile(), "profile"),
+        (contribution_policy(), "contributions"),
+        (income_tax_policy(), "income-tax"),
+        (opening(), "opening"),
+        (payroll(), "january"),
+    ):
+        company.save(fact, subject)
+    company.confirm_payroll("january")
+    company.publish("january")
+    current = workflow.Workflow(company.engine).obligation_basis("obligation")
+    review = review_from_completion(
+        completion,
+        saved["fact_id"],
+        current["candidate_calculations"],
+        "difference_identified",
+    )
+    company.save(review, "review")
+    company.publish("review")
+    item = external_item(company)
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "difference_identified"

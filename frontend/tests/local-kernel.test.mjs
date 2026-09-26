@@ -16,11 +16,11 @@ const money = await server.ssrLoadModule("/src/utils/money.ts");
 
 const job = (overrides = {}) => ({
   id: "j1", kind: "report_export", status: "succeeded", attempts: 1,
-  last_error: null, download_available: true, download_file_name: "report.xlsx",
+  error_code: null, error_message: null, download_available: true, download_file_name: "report.xlsx",
   delivery_status: "verified", delivery_message: null, ...overrides,
 });
 const jobsResponse = (companyId, items) => ({
-  schema_version: 1, company_id: companyId, database_id: `db-${companyId}`, items,
+  schema_version: 2, company_id: companyId, database_id: `db-${companyId}`, items,
 });
 
 test("reserve facts and mixed payroll use the current business labels", () => {

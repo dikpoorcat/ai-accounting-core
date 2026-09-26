@@ -48,7 +48,7 @@
 
 ## 页面版本与集合
 
-`brief`、`funds`、`employees`、`assets` 使用 `schema_version: 6`；`context` 保持 2，`business-status` 使用 4，`quarterly-report` 和 `period-preparation` 使用 3。只读 `close-review`、浏览器任务列表及安全窗口公开状态使用 1。公开 CLI/MCP `business_status`、`period_readiness` 的完整查询继续存在；页面 summary 明确标识为投影。
+`brief`、`funds`、`employees`、`assets` 使用 `schema_version: 7`；`context` 保持 2，`business-status` 使用 5，`quarterly-report` 和 `period-preparation` 使用 4。只读 `close-review`、安全窗口公开状态使用 1，浏览器任务列表使用 2。`workflow` 和完整 `period_readiness` 使用生成合同版本 1。公开 CLI/MCP `business_status`、`period_readiness` 的完整查询继续存在；页面 summary 明确标识为投影。
 
 每页保留原汇总字段。增长集合位于 `data.collections[section]`：
 

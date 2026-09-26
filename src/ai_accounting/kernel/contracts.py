@@ -39,27 +39,65 @@ def freeze(value):
 class KernelError(ValueError):
     def __init__(self, code: str, message: str, **details):
         super().__init__(message)
+        if code == "needs_information":
+            issues = details.get("fact_issues")
+            if (
+                not isinstance(issues, list)
+                or not issues
+                or not all(isinstance(issue, dict) for issue in issues)
+            ):
+                raise ValueError("needs_information requires nonempty fact_issues")
+            if "resolution" in details:
+                from .resolution import validate_resolution
+
+                details["resolution"] = validate_resolution(
+                    details["resolution"], registry=details.pop("_resolution_registry", None)
+                )
         self.code, self.details = code, details
 
     def response(self):
+        if self.code == "needs_information":
+            resolution = self.details.get("resolution")
+            return {
+                "status": "needs_information",
+                "fact_issues": self.details.get("fact_issues", []),
+                **({"resolution": resolution} if resolution is not None else {}),
+            }
         return {"status": "rejected", "code": self.code, "message": str(self), **self.details}
 
 
 class NeedsInformation(KernelError):
-    def __init__(self, field: str, message: str, *, sources=(), precision=()):
-        super().__init__("needs_information", message)
-        self.issues = [
-            {
+    def __init__(
+        self,
+        field: str | list[dict],
+        message: str = "需要补充核算事实",
+        *,
+        sources=(),
+        precision=(),
+        resolution=None,
+        registry=None,
+    ):
+        if isinstance(field, str):
+            issues = [{
                 "field": field,
                 "message": message,
                 "semantics": "accounting",
                 "reusable_sources": list(sources),
                 "allowed_precision": list(precision),
-            }
-        ]
+            }]
+        elif isinstance(field, list) and field and all(isinstance(issue, dict) for issue in field):
+            issues = [dict(issue) for issue in field]
+        else:
+            raise ValueError("needs_information requires one or more fact issues")
+        details = {"fact_issues": issues}
+        if resolution is not None:
+            details["resolution"] = resolution
+            details["_resolution_registry"] = registry
+        super().__init__("needs_information", message, **details)
+        self.issues = issues
 
     def response(self):
-        return {"status": "needs_information", "fact_issues": self.issues}
+        return super().response()
 
 
 @dataclass(frozen=True, order=True)

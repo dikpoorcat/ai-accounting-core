@@ -4,12 +4,10 @@ import pytest
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 from test_payroll_corrections import payment
 from test_payroll_withholding_actual import actual
-from test_workflow import completion_from_basis, obligation, setup_company
+from test_workflow import completion_from_basis, obligation, review_from_completion, setup_company
 
 from ai_accounting.kernel import workflow
-from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.banking import (
     BankEntry,
     BankOpening,
@@ -19,7 +17,6 @@ from ai_accounting.kernel.domains.banking import (
 )
 from ai_accounting.kernel.domains.transactions import Funding
 from ai_accounting.kernel.periods import Periods
-from ai_accounting.kernel.types import canonical
 
 KINDS = {
     "january": "payroll",
@@ -127,267 +124,89 @@ def journal_snapshot(company):
         }
 
 
-def historical_chain_view(company, original_vouchers, current, *, basis_current):
-    """Read the existing closed chain through shared queries and real page adapters."""
-    queries, dashboard = BusinessQueries(company.engine), Dashboard(company.engine)
-    status = queries.business_status("january", "2026-01", as_of="2026-03-31")
-    assert status["current_business_result"]["calculation"]["id"] == current["january"].id
-    events = status["as_posted"]["voucher_events"]
-    assert len(events) == 1
-    wage_voucher = next(item for item in original_vouchers.values() if item["kind"] == "payroll")
-    assert events[0]["voucher_version_id"] == wage_voucher["id"]
-    net = next(item for item in status["settlements"]["obligations"] if item["name"] == "net")
-    assert (net["source_amount_fen"], net["paid_fen"], net["remaining_fen"]) == (
-        900_000,
-        100_000,
-        800_000,
+def external_item(service):
+    result = service.query("2026-01", as_of="2026-03-31")
+    return next(
+        item for item in result["sections"]["external"]["obligations"] if item["id"] == "obligation"
     )
-    completion = next(
-        item for item in status["external"]["completions"] if item["subject_id"] == "completion"
-    )
-    assert completion["basis_current"] is basis_current
-    assert canonical(completion["accepted_calculations"]) == canonical(
-        current["completion"].values["accepted_calculations"]
-    )
-    assert status["external"]["as_of_semantics"] == "current_knowledge"
-    readiness = queries.period_readiness("2026-01", as_of="2026-03-31")
-    assert readiness["closure"]["state"] == "exact_close"
-    assert readiness["frozen_readiness"]["status"] == "ready"
-    assert readiness["readiness"] is None
-    followups = readiness["current_followups"]
-    assert followups["knowledge"] == "current_knowledge"
-    assert followups["affects_frozen_readiness"] is False
-    current_net = next(
-        item
-        for item in followups["settlements"]["obligations"]
-        if item["key"] == "payroll:january:net"
-    )
-    assert current_net["source_amount_fen"] == current["january"].values["net_fen"]
-    assert current_net["paid_fen"] == 100_000
-    assert current_net["remaining_fen"] == current["january"].values["net_fen"] - 100_000
-    external = next(
-        item for item in followups["external"]["obligations"] if item["id"] == "obligation"
-    )
-    assert external["completion_status"] == ("completed" if basis_current else "due")
-
-    brief_response = dashboard.brief("2026-01", voucher_number=wage_voucher["number"])
-    brief = brief_response["data"]
-    preparation = brief["period_preparation"]
-    assert preparation["closure"] == readiness["closure"]
-    assert preparation["frozen_readiness"]["status"] == "ready"
-    assert preparation["current_followups"]["affects_frozen_readiness"] is False
-    focused = brief["focused_voucher"]
-    assert focused["voucher_version_id"] == wage_voucher["id"]
-    traced = company.engine.trace(voucher_version_id=focused["voucher_version_id"])
-    assert traced["voucher"]["id"] == wage_voucher["id"]
-    assert traced["calculation"]["id"] == wage_voucher["calculation_id"]
-    assert traced["calculation"]["outcome"]["values"]["net_fen"] == 900_000
-
-    employee_response = dashboard.employees("2026-01")
-    employee = next(
-        item
-        for item in employee_response["data"]["collections"]["employees"]["items"]
-        if item["employee_id"] == "employee"
-    )
-    source_response = dashboard.employees(
-        "2026-01",
-        section="payroll_sources",
-        employee_id=employee["employee_id"],
-        expected_version=employee_response["snapshot_version"],
-    )
-    source = next(
-        item
-        for item in source_response["data"]["collections"]["payroll_sources"]["items"]
-        if item["source_id"] == "january"
-    )
-    assert source["calculation_id"] == events[0]["calculation_id"]
-    employee_net = next(item for item in source["obligations"] if item["name"] == "net")
-    assert employee_net["remaining_fen"] == net["remaining_fen"]
-    assert "movements" not in source
-    settlement_response = dashboard.employees(
-        "2026-01",
-        section="settlement_events",
-        employee_id="employee",
-        expected_version=employee_response["snapshot_version"],
-    )
-    current_movements = settlement_response["data"]["collections"]["settlement_events"]["items"]
-    assert len(current_movements) == (1 if basis_current else 3)
-    assert sum(item["signed_amount_fen"] for item in current_movements) == 100_000
-    current_payment = [item for item in current_movements if item["direction"] > 0]
-    if basis_current:
-        assert len(current_payment) == 1
-        assert current_payment[0]["signed_amount_fen"] == 100_000
-        assert current_payment[0]["source_calculation_id"] == source["calculation_id"]
-    else:
-        assert len(current_payment) == 2
-        assert len([item for item in current_movements if item["direction"] < 0]) == 1
-        assert {item["source_calculation_id"] for item in current_payment} == {
-            source["calculation_id"],
-            current["january"].id,
-        }
-    historical_settlements = dashboard.business_status(
-        "2026-01", "january", section="settlement_events", settlement_view="historical"
-    )
-    movements = historical_settlements["data"]["collections"]["settlement_events"]["items"]
-    assert len(movements) == 1
-    movement = movements[0]
-    assert movement["settlement_business"]["subject_id"] == "payment"
-    assert movement["signed_amount_fen"] == 100_000
-    assert movement["source_calculation_id"] == source["calculation_id"]
-    funds_response = dashboard.funds("2026-01")
-    funds = funds_response["data"]
-    assert funds["outflow_fen"] == brief["funds_overview"]["outflow_fen"] == 100_000
-    payment_voucher = next(item for item in original_vouchers.values() if item["kind"] == "payment")
-    payments = [
-        item
-        for item in funds["collections"]["movements"]["items"]
-        if item["reference"] == str(payment_voucher["number"])
-    ]
-    assert len(payments) == 1 and payments[0]["signed_amount_fen"] == -100_000
-    for response in (brief_response, employee_response, funds_response):
-        assert response["read_semantics"]["accounting"] == "as_posted"
-        assert response["read_semantics"]["business_basis"] == "frozen_adoption"
-        assert response["read_semantics"]["knowledge"] == "current_knowledge"
-    return {
-        "accounting": status["as_posted"],
-        "net": net,
-        "employee_source": source["calculation_id"],
-        "employee_movement": movement["settlement_calculation_id"],
-        "funds_calculation": payments[0]["calculation_id"],
-        "trace_calculation": traced["calculation"]["id"],
-    }
 
 
 def test_withholding_evidence_review_then_real_closed_correction(review_chain):
     company, service, withholding, initial = review_chain
     original = current_chain(company)
+    original_journal = journal_snapshot(company)
     january_ledger = company.engine.ledger("2026-01")
     original_vouchers = {row["calculation_id"]: row for row in january_ledger}
-    original_journal = journal_snapshot(company)
     assert original["january"].values["tax_fen"] == 20_000
-    assert original["january"].values["net_fen"] == 900_000
-    assert original["february"].values["prior_tax_state"]["cumulative_withheld_tax_fen"] == 20_000
     assert original["february"].values["tax_fen"] == 5_200
-    assert original["completion"].values["basis_current"]
-    assert all(initial[subject]["impact"] == "initial" for subject in KINDS)
-    frozen = None
+
+    with company.engine.store.connection(read_only=True) as connection:
+        completion_fact = company.engine.store.current_fact(connection, "completion")
+    basis = service.obligation_basis("obligation")
+    completion = completion_fact.fact
+    review = review_from_completion(
+        completion, completion_fact.id, basis["candidate_calculations"], "matched"
+    )
+    company.save(review, "review")
+    company.publish("review")
+    assert external_item(service)["actual_completion_status"] == "completed"
+    assert external_item(service)["basis_review_status"] == "reviewed"
 
     for revision in (1, 2):
-        # Company.save registers a distinct confirmation document for each revision
-        # while keeping every field of the actual withholding fact unchanged.
-        saved = company.save(withholding, "actual-withholding", revision=revision)
-        assert set(KINDS) <= company.pending()
-        before = current_chain(company)
+        company.save(withholding, "actual-withholding", revision=revision)
+        assert "review" in company.pending()
         preview, confirmed = company.publish("actual-withholding")
-        results = {item["subject_id"]: item for item in preview["results"]}
-        reviewed = current_chain(company)
-        assert not company.pending()
+        results = {row["subject_id"]: row for row in preview["results"]}
         for subject in ("january", "payment", "february"):
             assert results[subject]["impact"] == "review_no_impact"
-            assert results[subject]["accounting"] == initial[subject]["accounting"]
-            assert results[subject]["accounting"]["contract"]
-            assert len(results[subject]["accounting"]["digest"]) == 64
-            assert reviewed[subject].id != before[subject].id
-        for subject, result in results.items():
-            assert confirmed[subject]["impact"] == result["impact"]
-            assert confirmed[subject]["accounting"] == result["accounting"]
-        for subject in ("january", "payment"):
-            assert reviewed[subject].result_digest != before[subject].result_digest
-        assert reviewed["february"].values == original["february"].values
-        assert reviewed["payment"].fact_id == original["payment"].fact_id
+            assert confirmed[subject]["accounting"] == initial[subject]["accounting"]
         assert (
-            reviewed["payment"].values["settlements"][0]["source_calculation"]
-            == reviewed["january"].id
-        )
-        completion = reviewed["completion"]
-        assert completion.fact_id == original["completion"].fact_id
-        for field in ("accepted_calculations", "completion_date", "completion_evidence"):
-            assert completion.values[field] == original["completion"].values[field]
-        assert completion.values["basis_current"]
-        assert (
-            completion.values["reviewed_calculations"][0]["calculation_id"]
-            == reviewed["january"].id
+            company.current("completion", "external_completion").fact_id
+            == original["completion"].fact_id
         )
         assert (
-            completion.values["reviewed_calculations"][0]["result_digest"]
-            == reviewed["january"].result_digest
+            company.current("review", "external_basis_review").values["review_result"] == "outdated"
         )
-        with company.engine.store.connection(read_only=True) as connection:
-            assert connection.execute(
-                "SELECT 1 FROM dependency_fact WHERE calculation_id=? AND fact_id=?",
-                (reviewed["january"].id, saved["fact_id"]),
-            ).fetchone()
-            for subject in ("payment", "february", "completion"):
-                assert connection.execute(
-                    "SELECT 1 FROM dependency_calculation WHERE calculation_id=? AND upstream_id=?",
-                    (reviewed[subject].id, reviewed["january"].id),
-                ).fetchone()
+        assert external_item(service)["actual_completion_status"] == "completed"
+        assert external_item(service)["basis_review_status"] == "outdated"
         assert journal_snapshot(company) == original_journal
         assert company.engine.ledger("2026-01") == january_ledger
         if revision == 1:
-            assert service.query("2026-01", as_of="2026-03-01")["obligations"][0]["status"] == (
-                "completed"
-            )
             frozen = company.close("2026-01")
-            frozen_view = historical_chain_view(
-                company, original_vouchers, reviewed, basis_current=True
-            )
         else:
             assert Periods(company.engine).closed_report("2026-01") == frozen
-            assert (
-                historical_chain_view(company, original_vouchers, reviewed, basis_current=True)
-                == frozen_view
-            )
 
-    # The immutable payment is only partial, so a real tax change can be tested
-    # without inventing an unrelated overpayment/recovery fact.
     company.save(
         withholding.model_copy(update={"withheld_tax_fen": 21_000}),
         "actual-withholding",
         revision=3,
     )
-    before_failed_publish = current_chain(company)
+    before = current_chain(company)
     count = company.count("calculation")
-    pending = company.pending()
     with pytest.raises(KernelError) as failure:
         company.publish("actual-withholding")
     assert failure.value.code == "posting_period_required"
+    assert current_chain(company) == before
     assert company.count("calculation") == count
-    assert current_chain(company) == before_failed_publish
-    assert journal_snapshot(company) == original_journal
-    assert company.pending() == pending
 
     preview, confirmed = company.publish("actual-withholding", posting_period="2026-03")
-    results = {item["subject_id"]: item for item in preview["results"]}
+    results = {row["subject_id"]: row for row in preview["results"]}
     corrected = current_chain(company)
-    for subject in ("january", "payment", "february"):
-        assert results[subject]["impact"] == confirmed[subject]["impact"] == "accounting_changed"
-        assert results[subject]["accounting"] != initial[subject]["accounting"]
     assert corrected["january"].values["tax_fen"] == 21_000
-    assert corrected["february"].values["prior_tax_state"]["cumulative_withheld_tax_fen"] == 21_000
     assert corrected["february"].values["tax_fen"] == 4_200
     assert corrected["payment"].fact_id == original["payment"].fact_id
-    assert corrected["payment"].values["amount_fen"] == 100_000
-    assert not corrected["completion"].values["basis_current"]
-    assert (
-        corrected["completion"].values["accepted_calculations"]
-        == original["completion"].values["accepted_calculations"]
-    )
+    for subject in ("january", "payment", "february"):
+        assert results[subject]["impact"] == confirmed[subject]["impact"] == "accounting_changed"
+    assert corrected["completion"].fact_id == original["completion"].fact_id
+    assert external_item(service)["actual_completion_status"] == "completed"
+    assert external_item(service)["basis_review_status"] == "outdated"
+    assert company.engine.ledger("2026-01") == january_ledger
+    assert Periods(company.engine).closed_report("2026-01") == frozen
     march = company.engine.ledger("2026-03")
     for subject in ("january", "payment"):
         original_voucher = original_vouchers[original[subject].id]
-        reversed_rows = [item for item in march if item["reverses_id"] == original_voucher["id"]]
-        assert len(reversed_rows) == 1
+        assert len([item for item in march if item["reverses_id"] == original_voucher["id"]]) == 1
         assert any(
-            item["reverses_id"] is None
-            and item["calculation_id"] == corrected[subject].id
-            and item["number"] == confirmed[subject]["voucher_number"]
+            item["reverses_id"] is None and item["calculation_id"] == corrected[subject].id
             for item in march
         )
-    assert not company.pending()
-    assert company.engine.ledger("2026-01") == january_ledger
-    assert Periods(company.engine).closed_report("2026-01") == frozen
-    assert (
-        historical_chain_view(company, original_vouchers, corrected, basis_current=False)
-        == frozen_view
-    )

@@ -3,6 +3,7 @@
 import threading
 
 from .backup import _worker_lock, run_backup_jobs
+from .diagnostics import job_error_code
 from .engine import Engine
 from .exports import run_export_jobs
 from .reports import run_report_jobs
@@ -27,7 +28,8 @@ class JobRunner:
                     with store.connection() as connection:
                         connection.execute(
                             "UPDATE jobs SET status='failed',"
-                            "last_error='interrupted_retry_exhausted' "
+                            "last_error='interrupted_retry_exhausted',"
+                            "error_code='interrupted_retry_exhausted' "
                             "WHERE status='running' AND attempts>=3"
                         )
                 engine = Engine(store)
@@ -36,9 +38,9 @@ class JobRunner:
                 outcomes.extend(run_report_jobs(engine, limit=1))
                 outcomes.extend(run_tax_import_jobs(engine, limit=1))
             except Exception as exc:
-                self.last_error = getattr(exc, "code", type(exc).__name__)
+                self.last_error = f"{type(exc).__name__}: {exc}"[:500]
                 outcomes.append(
-                    {"company_id": company["id"], "status": "failed", "code": self.last_error}
+                    {"company_id": company["id"], "status": "failed", "code": job_error_code(exc)}
                 )
         return outcomes
 

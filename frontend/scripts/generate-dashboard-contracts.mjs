@@ -17,6 +17,8 @@ const check = process.argv.slice(2).includes("--check");
 
 // A Python response model is browser-visible only after it is intentionally listed here.
 const contracts = [
+  ["workflow", "Workflow"],
+  ["period_readiness", "PeriodReadiness"],
   ["dashboard_context", "DashboardContext"],
   ["dashboard_brief", "DashboardBrief"],
   ["dashboard_funds", "DashboardFunds"],

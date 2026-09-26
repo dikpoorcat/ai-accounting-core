@@ -1269,7 +1269,7 @@ class Reports:
                 "delivery_status": "pending"
                 if job["status"] in {"pending", "running"}
                 else "unavailable",
-                "delivery_message": None,
+                "delivery_message": job.get("error_message") if job["status"] == "failed" else None,
             }
             if job["kind"] == "report_export":
                 try:
@@ -1908,7 +1908,8 @@ def run_report_jobs(engine, *, limit: int = 10, fault=None):
                     connection.rollback()
                     break
                 connection.execute(
-                    "UPDATE jobs SET status='running',attempts=attempts+1,last_error=NULL "
+                    "UPDATE jobs SET status='running',attempts=attempts+1,"
+                    "last_error=NULL,error_code=NULL "
                     "WHERE id=?",
                     (row["id"],),
                 )
@@ -1930,17 +1931,20 @@ def run_report_jobs(engine, *, limit: int = 10, fault=None):
                 fault("before_files", row["id"])
                 result = _publish_report(Path(payload["output_directory"]), row["id"], plan)
                 fault("files_published", row["id"])
-                status, error = "succeeded", None
+                status, error, error_code = "succeeded", None, None
             except Exception as exc:
+                from .diagnostics import job_error_code
+
                 result, status, error = None, "failed", f"{type(exc).__name__}: {exc}"[:500]
+                error_code = job_error_code(exc)
             with engine.store.connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "UPDATE jobs SET status=?,last_error=?,result=? WHERE id=?",
-                    (status, error, canonical(result) if result else None, row["id"]),
+                    "UPDATE jobs SET status=?,last_error=?,error_code=?,result=? WHERE id=?",
+                    (status, error, error_code, canonical(result) if result else None, row["id"]),
                 )
                 connection.commit()
             results.append(
-                {"job_id": row["id"], "status": status, "result": result, "error": error}
+                {"job_id": row["id"], "status": status, "result": result, "error_code": error_code}
             )
     return results

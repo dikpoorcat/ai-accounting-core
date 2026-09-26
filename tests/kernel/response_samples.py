@@ -22,6 +22,7 @@ from test_payroll import payroll
 from test_payroll_preparation import company as payroll_company
 from test_tax_import import contribution_rule, replace_contribution_policy
 
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.periods import Periods
@@ -74,6 +75,12 @@ def native_samples(root):
     add("empty_context", "dashboard_context", dispatch("dashboard_context", {}))
     company = service.catalog.create_company("91310000123456789A", "合成合同测试公司")["id"]
     call = company_call(dispatch, company)
+    add("empty_workflow", "workflow", call("workflow", as_of="2026-02-25"))
+    add(
+        "empty_readiness",
+        "period_readiness",
+        call("period_readiness", period="2026-01", as_of="2026-02-25"),
+    )
     add("company_without_period", "dashboard_context", call("dashboard_context"))
     add("funds_without_period", "dashboard_funds", call("dashboard_funds"))
     references, evidence, _ = replay_sources(call, "contract")
@@ -84,6 +91,12 @@ def native_samples(root):
         ),
     )
     finish_payment(call, references, evidence)
+    add("open_workflow", "workflow", call("workflow", as_of="2026-02-25"))
+    add(
+        "open_readiness",
+        "period_readiness",
+        call("period_readiness", period="2026-01", as_of="2026-02-25"),
+    )
     add("company_with_period", "dashboard_context", call("dashboard_context"))
     brief = call("dashboard_brief", period="2026-01")
     add("brief", "dashboard_brief", brief)
@@ -191,6 +204,11 @@ def native_samples(root):
     closed_book, _ = public_bank_book(closed_path)
     engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
+    add(
+        "frozen_readiness",
+        "period_readiness",
+        BusinessQueries(engine).period_readiness("2026-09", as_of="2026-10-20"),
+    )
 
     wage_path = root / "wages"
     wage_path.mkdir()
@@ -224,6 +242,41 @@ def native_samples(root):
         "dashboard_funds",
         Dashboard(wage_book.engine).funds("2026-02"),
     )
+    from test_workflow import (
+        completion_from_basis,
+        obligation,
+        review_from_completion,
+        save_completion,
+        setup_company,
+    )
+
+    from ai_accounting.kernel.workflow import Workflow
+
+    external_path = root / "external"
+    external_path.mkdir()
+    external_book = setup_company(external_path)
+    external_book.save(obligation("quarterly_tax"), "obligation")
+    workflow = Workflow(external_book.engine)
+    completion = completion_from_basis(
+        workflow.obligation_basis("obligation"), no_reportable_activity_confirmed=True
+    )
+    saved = save_completion(external_book, completion)
+    external_book.publish("completion")
+    add("actual_tax_unreviewed", "workflow", workflow.query("2026-01", as_of="2026-02-25"))
+    add(
+        "external_brief",
+        "dashboard_brief",
+        Dashboard(external_book.engine).brief("2026-01", section="external_followups"),
+    )
+    add(
+        "external_readiness",
+        "period_readiness",
+        BusinessQueries(external_book.engine).period_readiness("2026-01", as_of="2026-02-25"),
+    )
+    review = review_from_completion(completion, saved["fact_id"], [], "matched")
+    external_book.save(review, "review")
+    external_book.publish("review")
+    add("actual_tax_reviewed", "workflow", workflow.query("2026-01", as_of="2026-02-25"))
     return samples
 
 

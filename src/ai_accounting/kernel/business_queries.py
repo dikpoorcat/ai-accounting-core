@@ -10,11 +10,16 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from .contracts import KernelError, Read
+from .diagnostics import job_error_message, public_job_code
 from .display import _KINDS, Display
 from .periods import Periods
 from .provenance import recorded_times
 from .query_reads import QueryReads, selected_voucher_sql
-from .query_semantics import SETTLEMENT_SOURCE_SLOTS, resolve_calculation_relations
+from .query_semantics import (
+    SETTLEMENT_SOURCE_SLOTS,
+    project_settlement_followup,
+    resolve_calculation_relations,
+)
 from .types import ActualDate, YearMonth, digest
 from .workflow import NON_ACCOUNTING_CALCULATIONS, Workflow, _basis_state
 
@@ -1271,8 +1276,8 @@ class BusinessQueries:
             calc = self._calculation(connection, ident)
             values = calc["outcome"].get("values", {})
             references = [
+                *values.get("source_facts", ()),
                 *values.get("accepted_calculations", ()),
-                *values.get("reviewed_calculations", ()),
             ]
             if calc["subject_id"] == subject_id or any(
                 item.get("subject_id") == subject_id for item in references
@@ -1287,9 +1292,14 @@ class BusinessQueries:
                             "obligation_id": values.get("obligation_id"),
                             "completion_status": values.get("completion_status"),
                             "completion_date": values.get("completion_date"),
-                            "basis_current": values.get("basis_current"),
+                            "source_facts": values.get("source_facts", []),
+                            "adopted_evidence_digests": values.get(
+                                "adopted_evidence_digests", []
+                            ),
+                            "previous_completion_fact_id": values.get(
+                                "previous_completion_fact_id"
+                            ),
                             "accepted_calculations": values.get("accepted_calculations", []),
-                            "reviewed_calculations": values.get("reviewed_calculations", []),
                         }
                     )
                 if values.get("obligation_id"):
@@ -1313,7 +1323,8 @@ class BusinessQueries:
             "completed"
             if obligations
             and all(
-                item["completion_status"] in {"completed", "not_applicable"} for item in obligations
+                item["actual_completion_status"] in {"completed", "not_applicable"}
+                for item in obligations
             )
             else "followup_required"
             if obligations
@@ -1578,13 +1589,15 @@ class BusinessQueries:
                         association = "period_scope"
             if association is None:
                 continue
+            error_code = public_job_code(row["error_code"]) if row["status"] == "failed" else None
             if metadata_only:
                 items.append(
                     {
                         "job_id": row["id"],
                         "status": row["status"],
                         "attempts": row["attempts"],
-                        "last_error": row["last_error"],
+                        "error_code": error_code,
+                        "error_message": job_error_message(error_code),
                         "result_record": row["result"],
                         "association": association,
                     }
@@ -1621,7 +1634,8 @@ class BusinessQueries:
                     "kind": row["kind"],
                     "status": row["status"],
                     "attempts": row["attempts"],
-                    "last_error": row["last_error"],
+                    "error_code": error_code,
+                    "error_message": job_error_message(error_code),
                     **({"result": result} if include_result else {}),
                     **({"result_issue": result_issue} if result_issue else {}),
                     **({"contract_issues": contract_issues} if contract_issues else {}),
@@ -2172,17 +2186,20 @@ class BusinessQueries:
     def _external_summary(external):
         if "obligations" not in external:
             return external
-        counts = {}
+        actual_counts, review_counts = {}, {}
         for item in external["obligations"]:
-            state = item["completion_status"]
-            counts[state] = counts.get(state, 0) + 1
+            actual = item["actual_completion_status"]
+            review = item["basis_review_status"]
+            actual_counts[actual] = actual_counts.get(actual, 0) + 1
+            review_counts[review] = review_counts.get(review, 0) + 1
         return {
             key: value
             for key, value in external.items()
             if key not in {"obligations", "completions"}
         } | {
             "obligation_count": len(external["obligations"]),
-            "completion_status_counts": counts,
+            "actual_completion_status_counts": actual_counts,
+            "basis_review_status_counts": review_counts,
         }
 
     @staticmethod
@@ -2457,6 +2474,7 @@ class BusinessQueries:
         *,
         as_of: str | None = None,
         summary=False,
+        _inspection_cache=None,
     ):
         """Compose readiness inside a caller-owned read snapshot."""
         from .tax_import import assess_tax_import_mapping
@@ -2473,26 +2491,32 @@ class BusinessQueries:
         periods = Periods(self.engine)
         if exact:
             manifest = reads.close_manifest(exact)
+            required_frozen = (
+                "readiness",
+                "inventories",
+                "material_coverage",
+                "previous_close_digest",
+            )
+            missing_frozen = [key for key in required_frozen if key not in manifest]
+            if missing_frozen:
+                raise KernelError(
+                    "content_integrity_failed",
+                    "冻结关账依据缺失",
+                    missing_fields=missing_frozen,
+                )
             closure = {"state": "exact_close", "digest": exact["digest"].hex()}
             frozen = {
                 "status": "ready",
                 "source": "exact_period_manifest",
                 **{
-                    key: (
-                        {"status": "recorded", "value": manifest[key]}
-                        if key in manifest
-                        else {"status": "not_recorded"}
-                    )
-                    for key in (
-                        "readiness",
-                        "inventories",
-                        "material_coverage",
-                        "previous_close_digest",
-                    )
+                    key: {"status": "recorded", "value": manifest[key]}
+                    for key in required_frozen
                 },
             }
             readiness = None
-            current = periods.collect_current_readiness(connection, period)
+            current = periods.collect_current_readiness(
+                connection, period, _inspection_cache=_inspection_cache
+            )
         elif later:
             later = reads.close_rows(periods=[later["period"]])[0]
             closure = {
@@ -2505,19 +2529,26 @@ class BusinessQueries:
                 "reason": "no_exact_period_manifest",
             }
             readiness = None
-            current = periods.collect_current_readiness(connection, period)
+            current = periods.collect_current_readiness(
+                connection, period, _inspection_cache=_inspection_cache
+            )
         else:
             closure = {"state": "open"}
-            readiness = periods.check_readiness(connection, period)
+            readiness = periods.check_readiness(
+                connection, period, _inspection_cache=_inspection_cache
+            )
             frozen = None
             current = (
-                periods.collect_current_readiness(connection, period)
+                periods.collect_current_readiness(
+                    connection, period, _inspection_cache=_inspection_cache
+                )
                 if readiness.get("order_failure") is not None
                 else readiness
             )
         external_obligation_ids = self._external_obligation_ids_for_period(connection, period)
+        obligations_query = Workflow(self.engine)
         if summary:
-            external = Workflow(self.engine)._external_obligations(
+            external = obligations_query._external_obligations(
                 connection,
                 period,
                 as_of,
@@ -2533,7 +2564,13 @@ class BusinessQueries:
             checked = (
                 readiness
                 if readiness is not None
-                else (periods.check_readiness(connection, period) if not exact else None)
+                else (
+                    periods.check_readiness(
+                        connection, period, _inspection_cache=_inspection_cache
+                    )
+                    if not exact
+                    else None
+                )
             )
             if checked and checked.get("order_failure"):
                 failure = checked["order_failure"]
@@ -2546,28 +2583,38 @@ class BusinessQueries:
                     }
                 )
         else:
-            workflow = Workflow(self.engine)._query(
+            obligations = obligations_query._external_obligations(
                 connection,
                 period,
-                as_of=as_of,
-                period_readiness=readiness if closure["state"] == "open" else None,
+                as_of,
                 reads=self._reads(connection),
                 obligation_ids=external_obligation_ids,
             )
+            period_issues = [] if exact else list(current["issues"])
+            if readiness and readiness.get("order_failure"):
+                failure = readiness["order_failure"]
+                period_issues.append(
+                    {
+                        "field": "period",
+                        "code": failure["code"],
+                        "message": failure["message"],
+                        **failure["details"],
+                    }
+                )
             external = {
                 "status": (
                     "completed"
-                    if workflow["obligations"]
+                    if obligations
                     and all(
-                        item["completion_status"] in {"completed", "not_applicable"}
-                        for item in workflow["obligations"]
+                        item["actual_completion_status"] in {"completed", "not_applicable"}
+                        for item in obligations
                     )
                     else "followup_required"
-                    if workflow["obligations"]
+                    if obligations
                     else "unestablished"
                 ),
-                "obligations": workflow["obligations"],
-                "fact_issues": workflow["fact_issues"],
+                "obligations": obligations,
+                "fact_issues": period_issues,
                 "scope_period": period,
                 "scope_semantics": "obligation_interval_includes_selected_period",
             }
@@ -2577,18 +2624,19 @@ class BusinessQueries:
             "materials": _plain(current["materials"]),
             "accounting": _plain(current["accounting"]),
             "close_requirements": _plain(current["close_requirements"]),
-            "settlements": (
+            "settlements": project_settlement_followup(
                 self.settlement_summary(connection, period, current=True)
-                if summary
-                else self._current_settlement_followups(connection, period)
             ),
             "external": external,
-            "file_jobs": self._file_jobs(connection, None, period, summary=summary),
+            "file_jobs": self._file_jobs(
+                connection, None, period, summary=summary, include_result=False
+            ),
             "tax_import_mapping": assess_tax_import_mapping(
                 self.store, connection, YearMonth(period)
             ),
         }
         result = {
+            "schema_version": 1,
             "company_id": self.store.company_id,
             "database_id": self.store.database_id,
             "period": period,

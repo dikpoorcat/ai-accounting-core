@@ -186,12 +186,13 @@ def test_payroll_reserve_payment_remains_outflow_only():
         )
 
 
-def test_obligation_definitions_are_ordered_immutable_and_drive_legacy_sources():
+def test_obligation_definitions_are_ordered_immutable_and_drive_sources():
     assert isinstance(OBLIGATION_DEFINITIONS, MappingProxyType)
     assert tuple(OBLIGATION_DEFINITIONS) == (
         "contribution_declaration",
         "individual_income_tax",
-        "quarterly_tax_and_reports",
+        "quarterly_tax",
+        "quarterly_financial_report",
         "annual_income_tax",
         "annual_business_report",
     )
@@ -203,4 +204,4 @@ def test_obligation_definitions_are_ordered_immutable_and_drive_legacy_sources()
     income_tax = OBLIGATION_DEFINITIONS["individual_income_tax"]
     assert income_tax.check_payroll_population
     assert income_tax.exclude_not_started
-    assert not OBLIGATION_DEFINITIONS["quarterly_tax_and_reports"].exclude_not_started
+    assert not OBLIGATION_DEFINITIONS["quarterly_tax"].exclude_not_started

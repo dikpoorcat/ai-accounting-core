@@ -23,7 +23,10 @@ def test_explicit_failed_job_retry_is_bounded_audited_and_idempotent(tmp_path):
     failed = engine.jobs()[0]
     assert failed["status"] == "failed" and failed["attempts"] == 3
     retry = engine.retry_job(queued["job_id"], request_id="retry")
-    assert retry["previous_attempts"] == 3 and retry["previous_error"]
+    assert retry["previous_attempts"] == 3
+    assert retry["previous_error_code"] == failed["error_code"] == "storage_unavailable"
+    assert retry["previous_error_message"] == failed["error_message"]
+    assert "previous_error" not in retry and str(blocker) not in str(retry)
     assert engine.retry_job(queued["job_id"], request_id="retry") == retry
     assert engine.jobs()[0]["attempts"] == 0
     with pytest.raises(KernelError) as error:
