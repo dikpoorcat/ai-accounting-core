@@ -79,7 +79,8 @@ _declare(
 )
 _declare(
     "platform_movement platform_expense_confirmation platform_payment platform_funding "
-    "bank_platform_transfer managed_reserve_expense managed_reserve_refund",
+    "bank_platform_transfer managed_reserve_expense managed_reserve_refund "
+    "managed_reserve_internal_movement",
     "platform_account_id",
     "platform_account",
     ("fund_account",),
@@ -201,6 +202,7 @@ BUSINESS_PATHS = {
     "bank_platform_transfer": "movement_ids.*",
     "managed_reserve_expense": "movement_ids.*",
     "managed_reserve_refund": "movement_ids.*",
+    "managed_reserve_internal_movement": "movement_ids.*",
     "money_fund_redemption": "costs.*.source_id",
     "continuation_report_profile": "opening_package_id",
     "report_carry_forward": "opening_package_id",

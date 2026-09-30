@@ -75,6 +75,7 @@ KIND_NAMES = {
     "platform_funding": "支付平台投入或借款",
     "bank_platform_transfer": "银行与支付平台转款",
     "platform_movement": "支付平台原始资金记录",
+    "managed_reserve_internal_movement": "备用金内部平台原行留证",
     "platform_expense_confirmation": "平台管理资金费用确认",
     "managed_reserve_expense": "备用金支出",
     "managed_reserve_refund": "备用金退款",

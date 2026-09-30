@@ -29,6 +29,79 @@ CREATE TRIGGER immutable_schema_history_delete BEFORE DELETE ON schema_history
  BEGIN SELECT RAISE(ABORT,'immutable schema history'); END;
 """
 
+DRAFT_HISTORY_DDL = """
+CREATE TABLE schema_draft_history(sequence INTEGER PRIMARY KEY CHECK(sequence>0),
+ source_fingerprint BLOB NOT NULL CHECK(length(source_fingerprint)=32),
+ target_fingerprint BLOB NOT NULL CHECK(length(target_fingerprint)=32),
+ retained_history_digest BLOB NOT NULL CHECK(length(retained_history_digest)=32),
+ installed_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT;
+CREATE TRIGGER immutable_schema_draft_history_update BEFORE UPDATE ON schema_draft_history
+ BEGIN SELECT RAISE(ABORT,'immutable draft schema history'); END;
+CREATE TRIGGER immutable_schema_draft_history_delete BEFORE DELETE ON schema_draft_history
+ BEGIN SELECT RAISE(ABORT,'immutable draft schema history'); END;
+"""
+
+
+def verify_draft_history(connection, bundle, kind="company"):
+    """Verify declared draft structure ancestry; never scan retained business rows."""
+    from .development_contracts import get_contract_sha
+
+    if kind != "company":
+        return
+    if bundle.current(kind)["status"] != "draft":
+        present = connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_draft_history'"
+        ).fetchone()
+        if present and connection.execute("SELECT 1 FROM schema_draft_history LIMIT 1").fetchone():
+            raise KernelError("schema_history_mismatch", "正式合同不得采用开发结构调整历史")
+        return
+    history = connection.execute(
+        "SELECT version,fingerprint FROM schema_history ORDER BY version"
+    ).fetchall()
+    if len(history) != 1 or history[0][0] != 0:
+        raise KernelError("schema_history_mismatch", "开发库必须保留唯一原始版本0安装记录")
+    original = bytes(history[0][1]).hex()
+    if get_contract_sha(bundle, kind, original) is None:
+        raise KernelError("schema_history_mismatch", "开发库原始结构不属于已打包明确来源")
+    present = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_draft_history'"
+    ).fetchone()
+    if not present:
+        # Only an explicit historical source bundle may decode its untouched old
+        # shape; current normal connections already require their full exact SQL.
+        current = bundle.current(kind)
+        if (
+            original == current["sha256"]
+            and original in bundle.development_contracts.get(kind, {})
+            and not any(item["name"] == "schema_draft_history" for item in current["objects"])
+        ):
+            return
+        raise KernelError("schema_history_mismatch", "当前开发公司结构缺少追加调整历史")
+    previous, visited = original, {original}
+    for expected, row in enumerate(
+        connection.execute(
+            "SELECT sequence,source_fingerprint,target_fingerprint,retained_history_digest "
+            "FROM schema_draft_history ORDER BY sequence"
+        ),
+        1,
+    ):
+        sequence, source, target, retained = row
+        source, target = bytes(source).hex(), bytes(target).hex()
+        if (
+            sequence != expected
+            or source != previous
+            or target in visited
+            or len(bytes(retained)) != 32
+            or get_contract_sha(bundle, kind, source) is None
+            or get_contract_sha(bundle, kind, target) is None
+            or (source, target) not in bundle.draft_transitions.get(kind, ())
+        ):
+            raise KernelError("schema_history_mismatch", "开发结构调整链不连续或缺少包内明确声明")
+        previous = target
+        visited.add(target)
+    if previous != bundle.current(kind)["sha256"]:
+        raise KernelError("schema_history_mismatch", "开发结构调整历史未到达当前完整合同")
+
 
 def execute_statements(connection, script):
     """Execute without executescript's implicit commit of the caller's transaction."""
@@ -162,7 +235,11 @@ def _verify_schema(connection, *, bundle, kind, allow_previous):
     history = connection.execute(
         "SELECT version,fingerprint FROM schema_history ORDER BY version"
     ).fetchall()
-    if not history or history[-1][0] != version or (status == "draft" and len(history) != 1):
+    if kind == "company":
+        verify_draft_history(connection, bundle, kind)
+    if status == "draft" and kind == "company":
+        history = []  # Draft ancestry is fingerprint-based, not a released version chain.
+    elif not history or history[-1][0] != version or (status == "draft" and len(history) != 1):
         raise KernelError("schema_history_mismatch", "数据库安装历史与当前版本不一致")
     for installed, recorded in history:
         released = bundle.contracts[kind].get(installed)
@@ -312,8 +389,13 @@ def _migration_plan(bundle, kind, source, target):
 
 
 def upgrade(
-    connection, *, bundle, kind="company", verify_source_content=None,
-    verify_target=None, fault=None
+    connection,
+    *,
+    bundle,
+    kind="company",
+    verify_source_content=None,
+    verify_target=None,
+    fault=None,
 ):
     if connection.in_transaction:
         raise KernelError("migration_transaction_active", "升级必须从无事务连接开始")

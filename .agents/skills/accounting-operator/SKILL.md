@@ -34,13 +34,13 @@ description: Operate real local accounting from invoices, bank records, payroll,
 - 人员、机构、账户、资产等先查身份再复用或登记；疑似重复先查证，身份纠错用专用原子入口。普通改名不改变账务归属。
 - 工资准备、资产批次、资料分期、外部义务、文件和关账采用各自的类型化准备入口。细节只读相应事实与命令 Schema，不套用退役流程。
 - 实际办理与账务核对分开：先申报可保存真实结果，后续核对不冒充再次申报。申报、扣税、缴款、文件生成各有依据。
-- 个税文件映射只影响文件；备用金只记实际支出和实际退回公司，不询问余额或退款额度。
+- 个税文件映射只影响文件；备用金只将实际支出和实际退回公司计入公司账，已确认边界内的平台原行通过无凭证留证入口处理，不询问余额或退款额度。
 
 ## 核对、关账与文件
 
 普通记账按公司逐月 `preview_close`，让老板通过 `review_locator` 查看页面的同版核对内容。随后请求 `finance_local_security` 的 `approve_period_close`，携带同一 `preview_digest` 和版本；查询安全状态取得批准后由 AI 执行 `close`。页面和密码窗口不替代正式关账。
 
-按[当前内核空库重建文档](../../../docs/empty-database-replay.md)重放时，默认使用[重放专用批量关账](../../../docs/replay-batch-close.md)，不逐月请求密码批准。先检查运行 Schema 的 `replay_close_contract.enabled`；服务缺少能力时停止重放并交由开发完成，不退回逐月密码流程。开发交付不自动恢复已暂停的真实业务。
+空库重放仅在用户明确指定时建立新目标；补齐缺口和结构变化默认保留当前进度库。按[当前内核重建文档](../../../docs/empty-database-replay.md)执行已确认重放范围时，默认使用[重放专用批量关账](../../../docs/replay-batch-close.md)，不逐月请求密码批准。先检查运行 Schema 的 `replay_close_contract.enabled`；服务缺少能力时停止重放并交由开发完成，不退回逐月密码流程。开发交付不自动恢复已暂停的真实业务；已有明确继续授权时沿原范围接续。
 
 重放服务由本机显式启动 `daemon --replay-scope <private.json>`，私有范围限制公司、数据库、月份及已登记负责人范围确认原件 SHA-256；负责人仍须有效登录，普通常驻服务拒绝批量命令。先调用 `preview_replay_close_range` 核对限定范围及同版内容，再以相同 `company_id`、`first_period`、`last_period`、`owner_confirmation`，将返回的 `digest` 传为 `preview_digest`，携带同一 `epochs` 和稳定 `request_id` 调用 `confirm_replay_close_range`。内核逐月完成全部检查、独立冻结和备份任务；冻结 `approval=null`，重放范围审计不是密码批准，范围授权不代替缺失业务事实。
 

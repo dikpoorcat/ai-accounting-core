@@ -878,6 +878,10 @@ class BriefPositionIssue(ResponseObject):
     semantics: NotRequired[str]
     account: NotRequired[str]
     amount_fen: NotRequired[WireFen]
+    voucher_version_id: NotRequired[str | None]
+    version_id: NotRequired[str | None]
+    line_no: NotRequired[Count | None]
+    affected_lines: NotRequired[list[Count]]
 
 
 class BriefPosition(ResponseObject):
@@ -1961,11 +1965,24 @@ class BusinessReadSemantics(ResponseObject):
     as_of: Literal["external_deadlines_and_completion_only"]
 
 
+class DuplicateMaterialSource(ResponseObject):
+    source_id: str
+    source_fact_id: str
+    evidence_digest: str
+    location: str
+    resolution_fact_id: NotRequired[str]
+
+
 class DuplicateCandidate(ResponseObject):
     subject_id: str
     fact_id: str | None
     kind: str
     period: Month
+    revision: NotRequired[int]
+    content_digest: NotRequired[str]
+    material_sources: NotRequired[list[DuplicateMaterialSource]]
+    published_current: NotRequired[bool]
+    pair_digest: NotRequired[str]
     signals: list[DuplicateSignal]
 
 

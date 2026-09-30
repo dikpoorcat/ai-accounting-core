@@ -5860,6 +5860,48 @@
             "title": "Amount Fen",
             "type": "string",
             "x-fen-int64": true
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "line_no": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line No"
+          },
+          "affected_lines": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Affected Lines",
+            "type": "array"
           }
         },
         "required": [
@@ -23594,6 +23636,29 @@
             "title": "Period",
             "type": "string"
           },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "content_digest": {
+            "title": "Content Digest",
+            "type": "string"
+          },
+          "material_sources": {
+            "items": {
+              "$ref": "#/$defs/DuplicateMaterialSource"
+            },
+            "title": "Material Sources",
+            "type": "array"
+          },
+          "published_current": {
+            "title": "Published Current",
+            "type": "boolean"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
           "signals": {
             "items": {
               "$ref": "#/$defs/DuplicateSignal"
@@ -23747,6 +23812,39 @@
           "checks_truncated"
         ],
         "title": "DuplicateChecks",
+        "type": "object"
+      },
+      "DuplicateMaterialSource": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "resolution_fact_id": {
+            "title": "Resolution Fact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_fact_id",
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateMaterialSource",
         "type": "object"
       },
       "DuplicateSignal": {

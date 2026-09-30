@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -49,6 +49,8 @@ class SchemaBundle:
     contracts: Mapping[str, Mapping[int, dict]]
     steps: tuple[MigrationStep, ...]
     company_verifiers: Mapping[int, Callable]
+    development_contracts: Mapping = field(default_factory=lambda: MappingProxyType({}))
+    draft_transitions: Mapping = field(default_factory=lambda: MappingProxyType({}))
 
     def current(self, kind="company"):
         return self.contracts[kind][self.current_versions[kind]]
@@ -70,6 +72,8 @@ def load_bundle(
     current_versions,
     steps=(),
     company_verifiers=None,
+    development_contracts=None,
+    draft_transitions=None,
 ):
     """Internal package/test constructor; never a service or external-SQL input."""
     if (
@@ -108,6 +112,24 @@ def load_bundle(
     for version, verifier in (company_verifiers or {}).items():
         if type(version) is not int or version not in loaded["company"] or not callable(verifier):
             raise ValueError("invalid company content verifier declaration")
+    from .development_contracts import validate_draft_contract
+
+    development_contracts = development_contracts or {}
+    draft_transitions = draft_transitions or {}
+    if (development_contracts or draft_transitions) and status != "draft":
+        raise ValueError("development contracts cannot enter released bundles")
+    if (development_contracts.keys() | draft_transitions.keys()) - {"company"}:
+        raise ValueError("development adjustment is company-only")
+    for sha, item in development_contracts.get("company", {}).items():
+        validate_draft_contract(item, family=family, application_id=application_id)
+        if item["sha256"] != sha:
+            raise ValueError("development contract key mismatch")
+    known = set(development_contracts.get("company", {}))
+    if status == "draft":
+        known.add(loaded["company"][0]["sha256"])
+    for source, target in draft_transitions.get("company", ()):
+        if source == target or source not in known or target not in known:
+            raise ValueError("development transition endpoints not declared")
     return SchemaBundle(
         registry,
         family,
@@ -117,6 +139,10 @@ def load_bundle(
         MappingProxyType({kind: MappingProxyType(value) for kind, value in loaded.items()}),
         tuple(steps),
         MappingProxyType(dict(company_verifiers or {})),
+        MappingProxyType(
+            {kind: MappingProxyType(dict(items)) for kind, items in development_contracts.items()}
+        ),
+        MappingProxyType({kind: frozenset(items) for kind, items in draft_transitions.items()}),
     )
 
 
@@ -171,6 +197,20 @@ def production_bundle():
         else {1: verify_v1_company, **({VERSION: verify_current_company} if VERSION > 1 else {})}
     )
 
+    from .development_contracts import load_development_contracts
+
+    source_sha = "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+    sources = (
+        load_development_contracts(
+            Path(__file__).with_name("schema_contracts") / "development" / "company",
+            (source_sha,),
+            family=FAMILY,
+            application_id=APPLICATION_ID,
+        )
+        if STATUS == "draft"
+        else {}
+    )
+    target_sha = "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
     return _require_released_company_verifiers(
         load_bundle(
             default_registry(),
@@ -180,5 +220,7 @@ def production_bundle():
             status=STATUS,
             current_versions={"company": VERSION, "catalog": VERSION},
             company_verifiers=verifiers,
+            development_contracts=sources,
+            draft_transitions={"company": ((source_sha, target_sha),)} if STATUS == "draft" else {},
         )
     )

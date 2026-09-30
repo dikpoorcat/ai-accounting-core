@@ -383,6 +383,10 @@ export namespace DashboardBriefContract {
   export type Semantics1 = string;
   export type Account3 = string;
   export type AmountFen8 = string;
+  export type VoucherVersionId3 = string | null;
+  export type VersionId1 = string | null;
+  export type LineNo1 = number | null;
+  export type AffectedLines1 = number[];
   export type Issues7 = BriefPositionIssue[];
   export type TotalFen = string | null;
   export type BankFen1 = string | null;
@@ -589,13 +593,13 @@ export namespace DashboardBriefContract {
   export type CalculationId6 = string;
   export type FactId2 = string;
   export type PostingPeriod = string;
-  export type VoucherVersionId3 = string | null;
+  export type VoucherVersionId4 = string | null;
   export type Direction4 = -1 | 1;
   export type SourceEvents = SettlementSourceEvent[];
   export type Items3 = OpenItem[];
   export type Id10 = string;
   export type EventType = "voucher";
-  export type VoucherVersionId4 = string;
+  export type VoucherVersionId5 = string;
   export type VoucherId = string;
   export type VoucherNumber1 = number;
   export type VoucherCalculationId = string;
@@ -609,7 +613,7 @@ export namespace DashboardBriefContract {
   export type Direction5 = number;
   export type ReversesVoucherVersionId = string | null;
   export type SelectionSource1 = string;
-  export type LineNo1 = number;
+  export type LineNo2 = number;
   export type Account5 = string;
   export type Debit = string;
   export type Credit = string;
@@ -1292,6 +1296,10 @@ export namespace DashboardBriefContract {
     semantics?: Semantics1;
     account?: Account3;
     amount_fen?: AmountFen8;
+    voucher_version_id?: VoucherVersionId3;
+    version_id?: VersionId1;
+    line_no?: LineNo1;
+    affected_lines?: AffectedLines1;
   }
   export interface FundsOverview {
     total_fen: TotalFen;
@@ -1581,7 +1589,7 @@ export namespace DashboardBriefContract {
     calculation_id: CalculationId6;
     fact_id: FactId2;
     posting_period: PostingPeriod;
-    voucher_version_id: VoucherVersionId3;
+    voucher_version_id: VoucherVersionId4;
     direction: Direction4;
   }
   export interface Collection2 {
@@ -1591,7 +1599,7 @@ export namespace DashboardBriefContract {
   export interface VoucherEvent {
     id?: Id10;
     event_type: EventType;
-    voucher_version_id: VoucherVersionId4;
+    voucher_version_id: VoucherVersionId5;
     voucher_id: VoucherId;
     voucher_number: VoucherNumber1;
     voucher_calculation_id: VoucherCalculationId;
@@ -1608,7 +1616,7 @@ export namespace DashboardBriefContract {
     lines?: Lines1;
   }
   export interface VoucherEventLine {
-    line_no: LineNo1;
+    line_no: LineNo2;
     account: Account5;
     debit: Debit;
     credit: Credit;

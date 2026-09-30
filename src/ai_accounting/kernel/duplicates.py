@@ -805,7 +805,8 @@ def _require_check_record(row) -> tuple[dict, list[ReviewBasis]]:
         return manifest, bases
     except DuplicateStoredKey as exc:
         raise KernelError(
-            "content_integrity_failed", "疑似重复核对原文有重复字段",
+            "content_integrity_failed",
+            "疑似重复核对原文有重复字段",
             check_id=row["id"],
         ) from exc
     except (IndexError, KeyError, TypeError, ValueError, ValidationError) as exc:
@@ -834,7 +835,8 @@ def _require_sql_manifest_scope(connection, *, predicate="1", parameters=()) -> 
     ).fetchone()
     if damaged is not None:
         raise KernelError(
-            "content_integrity_failed", "已保存的疑似重复核对原文有重复字段或格式错误",
+            "content_integrity_failed",
+            "已保存的疑似重复核对原文有重复字段或格式错误",
             check_id=damaged["id"],
         )
 
@@ -849,9 +851,9 @@ def _source_locations_from_checks(
     records = [
         (row["result_fact_id"], row)
         for row in connection.execute(
-        "SELECT d.* FROM json_each(?) ids "
-        "JOIN business_duplicate_check d ON d.result_fact_id=ids.value",
-        (canonical(sorted(wanted)),),
+            "SELECT d.* FROM json_each(?) ids "
+            "JOIN business_duplicate_check d ON d.result_fact_id=ids.value",
+            (canonical(sorted(wanted)),),
         )
     ]
     missing = sorted(wanted - {fact_id for fact_id, _ in records})
@@ -920,7 +922,10 @@ def _source_locations_from_checks(
 
 
 def _validate_source_locations(
-    connection, source_locations: Sequence[SourceLocation], *, current: bool = True,
+    connection,
+    source_locations: Sequence[SourceLocation],
+    *,
+    current: bool = True,
     _inspection_cache=None,
 ) -> None:
     from .materials import Specification, inspect_bytes
@@ -949,8 +954,9 @@ def _validate_source_locations(
             )
         specification = Specification.model_validate_json(row["specification"])
         inspection = (
-            inspect_bytes(row["content"], specification) if _inspection_cache is None else
-            _inspection_cache.inspect(
+            inspect_bytes(row["content"], specification)
+            if _inspection_cache is None
+            else _inspection_cache.inspect(
                 connection, source_fact_id, evidence_digest, specification, row["content"]
             )
         )
@@ -1190,17 +1196,15 @@ def _strong_pair_fact_ids(connection, rows, location_paired, registry, through_p
         scalar = [
             field
             for field in SIGNATURE_FIELDS[kind]
-            if field in columns and field not in {
-                "project_sources", "creditors", "assets", "annual_rate_percent"
-            }
+            if field in columns
+            and field not in {"project_sources", "creditors", "assets", "annual_rate_percent"}
         ]
         signature = "json_array(" + ",".join(f'd."{field}"' for field in scalar) + ")"
         origin_parts.append(
             f"SELECT f.id,f.period,'{kind}' kind,{signature} signature "
             "FROM subject s CROSS JOIN fact_current c ON c.subject_id=s.id "
             f"CROSS JOIN {table} d ON d.revision_id=c.fact_id "
-            f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'"
-            + period_clause
+            f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'" + period_clause
         )
         if through_period is not None:
             parameters.append(through_period)
@@ -1230,8 +1234,7 @@ def _strong_pair_fact_ids(connection, rows, location_paired, registry, through_p
             f"{amount} amount_fen,{object_id} object_id,{movements} movements "
             "FROM subject s CROSS JOIN fact_current c ON c.subject_id=s.id "
             f"CROSS JOIN {table} d ON d.revision_id=c.fact_id "
-            f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'"
-            + period_clause
+            f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'" + period_clause
         )
         if through_period is not None:
             parameters.append(through_period)
@@ -1594,6 +1597,80 @@ def _pair_digest(proposed: dict, candidate: dict, signals: Sequence[dict]) -> st
     return digest([DUPLICATE_CONTRACT, DUPLICATE_CONTRACT_VERSION, sides, list(signals)]).hex()
 
 
+def _review_pair_identity(connection, proposed, candidate):
+    """Current adoption identity; never changes the immutable v2 record digest.
+
+    Reader/disposition revisions remain verified audit references. A new ID alone
+    does not change an original location or its approved allocation semantics.
+    """
+    sides, resolutions = [], {}
+    for side in (proposed, candidate):
+        locations = {}
+        for item in side.get("material_sources", ()):
+            source = connection.execute(
+                "SELECT period,category,purpose,supporting_purpose,specification "
+                "FROM fact_material_source_v2 WHERE revision_id=?",
+                (item["source_fact_id"],),
+            ).fetchone()
+            if source is None:
+                raise KernelError("duplicate_review_corrupt", "疑似重复复核的原件版本不存在")
+            original = {
+                "source_id": item["source_id"],
+                "evidence_digest": item["evidence_digest"],
+                "location": item["location"],
+                "source_semantics": [*source[:4], loads_unique(source["specification"])],
+            }
+            key = canonical(original)
+            locations[key] = original
+            resolution_id = item.get("resolution_fact_id")
+            if resolution_id is not None:
+                row = connection.execute(
+                    "SELECT r.period,r.treatment,r.amount_fen,r.recognition_period "
+                    "FROM fact_material_resolution_v2 r WHERE r.revision_id=?",
+                    (resolution_id,),
+                ).fetchone()
+                if row is None:
+                    raise KernelError(
+                        "duplicate_review_corrupt", "疑似重复复核的材料处置版本不存在"
+                    )
+                links = [
+                    {**dict(link), "fact_digest": link["fact_digest"].hex()}
+                    for link in connection.execute(
+                        "SELECT l.subject_id,l.fact_kind,l.amount_field,l.amount_fen,"
+                        "l.recognition_period,f.digest AS fact_digest "
+                        "FROM fact_material_resolution_v2_links l "
+                        "JOIN fact_revision f ON f.id=l.fact_id WHERE l.revision_id=? "
+                        "ORDER BY l.subject_id,l.fact_kind,l.amount_field,l.amount_fen,"
+                        "l.recognition_period",
+                        (resolution_id,),
+                    )
+                ]
+                semantics = canonical([list(row), links])
+                resolutions.setdefault(key, set()).add(semantics)
+        sides.append(
+            {
+                "subject_id": side["subject_id"],
+                "revision": side["revision"],
+                "content_digest": side["content_digest"],
+                "material_sources": [locations[key] for key in sorted(locations)],
+            }
+        )
+    return canonical(sorted(sides, key=canonical)), resolutions
+
+
+def _review_pair_compatible(connection, saved, current):
+    if canonical(saved[1]["signals"]) != canonical(current[1]["signals"]):
+        return False
+    old_sides, old_resolutions = _review_pair_identity(connection, *saved)
+    new_sides, new_resolutions = _review_pair_identity(connection, *current)
+    if old_sides != new_sides:
+        return False
+    # Registration may precede the first material disposition. Once a reviewed
+    # disposition exists, its complete allocation is binding, not only the
+    # amount allocated to either duplicate candidate.
+    return all(new_resolutions.get(key) == value for key, value in old_resolutions.items())
+
+
 def _candidate_digest(
     proposed: Mapping[str, Any],
     source_locations: Sequence[Mapping[str, Any]],
@@ -1704,9 +1781,7 @@ class DuplicateCandidates:
             parameters.append(canonical(source_evidence))
         if source_evidence:
             if batch_cache is None or not batch_cache.get("manifest_scope_verified"):
-                _require_sql_manifest_scope(
-                    connection, predicate="d.result_fact_id IS NOT NULL"
-                )
+                _require_sql_manifest_scope(connection, predicate="d.result_fact_id IS NOT NULL")
                 if batch_cache is not None:
                     batch_cache["manifest_scope_verified"] = True
             check_cte = (
@@ -1741,7 +1816,9 @@ class DuplicateCandidates:
             # may otherwise scan every historical subject before testing the
             # candidate set. DISTINCT preserves the former UNION semantics.
             sql = (
-                "WITH RECURSIVE " + location_cte + "raw_candidates(id) AS ("
+                "WITH RECURSIVE "
+                + location_cte
+                + "raw_candidates(id) AS ("
                 + " UNION ALL ".join(selected_scopes)
                 + "), candidates(id) AS (SELECT DISTINCT id FROM raw_candidates) "
                 "SELECT f.id,f.subject_id,f.revision,f.digest,f.period,"
@@ -1803,11 +1880,7 @@ class DuplicateCandidates:
         if len(common_cache) > 8:
             del common_cache[next(iter(common_cache))]
         exact_rows = select_rows(scopes[:1], parameters[:1], exclude_subject=True)
-        rows = {
-            row["id"]: row
-            for row in common_rows
-            if row["subject_id"] != subject_id
-        }
+        rows = {row["id"]: row for row in common_rows if row["subject_id"] != subject_id}
         rows.update((row["id"], row) for row in exact_rows)
         return sorted(rows.values(), key=lambda row: (row["period"], row["id"]), reverse=True)
 
@@ -1973,7 +2046,9 @@ class DuplicateCandidates:
         # Share exact immutable candidates only during this read phase; every
         # proposal still selects its own authoritative scope and applies rules.
         cache = {
-            "facts": {}, "materials": {}, "candidate_rows": {},
+            "facts": {},
+            "materials": {},
+            "candidate_rows": {},
             "manifest_scope_verified": False,
         }
         prepared = [
@@ -2347,34 +2422,28 @@ class DuplicateCandidates:
         )
 
     def _valid_pair_reviews(
-        self, connection, pair_digests: Iterable[str], *, through_period: int | None = None
+        self,
+        connection,
+        current_pairs: Mapping[str, tuple[dict, dict]],
     ) -> set[str]:
-        wanted = set(pair_digests)
+        wanted = set(current_pairs)
         if not wanted:
             return set()
         _require_sql_manifest_scope(connection, predicate="d.action='create_separate'")
-        candidate_cache = {
-            "facts": {}, "materials": {}, "candidate_rows": {},
-            "manifest_scope_verified": False,
-        }
         result = set()
+        subjects = {side["subject_id"] for pair in current_pairs.values() for side in pair}
+        by_subjects = {}
+        for pair_digest, pair in current_pairs.items():
+            by_subjects.setdefault(frozenset(side["subject_id"] for side in pair), []).append(
+                (pair_digest, pair)
+            )
         for row in connection.execute(
-            "SELECT DISTINCT d.* FROM business_duplicate_check d "
-            "JOIN json_each(d.manifest,'$.strong_candidates') c "
-            "WHERE d.action='create_separate' AND "
-            "json_extract(c.value,'$.pair_digest') IN(SELECT value FROM json_each(?))",
-            (canonical(sorted(wanted)),),
+            "SELECT d.* FROM business_duplicate_check d "
+            "WHERE d.action='create_separate' AND d.proposed_subject_id "
+            "IN(SELECT value FROM json_each(?))",
+            (canonical(sorted(subjects)),),
         ):
             manifest, bases = _require_check_record(row)
-            prepared = self._current_prepared(
-                connection,
-                row["result_fact_id"],
-                through_period=through_period,
-                strong_only=True,
-                batch_cache=candidate_cache,
-            )
-            if prepared is None:
-                continue
             review = DuplicateReview(
                 candidate_digest=manifest["candidate_digest"],
                 action="create_separate",
@@ -2382,14 +2451,12 @@ class DuplicateCandidates:
                 review_basis=tuple(bases),
             )
             self._verify_review_evidence(connection, review, manifest, current=False)
-            current_pairs = {item["pair_digest"] for item in prepared["strong_candidates"]}
-            result.update(
-                item["pair_digest"]
-                for item in manifest.get("strong_candidates", ())
-                if isinstance(item, dict)
-                and item.get("pair_digest") in current_pairs
-                and item["pair_digest"] in wanted
-            )
+            for candidate in manifest["strong_candidates"]:
+                _verify_candidate_materials(connection, candidate)
+                key = frozenset((manifest["proposed"]["subject_id"], candidate["subject_id"]))
+                for pair_digest, pair in by_subjects.get(key, ()):
+                    if _review_pair_compatible(connection, (manifest["proposed"], candidate), pair):
+                        result.add(pair_digest)
         return result
 
     def unresolved(
@@ -2416,7 +2483,8 @@ class DuplicateCandidates:
             where.append("f.period<=?")
             parameters.append(limit)
         have_materials = {
-            "material_source_v2", "material_resolution_v2"
+            "material_source_v2",
+            "material_resolution_v2",
         } <= self.store.registry.models.keys()
         narrowed = None
         if targets is None and limit is not None and have_materials:
@@ -2438,9 +2506,7 @@ class DuplicateCandidates:
             _require_current_check_coverage(connection, changed_ids)
             if paired:
                 if paired - changed_ids:
-                    verify_sources(
-                        verification_engine, connection, fact_ids=paired - changed_ids
-                    )
+                    verify_sources(verification_engine, connection, fact_ids=paired - changed_ids)
                 where.append("f.id IN (SELECT value FROM json_each(?))")
                 parameters.append(canonical(sorted(paired)))
                 rows = list(
@@ -2477,8 +2543,7 @@ class DuplicateCandidates:
             if narrowed is not None:
                 old_locations = _material_locations(connection, paired - changed_ids)
                 locations_by_fact = {
-                    fact_id: changed_locations[fact_id]
-                    for fact_id in paired & changed_ids
+                    fact_id: changed_locations[fact_id] for fact_id in paired & changed_ids
                 }
                 locations_by_fact.update(old_locations)
             else:
@@ -2489,16 +2554,19 @@ class DuplicateCandidates:
                     else _source_locations_from_checks(connection, paired, current_sources=True)
                 )
             checked_locations = (
-                old_locations.values()
-                if old_locations is not None
-                else locations_by_fact.values()
+                old_locations.values() if old_locations is not None else locations_by_fact.values()
             )
             locations = {
-                (item["source_id"], item["source_fact_id"], item["evidence_digest"],
-                 item["location"]): SourceLocation.model_validate(
+                (
+                    item["source_id"],
+                    item["source_fact_id"],
+                    item["evidence_digest"],
+                    item["location"],
+                ): SourceLocation.model_validate(
                     {key: item[key] for key in SourceLocation.model_fields}
-                 )
-                for facts in checked_locations for item in facts
+                )
+                for facts in checked_locations
+                for item in facts
             }
             if locations:
                 _validate_source_locations(
@@ -2515,11 +2583,13 @@ class DuplicateCandidates:
                 if have_materials
                 else _source_locations_from_checks(connection, fact_ids, current_sources=True)
             )
-        candidates, seen = [], set()
+        candidates, seen, current_pairs = [], set(), {}
         # This method only reads authority. Share successful manifest syntax
         # proof across its candidate preparations, never across write phases.
         candidate_cache = {
-            "facts": {}, "materials": dict(locations_by_fact), "candidate_rows": {},
+            "facts": {},
+            "materials": dict(locations_by_fact),
+            "candidate_rows": {},
             "manifest_scope_verified": False,
         }
         for row in rows:
@@ -2539,6 +2609,7 @@ class DuplicateCandidates:
                 if pair in seen:
                     continue
                 seen.add(pair)
+                current_pairs[pair] = (prepared["proposed"], candidate)
                 review_period = max(
                     YearMonth(prepared["proposed"]["period"]), YearMonth(candidate["period"])
                 )
@@ -2559,8 +2630,7 @@ class DuplicateCandidates:
                 )
         valid = self._valid_pair_reviews(
             connection,
-            (item[0]["pair_digest"] for item in candidates),
-            through_period=limit,
+            current_pairs,
         )
         closed_through = (
             connection.execute("SELECT coalesce(max(period),-1) FROM period_close").fetchone()[0]
@@ -2589,7 +2659,9 @@ class DuplicateCandidates:
         self, connection, period: str | YearMonth, *, _inspection_cache=None, _query_reads=None
     ) -> list[dict]:
         return self.unresolved(
-            connection, through_period=period, _inspection_cache=_inspection_cache,
+            connection,
+            through_period=period,
+            _inspection_cache=_inspection_cache,
             _query_reads=_query_reads,
         )
 

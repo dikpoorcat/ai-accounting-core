@@ -63,6 +63,7 @@ export const localBusinessNames: Record<string, string> = {
   platform_expense_confirmation: "平台管理资金费用确认",
   managed_reserve_expense: "备用金支出",
   managed_reserve_refund: "备用金退款",
+  managed_reserve_internal_movement: "备用金内部平台原行留证",
   payroll_reserve_payment: "净薪及备用金支出付款",
   settlement: "非现金核销",
   sale_return: "销售退回",

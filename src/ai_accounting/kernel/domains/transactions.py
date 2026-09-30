@@ -479,12 +479,25 @@ def calculate_project_release(version: FactVersion, ctx: Context) -> Outcome:
 class PassThrough(Fact):
     kind: ClassVar[str] = "pass_through"
     payer_id: Identifier
-    beneficiary_id: Identifier
+    beneficiary_id: Identifier | None = Field(
+        description="已具名的最终权利人；受托代收债权和转付义务明确、最终权利人尚未具名时显式为null",
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "management",
+                "meaning": "known_final_pass_through_beneficiary",
+                "reusable_sources": ["original_document", "owner_confirmation"],
+                "constraint": "未知时显式为null；不虚构权利人，受托性质及责任金额仍须有明确依据",
+            }
+        },
+    )
     amount_fen: PositiveFen
     rights_and_obligation_confirmed: StrictBool | None = None
 
     def scopes(self):
-        return (str(self.period), f"party:{self.beneficiary_id}")
+        return (
+            str(self.period),
+            *((f"party:{self.beneficiary_id}",) if self.beneficiary_id is not None else ()),
+        )
 
 
 def calculate_pass_through(version: FactVersion, ctx: Context) -> Outcome:
@@ -941,7 +954,20 @@ class Payment(Fact):
     actual_date: ActualDate
     direction: Literal["inflow", "outflow"]
     bank_account_id: Identifier
-    counterparty_id: Identifier
+    counterparty_id: Identifier | None = Field(
+        description="实际单一交易方；没有单一交易方的银行汇总代付显式为null，每项分配保留真实收款人",
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "actual_single_payment_counterparty",
+                "reusable_sources": ["bank_statement", "payment_confirmation"],
+                "constraint": (
+                    "individual必须具名；bank_batch允许明确无单一交易方，"
+                    "每项recipient_id仍须真实且与采用义务一致"
+                ),
+            }
+        },
+    )
     payment_method: Literal["individual", "bank_batch"] = "individual"
     amount_fen: PositiveFen
     allocations: tuple[Allocation, ...] = Field(min_length=1)
@@ -954,6 +980,8 @@ class Payment(Fact):
     def validate_funds(self):
         if self.actual_date.period != self.period:
             raise ValueError("payment posting month must equal actual funds month")
+        if self.payment_method == "individual" and self.counterparty_id is None:
+            raise ValueError("individual payment requires an actual counterparty")
         if sum_fen(a.amount_fen for a in self.allocations) != self.amount_fen:
             raise ValueError("allocations must exactly account for the actual funds amount")
         scopes = [a.scope for a in self.allocations]

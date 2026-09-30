@@ -48,6 +48,7 @@ MOVEMENT_CONSUMER_KINDS = (
     "platform_expense_confirmation",
     "managed_reserve_expense",
     "managed_reserve_refund",
+    "managed_reserve_internal_movement",
 )
 
 

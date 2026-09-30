@@ -67,6 +67,24 @@ def _party(calculation: Mapping[str, Any], obligation: Mapping[str, Any]):
     party = obligation.get("counterparty_id")
     if isinstance(party, str) and party:
         return ("party", party), party, "creditor"
+    fact = _fact(calculation)
+    if (
+        calculation.get("kind") == "pass_through"
+        and "beneficiary_id" in fact
+        and fact["beneficiary_id"] is None
+        and fact.get("rights_and_obligation_confirmed") is True
+        and (obligation.get("name"), obligation.get("account"), obligation.get("normal"))
+        == ("remittance", "224105", "credit")
+        and isinstance(calculation.get("subject_id"), str)
+        and obligation.get("key") == f"pass_through:{calculation['subject_id']}:remittance"
+        and type(fact.get("amount_fen")) is int
+        and fact["amount_fen"] > 0
+        and obligation.get("amount_fen") == fact["amount_fen"]
+    ):
+        # An unnamed final rightsholder is not an unknown entrusted liability.
+        # Keep this exact source separate from every other unnamed source; an
+        # actual recipient does not retrospectively become the original party.
+        return ("entrusted_pass_through", obligation["key"]), None, "entrusted"
     if (
         calculation.get("kind") in {"payroll", "payroll_bounded"}
         and (obligation.get("name"), obligation.get("account"))

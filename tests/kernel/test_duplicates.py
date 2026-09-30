@@ -143,14 +143,16 @@ def write_fact(store, connection, subject_id, fact, evidence_digests, revision=1
 def fill_missing_test_checks(store, connection):
     """Complete low-level synthetic facts before exercising formal read invariants."""
     duplicates = DuplicateCandidates(store)
-    rows = list(connection.execute(
-        "SELECT f.id FROM fact_current c JOIN fact_revision f ON f.id=c.fact_id "
-        "JOIN subject s ON s.id=f.subject_id "
-        "WHERE s.kind IN(SELECT value FROM json_each(?)) "
-        "AND NOT EXISTS(SELECT 1 FROM business_duplicate_check d "
-        "WHERE d.result_fact_id=f.id) ORDER BY f.period,f.subject_id",
-        (canonical(sorted(duplicate_module.ELIGIBLE_KINDS)),),
-    ))
+    rows = list(
+        connection.execute(
+            "SELECT f.id FROM fact_current c JOIN fact_revision f ON f.id=c.fact_id "
+            "JOIN subject s ON s.id=f.subject_id "
+            "WHERE s.kind IN(SELECT value FROM json_each(?)) "
+            "AND NOT EXISTS(SELECT 1 FROM business_duplicate_check d "
+            "WHERE d.result_fact_id=f.id) ORDER BY f.period,f.subject_id",
+            (canonical(sorted(duplicate_module.ELIGIBLE_KINDS)),),
+        )
+    )
     for row in rows:
         version = store.fact(connection, row["id"])
         prepared = duplicates.prepare(
@@ -180,6 +182,278 @@ def owner_review(prepared, proof, action="create_separate", candidate_subject_id
         explanation="已核对原始资料并确认处置",
         review_basis=(ReviewBasis(kind="owner_confirmation", evidence_digest=proof),),
     )
+
+
+def reviewed_split_payments(company):
+    """Publish real typed payments, then review a late aggregate bank source."""
+    engine, party = company
+    other = Entities(engine).register_entity(
+        "organization", {"display_name": "供应商乙"}, source="合成拆分依据", request_id="party-b"
+    )["entity_id"]
+    bank = Entities(engine).register_entity(
+        "fund_account", {}, account_type="bank", source="合成银行", request_id="bank"
+    )["entity_id"]
+    proof = evidence(engine, "two-distinct-creditors-split")
+    source_proof = engine.register_evidence(
+        b"date,reference,expense,period\n2026-01-08,aggregate,200.00,2026-01\n",
+        "text/csv",
+        "synthetic-bank.csv",
+        request_id="bank-original",
+    )["digest"]
+    engine.save_fact(
+        "bank_opening",
+        "bank-opening",
+        {
+            "period": "2026-01",
+            "bank_account_id": bank,
+            "opening_fen": 0,
+            "basis": "new_account",
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="bank-opening",
+    )
+    facts = {}
+    for suffix, creditor in (("a", party), ("b", other)):
+        expense_data = expense(engine, creditor).model_dump(mode="json")
+        engine.save_fact(
+            "expense",
+            "expense-" + suffix,
+            expense_data,
+            evidence=(proof,),
+            expected_revision=0,
+            request_id="expense-" + suffix,
+        )
+    p = engine.preview(["expense-a", "expense-b"])
+    engine.confirm(
+        p["subjects"], preview_digest=p["digest"], epochs=p["epochs"], request_id="expenses"
+    )
+    for suffix, creditor in (("a", party), ("b", other)):
+        data = {
+            "period": "2026-01",
+            "actual_date": "2026-01-08",
+            "direction": "outflow",
+            "bank_account_id": bank,
+            "counterparty_id": creditor,
+            "amount_fen": 10000,
+            "allocations": [
+                {
+                    "source_kind": "expense",
+                    "source_id": "expense-" + suffix,
+                    "obligation": "primary",
+                    "amount_fen": 10000,
+                }
+            ],
+        }
+        facts["payment-" + suffix] = engine.save_fact(
+            "payment",
+            "payment-" + suffix,
+            data,
+            evidence=(proof,),
+            expected_revision=0,
+            request_id="payment-" + suffix,
+        ) | {"data": data}
+    engine.save_fact(
+        "bank_statement",
+        "statement",
+        {
+            "period": "2026-01",
+            "bank_account_id": bank,
+            "opening_fen": 0,
+            "closing_fen": -20000,
+            "entries": [
+                {"reference": "aggregate", "actual_date": "2026-01-08", "signed_fen": -20000}
+            ],
+        },
+        evidence=(source_proof,),
+        expected_revision=0,
+        request_id="statement",
+    )
+    engine.save_fact(
+        "bank_reconciliation",
+        "reconciliation",
+        {
+            "period": "2026-01",
+            "bank_account_id": bank,
+            "statement_id": "statement",
+            "matches": [
+                {"reference": "aggregate", "source_kind": "payment", "source_id": s} for s in facts
+            ],
+        },
+        evidence=(source_proof,),
+        expected_revision=0,
+        request_id="reconciliation",
+    )
+    p = engine.preview(["bank-opening", *facts, "statement", "reconciliation"])
+    published = engine.confirm(
+        p["subjects"], preview_digest=p["digest"], epochs=p["epochs"], request_id="funds"
+    )
+    calculations = {r["subject_id"]: r["calculation_id"] for r in published["results"]}
+    source = Materials(engine).receive(
+        "bank-source",
+        {
+            "period": "2026-01",
+            "category": "bank",
+            "purpose": "business",
+            "evidence_digest": source_proof,
+            "specification": {
+                "format": "csv",
+                "columns": [
+                    {"column": "A", "role": "context"},
+                    {"column": "B", "role": "context"},
+                    {"column": "C", "role": "amount", "funds_direction": "outflow"},
+                    {"column": "D", "role": "recognition_period"},
+                ],
+                "header_rows": {"CSV": 1},
+            },
+        },
+        evidence=(source_proof,),
+        expected_revision=0,
+        request_id="receive-bank",
+    )
+    resolution = {
+        "period": "2026-01",
+        "source_id": "bank-source",
+        "source_fact_id": source["fact_id"],
+        "location": "CSV!C2",
+        "treatment": "recognize",
+        "amount_fen": 20000,
+        "recognition_period": "2026-01",
+        "links": [
+            {
+                "subject_id": s,
+                "fact_kind": "payment",
+                "fact_id": f["fact_id"],
+                "calculation_id": calculations[s],
+                "amount_field": "fact.amount_fen",
+                "amount_fen": 10000,
+                "recognition_period": "2026-01",
+            }
+            for s, f in facts.items()
+        ],
+    }
+    Materials(engine).resolve(
+        "aggregate-resolution",
+        resolution,
+        evidence=(source_proof,),
+        expected_revision=0,
+        request_id="resolve-original",
+    )
+    location = SourceLocation(
+        source_id="bank-source",
+        source_fact_id=source["fact_id"],
+        evidence_digest=source_proof,
+        location="CSV!C2",
+    )
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN")
+        before = DuplicateCandidates(engine.store).unresolved(connection)
+    assert len(before) == 1
+    prepared = Duplicates(engine).prepare_fact_registration(
+        "payment",
+        "payment-a",
+        facts["payment-a"]["data"],
+        evidence=(proof,),
+        expected_revision=1,
+        source_locations=(location,),
+    )
+    reviewed = engine.save_fact(
+        "payment",
+        "payment-a",
+        facts["payment-a"]["data"],
+        evidence=(proof,),
+        expected_revision=1,
+        source_locations=(location.model_dump(mode="json"),),
+        review=owner_review(prepared, proof).model_dump(mode="json"),
+        request_id="review-distinct-payment",
+    )
+    p = engine.preview(reviewed["pending"])
+    assert all(r["mode"] == "review_no_impact" for r in p["results"])
+    assert next(r for r in p["results"] if r["kind"] == "bank_reconciliation")["values"]["balanced"]
+    published = engine.confirm(
+        p["subjects"], preview_digest=p["digest"], epochs=p["epochs"], request_id="review-publish"
+    )
+    result = next(r for r in published["results"] if r["subject_id"] == "payment-a")
+    resolution["links"][0].update(
+        fact_id=reviewed["fact_id"], calculation_id=result["calculation_id"]
+    )
+    with engine.store.connection(read_only=True) as connection:
+        original_record = dict(
+            connection.execute(
+                "SELECT * FROM business_duplicate_check WHERE id=?",
+                (reviewed["duplicate_check_id"],),
+            ).fetchone()
+        )
+    return engine, source_proof, resolution, original_record
+
+
+def test_review_survives_no_impact_publication_and_aggregate_relink(company):
+    engine, proof, resolution, original_record = reviewed_split_payments(company)
+    for revision in (1, 2):
+        Materials(engine).resolve(
+            "aggregate-resolution",
+            resolution,
+            evidence=(proof,),
+            expected_revision=revision,
+            request_id=f"refresh-bank-resolution-{revision}",
+        )
+        with engine.store.connection(read_only=True) as connection:
+            assert DuplicateCandidates(engine.store).unresolved(connection) == []
+            verify_duplicate_checks(connection)
+            from ai_accounting.kernel.duplicate_checks_v1 import (
+                verify_duplicate_checks as frozen_verify,
+            )
+
+            frozen_verify(connection)
+            assert (
+                dict(
+                    connection.execute(
+                        "SELECT * FROM business_duplicate_check WHERE id=?",
+                        (original_record["id"],),
+                    ).fetchone()
+                )
+                == original_record
+            )
+    assert Materials(engine).check("2026-01")["issues"] == []
+
+
+def test_review_does_not_cover_changed_aggregate_allocation(company):
+    engine, proof, resolution, _ = reviewed_split_payments(company)
+    resolution["links"][0]["amount_fen"] = 9999
+    resolution["links"][1]["amount_fen"] = 10001
+    Materials(engine).resolve(
+        "aggregate-resolution",
+        resolution,
+        evidence=(proof,),
+        expected_revision=1,
+        request_id="changed-bank-source-disposition",
+    )
+    with engine.store.connection(read_only=True) as connection:
+        assert DuplicateCandidates(engine.store).unresolved(connection)
+
+
+def test_original_location_cannot_be_replaced_by_resolution_refresh(company):
+    engine, proof, resolution, _ = reviewed_split_payments(company)
+    with engine.store.connection(read_only=True) as connection:
+        original = engine.store.current_fact(connection, "aggregate-resolution")
+    resolution["location"] = "CSV!C3"
+    with pytest.raises(KernelError) as failure:
+        Materials(engine).resolve(
+            "aggregate-resolution",
+            resolution,
+            evidence=(proof,),
+            expected_revision=1,
+            request_id="changed-original-location",
+        )
+    assert failure.value.code == "immutable_fact"
+    with engine.store.connection(read_only=True) as connection:
+        assert engine.store.current_fact(connection, "aggregate-resolution").id == original.id
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_revision WHERE subject_id='aggregate-resolution'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_complete_signature_without_shared_business_evidence_stays_weak(company):
@@ -410,18 +684,24 @@ def test_same_verified_location_uses_role_object_and_amount_not_secondary_class(
 def test_identity_reassignment_inherits_registered_location_for_new_candidate(company):
     engine, first_party = company
     second_party = Entities(engine).register_entity(
-        "organization", {"display_name": "供应商乙"},
-        source="合成测试资料", request_id="second-counterparty",
+        "organization",
+        {"display_name": "供应商乙"},
+        source="合成测试资料",
+        request_id="second-counterparty",
     )["entity_id"]
     third_party = Entities(engine).register_entity(
-        "organization", {"display_name": "供应商丙"},
-        source="合成测试资料", request_id="third-counterparty",
+        "organization",
+        {"display_name": "供应商丙"},
+        source="合成测试资料",
+        request_id="third-counterparty",
     )["entity_id"]
     proof = evidence(engine, "identity-location")
     source = material_source(engine, proof)
     location = SourceLocation(
-        source_id="source", source_fact_id=source["fact_id"],
-        evidence_digest=proof, location="sheet-1!row-2",
+        source_id="source",
+        source_fact_id=source["fact_id"],
+        evidence_digest=proof,
+        location="sheet-1!row-2",
     )
     original = expense(engine, first_party)
     reassigned = original.model_copy(update={"counterparty_id": second_party})
@@ -432,8 +712,12 @@ def test_identity_reassignment_inherits_registered_location_for_new_candidate(co
         connection.execute("BEGIN")
         first = write_fact(engine.store, connection, "expense-a", original, ())
         initial = duplicates.prepare(
-            connection, subject_id="expense-a", revision=1, fact=original,
-            evidence=(), source_locations=(location,),
+            connection,
+            subject_id="expense-a",
+            revision=1,
+            fact=original,
+            evidence=(),
+            source_locations=(location,),
         )
         duplicates.record_check(connection, prepared=initial, result_fact_id=first.id, review=None)
         after = write_fact(engine.store, connection, "expense-a", reassigned, (), revision=2)
@@ -453,8 +737,12 @@ def test_identity_reassignment_inherits_registered_location_for_new_candidate(co
             ("item-2", "correction-2", "expense-a", "reassign", after.id, latest.id, None, None),
         )
         prepared = duplicates.prepare(
-            connection, subject_id="expense-b", revision=1, fact=proposed,
-            evidence=(), source_locations=(location,),
+            connection,
+            subject_id="expense-b",
+            revision=1,
+            fact=proposed,
+            evidence=(),
+            source_locations=(location,),
         )
         assert prepared["status"] == "review_required"
         assert prepared["strong_candidates"][0]["subject_id"] == "expense-a"
@@ -469,8 +757,10 @@ def test_sql_location_lineage_stops_at_checked_reassignment(company):
     proof = evidence(engine, "checked-reassignment-location")
     source = material_source(engine, proof)
     location = SourceLocation(
-        source_id="source", source_fact_id=source["fact_id"],
-        evidence_digest=proof, location="sheet-1!row-2",
+        source_id="source",
+        source_fact_id=source["fact_id"],
+        evidence_digest=proof,
+        location="sheet-1!row-2",
     )
     fact = expense(engine, party)
     duplicates = DuplicateCandidates(engine.store)
@@ -478,8 +768,12 @@ def test_sql_location_lineage_stops_at_checked_reassignment(company):
         connection.execute("BEGIN")
         first = write_fact(engine.store, connection, "expense-a", fact, ())
         checked = duplicates.prepare(
-            connection, subject_id="expense-a", revision=1, fact=fact,
-            evidence=(), source_locations=(location,),
+            connection,
+            subject_id="expense-a",
+            revision=1,
+            fact=fact,
+            evidence=(),
+            source_locations=(location,),
         )
         duplicates.record_check(connection, prepared=checked, result_fact_id=first.id, review=None)
         second = write_fact(engine.store, connection, "expense-a", fact, (), revision=2)
@@ -489,15 +783,30 @@ def test_sql_location_lineage_stops_at_checked_reassignment(company):
         )
         connection.execute(
             "INSERT INTO identity_correction_item VALUES(?,?,?,?,?,?,?,?)",
-            ("checked-item-1", "checked-lineage-1", "expense-a", "reassign",
-             first.id, second.id, None, None),
+            (
+                "checked-item-1",
+                "checked-lineage-1",
+                "expense-a",
+                "reassign",
+                first.id,
+                second.id,
+                None,
+                None,
+            ),
         )
         empty_check = duplicates.prepare(
-            connection, subject_id="expense-a", revision=2, fact=fact,
-            evidence=(), source_locations=(),
+            connection,
+            subject_id="expense-a",
+            revision=2,
+            fact=fact,
+            evidence=(),
+            source_locations=(),
         )
         duplicates.record_check(
-            connection, prepared=empty_check, result_fact_id=second.id, review=None,
+            connection,
+            prepared=empty_check,
+            result_fact_id=second.id,
+            review=None,
         )
         third = write_fact(engine.store, connection, "expense-a", fact, (), revision=3)
         connection.execute(
@@ -506,20 +815,39 @@ def test_sql_location_lineage_stops_at_checked_reassignment(company):
         )
         connection.execute(
             "INSERT INTO identity_correction_item VALUES(?,?,?,?,?,?,?,?)",
-            ("checked-item-2", "checked-lineage-2", "expense-a", "reassign",
-             second.id, third.id, None, None),
+            (
+                "checked-item-2",
+                "checked-lineage-2",
+                "expense-a",
+                "reassign",
+                second.id,
+                third.id,
+                None,
+                None,
+            ),
         )
         other = write_fact(engine.store, connection, "expense-b", fact, ())
         other_check = duplicates.prepare(
-            connection, subject_id="expense-b", revision=1, fact=fact,
-            evidence=(), source_locations=(location,),
+            connection,
+            subject_id="expense-b",
+            revision=1,
+            fact=fact,
+            evidence=(),
+            source_locations=(location,),
         )
         duplicates.record_check(
-            connection, prepared=other_check, result_fact_id=other.id, review=None,
+            connection,
+            prepared=other_check,
+            result_fact_id=other.id,
+            review=None,
         )
-        assert duplicate_module._strong_location_pair_fact_ids(
-            connection, [{"id": third.id}, {"id": other.id}],
-        ) == set()
+        assert (
+            duplicate_module._strong_location_pair_fact_ids(
+                connection,
+                [{"id": third.id}, {"id": other.id}],
+            )
+            == set()
+        )
 
 
 def test_source_location_must_exist_in_current_material_inspection(company):
@@ -607,7 +935,10 @@ def test_distinct_location_review_cannot_use_same_or_invented_position(company, 
     }
 
 
-def test_material_source_revision_expires_prior_separation_without_rewriting_history(company):
+@pytest.mark.parametrize("category,expected_count", [("transactions", 0), ("assets", 1)])
+def test_material_source_revision_compares_semantics_without_rewriting_history(
+    company, category, expected_count
+):
     engine, party = company
     proof = evidence(engine, "versioned-material")
     source = material_source(engine, proof)
@@ -652,7 +983,7 @@ def test_material_source_revision_expires_prior_separation_without_rewriting_his
         {
             "period": "2026-01",
             "evidence_digest": proof,
-            "category": "assets",
+            "category": category,
             "purpose": "business",
             "specification": {
                 "format": "text",
@@ -670,11 +1001,12 @@ def test_material_source_revision_expires_prior_separation_without_rewriting_his
     with engine.store.connection(read_only=True) as connection:
         verify_duplicate_checks(connection)
         unresolved = duplicates.unresolved(connection)
-    assert len(unresolved) == 1
-    assert {unresolved[0][key] for key in ("subject_id", "candidate_subject_id")} == {
-        "expense-a",
-        "expense-b",
-    }
+    assert len(unresolved) == expected_count
+    if expected_count:
+        assert {unresolved[0][key] for key in ("subject_id", "candidate_subject_id")} == {
+            "expense-a",
+            "expense-b",
+        }
 
 
 def test_record_digest_rejects_tampered_disposition_on_normal_and_full_reads(company):
@@ -745,8 +1077,12 @@ def test_missing_current_check_rejected_by_close_and_full_integrity(company):
     engine, party = company
     proof = evidence(engine, "missing-current-check")
     saved = engine.save_fact(
-        "expense", "expense-a", expense(engine, party).model_dump(mode="json"),
-        evidence=(proof,), expected_revision=0, request_id="save-missing-current-check",
+        "expense",
+        "expense-a",
+        expense(engine, party).model_dump(mode="json"),
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="save-missing-current-check",
     )
     with engine.store.connection() as connection:
         connection.execute("DROP TRIGGER business_duplicate_check_no_delete")
@@ -765,14 +1101,18 @@ def test_unpaired_checks_are_not_decoded_during_close(company, monkeypatch):
     first, second = evidence(engine, "unpaired-first"), evidence(engine, "unpaired-second")
     for index, proof in enumerate((first, second)):
         engine.save_fact(
-            "expense", f"expense-{index}",
+            "expense",
+            f"expense-{index}",
             expense(engine, party, amount=10000 + index).model_dump(mode="json"),
-            evidence=(proof,), expected_revision=0, request_id=f"save-unpaired-{index}",
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=f"save-unpaired-{index}",
         )
     with engine.store.connection(read_only=True) as connection:
         with monkeypatch.context() as patch:
             patch.setattr(
-                duplicate_module, "_source_locations_from_checks",
+                duplicate_module,
+                "_source_locations_from_checks",
                 lambda *_args, **_kwargs: pytest.fail("unpaired check decoded"),
             )
             assert DuplicateCandidates(engine.store).close_readiness(connection, "2026-01") == []
@@ -1156,16 +1496,23 @@ def test_batch_candidates_decode_shared_sources_once_without_cross_batch_cache(
     duplicates = DuplicateCandidates(engine.store)
     proposals = [
         {
-            "subject_id": f"proposed-{index}", "revision": 1,
-            "fact": expense(engine, party, amount=20000 + index), "evidence": (proof,),
+            "subject_id": f"proposed-{index}",
+            "revision": 1,
+            "fact": expense(engine, party, amount=20000 + index),
+            "evidence": (proof,),
         }
         for index in range(20)
     ]
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
         originals = [
-            write_fact(engine.store, connection, f"existing-{index}",
-                       expense(engine, party, amount=10000 + index), (proof,))
+            write_fact(
+                engine.store,
+                connection,
+                f"existing-{index}",
+                expense(engine, party, amount=10000 + index),
+                (proof,),
+            )
             for index in range(10)
         ]
         fill_missing_test_checks(engine.store, connection)
@@ -1249,9 +1596,7 @@ def test_batch_candidates_decode_shared_sources_once_without_cross_batch_cache(
                 proposals[0]["evidence"],
                 (),
             )
-            assert [tuple(row) for row in without_index] == [
-                tuple(row) for row in expected_rows
-            ]
+            assert [tuple(row) for row in without_index] == [tuple(row) for row in expected_rows]
         finally:
             connection.execute("ROLLBACK TO without_candidate_index")
             connection.execute("RELEASE without_candidate_index")
@@ -1302,7 +1647,8 @@ def test_candidate_expiry_and_close_period_follow_later_business(company):
 
 
 def test_close_readiness_ignores_future_and_keeps_open_review_period(
-    company, monkeypatch,
+    company,
+    monkeypatch,
 ):
     engine, party = company
     proof = evidence(engine, "closed-duplicate")
@@ -1322,10 +1668,9 @@ def test_close_readiness_ignores_future_and_keeps_open_review_period(
         fill_missing_test_checks(engine.store, connection)
         issues = duplicates.close_readiness(connection, "2026-02")
         monkeypatch.setattr(
-            duplicate_module, "_strong_pair_fact_ids",
-            lambda _connection, rows, _locations, _registry, _period: {
-                row["id"] for row in rows
-            },
+            duplicate_module,
+            "_strong_pair_fact_ids",
+            lambda _connection, rows, _locations, _registry, _period: {row["id"] for row in rows},
         )
         exhaustive = duplicates.close_readiness(connection, "2026-02")
 
@@ -1466,23 +1811,23 @@ def test_batch_scoped_preselection_keeps_external_candidate(company, monkeypatch
         write_fact(engine.store, connection, "outside-target", duplicate_fact, (proof,))
         for index in range(10):
             write_fact(
-                engine.store, connection, f"target-{index}",
+                engine.store,
+                connection,
+                f"target-{index}",
                 duplicate_fact if index == 0 else expense(engine, party, amount=1000 + index),
                 (proof,) if index == 0 else (other,),
             )
         fill_missing_test_checks(engine.store, connection)
         optimized = duplicates.unresolved(connection, subject_ids=targets)
         monkeypatch.setattr(
-            duplicate_module, "_strong_pair_fact_ids",
-            lambda _connection, rows, _locations, _registry, _period: {
-                row["id"] for row in rows
-            },
+            duplicate_module,
+            "_strong_pair_fact_ids",
+            lambda _connection, rows, _locations, _registry, _period: {row["id"] for row in rows},
         )
         exhaustive = duplicates.unresolved(connection, subject_ids=targets)
     assert optimized == exhaustive
     assert any(
-        {item["subject_id"], item["candidate_subject_id"]}
-        == {"target-0", "outside-target"}
+        {item["subject_id"], item["candidate_subject_id"]} == {"target-0", "outside-target"}
         for item in optimized
     )
 
@@ -1519,8 +1864,12 @@ def test_strong_pair_discovery_does_not_scan_all_historical_revisions(company):
         before, initial_steps = measured()
         for revision in range(2, 502):
             other = write_fact(
-                engine.store, connection, "revised",
-                expense(engine, party, amount=revision), (proof,), revision=revision,
+                engine.store,
+                connection,
+                "revised",
+                expense(engine, party, amount=revision),
+                (proof,),
+                revision=revision,
             )
         after, revised_steps = measured()
         assert before == after == {first.id, second.id}

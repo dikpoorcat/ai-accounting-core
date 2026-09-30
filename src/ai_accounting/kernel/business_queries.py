@@ -79,6 +79,10 @@ def business_display_amount(calculation):
         "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
         "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
         "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
+        "managed_reserve_internal_movement": (
+            "original_amount_fen",
+            "备用金内部原行金额合计（不入公司账）",
+        ),
     }
     field, label = spec.get(calculation["kind"], ("amount_fen", "业务确认金额"))
     amount = values.get(field, data.get(field))

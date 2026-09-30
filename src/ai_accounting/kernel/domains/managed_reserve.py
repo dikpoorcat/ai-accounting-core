@@ -1,8 +1,8 @@
 """Actual managed-reserve expenses and refunds through company funds accounts."""
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, StrictBool, model_validator
 
 from ..contracts import (
     BalanceEffect,
@@ -12,14 +12,16 @@ from ..contracts import (
     NeedsInformation,
     Outcome,
 )
-from ..types import ActualDate, PositiveFen
+from ..types import ActualDate, PositiveFen, sum_fen
 from .money import FUNDS_ACCOUNT_BY_BALANCE_CATEGORY
 from .platforms import (
+    MovementConsumption,
     movement_claims,
     movement_reads,
     movement_scope,
     platform_scopes,
     validate_actual_money,
+    validate_movements,
 )
 from .transactions import Identifier, bank_scopes
 
@@ -29,6 +31,74 @@ _FUNDS = {
     "cash": "cash_account_id",
     "platform": "platform_account_id",
 }
+
+
+class ManagedReserveInternalMovement(MovementConsumption):
+    """Preserve specifically confirmed reserve-internal rows without company money."""
+
+    kind: ClassVar[str] = "managed_reserve_internal_movement"
+    platform_account_id: Identifier
+    boundary: Literal["reserve_internal"]
+    boundary_evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reserve_boundary_confirmed: StrictBool | None = Field(
+        default=None,
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "confirmed_reserve_internal_source_boundary",
+                "reusable_sources": ["original_owner_confirmation", "original_document"],
+                "constraint": "须明确本组仅属备用金内部原行，不代表公司新增收付或费用",
+            }
+        },
+    )
+
+    def scopes(self):
+        return (
+            *platform_scopes(self.period, self.platform_account_id),
+            *(movement_scope(source) for source in self.movement_ids),
+        )
+
+
+def calculate_internal_movement(version, context):
+    fact: ManagedReserveInternalMovement = version.fact
+    if fact.reserve_boundary_confirmed is not True:
+        raise NeedsInformation(
+            "reserve_boundary_confirmed",
+            "需要明确原依据确认本组仅为备用金内部原行，不形成公司新增实际收付或费用",
+            sources=(fact.boundary_evidence_digest, *fact.movement_ids),
+        )
+    if fact.boundary_evidence_digest not in version.evidence:
+        raise NeedsInformation(
+            "boundary_evidence_digest", "备用金内部边界依据须属于本次实际采用的保全原件"
+        )
+    originals = [context.one("platform_movement", "@" + source) for source in fact.movement_ids]
+    for direction in ("inflow", "outflow"):
+        sources = tuple(row.subject_id for row in originals if row.fact.direction == direction)
+        if sources:
+            validate_movements(version, context, sources, direction=direction)
+    return Outcome(
+        (),
+        {
+            "platform_account_id": fact.platform_account_id,
+            "movement_ids": fact.movement_ids,
+            "boundary": fact.boundary,
+            "boundary_evidence_digest": fact.boundary_evidence_digest,
+            "accounting_effect": "none",
+            "original_amount_fen": sum_fen(row.fact.amount_fen for row in originals),
+            "originals": [
+                {
+                    "subject_id": row.subject_id,
+                    "actual_date": str(row.fact.actual_date),
+                    "direction": row.fact.direction,
+                    "amount_fen": row.fact.amount_fen,
+                    "source_evidence_digest": row.fact.source_evidence_digest,
+                    "source_location": row.fact.source_location,
+                }
+                for row in originals
+            ],
+            "obligations": [],
+        },
+    )
 
 
 class _ManagedReserveMoney(Fact):
@@ -269,3 +339,4 @@ def calculate_refund(version, context):
 def register(registry):
     registry.register(ManagedReserveExpense, calculate_expense)
     registry.register(ManagedReserveRefund, calculate_refund)
+    registry.register(ManagedReserveInternalMovement, calculate_internal_movement)

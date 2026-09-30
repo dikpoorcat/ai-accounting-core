@@ -350,6 +350,16 @@ export namespace DashboardBusinessStatusContract {
   export type FactId7 = string | null;
   export type Kind9 = string;
   export type Period3 = string;
+  export type Revision3 = number;
+  export type ContentDigest = string;
+  export type SourceId1 = string;
+  export type SourceFactId1 = string;
+  export type EvidenceDigest3 = string;
+  export type Location2 = string;
+  export type ResolutionFactId = string;
+  export type MaterialSources = DuplicateMaterialSource[];
+  export type PublishedCurrent = boolean;
+  export type PairDigest1 = string;
   export type Signals1 = DuplicateSignal[];
   export type StrongCandidates = DuplicateCandidate[];
   export type WeakCandidates = DuplicateCandidate[];
@@ -396,7 +406,7 @@ export namespace DashboardBusinessStatusContract {
   export type CutoffSemantics1 = string;
   export type Id7 = string;
   export type SubjectId8 = string;
-  export type Revision3 = number;
+  export type Revision4 = number;
   export type Kind10 = string;
   export type Period4 = string;
   export type Evidence5 = string[];
@@ -926,7 +936,19 @@ export namespace DashboardBusinessStatusContract {
     fact_id: FactId7;
     kind: Kind9;
     period: Period3;
+    revision?: Revision3;
+    content_digest?: ContentDigest;
+    material_sources?: MaterialSources;
+    published_current?: PublishedCurrent;
+    pair_digest?: PairDigest1;
     signals: Signals1;
+  }
+  export interface DuplicateMaterialSource {
+    source_id: SourceId1;
+    source_fact_id: SourceFactId1;
+    evidence_digest: EvidenceDigest3;
+    location: Location2;
+    resolution_fact_id?: ResolutionFactId;
   }
   export interface DuplicateUnresolved {
     message: Message1;
@@ -991,7 +1013,7 @@ export namespace DashboardBusinessStatusContract {
   export interface SourceHistoryItem {
     id: Id7;
     subject_id: SubjectId8;
-    revision: Revision3;
+    revision: Revision4;
     kind: Kind10;
     period: Period4;
     evidence: Evidence5;

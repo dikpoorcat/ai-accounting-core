@@ -457,11 +457,12 @@ def _schema_for_models(models) -> str:
     from .report_semantics import REPORT_SEMANTICS_DDL
     from .security.schema import COMPANY_DDL
     from .settlement_freeze import DDL as SETTLEMENT_FREEZE_DDL
-    from .versions import HISTORY_DDL, META_DDL
+    from .versions import DRAFT_HISTORY_DDL, HISTORY_DDL, META_DDL
 
     return (
         script
         + HISTORY_DDL
+        + DRAFT_HISTORY_DDL
         + META_DDL
         + """
 CREATE TABLE opening_account(period INTEGER NOT NULL, account TEXT NOT NULL,

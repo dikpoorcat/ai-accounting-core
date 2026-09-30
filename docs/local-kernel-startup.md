@@ -30,9 +30,11 @@ Set-Location ..
 .\deploy\windows\start_accounting.ps1 -DataRoot D:\会计资料
 ```
 
-未指定 `DataRoot` 时，先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-released`；指定 `-PackageRoot` 时默认使用该包内的 `data/kernel-released`。原开发目录不移动、转换或删除，也不导入原凭据；CLI 直接运行需要 `--root` 或环境变量，不按当前工作目录选择裸 `data`。`-NoBrowser` 只连接服务并返回身份状态，默认打开页面。当前仍在第 9 阶段开发验收，正式合同尚未冻结，目录名称不代表已经发布。
+未指定 `DataRoot` 时，先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-released`；指定 `-PackageRoot` 时默认使用该包内的 `data/kernel-released`。原开发目录不移动、转换或删除，也不导入原凭据；CLI 直接运行需要 `--root` 或环境变量，不按当前工作目录选择裸 `data`。`-NoBrowser` 只连接服务并返回身份状态，默认打开页面。第 9 阶段当前暂停、尚未完成开发验收，正式合同尚未冻结，目录名称不代表已经发布。
 
 服务在本机回环地址自动选择端口；再次启动会复用同一资料根目录的服务。启动脚本不需要 Docker、PostgreSQL 或系统 Python，也不会替换旧 `.venv`。旧数据目录不会被转换或删除；遇到未知库或不支持的版本，应按诊断处理，不能绕过数据库检查。
+
+当前先在已有的本体系公司库试用并补齐缺口；结构变化不另设负责人、不自动建立空库重放。普通启动只接受匹配的结构，不隐式迁移。包内已声明的开发结构变化通过显式 `upgrade-development` 处理：先停止服务，完成已验证备份，再按精确来源与目标逐公司原子调整，追加 `schema_draft_history`，保留原版本 0 安装记录、全部原行、目录和负责人身份及冻结历史。入口已通过合成验证，真实执行与核验分别记入私有回执；完整操作及失败接续见[开发库前向升级](development-database-upgrades.md)。旧体系不作为来源，已发布的 `released` 合同不可回写；只有用户明确指定时才建立空库重放。
 
 ## 负责人登录与安全操作
 
