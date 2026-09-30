@@ -336,7 +336,7 @@ async function synchronizeQuarter(force = false) {
   }
 }
 
-async function preview(quarterKey: string) {
+async function preview(quarterKey: string, contextGate?: Promise<void>) {
   const generation = ++requestGeneration, selection = selectionKey();
   const companyId = route.query.company_id;
   previewController?.abort();
@@ -357,13 +357,14 @@ async function preview(quarterKey: string) {
   loading.value = true;
   try {
     if (typeof companyId !== "string") throw new Error("No selected company");
-    const result = await fetchDeferredQuarterlyReport(
+    const request = fetchDeferredQuarterlyReport(
       companyId,
       Number(match[1]),
       Number(match[2]),
       controller.signal,
       typeof route.query.carry_forward_fact_id === "string" ? route.query.carry_forward_fact_id : undefined,
     );
+    const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || previewController !== controller) return;
     report.value = result;
     loading.value = false;
@@ -402,9 +403,21 @@ async function refresh() {
   invalidateRequests();
   const generation = requestGeneration, selection = selectionKey();
   try {
-    await refreshContext();
-    if (!isCurrent(generation, selection)) return;
-    await synchronizeQuarter(true);
+    const company = route.query.company_id, period = route.query.period, quarter = routeQuarter();
+    if (typeof company === "string" && typeof period === "string" && quarter && route.query.quarter === quarter
+      && context.value?.current_company?.company_id === company && context.value.periods.some((item) => item.key === period)) {
+      const contextGate = refreshContext().then((fresh) => {
+        const selected = fresh.periods.find((item) => item.key === period);
+        if (fresh.current_company?.company_id !== company || !selected || quarterKeyForPeriod(selected) !== quarter
+          || !fresh.quarters.some((item) => item.key === quarter))
+          throw new Error("当前公司或期间已变化，请重新选择。");
+      });
+      await preview(quarter, contextGate);
+    } else {
+      await refreshContext();
+      if (!isCurrent(generation, selection)) return;
+      await synchronizeQuarter(true);
+    }
   } catch (error: unknown) {
     if (!isCurrent(generation, selection)) return;
     const message = dashboardErrorMessage(error);
@@ -579,7 +592,10 @@ watch(
 );
 watch(
   () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id] as const,
-  ([orgId, , , source], [previousOrgId, , , previousSource]) => {
+  ([orgId, period, quarter, source], previous) => {
+    if (previous && orgId === previous[0] && period === previous[1]
+      && quarter === previous[2] && source === previous[3]) return;
+    const previousOrgId = previous?.[0], previousSource = previous?.[3];
     if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId || source !== previousSource);
   },
 );

@@ -1,20 +1,28 @@
 """Actual source bytes and published SQLite facts establish row-level coverage."""
 
+import hashlib
+import json
 from io import BytesIO
 
 import pytest
 from entity_fixture import seed_fact_entities
 from openpyxl import Workbook
 
+from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.transactions import Expense
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.materials import (
     Materials,
     Specification,
+    check_completeness_many,
     inspect_bytes,
+    read_completeness_summary,
 )
+from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
+from ai_accounting.kernel.types import YearMonth
 
 
 class Company:
@@ -199,6 +207,183 @@ def test_split_one_original_row_to_two_actual_business_results(company):
     first, second = company.expense("first", 1000), company.expense("second", 2000)
     company.resolve(source, "CSV!B2", [first, second])
     assert company.materials.check("2026-01")["status"] == "complete"
+
+
+def test_bulk_linked_result_columns_verify_normal_and_damaged_source(company):
+    source, _ = company.source(b"name,amount,period\na,10.00,2026-01\n")
+    link = company.expense("expense", 1000)
+    company.resolve(source, "CSV!B2", [link])
+    month = YearMonth("2026-01").ordinal
+    with company.engine.store.connection(read_only=True) as connection:
+        result = check_completeness_many(connection, (month,), company.engine.store.registry)
+    assert result[month]["status"] == "complete"
+
+    with company.engine.store.connection() as connection:
+        raw = connection.execute(
+            "SELECT outcome FROM calculation WHERE id=?", (link["calculation_id"],)
+        ).fetchone()[0]
+        changed = '{"values":{},' + raw[1:]
+        assert json.loads(changed) == json.loads(raw)
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_calculation_UPDATE")
+        connection.execute(
+            "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
+            (changed, hashlib.sha256(changed.encode()).digest(), link["calculation_id"]),
+        )
+        connection.execute(trigger)
+    with company.engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as damaged:
+            check_completeness_many(connection, (month,), company.engine.store.registry)
+    assert damaged.value.code == "content_integrity_failed"
+
+
+def test_material_checker_shares_successful_sql_outcome_proof_with_its_snapshot(
+    company, monkeypatch
+):
+    from ai_accounting.kernel import stored_json
+
+    source, _ = company.source(b"name,amount,period\na,10.00,2026-01\n")
+    link = company.expense("expense", 1000)
+    company.resolve(source, "CSV!B2", [link])
+    month = YearMonth("2026-01").ordinal
+    checked = []
+    original = stored_json.verify_outcome_bytes
+
+    def counted(raw, expected_digest, ident, *, source_digest=None):
+        checked.append(ident)
+        return original(raw, expected_digest, ident, source_digest=source_digest)
+
+    monkeypatch.setattr(stored_json, "verify_outcome_bytes", counted)
+    with QueryReads.snapshot(company.engine) as reads:
+        result = Periods(company.engine).collect_current_readiness(
+            reads.connection, "2026-01", _query_reads=reads, _allow_frozen_materials=True
+        )
+        assert result["materials"]["coverage"].issues == ()
+        reads.verify_sql_outcomes({link["calculation_id"]})
+    assert checked.count(link["calculation_id"]) == 1
+    with QueryReads.snapshot(company.engine) as reads:
+        summary = read_completeness_summary(
+            reads.connection, month, company.engine.store.registry, _query_reads=reads
+        )
+        assert not summary.issues
+        reads.verify_sql_outcomes({link["calculation_id"]})
+        with company.engine.store.connection(read_only=True) as other_connection:
+            with pytest.raises(ValueError, match="another snapshot"):
+                check_completeness_many(
+                    other_connection,
+                    (month,),
+                    company.engine.store.registry,
+                    _query_reads=reads,
+                )
+    assert checked.count(link["calculation_id"]) == 2
+    with company.engine.store.connection(read_only=True) as connection:
+        unmanaged = QueryReads(company.engine, connection)
+        check_completeness_many(
+            connection, (month,), company.engine.store.registry, _query_reads=unmanaged
+        )
+        unmanaged.verify_sql_outcomes({link["calculation_id"]})
+    assert checked.count(link["calculation_id"]) == 4
+
+
+def test_failed_material_checker_does_not_share_successful_result_prefix(company, monkeypatch):
+    from ai_accounting.kernel import stored_json
+
+    source, _ = company.source(
+        b"name,amount,period\na,10.00,2026-01\nb,20.00,2026-01\nc,30.00,2026-01\n"
+    )
+    prior = company.expense("a-expense", 1000)
+    good = company.expense("b-expense", 2000)
+    bad = company.expense("c-expense", 3000)
+    company.resolve(source, "CSV!B2", [prior])
+    company.resolve(source, "CSV!B3", [good])
+    company.resolve(source, "CSV!B4", [bad])
+    with company.engine.store.connection() as connection:
+        raw = connection.execute(
+            "SELECT outcome FROM calculation WHERE id=?", (bad["calculation_id"],)
+        ).fetchone()[0]
+        changed = '{"values":{},' + raw[1:]
+        assert json.loads(changed) == json.loads(raw)
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_calculation_UPDATE")
+        connection.execute(
+            "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
+            (changed, hashlib.sha256(changed.encode()).digest(), bad["calculation_id"]),
+        )
+        connection.execute(trigger)
+    checked = []
+    original = stored_json.verify_outcome_bytes
+
+    def counted(raw, expected_digest, ident, *, source_digest=None):
+        checked.append(ident)
+        return original(raw, expected_digest, ident, source_digest=source_digest)
+
+    monkeypatch.setattr(stored_json, "verify_outcome_bytes", counted)
+    month = YearMonth("2026-01").ordinal
+    with QueryReads.snapshot(company.engine) as reads:
+        reads.verify_sql_outcomes({prior["calculation_id"]})
+        with pytest.raises(KernelError) as damaged:
+            check_completeness_many(
+                reads.connection, (month,), company.engine.store.registry, _query_reads=reads
+            )
+        assert damaged.value.code == "content_integrity_failed"
+        reads.verify_sql_outcomes({good["calculation_id"]})
+        reads.verify_sql_outcomes({prior["calculation_id"]})
+    assert checked.count(prior["calculation_id"]) == 1
+    assert checked.count(good["calculation_id"]) == 2
+    assert checked.index(prior["calculation_id"]) < checked.index(good["calculation_id"])
+    assert checked.index(good["calculation_id"]) < checked.index(bad["calculation_id"])
+
+
+def test_guard_before_material_and_batch_local_repeat_use_one_exact_proof(company, monkeypatch):
+    from ai_accounting.kernel import stored_json
+
+    source, _ = company.source(b"name,amount,period\na,10.00,2026-01\n")
+    link = company.expense("expense", 1000)
+    company.resolve(source, "CSV!B2", [link])
+    unrelated = [company.expense(f"unrelated-{index}", 100 + index) for index in range(8)]
+    checked = []
+    original = stored_json.verify_outcome_bytes
+
+    def counted(raw, expected_digest, ident, *, source_digest=None):
+        checked.append(ident)
+        return original(raw, expected_digest, ident, source_digest=source_digest)
+
+    monkeypatch.setattr(stored_json, "verify_outcome_bytes", counted)
+    month = YearMonth("2026-01").ordinal
+    with QueryReads.snapshot(company.engine) as reads:
+        reads.verify_sql_outcomes({link["calculation_id"]})
+        result = check_completeness_many(
+            reads.connection, (month,), company.engine.store.registry, _query_reads=reads
+        )
+        assert result[month]["status"] == "complete"
+        assert checked == [link["calculation_id"]]
+        row = reads.connection.execute(
+            "SELECT id,outcome stored_outcome,digest result_digest "
+            "FROM calculation WHERE id=?",
+            (unrelated[0]["calculation_id"],),
+        ).fetchone()
+        batch = reads._material_sql_outcome_batch(reads.connection)
+        batch.verify(row)
+        batch.verify(row)
+        batch.commit()
+        assert checked.count(link["calculation_id"]) == 1
+        assert checked.count(unrelated[0]["calculation_id"]) == 1
+        held = reads._material_sql_outcome_batch(reads.connection)
+    with pytest.raises(KernelError) as stale_verify:
+        held.verify(row)
+    assert stale_verify.value.code == "content_integrity_failed"
+    with pytest.raises(KernelError) as stale_commit:
+        held.commit()
+    assert stale_commit.value.code == "content_integrity_failed"
+    with QueryReads.snapshot(company.engine) as reads:
+        check_completeness_many(
+            reads.connection, (month,), company.engine.store.registry, _query_reads=reads
+        )
+    assert checked.count(link["calculation_id"]) == 2
 
 
 def test_changed_or_deleted_current_result_reopens_original_row(company):

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from close_storage_fixture import stored_manifest
 from schema_fixture import test_bundle
 from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import prepare_payment
@@ -288,11 +289,7 @@ def test_closed_single_no_entry_dependency_cannot_prove_adoption(
     reference_id = reference["results"][0]["calculation_id"]
     close(engine, "2026-01")
     with engine.store.connection(read_only=True) as connection:
-        manifest = json.loads(
-            connection.execute(
-                "SELECT manifest FROM period_close WHERE period=?", (YearMonth("2026-01").ordinal,)
-            ).fetchone()[0]
-        )
+        manifest = stored_manifest(connection, "2026-01")
         directly_adopted = {item["calculation_id"] for item in manifest["adopted_results"]}
         assert directly_adopted == (
             {reference_id} if move_before_close else {first_id, reference_id}

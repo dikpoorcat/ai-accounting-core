@@ -1,0 +1,794 @@
+{
+  "purpose": "two_process_full_preparation_diagnostic_not_acceptance",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r7",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-pilot-6-verified-r1.json",
+  "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-pilot-6",
+  "period": "2016-02",
+  "measurement_environment": "exclusive_native_diagnostic_requested_by_parent",
+  "samples": [
+    {
+      "mode": "original",
+      "warm": true,
+      "elapsed_ms": 900.7388001773506,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": true,
+      "elapsed_ms": 510.67750016227365,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 354.14190008305013,
+          "worker_cpu_ms": 343.75,
+          "serialized_bytes": 5,
+          "send_ms": 0.07409998215734959,
+          "finished_at": 1333894.888014,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 0.3580001648515463
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 499.9339999631047,
+          "worker_cpu_ms": 500.0,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.05110003985464573
+          },
+          "finished_at": 1333895.0338574,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.2673998717218637
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 406.940900022164,
+          "wait_ms": 95.45690007507801
+        }
+      },
+      "last_worker_received_from_start_ms": 502.3393000010401,
+      "parent_tail_after_last_worker_ms": 8.338200161233544
+    },
+    {
+      "mode": "original",
+      "warm": true,
+      "elapsed_ms": 768.7970001716167,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": true,
+      "elapsed_ms": 464.3999000545591,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 278.1536001712084,
+          "worker_cpu_ms": 281.25,
+          "serialized_bytes": 5,
+          "send_ms": 0.06949994713068008,
+          "finished_at": 1333896.1342657,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 3.578500123694539
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 448.0645000003278,
+          "worker_cpu_ms": 453.125,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.08350005373358727
+          },
+          "finished_at": 1333896.3042597,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 3.5268000792711973
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 398.18409993313253,
+          "wait_ms": 54.654600098729134
+        }
+      },
+      "last_worker_received_from_start_ms": 452.7257001027465,
+      "parent_tail_after_last_worker_ms": 11.674199951812625
+    },
+    {
+      "mode": "original",
+      "warm": true,
+      "elapsed_ms": 692.5726998597383,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": true,
+      "elapsed_ms": 408.52009993977845,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 270.28680010698736,
+          "worker_cpu_ms": 265.625,
+          "serialized_bytes": 5,
+          "send_ms": 0.0879999715834856,
+          "finished_at": 1333897.3275002,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 29.04260018840432
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 389.2657000105828,
+          "worker_cpu_ms": 390.625,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.051900045946240425
+          },
+          "finished_at": 1333897.4465093,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 2.0580000709742308
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 358.3482000976801,
+          "wait_ms": 39.07699999399483
+        }
+      },
+      "last_worker_received_from_start_ms": 392.08930009044707,
+      "parent_tail_after_last_worker_ms": 16.43079984933138
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 694.3991999141872,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 390.48760011792183,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 250.1097999047488,
+          "worker_cpu_ms": 250.0,
+          "serialized_bytes": 5,
+          "send_ms": 0.060399994254112244,
+          "finished_at": 1333898.4543457,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 0.4088999703526497
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 378.9439999964088,
+          "worker_cpu_ms": 375.0,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.05079992115497589
+          },
+          "finished_at": 1333898.5832241,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.1821999214589596
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 360.0012001115829,
+          "wait_ms": 21.066599991172552
+        }
+      },
+      "last_worker_received_from_start_ms": 381.0109000187367,
+      "parent_tail_after_last_worker_ms": 9.47670009918511
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 392.926599830389,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 249.93590009398758,
+          "worker_cpu_ms": 250.0,
+          "serialized_bytes": 5,
+          "send_ms": 0.06530014798045158,
+          "finished_at": 1333898.8635802,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 0.2921000123023987
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 381.6432999446988,
+          "worker_cpu_ms": 375.0,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.057900091633200645
+          },
+          "finished_at": 1333898.9953268,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.169400056824088
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 344.16319988667965,
+          "wait_ms": 39.420099928975105
+        }
+      },
+      "last_worker_received_from_start_ms": 383.5291999857873,
+      "parent_tail_after_last_worker_ms": 9.39739984460175
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 704.931499902159,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 724.9263001140207,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 461.9249999523163,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 304.2614001315087,
+          "worker_cpu_ms": 281.25,
+          "serialized_bytes": 5,
+          "send_ms": 0.08350005373358727,
+          "finished_at": 1333900.8082425,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 0.3674000035971403
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 450.69389999844134,
+          "worker_cpu_ms": 437.5,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.04579988308250904
+          },
+          "finished_at": 1333900.9547372,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.1856001801788807
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 396.994800074026,
+          "wait_ms": 55.86189986206591
+        }
+      },
+      "last_worker_received_from_start_ms": 452.7883001137525,
+      "parent_tail_after_last_worker_ms": 9.1366998385638
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 416.7172000743449,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 280.52260004915297,
+          "worker_cpu_ms": 281.25,
+          "serialized_bytes": 5,
+          "send_ms": 0.07609999738633633,
+          "finished_at": 1333901.2660833,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 18.963399808853865
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 405.27310012839735,
+          "worker_cpu_ms": 406.25,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.06279977969825268
+          },
+          "finished_at": 1333901.3909188,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.3559001963585615
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 358.73600002378225,
+          "wait_ms": 48.76450006850064
+        }
+      },
+      "last_worker_received_from_start_ms": 407.4346001725644,
+      "parent_tail_after_last_worker_ms": 9.282599901780486
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 707.0188000798225,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 722.8321000002325,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 399.7170999646187,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 259.8338001407683,
+          "worker_cpu_ms": 265.625,
+          "serialized_bytes": 5,
+          "send_ms": 0.07319985888898373,
+          "finished_at": 1333903.1591229,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 0.47530001029372215
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 388.0919001530856,
+          "worker_cpu_ms": 390.625,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.04770001396536827
+          },
+          "finished_at": 1333903.2874592,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.2811000924557447
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 373.8297999370843,
+          "wait_ms": 16.73960010521114
+        }
+      },
+      "last_worker_received_from_start_ms": 390.51060006022453,
+      "parent_tail_after_last_worker_ms": 9.20649990439415
+    },
+    {
+      "mode": "parallel_preparation",
+      "warm": false,
+      "elapsed_ms": 425.3412999678403,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {
+        "reports": {
+          "kind": "reports",
+          "worker_wall_ms": 292.28270007297397,
+          "worker_cpu_ms": 281.25,
+          "serialized_bytes": 5,
+          "send_ms": 0.06310013122856617,
+          "finished_at": 1333903.6115901,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 56552,
+          "delivery_ms": 6.992100039497018
+        },
+        "preparation": {
+          "kind": "preparation",
+          "worker_wall_ms": 414.0699999406934,
+          "worker_cpu_ms": 406.25,
+          "serialized_bytes": 150910,
+          "report_receive": {
+            "wait_ms": 0.0604002270847559
+          },
+          "finished_at": 1333903.7334348,
+          "identity_before": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "identity_after": [
+            10291191294807999146,
+            281474978450237,
+            76369920
+          ],
+          "pid": 82880,
+          "delivery_ms": 1.160199986770749
+        }
+      },
+      "use_future": {
+        "preparation": {
+          "first_call_from_start_ms": 398.61629996448755,
+          "wait_ms": 17.483499832451344
+        }
+      },
+      "last_worker_received_from_start_ms": 416.0287999548018,
+      "parent_tail_after_last_worker_ms": 9.312500013038516
+    },
+    {
+      "mode": "original",
+      "warm": false,
+      "elapsed_ms": 670.5164001323283,
+      "data_version": [
+        2,
+        2
+      ],
+      "identity": [
+        10291191294807999146,
+        281474978450237,
+        76369920
+      ],
+      "checkers": {},
+      "use_future": {},
+      "last_worker_received_from_start_ms": null,
+      "parent_tail_after_last_worker_ms": null
+    }
+  ],
+  "startup_ms": 5311.853100080043,
+  "worker_pids": [
+    56552,
+    82880
+  ],
+  "response_equal_except_generated_at": true,
+  "original": {
+    "samples_ms": [
+      694.3991999141872,
+      704.931499902159,
+      724.9263001140207,
+      707.0188000798225,
+      722.8321000002325,
+      670.5164001323283
+    ],
+    "median_ms": 705.9751499909908
+  },
+  "parallel_preparation": {
+    "samples_ms": [
+      390.48760011792183,
+      392.926599830389,
+      461.9249999523163,
+      416.7172000743449,
+      399.7170999646187,
+      425.3412999678403
+    ],
+    "median_ms": 408.2171500194818
+  }
+}

@@ -36,8 +36,6 @@ from .versions import (
     verify_schema,
 )
 
-VERSION = 0
-
 
 @contextmanager
 def _archive_snapshot(archive, parent):
@@ -152,12 +150,13 @@ class Catalog:
             return database_format(connection, bundle=self.bundle, kind="catalog")
 
     @contextmanager
-    def connection(self, *, read_only=False):
+    def connection(self, *, read_only=False, _cross_thread=False):
         with closing(
             connect(
                 self.path,
                 read_only=read_only,
                 validator=lambda c: verify_schema(c, bundle=self.bundle, kind="catalog"),
+                _cross_thread=_cross_thread,
             )
         ) as connection:
             try:
@@ -464,20 +463,25 @@ class Catalog:
                 dict(row) for row in connection.execute("SELECT * FROM company ORDER BY name,id")
             ]
 
-    def bind(self, company_id: str):
+    def bind(self, company_id: str, *, read_pool=None):
         with self.connection(read_only=True) as connection:
             row = connection.execute("SELECT * FROM company WHERE id=?", (company_id,)).fetchone()
             if not row:
                 raise KernelError("unknown_company", "公司尚未登记")
-        return self._bound_store(row)
+        return self._bound_store(row, read_pool=read_pool)
 
-    def _bound_store(self, row):
+    def _bound_store(self, row, *, read_pool=None):
         """Bind only a current, fully recognized company; opening never upgrades it."""
-        store = Store(row["path"], self.bundle, row["id"], row["database_id"])
+        store = Store(
+            row["path"], self.bundle, row["id"], row["database_id"],
+            taxpayer_id=row["taxpayer_id"], read_pool=read_pool,
+        )
         if not store.path.is_file():
             raise KernelError("company_missing", "公司数据库不存在")
-        with store.connection(read_only=True) as connection:
-            identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
-            if identity["taxpayer_id"] != row["taxpayer_id"]:
-                raise KernelError("company_mismatch", "数据库身份与目录登记不一致")
+        if read_pool is not None:
+            # The first dashboard borrow validates the exact file, schema and
+            # all three identities on its shared read connection.
+            return store
+        with store.connection(read_only=True):
+            pass
         return store

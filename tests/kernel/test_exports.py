@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from io import BytesIO
 
@@ -110,6 +111,31 @@ def queue(
         "request_id": request_id or company.request(),
     }
     return preview, export.confirm(period, **options), options
+
+
+def test_export_preview_rejects_duplicate_key_in_selected_result(setup):
+    company, export, template = setup
+    with company.engine.store.connection() as connection:
+        calculation_id = connection.execute(
+            "SELECT calculation_id FROM calculation_current WHERE subject_id='january'"
+        ).fetchone()[0]
+        raw = connection.execute(
+            "SELECT outcome FROM calculation WHERE id=?", (calculation_id,)
+        ).fetchone()[0]
+        changed = '{"values":{},' + raw[1:]
+        assert json.loads(changed) == json.loads(raw)
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_calculation_UPDATE")
+        connection.execute(
+            "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
+            (changed, hashlib.sha256(changed.encode()).digest(), calculation_id),
+        )
+        connection.execute(trigger)
+    with pytest.raises(KernelError) as rejected:
+        export.preview("2026-01", template_evidence_digest=template)
+    assert rejected.value.code == "content_integrity_failed"
 
 
 def test_personal_advances_export_only_explicit_employee_reimbursement(setup):

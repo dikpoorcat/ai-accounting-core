@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .accounting import compatibility
 from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
 from .asset_batches import _AssetPreparation, _checked_members
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_digest as digest
 from .contracts import (
     BalanceEffect,
     Context,
@@ -28,7 +30,7 @@ from .contracts import (
 )
 from .dependencies import fact_matches, scope_keys
 from .engine import Engine
-from .types import canonical, digest
+from .stored_json import load_outcome, verify_outcome_bytes
 
 IDENTITY_CORRECTION_DDL = """
 CREATE TABLE identity_correction(id TEXT PRIMARY KEY,plan TEXT NOT NULL CHECK(json_valid(plan)),
@@ -219,17 +221,17 @@ def _assignment_data(source, assignments):
     return type(source.fact).model_validate_json(canonical(data))
 
 
-def _entity_changes(before, after, subject_id):
+def _entity_changes(before, after, subject_id, *, registry=None):
     from .entity_references import references_for
 
     original = {
         r["path"]: r["entity_id"]
-        for r in references_for(before, subject_id)
+        for r in references_for(before, subject_id, registry=registry)
         if r["reference_type"] == "entity"
     }
     destination = {
         r["path"]: r["entity_id"]
-        for r in references_for(after, subject_id)
+        for r in references_for(after, subject_id, registry=registry)
         if r["reference_type"] == "entity"
     }
     return [
@@ -381,7 +383,7 @@ def current_opening_binding(connection, source_subject_id):
     ).fetchone()
     if row is None:
         return None
-    outcome = json.loads(row["outcome"])
+    outcome = load_outcome(row["outcome"])
     if (
         digest(outcome) != row["digest"]
         or outcome["values"].get("source_subject_id") != source_subject_id
@@ -408,7 +410,7 @@ def current_opening_bindings(connection, source_calculation_ids=None):
         "ON b.revision_id=c.fact_id WHERE c.kind='opening_identity_binding'" + restriction,
         parameters,
     ):
-        outcome = json.loads(row["outcome"])
+        outcome = load_outcome(row["outcome"])
         if (
             digest(outcome) != row["digest"]
             or outcome["values"].get("source_calculation_id") != row["source_calculation_id"]
@@ -515,11 +517,13 @@ class _CorrectionPreparation(_AssetPreparation):
         }
         with self.store.connection(read_only=True) as connection:
             for row in connection.execute(
-                "SELECT subject_id,outcome FROM calculation "
+                "SELECT id,subject_id,outcome,digest FROM calculation "
                 "WHERE id IN (SELECT value FROM json_each(?))",
                 (canonical(sorted(ids)),),
             ):
-                self.outcomes[row["subject_id"]] = json.loads(row["outcome"])
+                self.outcomes[row["subject_id"]] = verify_outcome_bytes(
+                    row["outcome"], row["digest"], row["id"]
+                )
         return snapshot
 
     def _evaluate(self, version, context):
@@ -1239,6 +1243,9 @@ class IdentityCorrections:
                         ),
                     )
                 _checked_members(connection, item.calculation_id, require_seals=False)
+            publication_highwater = connection.execute(
+                "SELECT coalesce(max(sequence), 0) FROM calculation_publication"
+            ).fetchone()[0]
             results = []
             for item in prepared:
                 if item.version.fact.kind in MEMBER_KINDS:
@@ -1302,7 +1309,9 @@ class IdentityCorrections:
                 connection, {i["subject_id"] for i in public["items"]} | set(versions)
             )
             self.engine._sync_publication_projections(
-                connection, [i.version.subject_id for i in prepared]
+                connection,
+                [i.version.subject_id for i in prepared],
+                new_publication_after=publication_highwater,
             )
             verify_publication(self.engine, connection, [i.calculation_id for i in prepared])
             verify_projection_change(connection, projection)
@@ -1327,6 +1336,32 @@ class IdentityCorrections:
 
 def verify_identity_corrections(engine, connection):
     from .entity_references import references_for
+
+    if getattr(engine.store.registry, "content_version", None) == 1:
+        from .content_v1_semantics import OPENING_BASIS_KIND, OPENING_BINDING_KIND
+
+        binding_kind = OPENING_BINDING_KIND
+        basis_kind = OPENING_BASIS_KIND
+        from .content_v1_semantics import assignment_data as apply_assignments
+        from .content_v1_semantics import entity_changes as v1_entity_changes
+        from .content_v1_semantics import (
+            v1_calculate_opening_basis_correction as verify_opening_basis,
+        )
+        from .content_v1_semantics import (
+            v1_calculate_opening_binding as verify_opening_binding,
+        )
+        from .history_types_v1 import CorrectionContext as VerificationContext
+
+        def compare_entities(before, after, _subject_id, *, registry=None):
+            return v1_entity_changes(before, after, registry.reference_declarations)
+    else:
+        binding_kind = OpeningIdentityBinding.kind
+        basis_kind = OpeningBasisCorrection.kind
+        VerificationContext = Context
+        verify_opening_basis = calculate_opening_basis_correction
+        verify_opening_binding = calculate_opening_binding
+        apply_assignments = _assignment_data
+        compare_entities = _entity_changes
 
     def fail(ident, message):
         raise KernelError(
@@ -1428,7 +1463,10 @@ def verify_identity_corrections(engine, connection):
                 ):
                     fail(item["id"], "纠错保存事实与批准事实不一致")
                 if item["action"] == "reassign":
-                    entity_changes = _entity_changes(source.fact, after.fact, source.subject_id)
+                    entity_changes = compare_entities(
+                        source.fact, after.fact, source.subject_id,
+                        registry=engine.store.registry,
+                    )
                     if (
                         after.subject_id != source.subject_id
                         or after.revision != source.revision + 1
@@ -1443,7 +1481,7 @@ def verify_identity_corrections(engine, connection):
                 else:
                     binding = after.fact
                     if (
-                        binding.kind != OpeningIdentityBinding.kind
+                        binding.kind != binding_kind
                         or binding.source_fact_id != source.id
                         or binding.source_subject_id != source.subject_id
                         or binding.source_kind != source.fact.kind
@@ -1451,7 +1489,9 @@ def verify_identity_corrections(engine, connection):
                         fail(item["id"], "期初绑定与保存来源不一致")
                     allowed = {
                         r["path"]
-                        for r in references_for(source.fact, source.subject_id)
+                        for r in references_for(
+                            source.fact, source.subject_id, registry=engine.store.registry
+                        )
                         if r["reference_type"] == "entity"
                     }
                     if len({a.path for a in binding.assignments}) != len(
@@ -1459,12 +1499,12 @@ def verify_identity_corrections(engine, connection):
                     ) or any(a.path not in allowed for a in binding.assignments):
                         fail(item["id"], "期初绑定修改了对象身份以外的字段")
                     corrected = (
-                        _assignment_data(
+                        apply_assignments(
                             engine.store.fact(connection, binding.replacement_source_fact_id),
                             binding.assignments,
                         )
                         if binding.operation == "supersede"
-                        else _assignment_data(source, binding.assignments)
+                        else apply_assignments(source, binding.assignments)
                     )
                     previous_binding = connection.execute(
                         "SELECT id FROM fact_revision WHERE subject_id=? AND revision=?",
@@ -1476,20 +1516,23 @@ def verify_identity_corrections(engine, connection):
                         else None
                     )
                     old_basis = (
-                        _assignment_data(
+                        apply_assignments(
                             engine.store.fact(connection, prior.replacement_source_fact_id),
                             prior.assignments,
                         )
                         if prior and prior.operation == "supersede"
-                        else _assignment_data(source, prior.assignments)
+                        else apply_assignments(source, prior.assignments)
                         if prior
                         else source.fact
                     )
-                    entity_changes = _entity_changes(old_basis, corrected, source.subject_id)
+                    entity_changes = compare_entities(
+                        old_basis, corrected, source.subject_id,
+                        registry=engine.store.registry,
+                    )
                     if (
                         canonical(corrected.model_dump(mode="json"))
                         != canonical(
-                            _assignment_data(
+                            apply_assignments(
                                 engine.store.fact(
                                     connection, expected[item["subject_id"]]["replacement_fact_id"]
                                 ),
@@ -1525,7 +1568,9 @@ def verify_identity_corrections(engine, connection):
                         ) or (not retained and binding.assignments):
                             fail(item["id"], "保留期初的对象归属并非批准时的精确采用")
                     selection = engine.store.select_many(connection, binding.reads())
-                    regenerated = asdict(calculate_opening_binding(after, Context(selection)))
+                    regenerated = asdict(
+                        verify_opening_binding(after, VerificationContext(selection))
+                    )
                     if (
                         not expected_result
                         or digest(regenerated).hex() != expected_result["result_digest"]
@@ -1547,7 +1592,10 @@ def verify_identity_corrections(engine, connection):
                     if target_proposal and target_proposal["data"]
                     else replacement.fact
                 )
-                entity_changes = _entity_changes(source.fact, destination, source.subject_id)
+                entity_changes = compare_entities(
+                    source.fact, destination, source.subject_id,
+                    registry=engine.store.registry,
+                )
             if entity_changes != expected[item["subject_id"]]["entity_changes"]:
                 fail(item["id"], "身份归属变更与精确事实范围不一致")
             if item["action"] == "supersede" and item["calculation_id"]:
@@ -1585,7 +1633,7 @@ def verify_identity_corrections(engine, connection):
                         record_id=item["id"],
                     )
         for approved in plan["fact_changes"]:
-            if approved["kind"] != OpeningBasisCorrection.kind:
+            if approved["kind"] != basis_kind:
                 continue
             owner = engine.store.fact(connection, approved["fact_id"])
             if owner.subject_id != "opening-correction:" + ident or canonical(
@@ -1606,8 +1654,9 @@ def verify_identity_corrections(engine, connection):
                 (m.binding_subject_id, m.binding_fact_id, m.action) for m in owner.fact.members
             } != expected_members:
                 fail(owner.id, "期初差额汇总遗漏或增加了批准明细")
-            result = calculate_opening_basis_correction(
-                owner, Context(engine.store.select_many(connection, owner.fact.reads()))
+            result = verify_opening_basis(
+                owner,
+                VerificationContext(engine.store.select_many(connection, owner.fact.reads())),
             )
             saved = results.get(owner.subject_id)
             if not saved or digest(asdict(result)).hex() != saved["result_digest"]:
@@ -1624,14 +1673,14 @@ def verify_identity_corrections(engine, connection):
             adopted_owners.add(owner.id)
     all_owners = (
         {r[0] for r in connection.execute("SELECT revision_id FROM fact_opening_basis_correction")}
-        if OpeningBasisCorrection.kind in engine.store.registry.models
+        if basis_kind in engine.store.registry.models
         else set()
     )
     if all_owners != adopted_owners:
         fail("opening_basis_correction", "期初差额汇总缺少完整纠错批准")
     all_bindings = (
         {r[0] for r in connection.execute("SELECT revision_id FROM fact_opening_identity_binding")}
-        if OpeningIdentityBinding.kind in engine.store.registry.models
+        if binding_kind in engine.store.registry.models
         else set()
     )
     all_terminal = {

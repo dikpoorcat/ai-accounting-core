@@ -179,6 +179,9 @@ def seed_to(
             ]
             connection.execute("BEGIN IMMEDIATE")
             try:
+                publication_highwater = connection.execute(
+                    "SELECT coalesce(max(sequence),0) FROM calculation_publication"
+                ).fetchone()[0]
                 connection.executemany(
                     "INSERT INTO subject VALUES(?,?)", [(r[1], "benchmark_charge") for r in rows]
                 )
@@ -274,6 +277,11 @@ def seed_to(
                 connection.executemany(
                     "INSERT INTO calculation_current VALUES(?,?)", [(r[1], r[3]) for r in rows]
                 )
+                # These immutable anchors belong to the publication transaction,
+                # just as in Engine.confirm; repair must never invent them.
+                from ai_accounting.kernel.report_open_contribution import sync_open_contributions
+
+                sync_open_contributions(engine, connection, publication_highwater)
                 connection.execute(
                     "UPDATE state SET accounting=accounting+1,next_number=?",
                     (next_number + finish - existing,),

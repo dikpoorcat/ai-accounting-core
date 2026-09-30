@@ -1,26 +1,73 @@
 """Exact batch loading and the shared page-summary boundaries."""
 
+import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 from test_business_queries import state_review_engine as state_review_engine_fixture
 from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import expense, payment, prepare_payment
-from test_engine import close, publish, save
+from test_engine import close, evidence, publish, save
 from test_engine import engine as engine_fixture
 
 import ai_accounting.kernel.business_queries as business_query_module
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.query_reads import QueryReads, selected_voucher_sql
-from ai_accounting.kernel.query_semantics import resolve_calculation_relations
-from ai_accounting.kernel.read_indexes import close_rows, sync_close, sync_job
-from ai_accounting.kernel.settlement_projection import _COLUMNS, _sealed
-from ai_accounting.kernel.types import YearMonth
+from ai_accounting.kernel.query_semantics import (
+    project_settlement_followup,
+    resolve_calculation_relations,
+)
+from ai_accounting.kernel.read_indexes import (
+    CLOSE_CALCULATIONS,
+    CLOSE_VOUCHERS,
+    close_rows,
+    sync_close,
+    sync_job,
+)
+from ai_accounting.kernel.settlement_projection import (
+    _COLUMNS,
+    _sealed,
+    settlement_dashboard_open,
+    settlement_followup_summary,
+    settlement_position_rows,
+)
+from ai_accounting.kernel.types import YearMonth, canonical
 
 engine = engine_fixture
 domain_book = domain_book_fixture
 state_review_engine = state_review_engine_fixture
+
+
+def test_frozen_voucher_selection_batches_metadata_and_keeps_state_when_loading_results(engine):
+    subjects = [f"charge-{index}" for index in range(8)]
+    for subject in subjects:
+        save(engine, subject=subject, request=subject)
+    publish(engine, subjects)
+    close(engine)
+    with QueryReads.snapshot(engine) as reads:
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
+        selected = BusinessQueries(engine, reads=reads)._selected_accounting(
+            reads.connection, subjects, "2026-01"
+        )
+        identifiers = {
+            item["calculation_id"] for item in selected["through_period"]["voucher_events"]
+        }
+        assert len(identifiers) == 8
+        metadata_queries = [
+            sql for sql in statements if sql.startswith("SELECT c.id,c.subject_id,c.kind")
+        ]
+        assert len(metadata_queries) == 1
+        state = reads.metadata(identifiers)
+        assert all(item["line_count"] == 2 for item in state.values())
+        reads.calculations(identifiers)
+        before = len(statements)
+        assert reads.metadata(identifiers) == state
+        assert len(statements) == before
+        reads.connection.set_trace_callback(None)
 
 
 def test_batch_facts_preserve_typed_versions_without_per_revision_queries(engine):
@@ -36,6 +83,254 @@ def test_batch_facts_preserve_typed_versions_without_per_revision_queries(engine
         connection.set_trace_callback(None)
     assert actual == expected
     assert len(statements) == 3
+
+
+def test_accounting_and_profiles_do_not_expand_unrelated_frozen_materials(engine, monkeypatch):
+    import ai_accounting.kernel.close_storage as close_storage
+
+    save(engine, subject="bounded-accounting", request="bounded-accounting")
+    publish(engine, ["bounded-accounting"])
+    close(engine)
+
+    def no_full_manifest(*_args, **_kwargs):
+        raise AssertionError("accounting selection expanded the complete frozen manifest")
+
+    monkeypatch.setattr(close_storage, "decode_close", no_full_manifest)
+    with QueryReads.snapshot(engine) as reads:
+        queries = BusinessQueries(engine, reads=reads)
+        result = queries._selected_accounting(reads.connection, None, "2026-01")
+        assert len(result["through_period"]["voucher_events"]) == 1
+        assert queries._profiles(reads.connection, "bounded-accounting", "2026-01") == {}
+
+
+def test_close_leaf_batches_share_verified_blocks_and_do_not_cache_failure(engine, monkeypatch):
+    from collections import Counter
+
+    from ai_accounting.kernel import close_storage
+
+    for index in range(8):
+        save(engine, subject=f"leaf-{index}", request=f"leaf-{index}")
+    publish(engine, [f"leaf-{index}" for index in range(8)])
+    close(engine)
+    checked = Counter()
+    original = close_storage._bucket_rows
+
+    def counted(connection, header, subroot, field, bucket, **kwargs):
+        checked[header.period, field, bucket] += 1
+        return original(connection, header, subroot, field, bucket, **kwargs)
+
+    monkeypatch.setattr(close_storage, "_bucket_rows", counted)
+    with QueryReads.snapshot(engine) as reads:
+        references = [
+            dict(row)
+            for row in reads.connection.execute(
+                "SELECT * FROM close_reference WHERE path IN "
+                "('adopted_results[*].calculation_id','adopted_results[*].fact_id') "
+                "ORDER BY path,position"
+            )
+        ]
+        assert len(references) == 16
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
+        reads.verify_close_references(references[:8])
+        reads.verify_close_references(references[8:])
+        reads.connection.set_trace_callback(None)
+        assert checked and set(checked.values()) == {1}
+        # Eight separate subject buckets share two physical queries; later
+        # fact references reuse the already checked blocks in this snapshot.
+        assert sum("JOIN close_storage_directory" in sql for sql in statements) == 1
+        assert sum("JOIN close_storage_block" in sql for sql in statements) == 1
+        known_parts = dict(reads._verified_close_storage_parts)
+        with pytest.raises(KernelError):
+            reads.verify_close_references([{**references[0], "position": "999999"}])
+        assert reads._verified_close_storage_parts == known_parts
+        zero = next(item for item in references if str(item["position"]) == "0")
+        reads.verify_close_references([{**zero, "position": 0}])
+        with pytest.raises(KernelError):
+            reads.verify_close_references([{**zero, "position": False}])
+        assert reads._verified_close_storage_parts == known_parts
+
+
+def test_accounting_slice_does_not_publish_partly_verified_blocks(engine, monkeypatch):
+    from ai_accounting.kernel import close_storage
+
+    save(engine, subject="accounting-slice", request="accounting-slice")
+    publish(engine, ["accounting-slice"])
+    close(engine)
+    with QueryReads.snapshot(engine) as reads:
+        row = reads.authoritative_close_rows(periods=[YearMonth("2026-01").ordinal])[0]
+        before = dict(reads._verified_close_storage_parts)
+        original = close_storage._buckets_rows
+
+        def fail_after_adoption(connection, header, subroot, field, buckets):
+            if field == "vouchers":
+                raise RuntimeError("synthetic voucher block failure")
+            return original(connection, header, subroot, field, buckets)
+
+        monkeypatch.setattr(close_storage, "_buckets_rows", fail_after_adoption)
+        with pytest.raises(RuntimeError, match="synthetic voucher block failure"):
+            reads.close_accounting(row, subjects={"accounting-slice"})
+        assert reads._verified_close_storage_parts == before
+        assert not reads._close_accounting_slices
+
+
+@pytest.mark.parametrize("damage_kind", ["publication", "voucher_current"])
+def test_scoped_accounting_rejects_missing_authoritative_source(engine, damage_kind):
+    from test_integrity_content import damage
+
+    save(engine, subject="accounting-source", request="accounting-source")
+    publish(engine, ["accounting-source"])
+    close(engine)
+    if damage_kind == "publication":
+        damage(
+            engine,
+            "calculation_publication",
+            "DELETE FROM calculation_publication WHERE subject_id='accounting-source'",
+            foreign_keys=False,
+        )
+        mismatch = "storage_adoption_publication_mismatch"
+    else:
+        damage(
+            engine,
+            "voucher_current",
+            "DELETE FROM voucher_current WHERE version_id IN ("
+            "SELECT v.id FROM voucher_version v JOIN calculation c "
+            "ON c.id=v.calculation_id WHERE c.subject_id='accounting-source')",
+        )
+        mismatch = "storage_voucher_source_mismatch"
+    with QueryReads.snapshot(engine) as reads:
+        row = reads.authoritative_close_rows(periods=[YearMonth("2026-01").ordinal])[0]
+        with pytest.raises(KernelError) as error:
+            reads.close_accounting(row, subjects={"accounting-source"})
+        assert error.value.details["reason"] == mismatch
+
+
+@pytest.mark.parametrize("damage_kind", ["directory", "missing", "extra", "bytes"])
+def test_batched_close_blocks_reject_missing_extra_and_damaged_parts(engine, damage_kind):
+    from test_integrity_content import damage
+
+    from ai_accounting.kernel.close_storage import _bucket
+
+    save(engine, subject="batch-damage", request="batch-damage")
+    publish(engine, ["batch-damage"])
+    close(engine)
+    bucket = _bucket("batch-damage")
+    where = " WHERE field='adopted_results' AND bucket=?"
+    if damage_kind == "directory":
+        damage(
+            engine,
+            "close_storage_directory",
+            "DELETE FROM close_storage_directory" + where,
+            (bucket,),
+        )
+    elif damage_kind == "missing":
+        damage(engine, "close_storage_block", "DELETE FROM close_storage_block" + where, (bucket,))
+    elif damage_kind == "extra":
+        damage(
+            engine,
+            "close_storage_block",
+            "INSERT INTO close_storage_block SELECT period,field,bucket,part+100,content,digest "
+            "FROM close_storage_block" + where,
+            (bucket,),
+        )
+    else:
+        damage(
+            engine,
+            "close_storage_block",
+            "UPDATE close_storage_block SET content='[]'" + where,
+            (bucket,),
+        )
+    with QueryReads.snapshot(engine) as reads:
+        references = reads.connection.execute(
+            "SELECT * FROM close_reference WHERE path='adopted_results[*].calculation_id'"
+        ).fetchall()
+        before = dict(reads._verified_close_storage_parts)
+        with pytest.raises(KernelError, match="关账"):
+            reads.verify_close_references(references)
+        assert reads._verified_close_storage_parts == before
+
+
+def test_primed_calculation_scalar_reads_do_not_reload_batch(engine, monkeypatch):
+    subjects = [f"primed-charge-{index}" for index in range(8)]
+    for subject in subjects:
+        save(engine, subject=subject, request=subject)
+    publish(engine, subjects)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        identifiers = [
+            row[0]
+            for row in connection.execute(
+                "SELECT calculation_id FROM calculation_current "
+                "WHERE subject_id LIKE 'primed-charge-%' ORDER BY subject_id"
+            )
+        ]
+        reads = QueryReads(engine, connection)
+        statements = []
+        connection.set_trace_callback(statements.append)
+        expected = reads.prime_calculations(identifiers)
+        connection.set_trace_callback(None)
+        calculation_rows = [
+            statement
+            for statement in statements
+            if "JOIN calculation c ON c.id=ids.value" in statement
+            and "c.outcome AS outcome" in statement
+        ]
+        assert len(calculation_rows) == 1
+        assert not any(
+            "SELECT c.id,c.outcome FROM json_each" in statement for statement in statements
+        )
+
+        def no_scalar_reload(_self, _identifiers):
+            raise AssertionError("primed calculation reloaded through batch reader")
+
+        monkeypatch.setattr(QueryReads, "calculations", no_scalar_reload)
+        assert {ident: reads.calculation(ident) for ident in identifiers} == expected
+
+
+def test_batch_calculation_still_requires_exact_publication(engine):
+    from test_integrity_content import damage
+
+    save(engine, subject="publication-proof", request="publication-proof")
+    publish(engine, ["publication-proof"])
+    with engine.store.connection(read_only=True) as connection:
+        calculation_id = connection.execute(
+            "SELECT calculation_id FROM calculation_current WHERE subject_id='publication-proof'"
+        ).fetchone()[0]
+    damage(
+        engine,
+        "calculation_publication",
+        "DELETE FROM calculation_publication WHERE calculation_id=?",
+        (calculation_id,),
+        foreign_keys=False,
+    )
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as missing:
+            QueryReads(engine, connection).calculations((calculation_id,))
+    assert missing.value.code == "unknown_calculation"
+
+
+def test_batch_calculation_still_requires_exact_fact_version(engine):
+    from test_integrity_content import damage
+
+    save(engine, subject="fact-proof", request="fact-proof")
+    publish(engine, ["fact-proof"])
+    with engine.store.connection(read_only=True) as connection:
+        calculation_id, fact_id = connection.execute(
+            "SELECT id,fact_id FROM calculation WHERE subject_id='fact-proof'"
+        ).fetchone()
+    damage(
+        engine,
+        "fact_revision",
+        "DELETE FROM fact_revision WHERE id=?",
+        (fact_id,),
+        foreign_keys=False,
+    )
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError) as missing:
+            QueryReads(engine, connection).calculations((calculation_id,))
+    assert missing.value.code == "unknown_calculation"
 
 
 def test_summary_does_not_hydrate_history_without_obligation_declarations(engine):
@@ -75,6 +370,53 @@ def test_scoped_summary_includes_related_payments_and_keeps_month_amounts(domain
     assert item["source_event_count"] == 1
 
 
+def test_dashboard_settlements_aggregate_and_hydrate_only_open_page(domain_book):
+    engine, save_business, publish_businesses, *_ = domain_book
+    prepare_payment(domain_book)
+    publish_businesses("payment")
+    save_business("expense", "other-expense", expense(amount=200))
+    publish_businesses("other-expense")
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        reads = QueryReads(engine, connection)
+        full = BusinessQueries(engine, reads=reads).settlement_summary(connection, "2026-01")
+        compact = settlement_dashboard_open(connection, "2026-01", limit=1, reads=reads)
+        compact_summary = settlement_dashboard_open(
+            connection, "2026-01", limit=1, summary_only=True, reads=reads
+        )
+        position = settlement_position_rows(connection, "2026-01", {"2202"}, reads=reads)
+        current = settlement_dashboard_open(
+            connection,
+            "2026-01",
+            current=True,
+            page_keys={row["key"] for row in full["obligations"]},
+            include_settled_page=True,
+            reads=reads,
+        )
+        for current_scope in (False, True):
+            expected = project_settlement_followup(
+                BusinessQueries(engine, reads=reads).settlement_summary(
+                    connection, "2026-01", current=current_scope
+                )
+            )
+            assert (
+                settlement_followup_summary(
+                    connection, "2026-01", current=current_scope, reads=reads
+                )
+                == expected
+            )
+    open_rows = [row for row in full["obligations"] if row["remaining_fen"]]
+    assert compact["page"]["total_count"] == len(open_rows) == 1
+    assert compact["obligations"] == open_rows
+    assert compact["categories"]["supplier_payables"] == {"count": 1, "amount": 200}
+    assert compact_summary["obligations"] == []
+    assert compact_summary["page"] == compact["page"]
+    assert sum(row["remaining"] for row in position) == 200
+    assert {row["key"] for row in current["obligations"]} == {
+        row["key"] for row in full["obligations"]
+    }
+
+
 def test_settlement_summary_rejects_damaged_projection_and_repairs_explicitly(domain_book):
     engine, _save, publish_businesses, *_ = domain_book
     prepare_payment(domain_book)
@@ -90,7 +432,10 @@ def test_settlement_summary_rejects_damaged_projection_and_repairs_explicitly(do
             BusinessQueries(engine).settlement_summary(
                 connection, "2026-01", subject_ids={"expense"}
             )
+        with pytest.raises(KernelError) as damaged_followup:
+            settlement_followup_summary(connection, "2026-01", current=True)
     assert damaged.value.code == "content_integrity_failed"
+    assert damaged_followup.value.code == "content_integrity_failed"
     assert engine.rebuild_projections(request_id="repair-settlement-projection")["changed"]
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
@@ -157,15 +502,15 @@ def test_settlement_summary_preserves_unknown_and_zero_sources(domain_book, sour
         ]
         count, checksum = _sealed(connection, rows, {month})[month]
         connection.execute(
-            "UPDATE settlement_projection_seal SET row_count=?,digest=? "
-            "WHERE posting_period=?",
+            "UPDATE settlement_projection_seal SET row_count=?,digest=? WHERE posting_period=?",
             (count, checksum, month),
         )
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         summary = BusinessQueries(engine).settlement_summary(
             connection, "2026-01", subject_ids={"expense"}
-    )
+        )
+        dashboard = settlement_dashboard_open(connection, "2026-01")
     obligation = summary["obligations"][0]
     assert obligation["source_amount_fen"] == source_amount
     expected_remaining = None if source_amount is None else -100
@@ -173,6 +518,9 @@ def test_settlement_summary_preserves_unknown_and_zero_sources(domain_book, sour
     assert obligation["settlement_status"] == (
         "unestablished" if source_amount is None else "over_settled"
     )
+    assert dashboard["obligations"][0]["remaining_fen"] == expected_remaining
+    assert dashboard["categories"]["supplier_payables"]["amount"] == expected_remaining
+    assert dashboard["complete"] is (source_amount is not None)
 
 
 def test_unknown_source_amount_is_not_a_zero_or_settled_state(state_review_engine, monkeypatch):
@@ -291,6 +639,98 @@ def test_source_history_pages_revision_keys_before_typed_facts(engine):
     assert all(item["recorded_at"] for item in first["items"])
 
 
+def test_source_history_keyset_keeps_full_scope_count_and_rejects_missing_after(engine):
+    identifiers = [
+        save(engine, revision=index, request=f"source-{index}")["fact_id"]
+        for index in range(5)
+    ]
+    unrelated = save(engine, subject="unrelated", request="unrelated")["fact_id"]
+    with QueryReads.snapshot(engine) as reads:
+        queries = BusinessQueries(engine, reads=reads)
+        pages = []
+        after = None
+        for _ in range(3):
+            page = queries.business_collection(
+                reads.connection,
+                "charge",
+                "2026-01",
+                section="source_history",
+                after=after,
+                limit=2,
+            )
+            pages.append(page)
+            after = page["page"]["next_cursor"]
+        assert [item["id"] for page in pages for item in page["items"]] == identifiers
+        assert [page["page"]["total_count"] for page in pages] == [5, 5, 5]
+        assert [page["page"]["has_more"] for page in pages] == [True, True, False]
+        assert set(reads._fact_versions) == set(identifiers)
+        unscoped = queries.business_collection(
+            reads.connection,
+            None,
+            "2026-01",
+            section="source_history",
+            after=identifiers[-1],
+            limit=2,
+        )
+        assert [item["id"] for item in unscoped["items"]] == [unrelated]
+        assert unscoped["page"]["total_count"] == 6
+        for wrong_after in (unrelated, "missing"):
+            with pytest.raises(KernelError) as failure:
+                queries.business_collection(
+                    reads.connection,
+                    "charge",
+                    "2026-01",
+                    section="source_history",
+                    after=wrong_after,
+                    limit=2,
+                )
+            assert failure.value.code == "dashboard_snapshot_changed"
+
+
+def test_external_followup_keyset_keeps_full_count_and_rejects_missing_after(domain_book):
+    engine, save_fact, *_ = domain_book
+    for name in ("external-a", "external-b", "external-c"):
+        save_fact(
+            "external_obligation",
+            name,
+            {
+                "period": "2026-01",
+                "obligation_kind": "quarterly_financial_report",
+                "start_period": "2026-01",
+                "end_period": "2026-01",
+                "due_date": "2026-02-20",
+                "applicability_confirmed": True,
+                "applicability": "required",
+            },
+        )
+    with QueryReads.snapshot(engine) as reads:
+        snap = SimpleNamespace(
+            connection=reads.connection,
+            reads=reads,
+            period="2026-01",
+            as_of="2026-02-01",
+        )
+        dashboard = Dashboard(engine)
+        first = dashboard._external_collection(snap, None, 2)
+        second = dashboard._external_collection(snap, first["page"]["next_cursor"], 2)
+        assert [item["obligation_id"] for item in first["items"]] == [
+            "external-a", "external-b"
+        ]
+        assert [item["obligation_id"] for item in second["items"]] == ["external-c"]
+        assert first["page"] == {
+            "total_count": 3,
+            "filtered_count": 3,
+            "returned_count": 2,
+            "has_more": True,
+            "next_cursor": "external-b",
+        }
+        assert second["page"]["total_count"] == 3
+        assert second["page"]["has_more"] is False
+        with pytest.raises(KernelError) as failure:
+            dashboard._external_collection(snap, "missing", 2)
+        assert failure.value.code == "dashboard_snapshot_changed"
+
+
 def test_current_settlement_page_preserves_original_scope_and_slot_identity(domain_book):
     engine, save_fact, publish_businesses, *_ = domain_book
     prepare_payment(domain_book)
@@ -388,9 +828,8 @@ def test_one_response_reuses_direct_manifest_across_subjects(engine, monkeypatch
         save(engine, subject=subject, request=subject)
     publish(engine, ["first", "second"])
     close(engine)
-    with engine.store.connection(read_only=True) as connection:
-        connection.execute("BEGIN")
-        reads = QueryReads(engine, connection)
+    with QueryReads.snapshot(engine) as reads:
+        connection = reads.connection
         queries = BusinessQueries(engine, reads=reads)
         queries._selected_accounting(connection, "first", "2026-01", include_lines=False)
 
@@ -399,8 +838,168 @@ def test_one_response_reuses_direct_manifest_across_subjects(engine, monkeypatch
 
         monkeypatch.setattr(reads, "parents", unexpected_second_graph_walk)
         second = queries._selected_accounting(connection, "second", "2026-01", include_lines=False)
-    assert len(second["through_period"]["voucher_events"]) == 1
-    assert len(reads._close_manifests) == 1
+        assert len(second["through_period"]["voucher_events"]) == 1
+        assert len(reads._close_headers) == 1
+        assert not reads._close_manifests  # Scoped reads never decode unrelated material history.
+
+
+def test_publication_period_finds_state_adoption_even_if_reverse_index_omits_it(
+    state_review_engine,
+):
+    from test_integrity_content import damage
+
+    engine = state_review_engine
+    proof = evidence(engine)
+    engine.save_fact(
+        "test_charge",
+        "charge",
+        {"period": "2026-01", "amount": 100, "suppress_posting": True},
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="state",
+    )
+    _, publication = publish(engine)
+    calculation_id = publication["results"][0]["calculation_id"]
+    close(engine)
+    month = YearMonth("2026-01").ordinal
+
+    def selected():
+        with QueryReads.snapshot(engine) as reads:
+            result = BusinessQueries(engine, reads=reads)._selected_accounting(
+                reads.connection, "charge", "2026-01", include_vouchers=False
+            )
+            assert month in reads._authoritative_closes
+            assert month not in reads._closes
+            return result
+
+    baseline = selected()
+    assert baseline["through_period"]["state_results"][0]["calculation_id"] == calculation_id
+    damage(
+        engine,
+        "close_reference",
+        "DELETE FROM close_reference WHERE close_period=? AND path=? AND reference_id=?",
+        (month, CLOSE_CALCULATIONS, calculation_id),
+    )
+    assert canonical(selected()) == canonical(baseline)
+    with engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as failure:
+            close_rows(connection, periods=[month])
+    assert failure.value.details["reason"] == "reference_multiset_mismatch"
+
+    with engine.store.connection(read_only=True) as connection:
+        block = next(
+            row
+            for row in connection.execute(
+                "SELECT bucket,part,content FROM close_storage_block "
+                "WHERE period=? AND field='adopted_results'",
+                (month,),
+            )
+            if any(
+                item[1]["calculation_id"] == calculation_id for item in json.loads(row["content"])
+            )
+        )
+        entries = json.loads(block["content"])
+        for _, item in entries:
+            if item["calculation_id"] == calculation_id:
+                item["result_digest"] = "0" * 64
+        directory = json.loads(
+            connection.execute(
+                "SELECT content FROM close_storage_directory "
+                "WHERE period=? AND field='adopted_results' AND bucket=?",
+                (month, block["bucket"]),
+            ).fetchone()[0]
+        )
+        subroot = json.loads(
+            connection.execute(
+                "SELECT content FROM close_storage_subroot WHERE period=? AND family='accounting'",
+                (month,),
+            ).fetchone()[0]
+        )
+        root = json.loads(
+            connection.execute(
+                "SELECT manifest FROM period_close WHERE period=?", (month,)
+            ).fetchone()[0]
+        )
+
+    def hashed(value):
+        return hashlib.sha256(canonical(value).encode("utf-8")).digest()
+
+    block_digest = hashed(entries)
+    damage(
+        engine,
+        "close_storage_block",
+        "UPDATE close_storage_block SET content=?,digest=? "
+        "WHERE period=? AND field='adopted_results' AND bucket=? AND part=?",
+        (canonical(entries), block_digest, month, block["bucket"], block["part"]),
+    )
+    directory[block["part"]][1] = block_digest.hex()
+    directory_digest = hashed(directory)
+    damage(
+        engine,
+        "close_storage_directory",
+        "UPDATE close_storage_directory SET content=?,digest=? "
+        "WHERE period=? AND field='adopted_results' AND bucket=?",
+        (canonical(directory), directory_digest, month, block["bucket"]),
+    )
+    for descriptor in subroot["directories"]["adopted_results"]:
+        if descriptor[0] == block["bucket"]:
+            descriptor[1] = directory_digest.hex()
+    subroot_digest = hashed(subroot)
+    damage(
+        engine,
+        "close_storage_subroot",
+        "UPDATE close_storage_subroot SET content=?,digest=? "
+        "WHERE period=? AND family='accounting'",
+        (canonical(subroot), subroot_digest, month),
+    )
+    root["subroots"]["accounting"] = subroot_digest.hex()
+    damage(
+        engine,
+        "period_close",
+        "UPDATE period_close SET manifest=? WHERE period=?",
+        (canonical(root), month),
+    )
+    damage(
+        engine,
+        "close_storage_root",
+        "UPDATE close_storage_root SET storage_digest=? WHERE period=?",
+        (hashed(root), month),
+    )
+    with pytest.raises(KernelError) as failure:
+        selected()
+    assert failure.value.details["reason"] == "direct_adoption_mismatch"
+
+
+def test_publication_period_finds_voucher_even_if_reverse_index_omits_it(engine):
+    from test_integrity_content import damage
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    month = YearMonth("2026-01").ordinal
+
+    def selected():
+        with QueryReads.snapshot(engine) as reads:
+            result = BusinessQueries(engine, reads=reads)._selected_accounting(
+                reads.connection, "charge", "2026-01", include_lines=False
+            )
+            assert month in reads._authoritative_closes
+            assert month not in reads._closes
+            return result
+
+    baseline = selected()
+    voucher_id = baseline["through_period"]["voucher_events"][0]["voucher_version_id"]
+    damage(
+        engine,
+        "close_reference",
+        "DELETE FROM close_reference WHERE close_period=? AND path=? AND reference_id=?",
+        (month, CLOSE_VOUCHERS, voucher_id),
+    )
+    assert canonical(selected()) == canonical(baseline)
+    with engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as failure:
+            close_rows(connection, periods=[month])
+    assert failure.value.details["reason"] == "reference_multiset_mismatch"
 
 
 def test_old_transitive_close_manifest_is_rejected(engine):
@@ -471,6 +1070,56 @@ def test_subject_close_lookup_drives_complete_reference_key_and_period(engine):
     assert not any("close_reference_lookup (reference_type=?)" in row for row in plan)
 
 
+def test_selected_voucher_adoption_lookup_drives_ids_and_rejects_missing_reference(engine):
+    from test_integrity_content import damage
+
+    subjects = [f"adoption-{index}" for index in range(8)]
+    for subject in subjects:
+        save(engine, subject=subject, request=subject)
+    publish(engine, subjects)
+    close(engine)
+    month = YearMonth("2026-01").ordinal
+    with QueryReads.snapshot(engine) as reads:
+        rows = [
+            {"id": row["reference_id"], "close_period": row["close_period"]}
+            for row in reads.connection.execute(
+                "SELECT reference_id,close_period FROM close_reference "
+                "WHERE close_period=? AND path=? ORDER BY position",
+                (month, CLOSE_VOUCHERS),
+            )
+        ]
+        assert len(rows) == len(subjects)
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
+        reads.verify_selected_voucher_adoptions(rows, through_period=month)
+        reads.connection.set_trace_callback(None)
+        lookup = next(
+            sql for sql in statements if sql.startswith("SELECT r.* FROM json_each(")
+        )
+        plan = [
+            row[3]
+            for row in reads.connection.execute("EXPLAIN QUERY PLAN " + lookup)
+        ]
+        assert any("SCAN ids VIRTUAL TABLE" in row for row in plan)
+        assert any(
+            "close_reference_lookup "
+            "(reference_type=? AND reference_id=? AND close_period<?)" in row
+            for row in plan
+        )
+        assert not any("close_reference_lookup (reference_type=?)" in row for row in plan)
+    victim = rows[0]["id"]
+    damage(
+        engine,
+        "close_reference",
+        "DELETE FROM close_reference WHERE close_period=? AND path=? AND reference_id=?",
+        (month, CLOSE_VOUCHERS, victim),
+    )
+    with QueryReads.snapshot(engine) as reads:
+        with pytest.raises(KernelError) as failure:
+            reads.verify_selected_voucher_adoptions(rows, through_period=month)
+    assert failure.value.code == "content_integrity_failed"
+
+
 def test_scoped_voucher_candidates_use_identity_indexes_and_keep_cross_year_reversal(engine):
     save(engine, period="2025-12")
     save(engine, subject="unrelated", request="unrelated", period="2025-12")
@@ -507,6 +1156,52 @@ def test_scoped_voucher_candidates_use_identity_indexes_and_keep_cross_year_reve
             assert not any("SEARCH v USING INDEX voucher_period" in row for row in scoped_plan)
             if "kinds" in filters:
                 assert any("calculation_kind_period (kind=?)" in row for row in scoped_plan)
+
+
+def test_joined_current_basis_preserves_reviews_replacements_and_closed_reversal(engine):
+    save(engine)
+    _, first = publish(engine)
+    original_calculation = first["results"][0]["calculation_id"]
+
+    def selected(period, **scope):
+        with engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            sql, parameters = selected_voucher_sql(period, subject_ids={"charge"}, **scope)
+            return [dict(row) for row in connection.execute(sql, parameters)]
+
+    save(engine, revision=1, request="review")
+    _, review = publish(engine, request="publish-review")
+    reviewed_calculation = review["results"][0]["calculation_id"]
+    assert reviewed_calculation != original_calculation
+    for scope in ({"no_close_references": True}, {"current_heads": True}):
+        rows = selected("2026-01", **scope)
+        assert len(rows) == 1
+        assert rows[0]["voucher_calculation_id"] == original_calculation
+        assert rows[0]["basis_calculation_id"] == reviewed_calculation
+
+    for revision, amount in ((2, 150), (3, 175)):
+        save(engine, revision=revision, amount=amount, request=f"replace-{revision}")
+        _, replacement = publish(engine, request=f"publish-replace-{revision}")
+    latest_calculation = replacement["results"][0]["calculation_id"]
+    for scope in ({"no_close_references": True}, {"current_heads": True}):
+        rows = selected("2026-01", **scope)
+        assert len(rows) == 1
+        assert rows[0]["voucher_calculation_id"] == latest_calculation
+        assert rows[0]["basis_calculation_id"] == latest_calculation
+
+    close(engine)
+    frozen = selected("2026-01")
+    assert len(frozen) == 1
+    assert frozen[0]["basis_calculation_id"] == latest_calculation
+    assert selected("2026-01", current_heads=True)[0]["basis_calculation_id"] == latest_calculation
+
+    save(engine, revision=4, amount=200, request="closed-correction")
+    publish(engine, request="publish-closed-correction", posting_period="2026-02")
+    correction = selected("2026-02", current_heads=True, posting_period="2026-02")
+    assert len(correction) == 2
+    reversal = next(row for row in correction if row["reverses_id"] is not None)
+    assert reversal["reverses_id"] == frozen[0]["id"]
+    assert reversal["basis_calculation_id"] == latest_calculation
 
 
 def test_relationship_candidate_queries_do_not_scan_unrelated_calculation_metadata(engine):

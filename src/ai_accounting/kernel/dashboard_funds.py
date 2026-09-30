@@ -6,6 +6,8 @@ effects and selects page keys; only returned rows need facts and display sources
 
 from __future__ import annotations
 
+import json
+
 from .contracts import KernelError
 from .dashboard_reads import page_keys
 from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
@@ -20,22 +22,11 @@ def _sum(rows, field):
     return None if None in values else sum(values)
 
 
-def _sql_page(connection, source, parameters, *, after, limit, where="1=1", filters=()):
-    total = connection.execute(f"SELECT count(*) FROM ({source})", parameters).fetchone()[0]
-    filtered = f"SELECT * FROM ({source}) WHERE {where}"
-    parameters = [*parameters, *filters]
-    count = connection.execute(f"SELECT count(*) FROM ({filtered})", parameters).fetchone()[0]
-    if (
-        after is not None
-        and not connection.execute(
-            f"SELECT 1 FROM ({filtered}) WHERE page_key=?", [*parameters, after]
-        ).fetchone()
-    ):
+def _finish_sql_page(found, *, after, limit):
+    total, count = found[0]["total_count"], found[0]["filtered_count"]
+    if after is not None and not found[0]["cursor_present"]:
         raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
-    rows = connection.execute(
-        f"SELECT * FROM ({filtered}) WHERE page_key>? ORDER BY page_key LIMIT ?",
-        [*parameters, after or "", limit + 1],
-    ).fetchall()
+    rows = [row for row in found if row["page_key"] is not None]
     more = len(rows) > limit
     rows = rows[:limit]
     return rows, {
@@ -45,6 +36,45 @@ def _sql_page(connection, source, parameters, *, after, limit, where="1=1", filt
         "has_more": more,
         "next_cursor": rows[-1]["page_key"] if more else None,
     }
+
+
+def _sql_summary_page(
+    connection,
+    source,
+    parameters,
+    summary_sql,
+    summary_columns,
+    *,
+    after,
+    limit,
+    where="1=1",
+    filters=(),
+):
+    """Return a full source summary and bounded page from one selected event set."""
+    summary_json = "json_group_array(json_array(" + ",".join(summary_columns) + "))"
+    query = (
+        f"WITH source_rows AS MATERIALIZED ({source}), "
+        f"summary_rows AS MATERIALIZED ({summary_sql}), "
+        f"filtered_rows AS MATERIALIZED (SELECT * FROM source_rows WHERE {where}), "
+        "page_rows AS (SELECT * FROM filtered_rows WHERE page_key>? "
+        "ORDER BY page_key LIMIT ?) "
+        "SELECT page_rows.*, counts.total_count, counts.filtered_count, "
+        "counts.cursor_present,CASE WHEN row_number() OVER (ORDER BY page_rows.page_key)=1 "
+        "THEN counts.summary_json END summary_json FROM (SELECT "
+        "(SELECT count(*) FROM source_rows) total_count, "
+        "(SELECT count(*) FROM filtered_rows) filtered_count, "
+        "(SELECT count(*) FROM filtered_rows WHERE page_key=?) cursor_present, "
+        f"(SELECT {summary_json} FROM summary_rows) summary_json) counts "
+        "LEFT JOIN page_rows ON 1=1 ORDER BY page_rows.page_key"
+    )
+    found = connection.execute(
+        query, [*parameters, *filters, after or "", limit + 1, after]
+    ).fetchall()
+    summary = json.loads(found[0]["summary_json"])
+    if any(row["summary_json"] is not None for row in found[1:]):
+        raise ValueError("funds summary returned more than once")
+    rows, page = _finish_sql_page(found, after=after, limit=limit)
+    return [dict(zip(summary_columns, values, strict=True)) for values in summary], rows, page
 
 
 class FundsRead:
@@ -78,15 +108,28 @@ class FundsRead:
         self.profiles = {}
         self.event_queries = {}
         self.bank_match_calculations = {}
+        self.investment_registered = None
+        self.shared_pages = {}
 
-    def events(self, *, current=False, accounts=None):
+    def events(self, *, current=False, accounts=None, subjects=None):
         accounts = {"1001", "1002", "1012", "1101"} if accounts is None else accounts
-        cache_key = current, tuple(sorted(accounts))
+        cache_key = (
+            current,
+            tuple(sorted(accounts)),
+            None if subjects is None else tuple(sorted(subjects)),
+        )
         if cache_key in self.event_queries:
             query, parameters = self.event_queries[cache_key]
             return query, list(parameters)
         journal = self.snap.month_journal if current else self.snap.journal
-        query, parameters = journal.select(accounts=accounts).sql()
+        query, parameters = journal.select(accounts=accounts, subjects=subjects).sql()
+        self.snap.reads.verify_sql_outcomes(
+            row[0]
+            for row in self.connection.execute(
+                "SELECT DISTINCT basis_calculation_id FROM (" + query + ")",
+                parameters,
+            )
+        )
         references = self.connection.execute(
             f"SELECT r.* FROM ({query}) j JOIN close_reference r ON r.reference_id=j.id "
             "AND r.reference_type='voucher' AND r.close_period=j.close_period",
@@ -94,7 +137,7 @@ class FundsRead:
         ).fetchall()
         self.snap.reads.verify_close_references(references)
         source = (
-            "WITH journal AS (" + query + "), events AS ("
+            "WITH journal AS MATERIALIZED (" + query + "), events AS MATERIALIZED ("
             "SELECT j.period,j.id event_id,j.number,j.basis_calculation_id calculation_id,"
             "j.basis_kind kind,CASE WHEN j.reverses_id IS NULL THEN 1 ELSE -1 END sign,"
             "0 opening,c.outcome FROM journal j JOIN calculation c ON c.id=j.basis_calculation_id"
@@ -163,34 +206,80 @@ class FundsRead:
             },
         )
 
-    def account_summary(self):
+    def account_summary(self, *, page_request=None):
         from .period_balances import balance_movements, balance_totals
 
-        categories = {"bank", "cash", "platform"}
+        categories = ("bank", "cash", "platform")
         projected_closing = {}
-        for row in balance_totals(self.connection, self.snap.month, reads=self.snap.reads):
+        for row in balance_totals(
+            self.connection, self.snap.month, categories, reads=self.snap.reads
+        ):
             if row["category"] in categories:
                 self.base_account(row["category"], row["key"])
                 projected_closing[row["category"], row["key"]] = row["amount"]
         current_activity = {}
-        for row in balance_movements(self.connection, self.snap.month, reads=self.snap.reads):
+        for row in balance_movements(
+            self.connection, self.snap.month, categories, reads=self.snap.reads
+        ):
             if row["category"] in categories:
                 current_activity[row["category"], row["key"]] = row["amount"]
         for key, amount in projected_closing.items():
             self.base_account(*key)["opening_fen"] = checked(amount - current_activity.get(key, 0))
         source, parameters = self.movements()
-        for row in self.connection.execute(
+        summary_columns = (
+            "category",
+            "balance_key",
+            "inflow_fen",
+            "outflow_fen",
+            "movement_count",
+            "last_activity_date",
+            "external_inflow_fen",
+            "external_outflow_fen",
+            "internal_outflow_fen",
+        )
+        summary_select = (
             "SELECT category,balance_key,sum(max(signed_amount,0)) inflow_fen,"
             "sum(max(-signed_amount,0)) outflow_fen,count(*) movement_count,"
-            f"max(actual_date) last_activity_date FROM ({source}) GROUP BY category,balance_key",
-            parameters,
-        ):
+            "max(actual_date) last_activity_date,"
+            "sum(CASE WHEN NOT internal_transfer THEN max(signed_amount,0) "
+            "ELSE 0 END) external_inflow_fen,"
+            "sum(CASE WHEN NOT internal_transfer THEN max(-signed_amount,0) "
+            "ELSE 0 END) external_outflow_fen,"
+            "sum(CASE WHEN internal_transfer THEN max(-signed_amount,0) "
+            "ELSE 0 END) internal_outflow_fen"
+        )
+        grouping = " GROUP BY category,balance_key"
+        if page_request is None:
+            summaries = self.connection.execute(
+                summary_select + f" FROM ({source})" + grouping, parameters
+            )
+        else:
+            summaries, rows, page = _sql_summary_page(
+                self.connection,
+                source,
+                parameters,
+                summary_select + " FROM source_rows" + grouping,
+                summary_columns,
+                **page_request,
+            )
+            self.shared_pages["movements"] = rows, page
+        movement_totals = {
+            "inflow_fen": 0,
+            "outflow_fen": 0,
+            "internal_transfer_fen": 0,
+            "movement_count": 0,
+        }
+        for row in summaries:
             self.base_account(row["category"], row["balance_key"]).update(
                 {
                     key: row[key]
                     for key in ("inflow_fen", "outflow_fen", "movement_count", "last_activity_date")
                 }
             )
+            movement_totals["inflow_fen"] += row["external_inflow_fen"]
+            movement_totals["outflow_fen"] += row["external_outflow_fen"]
+            movement_totals["internal_transfer_fen"] += row["internal_outflow_fen"]
+            movement_totals["movement_count"] += row["movement_count"]
         # Scalar established starts and statements keep explicitly opened zero accounts.
         for row in self.connection.execute(
             "SELECT c.kind,json_extract(c.outcome,'$.values.bank_account_id') bank_id,"
@@ -221,6 +310,7 @@ class FundsRead:
             for candidate in issue["candidates"]
             if candidate["kind"] == "opening_package"
         ]
+        self.snap.reads.verify_sql_outcomes(unknown)
         for row in self.connection.execute(
             "SELECT DISTINCT json_extract(b.value,'$.category') category,"
             "json_extract(b.value,'$.key') balance_key FROM json_each(?) ids JOIN calculation c "
@@ -256,18 +346,7 @@ class FundsRead:
                 "label": "本月尚未完成银行对账" if key[0] == "bank" else "不适用银行对账",
             }
         self._omit_retired_opening_accounts()
-        return dict(
-            self.connection.execute(
-                "SELECT coalesce(sum(CASE WHEN NOT internal_transfer THEN max(signed_amount,0) "
-                "ELSE 0 END),0) "
-                "inflow_fen,coalesce(sum(CASE WHEN NOT internal_transfer THEN "
-                "max(-signed_amount,0) ELSE 0 END),0) "
-                "outflow_fen,coalesce(sum(CASE WHEN internal_transfer THEN "
-                "max(-signed_amount,0) ELSE 0 END),0) "
-                f"internal_transfer_fen,count(*) movement_count FROM ({source})",
-                parameters,
-            ).fetchone()
-        )
+        return movement_totals
 
     def _omit_retired_opening_accounts(self):
         """Hide an old identity whose only current-period effect is reassignment."""
@@ -289,11 +368,16 @@ class FundsRead:
             original_id = getattr(source.fact, field)
             if original_id == binding["basis_data"].get(field):
                 continue
-            if self.connection.execute(
-                "SELECT 1 FROM entity_reference_current r JOIN fact_current c "
-                "ON c.fact_id=r.fact_id WHERE r.entity_id=? LIMIT 1",
+            witness = self.connection.execute(
+                "SELECT r.fact_id FROM entity_reference_current r JOIN fact_current c "
+                "ON c.fact_id=r.fact_id WHERE r.entity_id=? "
+                "ORDER BY r.period DESC,r.fact_id DESC LIMIT 1",
                 (original_id,),
-            ).fetchone():
+            ).fetchone()
+            if witness:
+                from .entity_references import verify_hits
+
+                verify_hits(self.connection, [witness], registry=self.snap.store.registry)
                 continue
             item = self.account_rows.get((category, original_id))
             if item is None:
@@ -408,6 +492,33 @@ class FundsRead:
             "internal_transfer": bool(row["internal_transfer"]),
             "component_kinds": [row["kind"]],
         }
+
+    def prepare_calculation_items(self, identifiers):
+        """Load only page calculations, relations and display records in batches."""
+        identifiers = set(identifiers)
+        if not identifiers:
+            return
+        self.snap.reads.prime_calculations(identifiers, ancestors=True)
+        resolutions = self.snap.reads.relations_many(identifiers)
+        presentation_ids = set(identifiers)
+        for ident, resolution in resolutions.items():
+            balance_keys = {
+                item["key"]
+                for item in self.snap.reads.calculation(ident)["outcome"].get("balances", ())
+            }
+            presentation_ids.update(
+                item["source_calculation_id"]
+                for item in resolution["obligations"]
+                if item.get("key") in balance_keys and item.get("source_calculation_id")
+            )
+        # voucher_relations presents the same source calculations and typed facts
+        # for every page row.  Prime those exact records once instead of issuing
+        # one metadata and one fact SELECT per visible movement.
+        metadata = self.snap.reads.metadata(presentation_ids)
+        self.snap.reads.fact_versions({item["fact_id"] for item in metadata.values()})
+        subjects = {self.snap.calculation(ident)["subject_id"] for ident in identifiers}
+        self.snap.metadata.prime_profiles("business", subjects)
+        self.snap.management.prime(subjects)
 
     def _closed_statement_parent(
         self, statement, reconciliation, result, statement_results, parents
@@ -546,7 +657,7 @@ class FundsRead:
             proven.add(opening["id"])
         return proven
 
-    def bank_summary(self):
+    def bank_summary(self, *, page_request=None):
         statement_ids = self.snap.fact_ids_of_kind("bank_statement", period=self.snap.period)
         reconciliation_ids = self.snap.fact_ids_of_kind(
             "bank_reconciliation", period=self.snap.period
@@ -799,21 +910,63 @@ class FundsRead:
             "coalesce(sum(state='unmatched'),0) "
             "unmatched_count,coalesce(sum(state='needs_review'),0) needs_review_count"
         )
-        totals = dict(
-            self.connection.execute(
-                f"SELECT {sums} FROM ({self.bank_source})", self.bank_parameters
-            ).fetchone()
+        totals = {
+            key: 0
+            for key in (
+                "transaction_count",
+                "inflow_fen",
+                "outflow_fen",
+                "matched_count",
+                "unmatched_count",
+                "needs_review_count",
+            )
+        }
+        unmatched = {key: 0 for key in ("count", "inflow_fen", "outflow_fen")}
+        summary_columns = (
+            "account_id",
+            "transaction_count",
+            "inflow_fen",
+            "outflow_fen",
+            "matched_count",
+            "unmatched_count",
+            "needs_review_count",
+            "last_activity_date",
+            "unmatched_total_count",
+            "unmatched_inflow_fen",
+            "unmatched_outflow_fen",
         )
-        for row in self.connection.execute(
-            f"SELECT account_id,{sums},max(actual_date) last_activity_date FROM "
-            f"({self.bank_source}) GROUP BY account_id",
-            self.bank_parameters,
-        ):
+        summary_select = (
+            f"SELECT account_id,{sums},max(actual_date) last_activity_date,"
+            "coalesce(sum(state!='matched'),0) unmatched_total_count,"
+            "coalesce(sum(CASE WHEN state!='matched' THEN max(signed_fen,0) "
+            "ELSE 0 END),0) unmatched_inflow_fen,"
+            "coalesce(sum(CASE WHEN state!='matched' THEN max(-signed_fen,0) "
+            "ELSE 0 END),0) unmatched_outflow_fen"
+        )
+        if page_request is None:
+            summaries = self.connection.execute(
+                summary_select + f" FROM ({self.bank_source}) GROUP BY account_id",
+                self.bank_parameters,
+            )
+        else:
+            summaries, rows, page = _sql_summary_page(
+                self.connection,
+                self.bank_source,
+                self.bank_parameters,
+                summary_select + " FROM source_rows GROUP BY account_id",
+                summary_columns,
+                **page_request,
+            )
+            self.shared_pages["statements"] = rows, page
+        for row in summaries:
+            for key in totals:
+                totals[key] += row[key]
+            unmatched["count"] += row["unmatched_total_count"]
+            unmatched["inflow_fen"] += row["unmatched_inflow_fen"]
+            unmatched["outflow_fen"] += row["unmatched_outflow_fen"]
             item = self.account_rows.get(("bank", row["account_id"]))
             if item is not None:
-                item["statement"].update(
-                    {key: row[key] for key in row.keys() if key != "account_id"}
-                )
+                item["statement"].update({key: row[key] for key in (*totals, "last_activity_date")})
                 item["reconciliation"].update(
                     {key: row[key] for key in ("unmatched_count", "needs_review_count")}
                 )
@@ -829,14 +982,6 @@ class FundsRead:
         )
         if coverage in {"missing", "not_applicable"}:
             totals["inflow_fen"] = totals["outflow_fen"] = None
-        unmatched = dict(
-            self.connection.execute(
-                "SELECT count(*) count,coalesce(sum(max(signed_fen,0)),0) inflow_fen,"
-                f"coalesce(sum(max(-signed_fen,0)),0) outflow_fen FROM ({self.bank_source}) "
-                f"WHERE state!='matched'",
-                self.bank_parameters,
-            ).fetchone()
-        )
         return totals | {
             "unmatched_totals": unmatched,
             "coverage_state": coverage,
@@ -865,17 +1010,20 @@ class FundsRead:
             return
         matches = self.connection.execute(
             "SELECT json_extract(r.value,'$.page_key') page_key,min(c.id) calculation_id,"
-            "count(*) candidate_count FROM json_each(?) r JOIN dependency_calculation d ON "
-            "d.calculation_id=json_extract(r.value,'$.root') JOIN calculation c ON "
-            "c.id=d.upstream_id JOIN fact_revision f ON f.id=c.fact_id WHERE "
-            "c.kind=json_extract(r.value,'$.source_kind') AND "
-            "f.subject_id=json_extract(r.value,'$.source_id') GROUP BY page_key",
+            "count(*) candidate_count FROM json_each(?) r "
+            "JOIN calculation c INDEXED BY calculation_subject ON "
+            "c.subject_id=json_extract(r.value,'$.source_id') AND "
+            "c.kind=json_extract(r.value,'$.source_kind') "
+            "JOIN fact_revision f ON f.id=c.fact_id AND f.subject_id=c.subject_id "
+            "JOIN dependency_calculation d INDEXED BY dependency_upstream ON "
+            "d.upstream_id=c.id AND d.calculation_id=json_extract(r.value,'$.root') "
+            "GROUP BY page_key",
             (canonical(requests),),
         ).fetchall()
         selected = {
             row["page_key"]: row["calculation_id"] for row in matches if row["candidate_count"] == 1
         }
-        self.snap.reads.metadata(selected.values())
+        self.prepare_calculation_items(selected.values())
         self.bank_match_calculations.update(
             {
                 page_key: self.snap.calculation(calculation_id)
@@ -974,8 +1122,27 @@ class FundsRead:
             item["batch_payment"] = batch
         return item
 
+    def has_investment_sources(self):
+        if self.investment_registered is None:
+            # All actual investment settlements name an investment source. An
+            # indexed absence check avoids decoding unrelated payment outcomes.
+            self.investment_registered = (
+                self.connection.execute(
+                    "SELECT 1 FROM subject WHERE kind IN "
+                    "('money_fund_subscription','money_fund_redemption','opening_money_fund') "
+                    "LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+        return self.investment_registered
+
     def investment_source(self, *, current=False):
-        source, parameters = self.events(current=current, accounts=None if current else {"1101"})
+        self.has_investment_sources()
+        source, parameters = self.events(
+            current=current,
+            accounts=None if current else {"1101"},
+            subjects=None if self.investment_registered else set(),
+        )
         source = source.rstrip() + (
             ", investments AS (SELECT *,json_extract(outcome,'$.values.fund_id') fund_id FROM "
             "events "
@@ -990,6 +1157,20 @@ class FundsRead:
 
     def investment_events(self):
         source, parameters = self.investment_source(current=True)
+        source_ids = {
+            row[0]
+            for row in self.connection.execute(
+                source
+                + "SELECT DISTINCT c.id FROM events e,"
+                "json_each(e.outcome,'$.values.settlements') s "
+                "JOIN calculation c ON c.id=json_extract(s.value,'$.source_calculation') "
+                "WHERE c.kind IN ('money_fund_subscription','money_fund_redemption') "
+                "AND EXISTS(SELECT 1 FROM effects b WHERE b.event_id=e.event_id "
+                "AND b.category IN ('bank','cash','platform'))",
+                parameters,
+            )
+        }
+        self.snap.reads.verify_sql_outcomes(source_ids)
         query = source + (
             "SELECT printf('%012d:%s:confirmation',number,calculation_id) "
             "page_key,number,sign,kind,fund_id,"
@@ -1011,7 +1192,7 @@ class FundsRead:
         )
         return query, parameters
 
-    def investment_summary(self):
+    def investment_summary(self, *, page_request=None):
         source, parameters = self.investment_source()
         for row in self.connection.execute(
             source
@@ -1037,6 +1218,7 @@ class FundsRead:
             for candidate in issue["candidates"]
             if candidate["kind"] == "opening_package"
         ]
+        self.snap.reads.verify_sql_outcomes(unknown)
         for row in self.connection.execute(
             "SELECT DISTINCT json_extract(m.value,'$.values.fund_id') fund_id FROM json_each(?) "
             "ids JOIN calculation c "
@@ -1046,14 +1228,42 @@ class FundsRead:
         ):
             self.base_product(row["fund_id"]).update(opening_cost_fen=None, closing_cost_fen=None)
         source, parameters = self.investment_events()
-        for row in self.connection.execute(
-            "SELECT fund_id,coalesce(sum(investment_income_fen),0) investment_income_fen "
-            f"FROM ({source}) GROUP BY fund_id",
-            parameters,
-        ):
+        event_count = actual_payments = actual_receipts = 0
+        summary_columns = (
+            "fund_id",
+            "investment_income_fen",
+            "event_count",
+            "actual_payments_fen",
+            "actual_receipts_fen",
+        )
+        summary_select = (
+            "SELECT fund_id,coalesce(sum(investment_income_fen),0) investment_income_fen,"
+            "count(*) event_count,coalesce(sum(CASE WHEN "
+            "kind='money_fund_subscription' THEN settlement_fen ELSE 0 END),0) "
+            "actual_payments_fen,coalesce(sum(CASE WHEN kind='money_fund_redemption' "
+            "THEN settlement_fen ELSE 0 END),0) actual_receipts_fen"
+        )
+        if page_request is None:
+            summaries = self.connection.execute(
+                summary_select + f" FROM ({source}) GROUP BY fund_id", parameters
+            )
+        else:
+            summaries, rows, page = _sql_summary_page(
+                self.connection,
+                source,
+                parameters,
+                summary_select + " FROM source_rows GROUP BY fund_id",
+                summary_columns,
+                **page_request,
+            )
+            self.shared_pages["investment_events"] = rows, page
+        for row in summaries:
             self.base_product(row["fund_id"])["investment_income_fen"] = row[
                 "investment_income_fen"
             ]
+            event_count += row["event_count"]
+            actual_payments += row["actual_payments_fen"]
+            actual_receipts += row["actual_receipts_fen"]
         totals = {
             key: _sum(self.product_rows.values(), key)
             for key in (
@@ -1065,16 +1275,9 @@ class FundsRead:
             )
         }
         totals.update(
-            dict(
-                self.connection.execute(
-                    "SELECT count(*) event_count,coalesce(sum(CASE WHEN "
-                    "kind='money_fund_subscription' THEN settlement_fen ELSE 0 END),0) "
-                    "actual_payments_fen,coalesce(sum(CASE WHEN kind='money_fund_redemption' "
-                    "THEN settlement_fen ELSE 0 END),0) "
-                    f"actual_receipts_fen FROM ({source})",
-                    parameters,
-                ).fetchone()
-            )
+            event_count=event_count,
+            actual_payments_fen=actual_payments,
+            actual_receipts_fen=actual_receipts,
         )
         return totals
 
@@ -1121,10 +1324,81 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
     if sections - SECTIONS:
         raise ValueError("未知资金明细集合")
     cursors, filters = cursors or {}, filters or {}
+    page_requests = {}
+    if "movements" in sections:
+        where, values = "1=1", []
+        if filters.get("movement_account_type"):
+            category = next(
+                (
+                    key
+                    for key, value in FUND_TYPES.items()
+                    if value == filters["movement_account_type"]
+                ),
+                "",
+            )
+            where += " AND category=? AND balance_key=?"
+            values.extend((category, filters.get("movement_account_id")))
+        page_requests["movements"] = {
+            "after": cursors.get("movements"),
+            "limit": limit,
+            "where": where,
+            "filters": values,
+        }
+    if "statements" in sections:
+        where, values = "1=1", []
+        if filters.get("statement_account_id"):
+            where += " AND account_id=?"
+            values.append(filters["statement_account_id"])
+        page_requests["statements"] = {
+            "after": cursors.get("statements"),
+            "limit": limit,
+            "where": where,
+            "filters": values,
+        }
+    if "investment_events" in sections:
+        page_requests["investment_events"] = {
+            "after": cursors.get("investment_events"),
+            "limit": limit,
+        }
     read = FundsRead(snap)
-    movement_totals = read.account_summary()
-    bank = read.bank_summary()
-    investments = read.investment_summary()
+    movement_totals = (
+        read.account_summary(page_request=page_requests["movements"])
+        if "movements" in page_requests
+        else read.account_summary()
+    )
+    bank = (
+        read.bank_summary(page_request=page_requests["statements"])
+        if "statements" in page_requests
+        else read.bank_summary()
+    )
+    # Brief does not display investment cost or events. If authoritative
+    # subjects prove none exist, and no unresolved opening package could
+    # contain one, avoid building an unused full investment aggregation.
+    # The funds page and any established or uncertain investment still run
+    # the original source checks.
+    investment_possible = read.has_investment_sources() or any(
+        candidate["kind"] == "opening_package"
+        for issue in read.issues
+        for candidate in issue["candidates"]
+    )
+    investments = (
+        (
+            read.investment_summary(page_request=page_requests["investment_events"])
+            if "investment_events" in page_requests
+            else read.investment_summary()
+        )
+        if not summary_only or investment_possible
+        else {
+            "opening_cost_fen": 0,
+            "subscription_cost_fen": 0,
+            "redemption_cost_fen": 0,
+            "closing_cost_fen": 0,
+            "investment_income_fen": 0,
+            "event_count": 0,
+            "actual_payments_fen": 0,
+            "actual_receipts_fen": 0,
+        }
+    )
     accounts = list(read.account_rows.values())
     complete_accounts = [*accounts, *read.omitted_account_rows.values()]
     complete_bank_accounts = [item for item in complete_accounts if item["type"] == "bank"]
@@ -1181,43 +1455,15 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 else [read.product_rows[key] | read.product_display(key) for key in keys]
             )
         else:
-            where, filter_values = "1=1", []
             if section == "movements":
-                source, parameters = read.movements()
-                if filters.get("movement_account_type"):
-                    category = next(
-                        (
-                            key
-                            for key, value in FUND_TYPES.items()
-                            if value == filters["movement_account_type"]
-                        ),
-                        "",
-                    )
-                    where += " AND category=? AND balance_key=?"
-                    filter_values.extend((category, filters.get("movement_account_id")))
                 present = read.movement_item
             elif section == "statements":
-                source, parameters = read.bank_source, read.bank_parameters
-                if filters.get("statement_account_id"):
-                    where += " AND account_id=?"
-                    filter_values.append(filters["statement_account_id"])
                 present = read.bank_item
             else:
-                source, parameters = read.investment_events()
                 present = read.investment_item
-            rows, page = _sql_page(
-                snap.connection,
-                source,
-                parameters,
-                after=after,
-                limit=limit,
-                where=where,
-                filters=filter_values,
-            )
+            rows, page = read.shared_pages[section]
             if section == "movements":
-                snap.reads.prime_calculations(
-                    {row["calculation_id"] for row in rows}, ancestors=True
-                )
+                read.prepare_calculation_items(row["calculation_id"] for row in rows)
             elif section == "statements":
                 read.prepare_bank_items(rows)
             items = [present(row) for row in rows]

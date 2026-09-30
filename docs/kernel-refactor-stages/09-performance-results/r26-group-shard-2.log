@@ -1,0 +1,16 @@
+........................................................................ [ 28%]
+........................................................................ [ 56%]
+........................................................................ [ 85%]
+......................................                                   [100%]
+============================ slowest 10 durations =============================
+12.67s call     tests/kernel/test_stage9_registered_verifier.py::test_switch_read_existing_reverifies_without_creating_and_rejects_changed_checkpoint
+12.13s setup    tests/kernel/test_dashboard_bounded_reads.py::test_dashboard_does_not_decode_unrelated_funding_history[brief]
+11.39s call     tests/kernel/test_dashboard_funds_alignment.py::test_account_filter_covers_movements_beyond_the_first_500
+10.22s call     tests/kernel/test_report_classification_directory.py::test_full_report_loads_fallback_references_only_when_directory_cannot_answer[32]
+9.44s call     tests/kernel/test_stage9_registered_verifier.py::test_sample_verification_uses_registered_reader_and_preserves_failure[False]
+7.28s call     tests/kernel/test_employee_role_identity_scope.py::test_closed_historical_payroll_role_must_be_proved_before_employee_selection[old-zero-line]
+6.81s call     tests/kernel/test_employee_role_identity_scope.py::test_closed_historical_payroll_role_must_be_proved_before_employee_selection[old-posted]
+6.52s call     tests/kernel/test_stage9_registered_verifier.py::test_switch_company_verification_uses_installed_reader
+4.78s call     tests/kernel/test_stage9_registered_verifier.py::test_sample_verification_uses_registered_reader_and_preserves_failure[True]
+4.75s call     tests/kernel/test_local_service.py::test_generated_command_schemas_validate_typed_facts_and_exclude_journals
+254 passed in 443.32s (0:07:23)

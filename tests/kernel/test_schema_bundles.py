@@ -13,7 +13,7 @@ from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import database_format, upgrade, verify_schema
 
 
-def test_production_creation_records_one_draft_and_auxiliary_header(tmp_path):
+def test_production_creation_records_active_contract_and_auxiliary_header(tmp_path):
     bundle = production_bundle()
     store = Store.create(tmp_path / "company.sqlite", bundle, "company", "taxpayer", "database")
     with store.connection(read_only=True) as connection:
@@ -24,12 +24,14 @@ def test_production_creation_records_one_draft_and_auxiliary_header(tmp_path):
             "taxpayer",
             "database",
         )
-        assert [r[0] for r in connection.execute("SELECT version FROM schema_history")] == [0]
+        assert [r[0] for r in connection.execute("SELECT version FROM schema_history")] == [
+            bundle.current_versions["company"]
+        ]
         assert tuple(connection.execute("SELECT * FROM schema_meta").fetchone()) == (
             1,
             FAMILY,
             "company",
-            "draft",
+            bundle.status,
         )
         assert connection.execute("PRAGMA application_id").fetchone()[0] == APPLICATION_ID
         assert connection.execute("SELECT read_repair_revision FROM state").fetchone()[0] == 0
@@ -39,7 +41,7 @@ def test_production_creation_records_one_draft_and_auxiliary_header(tmp_path):
         assert int.from_bytes(handle.read(4), "big") == APPLICATION_ID
 
 
-def test_draft_creation_cannot_replace_any_existing_file(tmp_path):
+def test_production_creation_cannot_replace_any_existing_file(tmp_path):
     path = tmp_path / "existing.sqlite"
     path.write_bytes(b"preserve existing source")
     with pytest.raises(FileExistsError):

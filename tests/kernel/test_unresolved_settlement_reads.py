@@ -14,13 +14,19 @@ from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import expense, payment, prepare_payment
 
 from ai_accounting.kernel.business_queries import BusinessQueries
-from ai_accounting.kernel.settlement_projection import repair_settlement_projection
+from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.query_semantics import project_settlement_followup
+from ai_accounting.kernel.settlement_projection import (
+    repair_settlement_projection,
+    settlement_followup_summary,
+)
+from ai_accounting.kernel.types import digest
 
 domain_book = domain_book_fixture
 
 
 @contextmanager
-def mismatched_payment_copy(domain_book, damaged_period="2026-01"):
+def mismatched_payment_copy(domain_book, damaged_period="2026-01", *, matching_digest=True):
     engine, save, publish, *_ = domain_book
     prepare_payment(domain_book)
     save("expense", "expense-b", expense())
@@ -80,9 +86,17 @@ def mismatched_payment_copy(domain_book, damaged_period="2026-01"):
         assert frozen["source_calculation"] == source_a
         original_key = frozen["obligation"]
         frozen["source_calculation"] = source_b
-        connection.execute(
-            "UPDATE calculation SET outcome=? WHERE id=?", (json.dumps(outcome), damaged_id)
-        )
+        if matching_digest:
+            # This fixture exercises disagreement between declared and frozen
+            # references, independently of a broken stored-body checksum.
+            connection.execute(
+                "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
+                (json.dumps(outcome), digest(outcome), damaged_id),
+            )
+        else:
+            connection.execute(
+                "UPDATE calculation SET outcome=? WHERE id=?", (json.dumps(outcome), damaged_id)
+            )
         connection.execute(
             "UPDATE dependency_calculation SET upstream_id=? "
             "WHERE calculation_id=? AND upstream_id=?",
@@ -101,6 +115,13 @@ def mismatched_payment_copy(domain_book, damaged_period="2026-01"):
 def mismatched_frozen_payment(domain_book):
     with mismatched_payment_copy(domain_book) as result:
         yield result
+
+
+def test_changed_settlement_body_without_matching_digest_is_content_error(domain_book):
+    with pytest.raises(KernelError) as failure:
+        with mismatched_payment_copy(domain_book, matching_digest=False):
+            pytest.fail("A damaged result must not reach settlement interpretation")
+    assert failure.value.code == "content_integrity_failed"
 
 
 def test_declared_and_frozen_sources_share_unresolved_slot_pagination(mismatched_frozen_payment):
@@ -167,6 +188,11 @@ def test_unresolved_source_mismatch_propagates_unknown_without_reassigning_payme
 ):
     queries, connection, identifiers, original_key = mismatched_frozen_payment
     for current in (False, True):
+        assert settlement_followup_summary(
+            connection, "2026-01", current=current
+        ) == project_settlement_followup(
+            queries.settlement_summary(connection, "2026-01", current=current)
+        )
         full = queries.settlements(connection, "2026-01", subject_ids={"expense"}, current=current)
         summary = queries.settlement_summary(
             connection,

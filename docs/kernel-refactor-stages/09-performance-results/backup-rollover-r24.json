@@ -1,0 +1,45 @@
+{
+  "candidate": "r24",
+  "candidate_sha256": "f7438bce0062bdc563080b398008517b44f5263bcd2a45e1ae80eae4118acbdd",
+  "affected_regression": {
+    "file_count": 30,
+    "passed": 455,
+    "failed": 1,
+    "failed_test": "tests/kernel/test_runtime_backup.py::test_initial_portable_round_trip_and_rollover_are_verified",
+    "operation": "second rollover: os.replace(verified candidate ZIP, existing current ZIP)",
+    "error": "PermissionError, Windows WinError 5 after the bounded five-second wait",
+    "raw_summary": ".tmp/stage9-read-group-r24/result.json",
+    "raw_trace": ".tmp/stage9-read-group-r24/shard-2.log",
+    "source_unchanged": true
+  },
+  "original_failure_state": {
+    "directory": ".tmp/stage9-read-group-r24/tmp-2/test_initial_portable_round_tr0",
+    "current_sha256": "4dd4d2d46cae7990b6380122bfbc47ea372b8d22a7ff48be6d47a8f6f4f625bd",
+    "pending_previous_sha256": "4dd4d2d46cae7990b6380122bfbc47ea372b8d22a7ff48be6d47a8f6f4f625bd",
+    "previous_exists": false,
+    "marker_old_current_sha256": "4dd4d2d46cae7990b6380122bfbc47ea372b8d22a7ff48be6d47a8f6f4f625bd",
+    "marker_new_current_sha256": "5e7ded269c3cf1c03de069826d021c6f1e159dc6cb5ab7783101f42be50d754b"
+  },
+  "one_test_rerun": {
+    "passed": 1,
+    "seconds": 4.29,
+    "log": ".tmp/stage9-read-group-r24/repro-runtime-backup-1.log"
+  },
+  "isolated_replay": {
+    "directory": ".tmp/stage9-rollover-failure-replay-r24",
+    "status": "passed",
+    "entry": "backup.create_portable(copy/company.sqlite, copy/backups, rollover=True, request_id='second')",
+    "current_evidence_count": 2,
+    "previous_evidence_count": 1,
+    "current_request_id": "second",
+    "previous_request_id": "first",
+    "current_sha256": "c17ea1368e0b0591c34edf2e5453cf6e28bc0dd8da86ef67cf25b74b006d22bd",
+    "previous_sha256": "4dd4d2d46cae7990b6380122bfbc47ea372b8d22a7ff48be6d47a8f6f4f625bd",
+    "company_identity_matched": true,
+    "marker_and_pending_cleared": true,
+    "original_file_hashes_unchanged": true,
+    "raw_result": ".tmp/stage9-rollover-failure-replay-r24/replay-result.json",
+    "raw_log": ".tmp/stage9-rollover-failure-replay-r24/replay.log"
+  },
+  "conclusion": "The saved failure state is recoverable in an isolated copy. The process or scanner holding a Windows handle was not identified; the r24 affected regression remains failed."
+}

@@ -1,0 +1,13 @@
+{
+  "scope": "isolated synthetic report_export job; no real accounting data",
+  "comparison": "fixed-r29 browser_job_results method extracted unchanged by AST, called on same current synthetic Store; Store.fact implementation unchanged between sources",
+  "fixed_r29_reports_py_sha256": "e761678e311a1422c4ca43a5db46e1f89bffed5356f521e153345ea0692905a7",
+  "diagnostic_log_sha256": "1180c7d7a2d9a3c24c1362f77b40df56b54ba40ca43085def537981b",
+  "results": [
+    {"damage": "adopted carry subject.kind changed to report_profile", "r29": "invalid", "before_fix": "pending; carry_forward_fact_id null", "after_fix": "invalid"},
+    {"damage": "adopted carry typed header deleted", "r29": "invalid", "before_fix": "invalid", "after_fix": "invalid"},
+    {"damage": "adopted noncarry subject.kind changed to report_carry_forward", "r29": "invalid", "before_fix": "invalid", "after_fix": "invalid"}
+  ],
+  "durable_test": "tests/kernel/test_browser_report_job_source_selection.py; 8 passed in 30.62 seconds",
+  "limits": "Titles authenticate positive carry-like candidates. Unrelated noncarry typed content is not fully decoded here; the registered full verifier covers it. This diagnostic is not a full-package or page-timing result."
+}

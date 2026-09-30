@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .asset_batches import AssetBatches
@@ -26,6 +26,20 @@ from .reports import Reports, run_report_jobs
 from .security import SecurityService, consume_close_approval
 from .tax_import import TaxImport
 from .workflow import Workflow
+
+_HTTP_DASHBOARD_COMMANDS = frozenset(
+    {
+        "dashboard_context",
+        "dashboard_brief",
+        "dashboard_funds",
+        "dashboard_employees",
+        "dashboard_assets",
+        "dashboard_business_status",
+        "dashboard_quarterly_report",
+        "dashboard_period_preparation",
+        "dashboard_close_review",
+    }
+)
 
 OPERATING_PROTOCOL = {
     "version": 1,
@@ -253,21 +267,119 @@ def default_registry():
 
 
 class LocalService:
-    def __init__(self, root: str | Path):
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        enable_read_pool: bool = False,
+        enable_parallel_brief: bool = False,
+        _static_runtime=None,
+    ):
         from .schema_bundle import production_bundle
 
-        self.bundle = production_bundle()
+        if _static_runtime is None:
+            self.bundle = production_bundle()
+            prepared_models = None
+        else:
+            self.bundle, prepared_models = _static_runtime
+            if self.bundle is not production_bundle():
+                raise ValueError("daemon runtime does not match the production bundle")
         self.registry = self.bundle.registry
         self.catalog = Catalog(root, self.bundle)
-        self.security = SecurityService(self.catalog.path)
-        self.close_previews = {}
-        self.active_close_previews = {}
-        from .command_schema import command_models
+        self.read_pool = None
+        self.brief_parallel = None
+        self._catalog_observer = None
+        self._catalog_observer_connection = None
+        try:
+            if enable_read_pool:
+                from .resident_reads import ResidentReadPool
 
-        self.command_models = command_models(self.registry)
+                self.read_pool = ResidentReadPool(maximum=4)
+            self.security = SecurityService(self.catalog.path)
+            self.close_previews = {}
+            self.active_close_previews = {}
+            if prepared_models is None:
+                from .command_schema import command_models
 
-    def engine(self, company_id):
-        return Engine(self.catalog.bind(company_id))
+                prepared_models = command_models(self.registry)
+            self.command_models = prepared_models
+            if enable_parallel_brief:
+                if not enable_read_pool:
+                    raise ValueError("parallel brief requires resident read connections")
+                from .brief_parallel import BriefParallelPool
+
+                self.brief_parallel = BriefParallelPool()
+            if enable_read_pool:
+                # This connection has no read transaction and carries no business
+                # result. It only keeps SQLite's catalog connection lifecycle
+                # stable while each request opens and validates its own connection.
+                observer = ExitStack()
+                try:
+                    connection = observer.enter_context(
+                        self.catalog.connection(read_only=True, _cross_thread=True)
+                    )
+                    if connection.in_transaction:
+                        raise RuntimeError("Catalog observer must not hold a transaction")
+                except BaseException:
+                    observer.close()
+                    raise
+                self._catalog_observer = observer
+                self._catalog_observer_connection = connection
+        except BaseException:
+            self.close()
+            raise
+
+    def engine(self, company_id, *, dashboard_read=False):
+        return Engine(
+            self.catalog.bind(
+                company_id,
+                read_pool=self.read_pool if dashboard_read else None,
+            )
+        )
+
+    def close(self):
+        with ExitStack() as cleanup:
+            if self.read_pool is not None:
+                cleanup.callback(self.read_pool.close)
+            if self.brief_parallel is not None:
+                cleanup.callback(self.brief_parallel.close)
+            if self._catalog_observer is not None:
+                observer, self._catalog_observer = self._catalog_observer, None
+                self._catalog_observer_connection = None
+                cleanup.callback(observer.close)
+
+    def _dashboard_brief(self, dashboard, engine, data):
+        """Use worker proofs only for a bound, ordinary complete brief read."""
+        if (
+            self.brief_parallel is None
+            or data.get("period") is None
+            or data.get("preparation", "complete") != "complete"
+            or data.get("section") is not None
+            or data.get("cursor") is not None
+            or data.get("voucher_version_id") is not None
+            or data.get("voucher_number") is not None
+        ):
+            return dashboard.brief(**data)
+        from .brief_parallel import ParallelBriefUnavailable
+
+        try:
+            with self.brief_parallel.attempt(engine.store) as attempt:
+                if attempt is None:
+                    return dashboard.brief(**data)
+                try:
+                    result = dashboard.brief(**data, _parallel_attempt=attempt)
+                    attempt.finish()
+                    return result
+                except KernelError:
+                    if attempt.guard.unchanged():
+                        raise
+                except ParallelBriefUnavailable:
+                    pass
+        except ParallelBriefUnavailable:
+            pass
+        # A changed source or worker infrastructure failure discards every
+        # partial value. The original page runs again in one read transaction.
+        return dashboard.brief(**data)
 
     def require_active_close_preview(self, company_id, database_id, period, preview_digest):
         """Read the exact active preview under the same gate used by close commits."""
@@ -310,32 +422,45 @@ class LocalService:
     def dashboard_context(self, company_id: str | None = None):
         from .dashboard import Dashboard
 
-        companies = self.catalog.companies()
-        if not companies:
-            if company_id:
+        with self.catalog.connection(read_only=True) as connection:
+            companies = [
+                dict(row) for row in connection.execute("SELECT * FROM company ORDER BY name,id")
+            ]
+            if not companies:
+                if company_id:
+                    raise KernelError("unknown_company", "公司尚未登记")
+                return {
+                    "schema_version": 2,
+                    "company": None,
+                    "companies": [],
+                    "current_company": None,
+                    "periods": [],
+                    "quarters": [],
+                    "default_period": None,
+                    "default_quarter": None,
+                }
+            company = next((item for item in companies if item["id"] == company_id), None)
+            if company_id and company is None:
                 raise KernelError("unknown_company", "公司尚未登记")
-            return {
-                "schema_version": 2,
-                "company": None,
-                "companies": [],
-                "current_company": None,
-                "periods": [],
-                "quarters": [],
-                "default_period": None,
-                "default_quarter": None,
-            }
-        company = next((item for item in companies if item["id"] == company_id), None)
-        if company_id and company is None:
-            raise KernelError("unknown_company", "公司尚未登记")
-        company = company or companies[0]
+            company = company or companies[0]
+            store = self.catalog._bound_store(company, read_pool=self.read_pool)
         return Dashboard(
-            self.engine(company["id"]), company_name=company["name"], companies=companies
+            Engine(store),
+            company_name=company["name"],
+            companies=companies,
         ).context()
 
-    def dispatch(self, command: str, payload: dict, *, session_token=None):
+    def dispatch(
+        self, command: str, payload: dict, *, session_token=None, response_format="native"
+    ):
         """Closed set of business commands, with company binding on every request."""
         from .command_schema import validate_command
-        from .response_contracts import validate_response
+        from .response_contracts import RESPONSE_ADAPTERS, validate_response
+
+        if response_format not in {"native", "http", "http_json"} or (
+            response_format in {"http", "http_json"} and command not in _HTTP_DASHBOARD_COMMANDS
+        ):
+            raise KernelError("invalid_command", "响应格式不适用于此命令")
 
         payload = validate_command(self.command_models, command, payload, registry=self.registry)
         if command == "schema":
@@ -345,7 +470,12 @@ class LocalService:
             with self.security.authorization_gate:
                 self.security.validate_authority(authority)
                 return self._dispatch(command, payload, authority=authority)
-        return validate_response(command, self._dispatch(command, payload, authority=authority))
+        result = validate_response(command, self._dispatch(command, payload, authority=authority))
+        if response_format == "http_json":
+            return RESPONSE_ADAPTERS[command].dump_json(result)
+        if response_format == "http":
+            return RESPONSE_ADAPTERS[command].dump_python(result, mode="json")
+        return result
 
     @contextmanager
     def _commit_authority(self, authority):
@@ -510,7 +640,7 @@ class LocalService:
             return getattr(self.catalog, command)(**payload)
         data = dict(payload)
         company_id = data.pop("company_id")
-        engine = self.engine(company_id)
+        engine = self.engine(company_id, dashboard_read=command in _HTTP_DASHBOARD_COMMANDS)
         engine.commit_guard = lambda: self._commit_authority(authority)
         engine.audit_actor = {
             "catalog_id": authority.catalog_instance_id,
@@ -665,7 +795,11 @@ class LocalService:
                     (company_id, engine.store.database_id, data["preview_digest"]), None
                 )
                 return result
-        result = actions[command](**data)
+        result = (
+            self._dashboard_brief(dashboard, engine, data)
+            if command == "dashboard_brief"
+            else actions[command](**data)
+        )
         if command == "preview_close":
             self._remember_close_preview(engine, result, data["owner_confirmation"])
             result = {

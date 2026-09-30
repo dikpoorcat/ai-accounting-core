@@ -1,0 +1,78 @@
+{
+  "purpose": "query_work_diagnostic_not_acceptance",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r7",
+  "parallel_diagnostic_activity": true,
+  "modes": {
+    "original": {
+      "rows": 4522,
+      "vm_steps_sampled": 677500,
+      "median_ms": 105.92295008245856,
+      "samples_ms": [
+        109.50610018335283,
+        105.8367001824081,
+        105.74510018341243,
+        106.00919998250902,
+        121.8284999486059,
+        105.74919986538589,
+        107.6001999899745,
+        105.76490010134876
+      ],
+      "plan": [
+        [
+          7,
+          0,
+          62,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=?)"
+        ],
+        [
+          16,
+          0,
+          47,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)"
+        ],
+        [
+          21,
+          0,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      ]
+    },
+    "candidate_driven": {
+      "rows": 4522,
+      "vm_steps_sampled": 96200,
+      "median_ms": 28.44294998794794,
+      "samples_ms": [
+        28.901500161737204,
+        28.259800048545003,
+        28.346400009468198,
+        27.772400062531233,
+        28.539499966427684,
+        27.976399986073375,
+        29.3505999725312,
+        28.982199961319566
+      ],
+      "plan": [
+        [
+          8,
+          0,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=?)"
+        ],
+        [
+          12,
+          0,
+          62,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_2 (subject_id=?)"
+        ],
+        [
+          17,
+          0,
+          50,
+          "SEARCH r EXISTS USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period<?)"
+        ]
+      ]
+    }
+  },
+  "same_candidates": true
+}

@@ -1,0 +1,106 @@
+{
+  "status": "private_read_only_diagnostic",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r29-release",
+  "book_report": ".tmp\\stage9-release-main-48-verified-r29.json",
+  "period": "2019-12",
+  "note": "The scalar prototype keeps the old trace IDs but does not enter QueryReads caches or authenticate old member bodies. Owner metadata comparison prices missing-row checking; neither branch is an acceptance implementation.",
+  "isolated_missing_member_probe": {
+    "copied_members": 1,
+    "missing_member_rejected": true,
+    "reason": "owner member count mismatch"
+  },
+  "results": [
+    {
+      "variant": "old",
+      "selected": {
+        "selected": 1128,
+        "latest": 47
+      },
+      "select": {
+        "cpu_ms_diagnostic": 31.25,
+        "wall_ms_diagnostic": 34.397799987345934,
+        "sql": 2,
+        "vm": 63300,
+        "rows": 1128,
+        "value_bytes": 970056
+      },
+      "consumer_cpu_ms_diagnostic": 0.0,
+      "owner_metadata": null,
+      "id_parity": true,
+      "issue_parity": true
+    },
+    {
+      "variant": "scalar",
+      "selected": {
+        "selected": 1128,
+        "latest": 47
+      },
+      "select": {
+        "cpu_ms_diagnostic": 31.25,
+        "wall_ms_diagnostic": 24.352699983865023,
+        "sql": 3,
+        "vm": 57300,
+        "rows": 1175,
+        "value_bytes": 422438
+      },
+      "consumer_cpu_ms_diagnostic": 0.0,
+      "owner_metadata": {
+        "owners": 48,
+        "members": 1128,
+        "sql": 2,
+        "rows": 1176,
+        "value_bytes": 1701641,
+        "vm": 32100,
+        "cpu_ms_diagnostic": 31.25
+      },
+      "id_parity": true,
+      "issue_parity": true
+    },
+    {
+      "variant": "scalar",
+      "selected": {
+        "selected": 1128,
+        "latest": 47
+      },
+      "select": {
+        "cpu_ms_diagnostic": 15.625,
+        "wall_ms_diagnostic": 24.941000156104565,
+        "sql": 3,
+        "vm": 57300,
+        "rows": 1175,
+        "value_bytes": 422438
+      },
+      "consumer_cpu_ms_diagnostic": 0.0,
+      "owner_metadata": {
+        "owners": 48,
+        "members": 1128,
+        "sql": 2,
+        "rows": 1176,
+        "value_bytes": 1701641,
+        "vm": 32100,
+        "cpu_ms_diagnostic": 31.25
+      },
+      "id_parity": true,
+      "issue_parity": true
+    },
+    {
+      "variant": "old",
+      "selected": {
+        "selected": 1128,
+        "latest": 47
+      },
+      "select": {
+        "cpu_ms_diagnostic": 31.25,
+        "wall_ms_diagnostic": 33.94710016436875,
+        "sql": 2,
+        "vm": 63300,
+        "rows": 1128,
+        "value_bytes": 970056
+      },
+      "consumer_cpu_ms_diagnostic": 15.625,
+      "owner_metadata": null,
+      "id_parity": true,
+      "issue_parity": true
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
 import { requestGeneratedJson } from "./client";
-import type { DashboardEmployeesContract, DashboardEmployeesResponse } from "./generated/dashboardResponses";
-import { validateDashboardEmployeesResponse } from "./generated/dashboardValidators.js";
+import type { DashboardEmployeesContract, DashboardEmployeesResponse } from "./generated/dashboardEmployees";
+import { validateDashboardEmployeesResponse } from "./generated/dashboardEmployees.js";
 
 export type EmployeesDashboardResponse = DashboardEmployeesResponse;
 export type EmployeesDashboardData = DashboardEmployeesContract.EmployeesData;

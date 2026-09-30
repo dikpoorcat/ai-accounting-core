@@ -1,0 +1,36 @@
+{
+  "scope": "fixed_r25_main48_private_sql_only_not_full_page_or_verified_candidate",
+  "report_status_at_input": "complete",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r25-final-release",
+  "measurements": [
+    {
+      "label": "baseline",
+      "rows": 2400,
+      "value_bytes": 313920,
+      "vm": 1135700,
+      "cpu_ms_diagnostic": 203.125,
+      "wall_ms_diagnostic": 207.56160002201796
+    },
+    {
+      "label": "minimal_authoritative_ids",
+      "rows": 2400,
+      "value_bytes": 76800,
+      "vm": 1112400,
+      "cpu_ms_diagnostic": 125.0,
+      "wall_ms_diagnostic": 135.87050000205636
+    },
+    {
+      "label": "representative_after_proof",
+      "rows": 50,
+      "value_bytes": 6540,
+      "vm": 1370000,
+      "cpu_ms_diagnostic": 171.875,
+      "wall_ms_diagnostic": 162.7849000506103
+    }
+  ],
+  "semantic_checks": {
+    "minimal_ids_multiset_equal": true,
+    "representative_ids_equal_for_this_intact_synthetic_sample": true,
+    "all_2400_source_proofs_run_by_candidate_sql": false
+  }
+}

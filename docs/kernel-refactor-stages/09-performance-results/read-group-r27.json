@@ -1,0 +1,61 @@
+{
+  "status": "failed",
+  "started_unix": 1790533999.134933,
+  "temp_root": "C:\\Users\\MD01\\AppData\\Local\\Temp\\ai-accounting-stage9-r27-group",
+  "repository_source_sha256": "77c601089738cf09a221acb908c089ee5357d9a1b8ef69e97358fd34bdfed8d4",
+  "candidate_sha256": "17f6ca6dc56fb9499b7f6ecde1b8a4c2d1adbd483e304e837315f1f1c6922e6a",
+  "file_count": 33,
+  "shards": [
+    {
+      "index": 1,
+      "pid": 36180,
+      "files": [
+        "tests\\kernel\\test_close_direct_contract.py",
+        "tests\\kernel\\test_close_management_sections.py",
+        "tests\\kernel\\test_dashboard_identity_attribution.py",
+        "tests\\kernel\\test_dashboard_provenance.py",
+        "tests\\kernel\\test_entity_positive_witnesses.py",
+        "tests\\kernel\\test_local_service.py",
+        "tests\\kernel\\test_maintenance.py",
+        "tests\\kernel\\test_opening_continuation.py",
+        "tests\\kernel\\test_period_readiness.py",
+        "tests\\kernel\\test_query_reads.py",
+        "tests\\kernel\\test_report_classification_directory.py",
+        "tests\\kernel\\test_report_flow_integrity.py",
+        "tests\\kernel\\test_reports.py",
+        "tests\\kernel\\test_reports_bounded_reads.py",
+        "tests\\kernel\\test_stage9_backup_upgrade_history.py",
+        "tests\\kernel\\test_t7_quarter_coverage.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-group-r27\\shard-1.log",
+      "exit_code": 0
+    },
+    {
+      "index": 2,
+      "pid": 19644,
+      "files": [
+        "tests\\kernel\\test_dashboard_bounded_reads.py",
+        "tests\\kernel\\test_dashboard_funds_alignment.py",
+        "tests\\kernel\\test_dashboard_metadata.py",
+        "tests\\kernel\\test_dashboard_projection.py",
+        "tests\\kernel\\test_dashboard_reports_adapter.py",
+        "tests\\kernel\\test_dashboard_transport.py",
+        "tests\\kernel\\test_dashboard_workforce_assets.py",
+        "tests\\kernel\\test_employee_role_identity_scope.py",
+        "tests\\kernel\\test_offline_upgrade_history_preservation.py",
+        "tests\\kernel\\test_payroll_head_line_scope.py",
+        "tests\\kernel\\test_report_flow.py",
+        "tests\\kernel\\test_report_open_contribution.py",
+        "tests\\kernel\\test_report_open_contribution_bytes.py",
+        "tests\\kernel\\test_report_projection.py",
+        "tests\\kernel\\test_single_month_close.py",
+        "tests\\kernel\\test_stage9_registered_verifier.py",
+        "tests\\kernel\\test_t7_snapshot_reuse.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-group-r27\\shard-2.log",
+      "exit_code": 1
+    }
+  ],
+  "elapsed_seconds": 470.18344950675964,
+  "source_unchanged": true
+}

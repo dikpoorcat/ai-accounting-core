@@ -1,0 +1,518 @@
+{
+  "status": "diagnostic",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r23-release",
+  "book_report_status": "measuring",
+  "months": 48,
+  "note": "Read-only scope counts; concurrent workload, not timing acceptance.",
+  "results": [
+    {
+      "page": "context",
+      "events": [],
+      "response_sha256": "7ac4c0b629115e6a103fd560979a690f58f9170161367e87493d0921cbff073b"
+    },
+    {
+      "page": "brief",
+      "events": [
+        {
+          "request": {
+            "kinds": [
+              "asset",
+              "opening_asset",
+              "reimbursed_asset"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 0,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "brief",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4134",
+            "dashboard.py:_long_term_assets:4196"
+          ],
+          "returned": 0
+        },
+        {
+          "request": {
+            "kinds": [
+              "reimbursed_asset_batch"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 1,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "brief",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4135",
+            "dashboard.py:_long_term_assets:4196"
+          ],
+          "returned": 0
+        },
+        {
+          "request": {
+            "kinds": [
+              "asset_activation",
+              "asset_disposal"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 2,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "brief",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4136",
+            "dashboard.py:_long_term_assets:4196"
+          ],
+          "returned": 48
+        },
+        {
+          "request": {
+            "kinds": [
+              "labor_project_cost",
+              "project_cost"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 3,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "brief",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4137",
+            "dashboard.py:_long_term_assets:4196"
+          ],
+          "returned": 0
+        },
+        {
+          "scope": "{'subject_id': None, 'period': '2019-12'}",
+          "page": "brief",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-12')",
+          "page": "brief",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423",
+            "functools.py:__get__:998",
+            "dashboard.py:brief:1813"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      ],
+      "response_sha256": "78cd9b72a072e3966e61f3e109c716dfb687bc729db7cf9b7483f0f5af0f3397"
+    },
+    {
+      "page": "funds",
+      "events": [
+        {
+          "scope": "{'subject_id': None, 'period': '2019-12'}",
+          "page": "funds",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-12')",
+          "page": "funds",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423",
+            "functools.py:__get__:998",
+            "dashboard.py:funds:2054"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      ],
+      "response_sha256": "7100827bc9e3aaa01ab73319b73f4c62d1d9efe6993be75f73ddd0305770fd2c"
+    },
+    {
+      "page": "employees",
+      "events": [
+        {
+          "request": {
+            "kinds": [
+              "annual_bonus",
+              "opening_payroll_payable",
+              "payroll",
+              "payroll_bounded"
+            ],
+            "subjects": [
+              "wage-2019-12-0",
+              "wage-2019-12-1",
+              "wage-2019-12-10",
+              "wage-2019-12-11",
+              "wage-2019-12-12",
+              "wage-2019-12-13",
+              "wage-2019-12-14",
+              "wage-2019-12-15",
+              "wage-2019-12-16",
+              "wage-2019-12-17",
+              "wage-2019-12-18",
+              "wage-2019-12-19",
+              "wage-2019-12-2",
+              "wage-2019-12-20",
+              "wage-2019-12-21",
+              "wage-2019-12-22",
+              "wage-2019-12-23",
+              "wage-2019-12-24",
+              "wage-2019-12-25",
+              "wage-2019-12-26",
+              "wage-2019-12-27",
+              "wage-2019-12-28",
+              "wage-2019-12-29",
+              "wage-2019-12-3",
+              "wage-2019-12-30",
+              "wage-2019-12-31",
+              "wage-2019-12-32",
+              "wage-2019-12-33",
+              "wage-2019-12-34",
+              "wage-2019-12-35",
+              "wage-2019-12-36",
+              "wage-2019-12-37",
+              "wage-2019-12-38",
+              "wage-2019-12-39",
+              "wage-2019-12-4",
+              "wage-2019-12-40",
+              "wage-2019-12-41",
+              "wage-2019-12-42",
+              "wage-2019-12-43",
+              "wage-2019-12-44",
+              "wage-2019-12-45",
+              "wage-2019-12-46",
+              "wage-2019-12-47",
+              "wage-2019-12-48",
+              "wage-2019-12-49",
+              "wage-2019-12-5",
+              "wage-2019-12-6",
+              "wage-2019-12-7",
+              "wage-2019-12-8",
+              "wage-2019-12-9"
+            ],
+            "asset_ids": null
+          },
+          "cache_entries_before": 0,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "employees",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:_employees:3470",
+            "dashboard.py:employees:2092",
+            "stage9-cache-scope-probe.py:<module>:82"
+          ],
+          "returned": 0
+        },
+        {
+          "scope": "{'subject_id': None, 'period': '2019-12'}",
+          "page": "employees",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-12')",
+          "page": "employees",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423",
+            "functools.py:__get__:998",
+            "dashboard.py:employees:2116"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      ],
+      "response_sha256": "cbb35d5535d7df6951276d31c866139dbd9f4c65cff56de17ae096e2b444e53d"
+    },
+    {
+      "page": "assets",
+      "events": [
+        {
+          "request": {
+            "kinds": [
+              "asset",
+              "opening_asset",
+              "reimbursed_asset"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 0,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "assets",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4134",
+            "dashboard.py:_assets:4271"
+          ],
+          "returned": 0
+        },
+        {
+          "request": {
+            "kinds": [
+              "reimbursed_asset_batch"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 1,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "assets",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4135",
+            "dashboard.py:_assets:4271"
+          ],
+          "returned": 0
+        },
+        {
+          "request": {
+            "kinds": [
+              "asset_activation",
+              "asset_disposal"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 2,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "assets",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4136",
+            "dashboard.py:_assets:4271"
+          ],
+          "returned": 48
+        },
+        {
+          "request": {
+            "kinds": [
+              "labor_project_cost",
+              "project_cost"
+            ],
+            "subjects": null,
+            "asset_ids": null
+          },
+          "cache_entries_before": 3,
+          "exact_hit": false,
+          "full_list_size": null,
+          "filtered_full_list": false,
+          "page": "assets",
+          "method": "asset_member_events",
+          "callers": [
+            "dashboard_reads.py:selected:539",
+            "dashboard.py:calculations_of_kind:351",
+            "dashboard.py:_asset_card_sources:4137",
+            "dashboard.py:_assets:4271"
+          ],
+          "returned": 0
+        },
+        {
+          "scope": "{'subject_id': None, 'period': '2019-12'}",
+          "page": "assets",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-12')",
+          "page": "assets",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:preparation:423",
+            "functools.py:__get__:998",
+            "dashboard.py:assets:2183"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      ],
+      "response_sha256": "502e4f294105ff7524dc75e85fbfa285d5e94267fd4d1ec45e2c665990e237dc"
+    },
+    {
+      "page": "reports",
+      "events": [
+        {
+          "scope": "{'subject_id': None, 'period': '2019-10'}",
+          "page": "reports",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-10')",
+          "page": "reports",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407",
+            "stage9-cache-scope-probe.py:<module>:79"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        },
+        {
+          "scope": "{'subject_id': None, 'period': '2019-11'}",
+          "page": "reports",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-11')",
+          "page": "reports",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407",
+            "stage9-cache-scope-probe.py:<module>:79"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        },
+        {
+          "scope": "{'subject_id': None, 'period': '2019-12'}",
+          "page": "reports",
+          "method": "job_rows",
+          "callers": [
+            "business_queries.py:_file_jobs:1552",
+            "stage9-cache-scope-probe.py:run:45",
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407"
+          ],
+          "rows": 0
+        },
+        {
+          "summary": true,
+          "metadata_only": false,
+          "job_ids_count": null,
+          "scope": "(None, '2019-12')",
+          "page": "reports",
+          "method": "_file_jobs",
+          "callers": [
+            "business_queries.py:_period_readiness:2938",
+            "dashboard.py:quarterly_report:2407",
+            "stage9-cache-scope-probe.py:<module>:79"
+          ],
+          "returned": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      ],
+      "response_sha256": "1284f6265c49f159b36c7cd2da302d4d8e965a1f99bface483c8c989b3de1adf"
+    }
+  ]
+}

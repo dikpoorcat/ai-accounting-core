@@ -92,6 +92,38 @@ def test_index_repair_is_idempotent_and_does_not_touch_business_epochs(engine):
         assert connection.execute("SELECT read_repair_revision FROM state").fetchone()[0] == 1
 
 
+def test_index_repair_restores_missing_close_marker_without_waiving_frozen_roots(engine):
+    save(engine)
+    publish(engine)
+    close(engine)
+    damage(
+        engine, "read_index_source",
+        "DELETE FROM read_index_source WHERE source_kind='close'",
+        foreign_keys=False,
+    )
+    maintenance = Maintenance(engine)
+    with pytest.raises(KernelError):
+        maintenance.verify_integrity()
+    result = maintenance.repair_read_indexes(request_id="repair-missing-close-marker")
+    assert result["changed"]
+    assert maintenance.verify_integrity()["status"] == "verified"
+
+
+def test_index_repair_with_missing_marker_still_rejects_damaged_close_root(engine):
+    save(engine)
+    publish(engine)
+    close(engine)
+    damage(
+        engine, "read_index_source",
+        "DELETE FROM read_index_source WHERE source_kind='close'",
+        foreign_keys=False,
+    )
+    damage(engine, "period_close", "UPDATE period_close SET manifest=manifest||' '")
+    with pytest.raises(KernelError) as failure:
+        Maintenance(engine).repair_read_indexes(request_id="repair-damaged-close-root")
+    assert failure.value.details["reason"] == "storage_root_digest_mismatch"
+
+
 @pytest.mark.parametrize("target", ["projections", "read_indexes"])
 def test_source_damage_cannot_be_repaired_or_disguised(engine, target):
     save(engine)

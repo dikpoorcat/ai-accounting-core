@@ -99,6 +99,7 @@ def resolve_calculation_relations(
     load_calculation: Callable[[str], Mapping[str, Any]],
     load_parents: Callable[[str], Iterable[str]],
     source_cache: dict | None = None,
+    collect_ancestry: bool = True,
 ) -> dict:
     """Resolve supported frozen calculations to stable obligations and exact source lines."""
 
@@ -130,7 +131,15 @@ def resolve_calculation_relations(
             parents[ident] = tuple(load_parents(ident))
         return parents[ident]
 
-    sources = {} if source_cache is None else source_cache
+    source_records_cache = {} if source_cache is None else source_cache
+
+    def cached_own(record, count):
+        """Reuse this exact source's resolved obligations, never an ancestor's."""
+        ident = record.get("id")
+        for source_id, items in source_records_cache.get(ident, ()):
+            if source_id == ident and len(items) == count:
+                return items
+        return None
 
     def source_records(record):
         """Memoize obligation-bearing ancestry without recursion or graph copies."""
@@ -141,7 +150,7 @@ def resolve_calculation_relations(
         while stack:
             current, expanded = stack.pop()
             ident = current.get("id")
-            if not isinstance(ident, str) or ident in sources:
+            if not isinstance(ident, str) or ident in source_records_cache:
                 continue
             if not expanded:
                 if ident in visiting:
@@ -153,7 +162,7 @@ def resolve_calculation_relations(
                     if parent is not None and parent_id not in visiting:
                         stack.append((parent, False))
                 continue
-            branches = [sources.get(parent_id, ()) for parent_id in parent_ids(ident)]
+            branches = [source_records_cache.get(parent_id, ()) for parent_id in parent_ids(ident)]
             own = _values(current).get("obligations", ())
             if not own and len(branches) == 1:
                 result = branches[0]
@@ -165,9 +174,9 @@ def resolve_calculation_relations(
                 if own:
                     combined[ident] = tuple(_obligation(current, item) for item in own)
                 result = tuple(combined.items())
-            sources[ident] = result
+            source_records_cache[ident] = result
             visiting.discard(ident)
-        return sources.get(root_id, ())
+        return source_records_cache.get(root_id, ())
 
     def collect(record):
         for ident, items in source_records(record):
@@ -195,7 +204,8 @@ def resolve_calculation_relations(
                 obligations[key] = resolved
 
     loaded(str(calculation.get("id")))
-    collect(calculation)
+    if collect_ancestry:
+        collect(calculation)
     line_relations: list[dict] = []
     settlements: list[dict] = []
     lines = _lines(calculation)
@@ -237,18 +247,45 @@ def resolve_calculation_relations(
                 )
                 return None
             source_values = _values(binding)["basis_values"]
+        source_items = source_values.get("obligations", ())
         candidates = [
-            item
-            for item in source_values.get("obligations", ())
+            (index, item)
+            for index, item in enumerate(source_items)
             if (key is None or item.get("key") == key)
             and (name is None or item.get("name") == name)
         ]
         if len(candidates) != 1:
             return None
-        item = _obligation(source, candidates[0])
+        index, raw_item = candidates[0]
+        # The ancestry walk already resolved this immutable source. A binding
+        # supplies different basis values and adds its own identity, so it must
+        # retain a separate object.
+        cached = cached_own(source, len(source_items)) if binding_id is None else None
+        item = cached[index] if cached is not None else _obligation(source, raw_item)
         if binding_id is not None:
             item["identity_binding_calculation_id"] = binding_id
             obligations[item["key"]] = item
+        elif not collect_ancestry:
+            direct_key = item.get("key")
+            if not isinstance(direct_key, str) or not direct_key:
+                issues.append(
+                    _issue(
+                        "report_source.obligations",
+                        "核算义务缺少稳定键",
+                        calculation_id=source.get("id"),
+                    )
+                )
+            elif direct_key in obligations and obligations[direct_key] != item:
+                issues.append(
+                    _issue(
+                        "report_source.obligations",
+                        "稳定义务键指向不一致的冻结来源",
+                        calculation_id=source.get("id"),
+                        obligation_key=direct_key,
+                    )
+                )
+            else:
+                obligations[direct_key] = item
         return item
 
     def add_relation(line_no: int, role: str, amount: int, source, item, **extra):
@@ -642,7 +679,13 @@ def resolve_calculation_relations(
 
     # A calculation's own obligations can share one aggregate line.  Expand only
     # when their stable amounts exactly conserve that line.
-    own = [_obligation(calculation, item) for item in values.get("obligations", ())]
+    raw_own = values.get("obligations", ())
+    reused_own = cached_own(calculation, len(raw_own))
+    own = (
+        reused_own
+        if reused_own is not None
+        else tuple(_obligation(calculation, item) for item in raw_own)
+    )
     own_party_accounts = {item.get("account") for item in own if item.get("party_key") is not None}
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for item in own:
@@ -782,6 +825,16 @@ def report_party_splits(
         "relations": relations,
         "issues": issues,
     }
+
+
+def report_party_needs_ancestry(row: Mapping[str, Any], resolution: Mapping[str, Any]) -> bool:
+    """Whether this row can use the resolver's ancestor party candidates."""
+    relations = any(
+        relation.get("line_no") == row.get("line_no")
+        and relation.get("role") not in {"funds", "tax_transfer", "reserve_expense"}
+        for relation in resolution.get("line_relations", ())
+    )
+    return not relations and row.get("account") not in resolution.get("own_party_accounts", ())
 
 
 def resolve_line_parties(
@@ -952,8 +1005,7 @@ def project_settlement_followup(summary):
         "issues": summary["issues"],
         "obligation_count": len(obligations),
         "followup_count": sum(
-            item["remaining_fen"] is None or item["remaining_fen"] != 0
-            for item in obligations
+            item["remaining_fen"] is None or item["remaining_fen"] != 0 for item in obligations
         ),
         "complete": summary.get("complete", True),
         "unestablished_state_selection_count": len(unknown),

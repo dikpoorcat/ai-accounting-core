@@ -1,0 +1,89 @@
+{
+  "scope": "r28_fixed_reader_on_verified_r26_main48_material_worker_plus_exact_asset_readiness_same_snapshot_diagnostic_not_pure_timing",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r28-release",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48-verified-r26.json",
+  "period": "2019-12",
+  "material": {
+    "wall_ms": 353.2194,
+    "cpu_ms": 343.75,
+    "issues": 0,
+    "fact_versions_after": 2342,
+    "verified_source_contents_after": 0
+  },
+  "asset_prime": {
+    "wall_ms": 107.3896,
+    "cpu_ms": 93.75,
+    "read_specs": 31,
+    "asset_only_specs": 29,
+    "asset_only_specs_repr": [
+      "Read(source='calculation', kind='asset', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='asset_activation', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='asset_consumption', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='asset_disposal', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='cash_payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='calculation', kind='employee_advance', key='loan-principal', before_period='2020-01')",
+      "Read(source='calculation', kind='loan_drawdown', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='loan_interest', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='opening_asset', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='opening_loan', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='calculation', kind='platform_payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='calculation', kind='reimbursed_asset', key='*', before_period='2020-01')",
+      "Read(source='calculation', kind='reimbursed_asset_batch', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='asset', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='asset_activation', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='asset_consumption', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='asset_disposal', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='cash_payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='fact', kind='employee_advance', key='loan-principal', before_period='2020-01')",
+      "Read(source='fact', kind='loan_agreement', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='loan_drawdown', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='loan_interest', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='opening_asset', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='opening_loan', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='fact', kind='platform_payment', key='loan-principal', before_period='2020-01')",
+      "Read(source='fact', kind='reimbursed_asset', key='*', before_period='2020-01')",
+      "Read(source='fact', kind='reimbursed_asset_batch', key='*', before_period='2020-01')"
+    ],
+    "new_fact_versions": 1460,
+    "new_typed_calculations": 1415
+  },
+  "other_readiness_prime": {
+    "wall_ms": 45.4436,
+    "cpu_ms": 46.875,
+    "read_specs": 34,
+    "fact_versions_after": 2808
+  },
+  "asset_evaluate": {
+    "wall_ms": 1.4513,
+    "cpu_ms": 0.0,
+    "issue_count": 0
+  },
+  "asset_trace": {
+    "facts": 1463,
+    "calculations": 1415,
+    "fact_kinds": {
+      "asset": 48,
+      "asset_activation": 48,
+      "asset_consumption": 1128,
+      "loan_agreement": 48,
+      "loan_drawdown": 48,
+      "loan_interest": 95,
+      "payment": 48
+    },
+    "calculation_kinds": {
+      "asset": 48,
+      "asset_activation": 48,
+      "asset_consumption": 1128,
+      "loan_drawdown": 48,
+      "loan_interest": 95,
+      "payment": 48
+    }
+  },
+  "packet_estimate": {
+    "id_and_issue_pickle_bytes": 192432
+  },
+  "material_coverage_digest": "dc002a52e6058a7b99c178518749c789f44b912ed84c0e7a2f96257d98ffdc2c",
+  "asset_issue_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+}

@@ -31,11 +31,11 @@ SECTIONS = {
 
 def validate_page(endpoint, section, cursor, limit):
     if section is not None and section not in SECTIONS[endpoint]:
-        raise ValueError("不支持的明细集合")
+        raise KernelError("invalid_command", "不支持的明细集合")
     if cursor is not None and section is None:
-        raise ValueError("分页游标须指定明细集合")
+        raise KernelError("invalid_command", "分页游标须指定明细集合")
     if type(limit) is not int or not 1 <= limit <= 500:
-        raise ValueError("每页数量必须为 1 至 500")
+        raise KernelError("invalid_command", "每页数量必须为 1 至 500")
 
 
 def page_scope(snapshot, endpoint, section, filters, *, collection_version=None):

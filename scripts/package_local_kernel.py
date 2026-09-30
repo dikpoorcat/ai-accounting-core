@@ -26,12 +26,44 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-ROOT_DEPENDENCIES = ("mcp", "pydantic", "argon2-cffi", "pypdf", "openpyxl", "xlwt", "xlrd")
+ROOT_DEPENDENCIES = (
+    "mcp",
+    "pydantic",
+    "argon2-cffi",
+    "pypdf",
+    "openpyxl",
+    "xlwt",
+    "xlrd",
+    "jsonschema",
+)
 
 
 def sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def verify_package_inventory(root: Path, manifest: dict, manifest_sha256: str) -> None:
+    """Reject extra, absent or changed software before packaging or first execution."""
+    expected = manifest["files"]
+    names = set()
+    if root.is_symlink() or root.is_junction():
+        raise ValueError("Package root must not be a symbolic link or junction")
+    for path in root.rglob("*"):
+        if path.is_symlink() or path.is_junction():
+            raise ValueError(f"Package contains a link or junction: {path.relative_to(root)}")
+        if path.is_file():
+            names.add(path.relative_to(root).as_posix())
+        elif not path.is_dir():
+            raise ValueError(f"Package contains an unsupported path: {path.relative_to(root)}")
+    if names != set(expected) | {"manifest.json"}:
+        raise ValueError("Package file inventory differs from its manifest")
+    if sha256(root / "manifest.json") != manifest_sha256:
+        raise ValueError("Package manifest changed after construction")
+    for relative, recorded in expected.items():
+        source = root / relative
+        if source.stat().st_size != recorded["bytes"] or sha256(source) != recorded["sha256"]:
+            raise ValueError(f"Package file changed: {relative}")
 
 
 def copy_file(source: Path, target: Path):
@@ -120,6 +152,28 @@ def copy_dependencies(output: Path):
     return {name: distribution.version for name, distribution in sorted(dependencies.items())}
 
 
+def selected_contract_files(bundle, directory: Path):
+    """Copy the active draft or the declared released history, never stale drafts."""
+
+    selected = []
+    for kind in ("company", "catalog"):
+        for version, item in sorted(bundle.contracts[kind].items()):
+            if bundle.status == "released" and item["status"] != "released":
+                continue
+            if bundle.status == "draft" and version != bundle.current_versions[kind]:
+                continue
+            filename = "draft.json" if item["status"] == "draft" else f"v{version}.json"
+            selected.append(directory / kind / filename)
+    if bundle.status == "released":
+        if 1 not in bundle.contracts["company"]:
+            raise ValueError("Released runtime is missing its v1 company contract")
+        selected.append(directory / "content-v1.json")
+    for path in selected:
+        if not path.is_file():
+            raise ValueError(f"Required runtime contract is missing: {path}")
+    return tuple(selected)
+
+
 def copy_application(output: Path):
     # Exercise all local public entry modules and generated schemas to discover
     # their shared pure imports. Optional dependency distributions are handled
@@ -128,7 +182,8 @@ def copy_application(output: Path):
         importlib.import_module("ai_accounting.kernel." + name)
     from ai_accounting.kernel.schema_bundle import production_bundle
 
-    production_bundle().registry.schemas()
+    bundle = production_bundle()
+    bundle.registry.schemas()
     source_package = REPOSITORY / "src/ai_accounting"
     selected = set((source_package / "kernel").rglob("*.py"))
     selected.discard(source_package / "kernel/security/legacy.py")
@@ -153,7 +208,7 @@ def copy_application(output: Path):
     for source in sorted(selected):
         copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
     contracts = source_package / "kernel/schema_contracts"
-    for source in contracts.rglob("*.json"):
+    for source in selected_contract_files(bundle, contracts):
         copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
     from ai_accounting.financial_statement_template import TEMPLATE_FILE_NAME, _template_bytes
 
@@ -176,6 +231,7 @@ def bundle_manifest(output, dependencies, modules):
         [
             str(output / "runtime/python.exe"),
             "-I",
+            "-B",
             "-X",
             "utf8",
             "-c",
@@ -237,14 +293,14 @@ def main():
     modules = copy_application(output)
     (output / "finance-local.cmd").write_text(
         '@echo off\nsetlocal\nif not defined FINANCE_DATA_ROOT '
-        'set "FINANCE_DATA_ROOT=%~dp0data\\kernel-draft"\n'
+        'set "FINANCE_DATA_ROOT=%~dp0data\\kernel-released"\n'
         '"%~dp0runtime\\python.exe" -I -X utf8 '
         "-m ai_accounting.kernel.cli %*\nexit /b %errorlevel%\n",
         encoding="ascii",
     )
     (output / "finance-local.ps1").write_text(
         'if (-not $env:FINANCE_DATA_ROOT) { '
-        '$env:FINANCE_DATA_ROOT = Join-Path $PSScriptRoot "data/kernel-draft" }\n'
+        '$env:FINANCE_DATA_ROOT = Join-Path $PSScriptRoot "data/kernel-released" }\n'
         '& (Join-Path $PSScriptRoot "runtime/python.exe") -I -X utf8 '
         "-m ai_accounting.kernel.cli @args\nexit $LASTEXITCODE\n",
         encoding="utf-8",
@@ -256,7 +312,7 @@ def main():
         "本地会计内核运行包（Windows x64）\n\n"
         "不需要安装 Python、SQLite、PostgreSQL 或 Node.js。\n"
         "所有命令通过包内 finance-local.cmd 或 finance-local.ps1 运行。\n"
-        "默认资料目录：包内 data\\kernel-draft。\n"
+        "默认资料目录：包内 data\\kernel-released。\n"
         "示例：finance-local.cmd serve\n"
         "MCP：finance-local.cmd mcp\n"
         "另选资料目录：finance-local.cmd --root D:\\会计资料 serve\n"
@@ -269,6 +325,8 @@ def main():
     (output / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    manifest_sha256 = sha256(output / "manifest.json")
+    verify_package_inventory(output, manifest, manifest_sha256)
     with zipfile.ZipFile(
         archive_path, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as archive:
@@ -282,6 +340,7 @@ def main():
         relocated.mkdir()
         with zipfile.ZipFile(archive_path) as archive:
             archive.extractall(relocated)  # own freshly generated, relative-only software archive
+        verify_package_inventory(relocated, manifest, manifest_sha256)
         poisoned = dict(
             os.environ,
             PYTHONPATH=str(REPOSITORY / "not-an-import-path"),
@@ -292,6 +351,7 @@ def main():
             [
                 str(relocated / "runtime/python.exe"),
                 "-I",
+                "-B",
                 "-X",
                 "utf8",
                 str(relocated / "tools/verify_local_package.py"),

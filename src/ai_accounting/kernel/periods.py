@@ -122,6 +122,23 @@ class Periods:
         condition = ""
         parameters = [month, kind]
         if count_field is not None:
+            from .stored_json import verify_sql_outcomes
+
+            verify_sql_outcomes(
+                connection,
+                (
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT c.id FROM fact_revision r INDEXED BY fact_period "
+                        "CROSS JOIN fact_current f CROSS JOIN subject s "
+                        "JOIN calculation_current a ON a.subject_id=s.id "
+                        "JOIN calculation c ON c.id=a.calculation_id "
+                        "WHERE r.period=? AND f.fact_id=r.id AND s.id=f.subject_id "
+                        "AND s.kind=?",
+                        (month, kind),
+                    )
+                ),
+            )
             # Missing, malformed or nonzero counts never establish no activity.
             # The path is bound as data and is declared by the domain, not a caller.
             condition = (
@@ -162,19 +179,27 @@ class Periods:
                 continue
             if row["expected"] > row["received"]:
                 issues.append({"field": f"materials.{category}", "message": "预期资料尚未全部收到"})
-        from .materials import check_completeness
+        from .materials import MaterialReadSummary, check_completeness
 
         if material_coverage is None:
             material_coverage = check_completeness(connection, month, registry)
-        issues.extend(material_coverage["issues"])
+        issues.extend(
+            material_coverage.issues
+            if isinstance(material_coverage, MaterialReadSummary)
+            else material_coverage["issues"]
+        )
         # Facts awaiting initial publication are just as incomplete as stale results.
         unpublished = connection.execute(
             "SELECT s.id,s.kind FROM subject s JOIN fact_current f "
             "ON f.subject_id=s.id JOIN fact_revision r "
             "ON r.id=f.fact_id LEFT JOIN calculation_current c ON c.subject_id=s.id "
-            "WHERE r.period=? AND c.subject_id IS NULL AND NOT(s.kind='asset_consumption' "
-            "AND EXISTS(SELECT 1 FROM disposition d WHERE d.subject_id=s.id "
-            "AND d.cause_id=f.fact_id AND d.action='asset_derived_removed'))",
+            # Check publication first. A free-standing disposition predicate
+            # can be pushed before the LEFT JOIN and scan every published
+            # asset's history even though it cannot be an unpublished fact.
+            "WHERE r.period=? AND CASE WHEN c.subject_id IS NOT NULL THEN 0 "
+            "WHEN s.kind='asset_consumption' THEN NOT EXISTS("
+            "SELECT 1 FROM disposition d WHERE d.subject_id=s.id "
+            "AND d.cause_id=f.fact_id AND d.action='asset_derived_removed') ELSE 1 END",
             (month,),
         ).fetchall()
         for row in connection.execute(
@@ -218,7 +243,11 @@ class Periods:
 
         verify_close_integrity(self.engine, connection, month)
         checked = self.check_readiness(
-            connection, period, previous_close, _inspection_cache=_inspection_cache
+            connection,
+            period,
+            previous_close,
+            _inspection_cache=_inspection_cache,
+            _reuse_closed_materials=True,
         )
         if checked["order_failure"]:
             failure = checked["order_failure"]
@@ -368,7 +397,12 @@ class Periods:
 
         from .close_review import build_owner_review
 
-        manifest["owner_review"] = build_owner_review(connection, self.engine, manifest)
+        # The owner summary is constructed immediately in this same transaction.
+        # Reuse the full checks above; it must not repeat material parsing and
+        # every readiness evaluator just to obtain the same follow-up counts.
+        manifest["owner_review"] = build_owner_review(
+            connection, self.engine, manifest, _checked_open=checked
+        )
 
         return require_close_contract(manifest)
 
@@ -379,6 +413,10 @@ class Periods:
         previous_close=_CURRENT_CLOSE,
         *,
         _inspection_cache=None,
+        _allow_frozen_materials=False,
+        _reuse_closed_materials=False,
+        _query_reads=None,
+        _parallel_checks=None,
     ):
         """Collect the exact close checks without requiring owner authorization."""
 
@@ -434,6 +472,10 @@ class Periods:
             period,
             closed_through=previous_close["period"] if previous_close else None,
             _inspection_cache=_inspection_cache,
+            _allow_frozen_materials=_allow_frozen_materials,
+            _reuse_closed_materials=_reuse_closed_materials,
+            _query_reads=_query_reads,
+            _parallel_checks=_parallel_checks,
         )
         return {
             "period": period,
@@ -452,6 +494,10 @@ class Periods:
         *,
         closed_through=_CURRENT_CLOSE,
         _inspection_cache=None,
+        _allow_frozen_materials=False,
+        _reuse_closed_materials=False,
+        _query_reads=None,
+        _parallel_checks=None,
     ):
         """Collect current issues without interpreting a historical close boundary."""
 
@@ -461,22 +507,43 @@ class Periods:
             for kind in self.store.registry.evaluators
             if self.store.registry.models[kind].lane != "management"
         )
-        from .materials import check_completeness
+        from .materials import (
+            _CompletenessInspectionCache,
+            check_completeness,
+            read_completeness_summary,
+        )
 
-        material_coverage = (
-            check_completeness(
+        if _inspection_cache is None:
+            _inspection_cache = _CompletenessInspectionCache(connection)
+        if _parallel_checks is not None and (
+            not _allow_frozen_materials
+            or _query_reads is None
+            or _query_reads.connection is not connection
+            or not _query_reads._snapshot_active
+        ):
+            raise ValueError("parallel readiness belongs to an active summary snapshot")
+
+        checker = read_completeness_summary if _allow_frozen_materials else check_completeness
+        material_options = {
+            "_inspection_cache": _inspection_cache,
+            "_query_reads": _query_reads,
+        }
+        if _reuse_closed_materials and not _allow_frozen_materials:
+            material_options["_allow_frozen_reuse"] = True
+        material_coverage = _parallel_checks.material() if _parallel_checks is not None else (
+            checker(
                 connection,
                 month,
                 self.store.registry,
-                _inspection_cache=_inspection_cache,
+                **material_options,
             )
             if closed_through is _CURRENT_CLOSE
-            else check_completeness(
+            else checker(
                 connection,
                 month,
                 self.store.registry,
                 closed_through=closed_through,
-                _inspection_cache=_inspection_cache,
+                **material_options,
             )
         )
         inventories, material_issues, unpublished = self.completeness(
@@ -485,9 +552,20 @@ class Periods:
         issues = list(material_issues)
         readiness = {}
         readiness_issues = []
-        for name, (required_reads, evaluate) in sorted(self.store.registry.readiness.items()):
-            reads = tuple(required_reads(YearMonth(period)))
-            context = Context({read: self.store.select(connection, read) for read in reads})
+        checks = [
+            (name, tuple(required_reads(YearMonth(period))), evaluate)
+            for name, (required_reads, evaluate) in sorted(self.store.registry.readiness.items())
+        ]
+        requested = sorted({read for _name, reads, _evaluate in checks for read in reads}, key=repr)
+        if _query_reads is None:
+            selected = self.store.select_many(connection, requested)
+        else:
+            if _query_reads.connection is not connection or _query_reads.store is not self.store:
+                raise ValueError("period readiness reads belong to another snapshot")
+            _query_reads.prime_select(requested)
+            selected = {read: _query_reads.select(read) for read in requested}
+        for name, reads, evaluate in checks:
+            context = Context({read: selected[read] for read in reads})
             found = list(evaluate(YearMonth(period), context))
             for issue in found:
                 if "work_area" not in issue:
@@ -518,13 +596,37 @@ class Periods:
         snapshot_issues = []
         from .duplicates import DuplicateCandidates
 
-        duplicate_issues = DuplicateCandidates(self.store).close_readiness(connection, period)
+        duplicate_issues = (
+            _parallel_checks.duplicates()
+            if _parallel_checks is not None
+            else DuplicateCandidates(self.store).close_readiness(
+                connection, period, _inspection_cache=_inspection_cache, _query_reads=_query_reads
+            )
+        )
         snapshot_issues.extend(duplicate_issues)
         issues.extend(duplicate_issues)
-        for checker in self.store.registry.snapshot_readiness.values():
-            found = list(checker(self.store, connection, YearMonth(period)))
+        for name, checker in self.store.registry.snapshot_readiness.items():
+            found = list(
+                _parallel_checks.report()
+                if _parallel_checks is not None and name == "financial_reports"
+                else checker(self.store, connection, YearMonth(period), reads=_query_reads)
+            )
             snapshot_issues.extend(found)
             issues.extend(found)
+        from .stored_json import verify_sql_outcomes
+
+        current_result_ids = (
+            row[0]
+            for row in connection.execute(
+                "SELECT c.id FROM calculation_current a JOIN calculation c "
+                "ON c.id=a.calculation_id WHERE c.period=?",
+                (month,),
+            )
+        )
+        if _query_reads is not None:
+            _query_reads.verify_sql_outcomes(current_result_ids)
+        else:
+            verify_sql_outcomes(connection, current_result_ids)
         bank_accounts = {
             row[0]
             for row in connection.execute(
@@ -637,13 +739,93 @@ class Periods:
                 manifest["approval"] = self.authorize_close(
                     connection, period, preview_digest, epochs
                 )
+            from .close_storage import write_close
+            from .duplicate_freeze import persist_duplicate_freeze, prepare_duplicate_freeze
+            from .material_watch import persist_material_watch, prepare_material_watch
+            from .period_balance_freeze import persist_balance_freeze, prepare_balance_freeze
+            from .report_classification_directory import (
+                DERIVED_ROOT_NAME as REPORT_CLASSIFICATION_ROOT,
+            )
+            from .report_classification_directory import (
+                persist_classification_directory,
+                prepare_classification_directory,
+            )
+            from .report_flow import persist_report_flow, prepare_report_flow
+            from .report_projection import prepare_report_projection
+            from .report_semantics import persist_report_semantics, prepare_report_semantics
+            from .settlement_freeze import (
+                persist_freeze_projection,
+                prepare_freeze_projection,
+            )
+
+            month = YearMonth(period).ordinal
+            logical_close_digest = digest(manifest)
+            prepared_settlement = prepare_freeze_projection(
+                connection, month, logical_close_digest, manifest["publication_sequence"]
+            )
+            prepared_report = prepare_report_projection(
+                self.engine, connection, month, manifest, logical_close_digest
+            )
+            prepared_semantics = prepare_report_semantics(
+                self.engine, connection, month, prepared_report.rows, logical_close_digest
+            )
+            prepared_flow = prepare_report_flow(
+                self.engine, connection, month, prepared_report, prepared_semantics
+            )
+            prepared_classifications = prepare_classification_directory(
+                connection,
+                month,
+                logical_close_digest,
+                manifest,
+                prepared_flow.content,
+                allow_absent_financial_reports=(
+                    "financial_reports" not in self.store.registry.readiness
+                    and "report_classification" not in self.store.registry.models
+                ),
+            )
+            prepared_balances = prepare_balance_freeze(
+                connection, month, logical_close_digest, manifest["publication_sequence"]
+            )
+            prepared_duplicates = prepare_duplicate_freeze(
+                self.engine, connection, month, logical_close_digest
+            )
+            prepared_materials = prepare_material_watch(
+                self.engine, connection, month, manifest, logical_close_digest
+            )
+            close_digest = write_close(
+                connection,
+                month,
+                manifest,
+                projection_roots={
+                    "settlement": prepared_settlement.root_digest,
+                    "report": prepared_report.root_digest,
+                    "report_semantics": prepared_semantics.root_digest,
+                    "report_flow": prepared_flow.root_digest,
+                    REPORT_CLASSIFICATION_ROOT: prepared_classifications.root_digest,
+                    "period_balance": prepared_balances.root_digest,
+                    "duplicate": prepared_duplicates.root_digest,
+                    "material_watch": prepared_materials.root_digest,
+                },
+            )
+            persist_freeze_projection(connection, prepared_settlement)
+            from .frozen_material import MATERIAL_COVERAGE_RULE_DIGEST
+
             connection.execute(
-                "INSERT INTO period_close VALUES(?,?,?)",
-                (YearMonth(period).ordinal, canonical(manifest), digest(manifest)),
+                "INSERT INTO material_close_rule VALUES(?,?)",
+                (YearMonth(period).ordinal, MATERIAL_COVERAGE_RULE_DIGEST),
             )
             from .read_indexes import sync_close
 
-            sync_close(connection, YearMonth(period).ordinal)
+            sync_close(connection, month)
+            persist_duplicate_freeze(connection, prepared_duplicates)
+            persist_material_watch(connection, prepared_materials)
+            from .report_projection import persist_report_projection
+
+            persist_report_projection(connection, prepared_report)
+            persist_report_semantics(connection, prepared_semantics)
+            persist_report_flow(connection, prepared_flow)
+            persist_classification_directory(connection, prepared_classifications)
+            persist_balance_freeze(connection, prepared_balances)
             job_id = None
             if backup_directory:
                 job_id = uuid.uuid4().hex
@@ -657,7 +839,7 @@ class Periods:
                                 "directory": backup_directory,
                                 "rollover": True,
                                 "close_period": period,
-                                "close_digest": digest(manifest).hex(),
+                                "close_digest": close_digest.hex(),
                             }
                         ),
                     ),
@@ -665,7 +847,7 @@ class Periods:
             return {
                 "status": "closed",
                 "period": period,
-                "digest": digest(manifest).hex(),
+                "digest": close_digest.hex(),
                 "backup_job": job_id,
             }
 
@@ -680,22 +862,17 @@ class Periods:
         )
 
     def closed_report(self, period: str):
+        try:
+            month = YearMonth(period).ordinal
+        except ValueError as exc:
+            raise KernelError("invalid_command", "会计月份格式不正确") from exc
         with self.store.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT manifest,digest FROM period_close WHERE period=?",
-                (YearMonth(period).ordinal,),
+                "SELECT * FROM period_close WHERE period=?",
+                (month,),
             ).fetchone()
             if not row:
                 raise KernelError("frozen_snapshot_unavailable", "该月份没有精确的关账冻结记录")
-            from .close_contract import require_close_contract
+            from .close_storage import decode_close
 
-            manifest = require_close_contract(json.loads(row[0]))
-            if digest(manifest) != row[1]:
-                raise KernelError(
-                    "content_integrity_failed",
-                    "关账冻结内容摘要不匹配",
-                    component="close",
-                    record_id=period,
-                    reason="manifest_digest_mismatch",
-                )
-            return manifest
+            return decode_close(connection, row)

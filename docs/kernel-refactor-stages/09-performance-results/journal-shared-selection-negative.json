@@ -1,0 +1,97 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r6",
+  "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-pilot-5",
+  "period": "2016-02",
+  "month_selection": {
+    "vm_steps": 137000,
+    "wall_ms_diagnostic": 12.044799979776144,
+    "rows": 1005,
+    "returned_value_bytes": 454060,
+    "column_names": [
+      "id",
+      "voucher_id",
+      "calculation_id",
+      "period",
+      "reverses_id",
+      "total",
+      "number",
+      "voucher_subject_id",
+      "close_period",
+      "selection_source",
+      "voucher_calculation_id",
+      "basis_calculation_id",
+      "basis_subject_id",
+      "basis_kind",
+      "basis_fact_id",
+      "calculation_period",
+      "result_digest",
+      "replacement"
+    ]
+  },
+  "brief_summary": {
+    "vm_steps": 148400,
+    "wall_ms_diagnostic": 8.990499889478087,
+    "rows": 13,
+    "returned_value_bytes": 701
+  },
+  "brief_page": {
+    "vm_steps": 85900,
+    "wall_ms_diagnostic": 6.030299933627248,
+    "rows": 101,
+    "returned_value_bytes": 45897
+  },
+  "funds_selection": {
+    "vm_steps": 72000,
+    "wall_ms_diagnostic": 8.183300029486418,
+    "rows": 504,
+    "returned_value_bytes": 228043,
+    "column_names": [
+      "id",
+      "voucher_id",
+      "calculation_id",
+      "period",
+      "reverses_id",
+      "total",
+      "number",
+      "voucher_subject_id",
+      "close_period",
+      "selection_source",
+      "voucher_calculation_id",
+      "basis_calculation_id",
+      "basis_subject_id",
+      "basis_kind",
+      "basis_fact_id",
+      "calculation_period",
+      "result_digest",
+      "replacement"
+    ]
+  },
+  "funds_account_aggregate": {
+    "vm_steps": 238400,
+    "wall_ms_diagnostic": 18.568000057712197,
+    "rows": 2,
+    "returned_value_bytes": 202
+  },
+  "overlap": {
+    "month_vouchers": 1005,
+    "funds_vouchers": 504,
+    "shared_ids": 504,
+    "funds_only_ids": 0,
+    "page_ids": 101,
+    "page_funds_overlap": 1
+  },
+  "shared_all_month_lines": {
+    "vm_steps": 21600,
+    "wall_ms_diagnostic": 4.0969999972730875,
+    "rows": 2200,
+    "returned_value_bytes": 189884
+  },
+  "shared_funds_aggregate": {
+    "vm_steps": 174500,
+    "wall_ms_diagnostic": 14.050300000235438,
+    "rows": 2,
+    "returned_value_bytes": 202,
+    "json_selection_bytes": 83795
+  },
+  "shared_sums_equal": true
+}

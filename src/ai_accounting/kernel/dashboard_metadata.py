@@ -78,11 +78,35 @@ class Records(Mapping):
             if self.kind == "employee":
                 from .entities import employee_entities
 
-                identities = (
-                    self.snapshot.close["management_snapshot"]["employee_entities"]
-                    if self.frozen
-                    else employee_entities(self.connection, self.snapshot.period)
-                )
+                if self.frozen:
+                    identities = self.snapshot.close.section("management_snapshot")[
+                        "employee_entities"
+                    ]
+                else:
+                    reads = self.snapshot.reads
+                    cache = (
+                        reads._report_snapshot_cache
+                        if reads._snapshot_active
+                        and reads.connection is self.connection
+                        and reads.store is self.snapshot.store
+                        and self.connection.in_transaction
+                        else None
+                    )
+                    key = (
+                        "employee_entities",
+                        self.snapshot.store.company_id,
+                        self.snapshot.store.database_id,
+                        self.snapshot.period,
+                    )
+                    if cache is not None and key in cache:
+                        identities = cache[key]
+                    else:
+                        identities = tuple(employee_entities(
+                            self.connection, self.snapshot.period,
+                            registry=self.snapshot.store.registry,
+                        ))
+                        if cache is not None:
+                            cache[key] = identities
                 query += " AND p.entity_id IN(SELECT value FROM json_each(?))"
                 parameters.append(canonical(identities))
         elif self.kind is not None:
@@ -112,7 +136,7 @@ class Records(Mapping):
         query, parameters = self._query(records=True, identifiers=missing)
         rows = self.connection.execute(query, parameters).fetchall()
         if self.frozen:
-            verify_close_references(self.connection, rows)
+            self.snapshot.reads.verify_close_references(rows)
         for row in rows:
             record = {
                 key: row[key]
@@ -137,7 +161,7 @@ class Records(Mapping):
             query, parameters = self._query()
             rows = self.connection.execute(query, parameters).fetchall()
             if self.frozen:
-                verify_close_references(self.connection, rows)
+                self.snapshot.reads.verify_close_references(rows)
             self._identities = tuple(dict.fromkeys(row[self.identity] for row in rows))
         return iter(self._identities)
 

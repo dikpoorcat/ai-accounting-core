@@ -67,7 +67,7 @@ async function harness(query = { company_id: "a", period: "2026-01" }, name = "e
   const script = withoutImports(source("../src/App.vue").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]);
   const app = await compile(`
     export function instantiate() {
-      const { computed, ref, watch, nextTick } = environment.Vue;
+      const { computed, defineAsyncComponent, ref, watch, nextTick } = environment.Vue;
       const { window, storage: localStorage } = environment;
       const document = { documentElement: { dataset: {} } };
       const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);
@@ -75,13 +75,66 @@ async function harness(query = { company_id: "a", period: "2026-01" }, name = "e
       const useRoute = () => environment.route, useRouter = () => environment.router;
       const useDashboardContext = () => environment.contextState;
       ${script}
-      return { setAuthenticated, loadCompanyContext, contextError, selectCompany, selectPeriod };
+      return { authenticated, currentCompany, routeSelectionReady, setAuthenticated, loadCompanyContext, contextError, selectCompany, selectPeriod };
     }
   `, environment);
   const scope = Vue.effectScope();
   const instance = scope.run(() => app.instantiate());
   return { ...instance, state, calls, route, router, window, replacements, pushes, notices, environment, navigate,
     close() { unmount.forEach(callback => callback()); scope.stop(); state.cancel(); } };
+}
+
+function mountPageRequests(h, pageNames = ["brief", "funds", "employees", "assets", "reports"]) {
+  // Evaluate App's actual RouterView condition inside Vue's renderer, so a
+  // mount represents the page request made before route selection settles.
+  const template = source("../src/App.vue").match(/<template>([\s\S]*?)<\/template>/)[1];
+  const condition = template.match(/<template v-if="([^"]+)"/)[1];
+  const canMount = new Function("authenticated", "currentCompany", "routeSelectionReady", `return ${condition};`);
+  const requests = [];
+  const mounts = [];
+  const Page = Vue.defineComponent({
+    setup() {
+      mounts.push({ company_id: h.route.query.company_id, period: h.route.query.period });
+      Vue.watch(() => [h.state.context.value?.current_company?.company_id, h.route.query.company_id,
+        h.route.query.period, h.route.query.quarter], ([loadedCompany, companyId, period, quarter]) => {
+        if (loadedCompany !== companyId || !period) return;
+        for (const name of pageNames) requests.push({ name, company_id: companyId, period, quarter });
+      }, { immediate: true });
+      return () => Vue.h("page");
+    },
+  });
+  const remove = node => {
+    if (!node.parent) return;
+    const index = node.parent.children.indexOf(node);
+    if (index >= 0) node.parent.children.splice(index, 1);
+    node.parent = null;
+  };
+  const renderer = Vue.createRenderer({
+    createElement: type => ({ type, children: [], parent: null }),
+    createText: text => ({ type: "text", text, parent: null }),
+    createComment: text => ({ type: "comment", text, parent: null }),
+    setText: (node, text) => { node.text = text; },
+    setElementText: (node, text) => { node.text = text; },
+    insert(node, parent, anchor) {
+      if (node.parent) remove(node);
+      const index = anchor ? parent.children.indexOf(anchor) : -1;
+      if (index < 0) parent.children.push(node); else parent.children.splice(index, 0, node);
+      node.parent = parent;
+    },
+    remove,
+    parentNode: node => node.parent,
+    nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] ?? null,
+    patchProp: () => {},
+  });
+  const Shell = Vue.defineComponent({
+    render() {
+      return canMount(h.authenticated.value, h.currentCompany.value, h.routeSelectionReady.value)
+        ? Vue.h(Page, { key: h.currentCompany.value.company_id }) : null;
+    },
+  });
+  const root = { children: [] };
+  renderer.createApp(Shell).mount(root);
+  return { requests, mounts, close: () => renderer.render(null, root) };
 }
 
 test("T6 shared context: A → B → A rejects stale success, error and finally", async () => {
@@ -103,6 +156,129 @@ test("T6 shared context: A → B → A rejects stale success, error and finally"
     assert.equal(h.state.context.value.default_period, "2026-02");
     assert.equal(h.state.loading.value, false);
   } finally { h.close(); }
+});
+
+test("T6 RouterView never mounts a new company's pages with its former company's month", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+    assert.equal(page.requests.length, 5);
+    await h.selectCompany("b");
+    assert.equal(h.route.query.period, "2026-01", "company selection preserves a potentially shared month");
+    h.calls[1].resolve(context("b", ["2026-03"])); await flush();
+    assert.equal(h.route.query.period, "2026-03");
+    assert.deepEqual(page.requests.filter(request => request.company_id === "b").map(request => request.period),
+      Array(5).fill("2026-03"), "all pages must mount only after the new month is normalized");
+  } finally { page.close(); h.close(); }
+});
+
+test("T6 RouterView waits for initial month and report-quarter normalization", async t => {
+  for (const [label, query, name, periods, expectedPeriod, expectedQuarter] of [
+    ["invalid month", { company_id: "a", period: "2025-12" }, "brief", ["2026-01"], "2026-01", undefined],
+    ["invalid report quarter", { company_id: "a", period: "2026-01", quarter: "2025-Q4" }, "reports", ["2026-01"], "2026-01", undefined],
+    ["empty company", { company_id: "a", period: "2025-12" }, "brief", [], undefined, undefined],
+  ]) await t.test(label, async () => {
+    const h = await harness(query, name);
+    const page = mountPageRequests(h, [name]);
+    try {
+      h.setAuthenticated(true);
+      h.calls[0].resolve(context("a", periods)); await flush();
+      assert.equal(h.route.query.period, expectedPeriod);
+      assert.equal(h.route.query.quarter, expectedQuarter);
+      assert.deepEqual(page.requests.map(item => item.period), expectedPeriod ? [expectedPeriod] : []);
+      assert.equal(page.mounts.length, 1, "the final selection mounts exactly once");
+      if (name === "reports") assert.equal(page.requests[0].quarter, undefined);
+    } finally { page.close(); h.close(); }
+  });
+});
+
+test("T6 RouterView keeps a same-company refresh mounted until an actual fallback is needed", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h, ["brief"]);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+    const sameMonth = h.state.refresh();
+    assert.equal(page.mounts.length, 1, "refresh does not unmount the current page while waiting");
+    h.calls[1].resolve(context("a", ["2026-01", "2026-02"])); await sameMonth; await flush();
+    assert.equal(page.mounts.length, 1, "same-month refresh keeps its existing RouterView");
+    const requestsBeforeFallback = page.requests.length;
+    const fallback = h.state.refresh();
+    h.calls[2].resolve(context("a", ["2026-02"])); await fallback; await flush();
+    assert.equal(h.route.query.period, "2026-02");
+    assert.deepEqual(page.requests.slice(requestsBeforeFallback).map(item => item.period), ["2026-02"],
+      "the refreshed context must not request its now unavailable former month");
+  } finally { page.close(); h.close(); }
+});
+
+test("T6 RouterView rapid A → B → A mounts only the winning company's selected month", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h, ["brief"]);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+    await h.selectCompany("b");
+    const abandoned = h.calls[1];
+    await h.selectCompany("a");
+    assert.equal(abandoned.signal.aborted, true);
+    h.calls[2].resolve(context("a", ["2026-02"])); await flush();
+    abandoned.resolve(context("b", ["2026-01"])); await flush();
+    assert.deepEqual(page.requests.map(item => [item.company_id, item.period]),
+      [["a", "2026-01"], ["a", "2026-02"]]);
+  } finally { page.close(); h.close(); }
+});
+
+test("T6 an invalid same-company deep link is normalized without mounting its invalid month", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h, ["brief"]);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01", "2026-02"])); await flush();
+    h.navigate({ query: { company_id: "a", period: "2026-99" } }); await flush();
+    assert.equal(h.route.query.period, "2026-01");
+    assert.equal(page.requests.some(item => item.period === "2026-99"), false);
+  } finally { page.close(); h.close(); }
+});
+
+test("T6 new company month changes during context adoption still settle and mount", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h, ["brief"]);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+    await h.selectCompany("b");
+    h.calls[1].resolve(context("b", ["2026-02", "2026-03"]));
+    for (let i = 0; i < 5 && h.state.context.value?.current_company?.company_id !== "b"; i++) await Promise.resolve();
+    assert.equal(h.state.context.value?.current_company?.company_id, "b");
+    assert.equal(h.routeSelectionReady.value, false);
+    h.navigate({ query: { company_id: "b", period: "2026-03" } });
+    await flush();
+    assert.equal(h.route.query.period, "2026-03");
+    assert.equal(h.routeSelectionReady.value, true, "superseded context adoption must not leave RouterView closed");
+    assert.deepEqual(page.requests.filter(item => item.company_id === "b").map(item => item.period), ["2026-03"]);
+  } finally { page.close(); h.close(); }
+});
+
+test("T6 changing a new company's month before context returns restarts its request", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01" });
+  const page = mountPageRequests(h, ["brief"]);
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+    h.navigate({ query: { company_id: "b", period: "2026-01" } });
+    assert.equal(h.state.context.value, null, "company change cancels the old-company context synchronously");
+    const abandoned = h.calls[1];
+    h.navigate({ query: { company_id: "b", period: "2026-02" } });
+    assert.equal(abandoned.signal.aborted, true);
+    assert.equal(h.calls.length, 3);
+    abandoned.resolve(context("b", ["2026-01"])); await flush();
+    assert.equal(h.state.context.value, null);
+    h.calls[2].resolve(context("b", ["2026-02"])); await flush();
+    assert.equal(h.routeSelectionReady.value, true);
+    assert.deepEqual(page.requests.filter(item => item.company_id === "b").map(item => item.period), ["2026-02"]);
+  } finally { page.close(); h.close(); }
 });
 
 test("T6 new company context keeps a supported month, falls back explicitly, and permits an empty period", async t => {

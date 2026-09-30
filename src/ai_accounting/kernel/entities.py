@@ -6,14 +6,16 @@ scope remain independent; a name change never rewrites an accounting fact.
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
 
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_digest as digest
+from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
-from .types import ActualDate, YearMonth, canonical, digest
+from .types import ActualDate, YearMonth
 
 EntityKind = Literal["person", "organization", "fund_account", "asset", "project", "fund_product"]
 ENTITY_KINDS = ("person", "organization", "fund_account", "asset", "project", "fund_product")
@@ -99,7 +101,12 @@ def require_entity(connection, entity_id, *, kinds=(), account_type=None):
 
 
 def _profile_record(row):
-    content = json.loads(row["content"])
+    try:
+        content = source_json_loads(row["content"])
+    except ValueError as exc:
+        raise KernelError(
+            "content_integrity_failed", "对象档案 JSON 有重复字段或格式错误", profile_id=row["id"]
+        ) from exc
     evidence = row["evidence_digest"].hex() if row["evidence_digest"] else None
     if (
         digest([row["entity_id"], row["revision"], content, row["source"], evidence])
@@ -166,23 +173,48 @@ def profiles(connection, *, profile_ids=None):
     }
 
 
-def employee_entities(connection, period):
+def employee_entities(connection, period, *, registry):
     """Explicit employment records or profiles, with scoped corrections applied."""
-    return [
-        row[0]
-        for row in connection.execute(
-            "SELECT e.id FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
-            "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
-            "FROM entity_profile_revision q WHERE q.entity_id=e.id) AND ("
-            "EXISTS(SELECT 1 FROM entity_reference_current r "
-            "JOIN fact_current c ON c.fact_id=r.fact_id "
-            "WHERE r.entity_id=e.id AND r.role='employee' AND r.period<=?) OR ("
-            "(json_extract(p.content,'$.employment_start') IS NOT NULL OR "
-            "json_extract(p.content,'$.employment_status')<>'unknown') AND NOT EXISTS "
-            "(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id))) ORDER BY e.id",
-            (YearMonth(period).ordinal,),
-        )
-    ]
+    cutoff = YearMonth(period).ordinal
+    # Every latest person profile can influence this negative membership test.
+    # Verify its exact JSON before applying the same predicates in Python;
+    # SQLite JSON1 picks the first duplicate key while Python picks the last.
+    candidates = list(connection.execute(
+        "SELECT p.*,EXISTS(SELECT 1 FROM entity_reference_current r "
+        "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
+        "AND r.role='employee' AND r.period<=?) AS employee_reference,"
+        "EXISTS(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id) "
+        "AS resolved FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
+        "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
+        "FROM entity_profile_revision q WHERE q.entity_id=e.id) ORDER BY e.id",
+        (cutoff,),
+    ))
+    selected = []
+    for profile in candidates:
+        content = _profile_record(profile)
+        if profile["employee_reference"] or (
+            not profile["resolved"]
+            and (
+                content["employment_start"] is not None
+                or content["employment_status"] != "unknown"
+            )
+        ):
+            selected.append(profile)
+    if selected:
+        witnesses = connection.execute(
+            "SELECT ids.value entity_id,(SELECT r.fact_id FROM entity_reference_current r "
+            "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=ids.value "
+            "AND r.role='employee' AND r.period<=? "
+            "ORDER BY r.period DESC,r.fact_id DESC LIMIT 1) fact_id "
+            "FROM json_each(?) ids",
+            (cutoff, canonical([row["entity_id"] for row in selected])),
+        ).fetchall()
+        hits = [{"fact_id": row["fact_id"]} for row in witnesses if row["fact_id"] is not None]
+        if hits:
+            from .entity_references import verify_hits
+
+            verify_hits(connection, hits, registry=registry)
+    return [row["entity_id"] for row in selected]
 
 
 def validate_resolution(connection, changes, entity_resolution):
@@ -376,23 +408,10 @@ class Entities:
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             all_profiles = profiles(connection)
-            usage = {
-                row["entity_id"]: row["last_period"]
-                for row in connection.execute(
-                    "SELECT r.entity_id,max(r.period) last_period FROM entity_reference_current r "
-                    "JOIN fact_current c ON c.fact_id=r.fact_id GROUP BY r.entity_id"
-                )
-            }
-            relationships = list(connection.execute("SELECT * FROM entity_resolution"))
-            items = []
             needle = query.casefold().strip() if query else None
+            candidates = {}
             for entity_id, profile in all_profiles.items():
                 if kind is not None and kind != profile["entity_kind"]:
-                    continue
-                recent = usage.get(entity_id)
-                if (lower is not None and (recent is None or recent < lower)) or (
-                    upper is not None and (recent is None or recent > upper)
-                ):
                     continue
                 values = [
                     entity_id,
@@ -404,6 +423,43 @@ class Entities:
                     needle == value.casefold() for value in values if value
                 )
                 if needle and not any(needle in value.casefold() for value in values if value):
+                    continue
+                candidates[entity_id] = profile, exact
+
+            # Only the latest current references can decide recent_period and
+            # its range filter. Prove every tied source before using that
+            # indexed value, including candidates excluded by used_to; a
+            # missing index row still belongs to full integrity verification.
+            usage = {}
+            if candidates:
+                latest_rows = list(connection.execute(
+                    "WITH latest AS (SELECT r.entity_id,max(r.period) last_period "
+                    "FROM entity_reference_current r JOIN fact_current c ON c.fact_id=r.fact_id "
+                    "WHERE r.entity_id IN (SELECT value FROM json_each(?)) GROUP BY r.entity_id) "
+                    "SELECT l.entity_id,l.last_period,r.fact_id FROM latest l "
+                    "JOIN entity_reference_current r ON r.entity_id=l.entity_id "
+                    "AND r.period=l.last_period JOIN fact_current c ON c.fact_id=r.fact_id",
+                    (canonical(sorted(candidates)),),
+                ))
+                if latest_rows:
+                    from .entity_references import verify_hits
+
+                    verify_hits(
+                        connection,
+                        [
+                            {"fact_id": ident}
+                            for ident in sorted({row["fact_id"] for row in latest_rows})
+                        ],
+                        registry=self.store.registry,
+                    )
+                    usage = {row["entity_id"]: row["last_period"] for row in latest_rows}
+            relationships = list(connection.execute("SELECT * FROM entity_resolution"))
+            items = []
+            for entity_id, (profile, exact) in candidates.items():
+                recent = usage.get(entity_id)
+                if (lower is not None and (recent is None or recent < lower)) or (
+                    upper is not None and (recent is None or recent > upper)
+                ):
                     continue
                 linked = [
                     dict(

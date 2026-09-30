@@ -1,0 +1,98 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r30-release",
+  "pure_timing": false,
+  "results": [
+    {
+      "months": 12,
+      "after": 0,
+      "summary": {
+        "vm_lower_bound": 149000,
+        "cpu_ms": 93.75,
+        "returned_rows": 13,
+        "value_bytes": 385
+      },
+      "page": {
+        "vm_lower_bound": 85900,
+        "cpu_ms": 0.0,
+        "returned_rows": 101,
+        "value_bytes": 50314
+      },
+      "joint": {
+        "vm_lower_bound": 231700,
+        "cpu_ms": 46.875,
+        "returned_rows": 101,
+        "value_bytes": 50830
+      },
+      "equal": true
+    },
+    {
+      "months": 12,
+      "after": 999999999,
+      "summary": {
+        "vm_lower_bound": 149100,
+        "cpu_ms": 78.125,
+        "returned_rows": 13,
+        "value_bytes": 385
+      },
+      "page": {
+        "vm_lower_bound": 30400,
+        "cpu_ms": 0.0,
+        "returned_rows": 0,
+        "value_bytes": 0
+      },
+      "joint": {
+        "vm_lower_bound": 200500,
+        "cpu_ms": 31.25,
+        "returned_rows": 1,
+        "value_bytes": 516
+      },
+      "equal": true
+    },
+    {
+      "months": 48,
+      "after": 0,
+      "summary": {
+        "vm_lower_bound": 151300,
+        "cpu_ms": 31.25,
+        "returned_rows": 13,
+        "value_bytes": 385
+      },
+      "page": {
+        "vm_lower_bound": 85900,
+        "cpu_ms": 46.875,
+        "returned_rows": 101,
+        "value_bytes": 50454
+      },
+      "joint": {
+        "vm_lower_bound": 234000,
+        "cpu_ms": 62.5,
+        "returned_rows": 101,
+        "value_bytes": 50970
+      },
+      "equal": true
+    },
+    {
+      "months": 48,
+      "after": 999999999,
+      "summary": {
+        "vm_lower_bound": 151400,
+        "cpu_ms": 31.25,
+        "returned_rows": 13,
+        "value_bytes": 385
+      },
+      "page": {
+        "vm_lower_bound": 30400,
+        "cpu_ms": 0.0,
+        "returned_rows": 0,
+        "value_bytes": 0
+      },
+      "joint": {
+        "vm_lower_bound": 202800,
+        "cpu_ms": 46.875,
+        "returned_rows": 1,
+        "value_bytes": 516
+      },
+      "equal": true
+    }
+  ]
+}

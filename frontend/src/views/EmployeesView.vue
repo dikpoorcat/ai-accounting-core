@@ -161,7 +161,7 @@ function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
-async function loadPeriod(periodKey: string | null) {
+async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>) {
   const generation = ++requestGeneration;
   const selection = selectionKey();
   controller?.abort();
@@ -172,7 +172,8 @@ async function loadPeriod(periodKey: string | null) {
   loading.value = true;
   error.value = "";
   try {
-    const result = await fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: filter.value });
+    const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: filter.value });
+    const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || controller !== activeController) return;
     response.value = result;
     updateNotice.value = "";
@@ -212,8 +213,19 @@ async function refresh() {
   invalidateRequests();
   const generation = requestGeneration, selection = selectionKey();
   try {
-    await refreshContext();
-    if (isCurrent(generation, selection)) await loadPeriod(routePeriod());
+    const period = routePeriod();
+    const company = route.query.company_id;
+    if (typeof company === "string" && period && context.value?.current_company?.company_id === company
+      && context.value.periods.some((item) => item.key === period)) {
+      const contextGate = refreshContext().then((fresh) => {
+        if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === period))
+          throw new Error("当前公司或期间已变化，请重新选择。");
+      });
+      await loadPeriod(period, contextGate);
+    } else {
+      await refreshContext();
+      if (isCurrent(generation, selection)) await loadPeriod(routePeriod());
+    }
   } catch (caught: unknown) {
     if (isCurrent(generation, selection)) error.value = dashboardErrorMessage(caught);
   }
@@ -328,7 +340,8 @@ watch(
 );
 watch(
   () => [context.value?.current_company?.company_id, route.query.period, filter.value] as const,
-  ([orgId]) => {
+  ([orgId, period, selectedFilter], previous) => {
+    if (previous && orgId === previous[0] && period === previous[1] && selectedFilter === previous[2]) return;
     if (initialized && orgId && orgId === route.query.company_id) void loadPeriod(routePeriod());
   },
 );

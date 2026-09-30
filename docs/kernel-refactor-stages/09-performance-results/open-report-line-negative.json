@@ -1,0 +1,34 @@
+{
+  "purpose": "diagnostic_negative_result_not_acceptance_timing",
+  "source_book": ".tmp/stage9-open-pilot-5",
+  "book_verified_report": ".tmp/stage9-open-pilot-5-verified-r1.json",
+  "parallel_load": "12-month synthetic builder was running; elapsed times are diagnostic only",
+  "modes": {
+    "line": "new publication-bound line rows and SQL party grouping",
+    "body": "existing authenticated contribution body and original party resolver"
+  },
+  "order": ["line", "body", "body", "line", "line", "body", "body", "line"],
+  "brief_complete": {
+    "line_ms": [1062.4238001182675, 841.3700999226421, 764.0062000136822, 809.4496000558138],
+    "body_ms": [869.5203999523073, 794.7384000290185, 816.0782000049949, 805.0720000173897],
+    "line_median_ms": 825.409849989228,
+    "body_median_ms": 810.5751000111923,
+    "response_equal_except_generated_at": true
+  },
+  "report_readiness": {
+    "line_ms": [390.32469992525876, 332.99500006251037, 255.45870000496507, 256.20100018568337],
+    "body_ms": [235.2999998256564, 293.05800003930926, 298.45949984155595, 324.92329995147884],
+    "line_median_ms": 294.59800012409687,
+    "body_median_ms": 295.7587499404326,
+    "response_equal": true
+  },
+  "profiled_report_readiness_ms": {
+    "line_reader_two_calls": 147,
+    "line_selection_1949_calls": 31,
+    "line_party_delta_self": 9,
+    "body_reader_two_calls": 123,
+    "body_selection_1949_calls": 16,
+    "body_party_delta_self": 63
+  },
+  "decision": "The new line table and ordinary read path were removed; the authenticated body path remains."
+}

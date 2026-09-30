@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +25,50 @@ from .security.windows import read_protected_json, write_protected_json
 from .types import digest
 
 SERVICE_PROTOCOL = 2
+_STATIC_RUNTIME = None
+_STATIC_RUNTIME_LOCK = threading.Lock()
+
+
+def _prepare_static_runtime():
+    """Compile daemon-only models before the first root or company read."""
+    global _STATIC_RUNTIME
+
+    with _STATIC_RUNTIME_LOCK:
+        if _STATIC_RUNTIME is not None:
+            return _STATIC_RUNTIME
+
+        from openpyxl.utils.exceptions import InvalidFileException
+        from pypdf.errors import PyPdfError
+        from xlrd.biffh import XLRDError
+
+        from . import history_reads_v1, history_types_v1
+        from .command_schema import command_models
+        from .http import create_server
+        from .jobs import JobRunner
+        from .response_contracts import RESPONSE_ADAPTERS
+        from .service import LocalService
+
+        # These imports construct only package-owned types. A released bundle
+        # also loads and verifies its fixed v1 content reader here. The three
+        # file-format exceptions are loaded by every material inspection,
+        # including CSV, so load their modules before freezing static objects.
+        _ = (
+            history_reads_v1,
+            history_types_v1,
+            RESPONSE_ADAPTERS,
+            create_server,
+            JobRunner,
+            LocalService,
+            InvalidFileException,
+            PyPdfError,
+            XLRDError,
+        )
+        bundle = production_bundle()
+        models = command_models(bundle.registry)
+        gc.collect(2)
+        gc.freeze()
+        _STATIC_RUNTIME = bundle, models
+        return _STATIC_RUNTIME
 
 
 def default_root():
@@ -148,6 +194,9 @@ def _check_health(metadata, health):
 def ensure_service(root, *, timeout=20):
     root = reject_reparse_path(root)
     ensure_catalog(root)
+    from .offline_upgrade import check_root_current
+
+    check_root_current(root)
     state = root / ".service.json"
     expected = calculator_build_id()
     started = time.monotonic()
@@ -370,6 +419,7 @@ def build_native_security_controller(
 
 
 def run(root, *, port=0):
+    static_runtime = _prepare_static_runtime()
     from .http import create_server
     from .jobs import JobRunner
     from .service import LocalService
@@ -379,28 +429,53 @@ def run(root, *, port=0):
     with instance_lock(root) as acquired:
         if not acquired:
             return
-        service = LocalService(root)
-        server, capability = create_server(service, port=port)
+        from .offline_upgrade import check_root_current
 
-        # Controller owns native request state, separate from business command payloads.
-        service.security_controller = build_native_security_controller(service, server, capability)
-        metadata = {
-            "protocol": SERVICE_PROTOCOL,
-            "database_format": service.catalog.database_format(),
-            "pid": os.getpid(),
-            "port": server.server_port,
-            "capability": capability,
-            "catalog_id": service.security.catalog_instance_id,
-            "build_id": server.build_id,
-        }
-        write_protected_json(root / ".service.json", metadata)
-        runner = JobRunner(service.catalog)
-        runner.start()
+        check_root_current(root)
+        service = server = runner = None
+        serving = False
         try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+            service = LocalService(
+                root,
+                enable_read_pool=True,
+                enable_parallel_brief=True,
+                _static_runtime=static_runtime,
+            )
+            server, capability = create_server(service, port=port)
+
+            # Controller owns native request state, separate from business command payloads.
+            service.security_controller = build_native_security_controller(
+                service, server, capability
+            )
+            metadata = {
+                "protocol": SERVICE_PROTOCOL,
+                "database_format": service.catalog.database_format(),
+                "pid": os.getpid(),
+                "port": server.server_port,
+                "capability": capability,
+                "catalog_id": service.security.catalog_instance_id,
+                "build_id": server.build_id,
+            }
+            write_protected_json(root / ".service.json", metadata)
+            runner = JobRunner(service.catalog)
+            runner.start()
+            serving = True
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
         finally:
-            server.shutdown()
-            server.server_close()
-            runner.stop()
+            try:
+                if server is not None:
+                    try:
+                        if serving:
+                            server.shutdown()
+                    finally:
+                        server.server_close()
+            finally:
+                try:
+                    if runner is not None:
+                        runner.stop()
+                finally:
+                    if service is not None:
+                        service.close()

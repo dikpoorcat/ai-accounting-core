@@ -1,7 +1,8 @@
 """Lazy presentation metadata keeps original exact-version and supplement semantics."""
 
-import json
+from types import SimpleNamespace
 
+import pytest
 from entity_fixture import seed_entities
 from test_banking import book as _bank_book
 from test_engine import close, publish, save
@@ -9,8 +10,8 @@ from test_engine import engine as _engine
 
 from ai_accounting.kernel import entities
 from ai_accounting.kernel.dashboard import _Snapshot
-from ai_accounting.kernel.dashboard_metadata import initialize_metadata
-from ai_accounting.kernel.dashboard_reads import FrozenFacts
+from ai_accounting.kernel.dashboard_metadata import Records, initialize_metadata
+from ai_accounting.kernel.dashboard_reads import FrozenCloseView, FrozenFacts
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.exports import Exports
@@ -19,6 +20,63 @@ from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth
 
 engine, bank_book = _engine, _bank_book
+
+
+def test_employee_candidate_scope_reuses_only_successful_live_snapshot(engine, monkeypatch):
+    calls = []
+    fail_once = {"2026-02"}
+
+    def selected(connection, period, *, registry):
+        assert registry is engine.store.registry
+        calls.append((connection, period))
+        if period in fail_once:
+            fail_once.remove(period)
+            raise RuntimeError("candidate read failed")
+        return ["employee-for-" + period]
+
+    monkeypatch.setattr(entities, "employee_entities", selected)
+    with QueryReads.snapshot(engine) as reads:
+        snapshot = SimpleNamespace(
+            reads=reads,
+            connection=reads.connection,
+            store=engine.store,
+            period="2026-01",
+        )
+        records = Records(snapshot, "profile", kind="employee")
+        first_query, first_params = records._query(records=True, identifiers={"first"})
+        second_query, second_params = records._query(records=True, identifiers={"second"})
+        assert first_query == second_query
+        assert first_params[-1] != second_params[-1]
+        assert calls == [(reads.connection, "2026-01")]
+        snapshot.period = "2026-02"
+        with pytest.raises(RuntimeError, match="candidate read failed"):
+            records._query(records=True, identifiers={"first"})
+        assert (
+            "employee_entities",
+            engine.store.company_id,
+            engine.store.database_id,
+            "2026-02",
+        ) not in reads._report_snapshot_cache
+        records._query(records=True, identifiers={"first"})
+        records._query(records=True, identifiers={"second"})
+        assert [period for _, period in calls] == ["2026-01", "2026-02", "2026-02"]
+    assert reads._report_snapshot_cache == {}
+    with QueryReads.snapshot(engine) as another:
+        snapshot.reads = another
+        snapshot.connection = another.connection
+        records = Records(snapshot, "profile", kind="employee")
+        records._query(records=True, identifiers={"first"})
+        assert [period for _, period in calls][-1] == "2026-02"
+        assert len(calls) == 4
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        snapshot.reads = QueryReads(engine, connection)
+        snapshot.connection = connection
+        records = Records(snapshot, "profile", kind="employee")
+        records._query(records=True, identifiers={"first"})
+        records._query(records=True, identifiers={"second"})
+        assert len(calls) == 6
+        assert snapshot.reads._report_snapshot_cache == {}
 
 
 def profile(engine, kind, entity_id, revision=0, **fields):
@@ -49,10 +107,10 @@ def detached_snapshot(engine, connection, period="2026-01"):
     snapshot.connection, snapshot.period = connection, period
     snapshot.month = YearMonth(period).ordinal
     close = connection.execute(
-        "SELECT manifest FROM period_close WHERE period=?", (snapshot.month,)
+        "SELECT * FROM period_close WHERE period=?", (snapshot.month,)
     ).fetchone()
-    snapshot.close = json.loads(close[0]) if close else None
     snapshot.reads = QueryReads(engine, connection)
+    snapshot.close = FrozenCloseView(snapshot.reads, close) if close else None
     snapshot.profile_cache, snapshot.source_metadata = {}, {}
     snapshot.frozen_fact_ids = FrozenFacts(snapshot)
     snapshot.metadata = initialize_metadata(snapshot)

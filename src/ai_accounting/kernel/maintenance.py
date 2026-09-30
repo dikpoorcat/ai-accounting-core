@@ -25,9 +25,18 @@ class Maintenance:
         return self._repair("read_indexes", request_id)
 
     def _repair(self, target, request_id):
+        from .duplicate_freeze import compare_duplicate_freeze
         from .integrity import verify_integrity
+        from .material_watch import repair_material_watch
+        from .period_balance_freeze import compare_balance_freeze
         from .projections import repair_projections
         from .read_indexes import repair_read_indexes
+        from .report_classification_directory import repair_classification_directory
+        from .report_flow import repair_report_flow
+        from .report_open_contribution import repair_open_contributions
+        from .report_projection import repair_report_projection
+        from .report_semantics import repair_report_semantics
+        from .settlement_freeze import repair_frozen_settlement_projection
         from .settlement_projection import repair_settlement_projection
         from .versions import verify_schema
 
@@ -45,9 +54,39 @@ class Maintenance:
                 else repair_read_indexes(connection, bundle=self.store.bundle, fault=fault)
             )
             if target == "projections":
+                duplicates_changed = compare_duplicate_freeze(
+                    connection, self.engine, repair=True
+                )
+                materials_changed = repair_material_watch(self.engine, connection)
+                result["changed"] = (
+                    result["changed"] or duplicates_changed or materials_changed
+                )
                 settlements = repair_settlement_projection(self.engine, connection)
                 result["changed"] = result["changed"] or settlements["changed"]
                 result["settlements"] = settlements
+                frozen_settlements = repair_frozen_settlement_projection(self.engine, connection)
+                result["changed"] = result["changed"] or frozen_settlements["changed"]
+                result["frozen_settlements"] = frozen_settlements
+                reports = repair_report_projection(self.engine, connection)
+                result["changed"] = result["changed"] or reports["changed"]
+                result["reports"] = reports
+                open_contributions = repair_open_contributions(self.engine, connection)
+                result["changed"] = result["changed"] or bool(open_contributions)
+                result["report_open_contributions"] = open_contributions
+                report_semantics = repair_report_semantics(self.engine, connection, fault=fault)
+                result["changed"] = result["changed"] or report_semantics["changed"]
+                result["report_semantics"] = report_semantics
+                report_flow = repair_report_flow(self.engine, connection)
+                result["changed"] = result["changed"] or report_flow["changed"]
+                result["report_flow"] = report_flow
+                classifications = repair_classification_directory(
+                    self.engine, connection, _expected_flows=report_flow["expected_rows"]
+                )
+                result["changed"] = result["changed"] or classifications["changed"]
+                result["report_classifications"] = classifications
+                balance_freeze = compare_balance_freeze(connection, repair=True)
+                result["changed"] = result["changed"] or balance_freeze["changed"]
+                result["balance_freeze"] = balance_freeze
             else:
                 from .discovery_indexes import rebuild_discovery_indexes
                 from .entity_references import rebuild_entity_references

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_checked as checked
 from .contracts import KernelError
-from .types import YearMonth, canonical, checked
+from .types import YearMonth
 
 TABLE_COLUMNS = {
     "monthly_account": ("period", "account", "debit", "credit"),

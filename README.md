@@ -21,7 +21,7 @@
 2. 在仓库根目录依次执行：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -I -X utf8 -m ai_accounting.kernel.cli --root .\data\kernel-draft stop
+.\.tmp-kernel-venv\Scripts\python.exe -I -X utf8 -m ai_accounting.kernel.cli --root .\data\kernel-released stop
 .\deploy\windows\start_accounting.ps1 -NoBrowser
 Set-Location .\frontend
 npm run dev
@@ -29,7 +29,7 @@ npm run dev
 
 3. 刷新 `http://127.0.0.1:5173`。
 
-后台重启后端口可能变化，重启 Vite 会重新核验同一开发资料根的目录身份和服务协议。开发启动器默认使用仓库 `data/kernel-draft`，不连接原来的裸 `data`；旧目录必须单独保全，不执行转换或清理。
+后台重启后端口可能变化，重启 Vite 会重新核验同一资料根的目录身份和服务协议。启动器、仓库 MCP 和 Vite 默认使用仓库 `data/kernel-released`；原开发目录保留，不移动或转换。当前合同仍为 draft，目录名称不表示正式 v1 已经交付；第 9 阶段验收状态见路线图。
 
 ## 运行
 
@@ -103,7 +103,7 @@ npm run dev
 
 具体可用字段和边界以运行时 Schema 为准。缺少影响核算的事实返回 `needs_information`；名称等展示资料后补不重算。工资确认依据变化须重新核对，金额不变时使用无影响复核，不重写冻结内容。
 
-核算等价、内容有效性和提交并发版本分别判断；完整结果及精确来源始终保留。共同业务查询统一财务位置、清偿、期间准备和来源追溯，每次看板响应在同一公司库快照中读取汇总与明细。简报和季度报表先返回主数据，再按公司、数据库、数据版本及日期匹配后续月度准备结果。冻结读取保留精确采用，缺少必需依据按内容错误处理；尚未建立的业务金额保持未知。历史核算与当前相关后来事项分别展示。具体边界见[核算等价](docs/accounting-equivalence.md)、[历史内容](docs/history-content-versions.md)、[统一业务查询](docs/unified-business-queries.md)和[有界读取](docs/bounded-dashboard-queries.md)。
+核算等价、内容有效性和提交并发版本分别判断；完整结果及精确来源始终保留。共同业务查询统一财务位置、清偿、期间准备和来源追溯，每次看板响应在同一公司库快照中读取汇总与明细。简报默认返回完整准备检查，关账核对摘要并行读取并绑定精确预览；季度报表的按需准备结果核对公司、数据库、数据版本及日期。冻结读取保留精确采用，缺少必需依据按内容错误处理；尚未建立的业务金额保持未知。历史核算与当前相关后来事项分别展示。具体边界见[核算等价](docs/accounting-equivalence.md)、[历史内容](docs/history-content-versions.md)、[统一业务查询](docs/unified-business-queries.md)和[有界读取](docs/bounded-dashboard-queries.md)。
 
 ## 开发与验证
 

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { fetchDeferredBrief, type BriefQuery, type BriefValidationItem } from "../api/brief";
+import { fetchCompleteBrief, fetchDeferredBrief, type BriefQuery, type BriefValidationItem } from "../api/brief";
 import { fetchPeriodPreparation, type PeriodPreparationResult } from "../api/periodPreparation";
+import { prefetchCloseReview, type CloseReviewPrefetch } from "../api/closeReview";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
@@ -29,7 +30,9 @@ type PriorityItem = {
 const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
-const response = ref<Awaited<ReturnType<typeof fetchDeferredBrief>> | null>(null);
+// API responses are immutable snapshots; pagination replaces the containing
+// response instead of mutating nested rows. Avoid proxying the full payload.
+const response = shallowRef<Awaited<ReturnType<typeof fetchDeferredBrief>> | null>(null);
 const preparation = ref<PeriodPreparationResult | null>(null);
 const preparationStatus = ref<"pending" | "loading" | "ready" | "error" | "stale">("pending");
 const preparationError = ref("");
@@ -45,6 +48,7 @@ const updateNotice = ref("");
 const error = ref("");
 const openItemsFocusRequest = ref(0);
 const closeReviewRefreshKey = ref(0);
+const closeReviewPrefetch = shallowRef<CloseReviewPrefetch | null>(null);
 let controller: AbortController | null = null;
 let initialized = false;
 let mounted = true;
@@ -188,6 +192,18 @@ function resetPreparation() {
   preparation.value = null; preparationStatus.value = "pending"; preparationError.value = "";
 }
 
+function invalidCompleteResponse(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return [
+    "DASHBOARD_SCHEMA_MISMATCH",
+    "LOCAL_INVALID_RESPONSE",
+    "response_contract_mismatch",
+    "content_integrity_failed",
+    "projection_integrity_failed",
+    "read_index_integrity_failed",
+  ].includes(error.code as string);
+}
+
 async function loadPreparation() {
   const main = response.value;
   if (!main?.data || !main.selected_period || preparationStatus.value === "stale") return;
@@ -208,7 +224,7 @@ async function loadPreparation() {
   } finally { if (valid()) preparationController = null; }
 }
 
-async function loadData(period: string | null) {
+async function loadData(period: string | null, contextGate?: Promise<void>) {
   const generation = ++requestGeneration;
   const selection = selectionKey();
   const companyId = route.query.company_id;
@@ -220,23 +236,35 @@ async function loadData(period: string | null) {
   controller = request;
   loading.value = true;
   response.value = null;
+  closeReviewPrefetch.value = null;
   error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("No selected company");
     const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
-    const result = await fetchDeferredBrief(companyId, period, request.signal, undefined,
-      target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {});
+    const options = target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {};
+    let complete = true;
+    const mainRequest = fetchCompleteBrief(companyId, period, request.signal, options).catch(async (caught: unknown) => {
+      if (request.signal.aborted || invalidCompleteResponse(caught)) throw caught;
+      complete = false;
+      return fetchDeferredBrief(companyId, period, request.signal, undefined, options);
+    });
+    if (period) closeReviewPrefetch.value = prefetchCloseReview(companyId, period, request.signal);
+    const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
     if (isCurrent(generation, selection) && controller === request) {
       response.value = result;
+      if (!result.data) { request.abort(); closeReviewPrefetch.value = null; }
+      if (complete && result.data?.period_preparation) preparationStatus.value = "ready";
       closeReviewRefreshKey.value += 1;
       loading.value = false;
       await nextTick();
       if (isCurrent(generation, selection) && controller === request) {
         if (target) focusSection("activity");
-        void loadPreparation();
+        if (!complete || (result.data && !result.data.period_preparation)) void loadPreparation();
       }
     }
   } catch (caught: unknown) {
+    request.abort();
+    if (controller === request) closeReviewPrefetch.value = null;
     if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
     error.value = dashboardErrorMessage(caught);
   } finally {
@@ -278,8 +306,18 @@ async function refresh() {
   invalidateRequests();
   const generation = requestGeneration, selection = selectionKey();
   try {
-    await refreshContext();
-    if (isCurrent(generation, selection)) await loadData(queryPeriod());
+    const company = route.query.company_id, period = queryPeriod();
+    if (typeof company === "string" && period && context.value?.current_company?.company_id === company
+      && context.value.periods.some((item) => item.key === period)) {
+      const contextGate = refreshContext().then((fresh) => {
+        if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === period))
+          throw new Error("当前公司或期间已变化，请重新选择。");
+      });
+      await loadData(period, contextGate);
+    } else {
+      await refreshContext();
+      if (isCurrent(generation, selection)) await loadData(queryPeriod());
+    }
   } catch (caught) { if (isCurrent(generation, selection)) error.value = dashboardErrorMessage(caught); }
 }
 
@@ -347,6 +385,7 @@ function invalidateRequests() {
   requestGeneration += 1;
   resetPreparation();
   controller?.abort();
+  closeReviewPrefetch.value = null;
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
   controller = null; response.value = null; loading.value = false;
@@ -586,6 +625,7 @@ onBeforeUnmount(() => {
             :company-id="route.query.company_id"
             :period="selectedPeriod"
             :refresh-key="closeReviewRefreshKey"
+            :prefetch="closeReviewPrefetch"
           />
           <article
             id="validation-checks"

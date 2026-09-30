@@ -118,6 +118,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "report_job_not_ready": 409,
                     "unknown_report_job": 404,
                     "report_download_invalid": 409,
+                    "internal_error": 500,
                     "response_contract_mismatch": 500,
                     "content_integrity_failed": 500,
                     "projection_integrity_failed": 500,
@@ -376,8 +377,9 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                         command,
                         self.query_payload(url.query),
                         session_token=owner_token,
+                        response_format="http_json",
                     )
-                    self.contract_reply(command, result)
+                    self.reply(200, result)
                 except Exception as exc:
                     self.dashboard_error(exc)
                 return

@@ -30,7 +30,7 @@ Set-Location ..
 .\deploy\windows\start_accounting.ps1 -DataRoot D:\会计资料
 ```
 
-未指定 `DataRoot` 时，先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-draft`；指定 `-PackageRoot` 时默认使用该包内的 `data/kernel-draft`。旧目录不转换、不删除；CLI 直接运行需要 `--root` 或环境变量，不再按当前工作目录选择裸 `data`。`-NoBrowser` 只连接服务并返回身份状态，默认打开页面。
+未指定 `DataRoot` 时，先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-released`；指定 `-PackageRoot` 时默认使用该包内的 `data/kernel-released`。原开发目录不移动、转换或删除，也不导入原凭据；CLI 直接运行需要 `--root` 或环境变量，不按当前工作目录选择裸 `data`。`-NoBrowser` 只连接服务并返回身份状态，默认打开页面。当前仍在第 9 阶段开发验收，正式合同尚未冻结，目录名称不代表已经发布。
 
 服务在本机回环地址自动选择端口；再次启动会复用同一资料根目录的服务。启动脚本不需要 Docker、PostgreSQL 或系统 Python，也不会替换旧 `.venv`。旧数据目录不会被转换或删除；遇到未知库或不支持的版本，应按诊断处理，不能绕过数据库检查。
 

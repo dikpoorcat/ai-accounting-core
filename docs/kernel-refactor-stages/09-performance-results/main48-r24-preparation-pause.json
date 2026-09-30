@@ -1,0 +1,12 @@
+{
+  "command": "\"C:\\Users\\MD01\\AppData\\Roaming\\uv\\python\\cpython-3.12.13-windows-x86_64-none\\python.exe\" -X utf8 scripts/benchmark_stage9_browser.py --source .tmp/stage9-build-source-r24-release --workspace . --book-report .tmp/stage9-release-main-48-verified-r24.json --output .tmp/stage9-release-main-48-browser-pure-r24.json --node \"D:/Program Files/nodejs/node.exe\" --playwright-module D:/Develop/nodejs/node_global/node_modules/@playwright/cli/node_modules/playwright --warmups 3 --repeats 30 --timing-ready-file .tmp/stage9-main48-r24-ready.json --timing-start-file .tmp/stage9-main48-r24-start",
+  "time": "2026-09-27T23:39:18.9908027+08:00",
+  "pids": [
+    72628,
+    76952,
+    66332,
+    69196
+  ],
+  "state": "resumed",
+  "resumed": "2026-09-27T23:41:46.0272202+08:00"
+}

@@ -1,7 +1,7 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
 import { requestGeneratedJson } from "./client";
-import type { DashboardBriefContract, DashboardBriefResponse } from "./generated/dashboardResponses";
-import { validateDashboardBriefResponse } from "./generated/dashboardValidators.js";
+import type { DashboardBriefContract, DashboardBriefResponse } from "./generated/dashboardBrief";
+import { validateDashboardBriefResponse } from "./generated/dashboardBrief.js";
 
 export type BriefResponse = DashboardBriefResponse;
 export type DeferredBriefResponse = DashboardBriefResponse;
@@ -40,10 +40,18 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
     && (section === null || (response.data !== null && section in response.data.collections));
 }
 
-export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
-  const query = new URLSearchParams({ company_id: companyId, preparation: "deferred", ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
+function fetchBrief(companyId: string, period: string | null, preparation: "complete" | "deferred", signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
+  const query = new URLSearchParams({ company_id: companyId, preparation, ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
   pageQuery(query, options);
   if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
   if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
   return requestGeneratedJson(`/api/dashboard/brief?${query}`, "/api/dashboard/brief", validateDashboardBriefResponse, matchesRequest, { signal });
+}
+
+export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
+  return fetchBrief(companyId, period, "deferred", signal, expectedVersion, options);
+}
+
+export function fetchCompleteBrief(companyId: string, period: string | null, signal?: AbortSignal, options: BriefQuery = {}) {
+  return fetchBrief(companyId, period, "complete", signal, undefined, options);
 }

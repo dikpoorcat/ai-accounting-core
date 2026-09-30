@@ -1,0 +1,524 @@
+{
+  "method": "Vite 6.4.3 production build; static import closure in manifest; raw and per-file gzip bytes",
+  "baseline_source": ".tmp/stage9-baseline-835fe4a/frontend (commit 835fe4a snapshot; rebuilt in isolation)",
+  "current_source": "frontend (current workspace; built in isolation)",
+  "baseline_835fe4a": {
+    "initial": {
+      "files": 4,
+      "raw": 2812121,
+      "gzip": 270488,
+      "file_paths": [
+        "assets/index-DlLpv22J.js",
+        "assets/main-CvjEB2Os.css",
+        "assets/main-DrK7CYBO.js",
+        "index.html"
+      ]
+    },
+    "pages": {
+      "brief": {
+        "increment": {
+          "files": 8,
+          "raw": 205996,
+          "gzip": 52962,
+          "file_paths": [
+            "assets/BriefView-B3wLdJ7Z.css",
+            "assets/BriefView-tVPN6FD7.js",
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js"
+          ]
+        },
+        "total": {
+          "files": 12,
+          "raw": 3018117,
+          "gzip": 323450,
+          "file_paths": [
+            "assets/BriefView-B3wLdJ7Z.css",
+            "assets/BriefView-tVPN6FD7.js",
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/index-DlLpv22J.js",
+            "assets/main-CvjEB2Os.css",
+            "assets/main-DrK7CYBO.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js",
+            "index.html"
+          ]
+        }
+      },
+      "funds": {
+        "increment": {
+          "files": 6,
+          "raw": 84742,
+          "gzip": 22629,
+          "file_paths": [
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/FundsView-BqVGvQW7.js",
+            "assets/FundsView-DG7gc9nZ.css",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js"
+          ]
+        },
+        "total": {
+          "files": 10,
+          "raw": 2896863,
+          "gzip": 293117,
+          "file_paths": [
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/FundsView-BqVGvQW7.js",
+            "assets/FundsView-DG7gc9nZ.css",
+            "assets/index-DlLpv22J.js",
+            "assets/main-CvjEB2Os.css",
+            "assets/main-DrK7CYBO.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js",
+            "index.html"
+          ]
+        }
+      },
+      "employees": {
+        "increment": {
+          "files": 9,
+          "raw": 105350,
+          "gzip": 30525,
+          "file_paths": [
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/EmployeesView-CMZiVwhU.css",
+            "assets/EmployeesView-DL_7Aqhb.js",
+            "assets/assets-C3YqZWq2.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js"
+          ]
+        },
+        "total": {
+          "files": 13,
+          "raw": 2917471,
+          "gzip": 301013,
+          "file_paths": [
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/EmployeesView-CMZiVwhU.css",
+            "assets/EmployeesView-DL_7Aqhb.js",
+            "assets/assets-C3YqZWq2.js",
+            "assets/index-DlLpv22J.js",
+            "assets/main-CvjEB2Os.css",
+            "assets/main-DrK7CYBO.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js",
+            "index.html"
+          ]
+        }
+      },
+      "assets": {
+        "increment": {
+          "files": 9,
+          "raw": 86763,
+          "gzip": 26779,
+          "file_paths": [
+            "assets/AssetsView-BFxhAJ3P.css",
+            "assets/AssetsView-DGtE-olF.js",
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/assets-C3YqZWq2.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js"
+          ]
+        },
+        "total": {
+          "files": 13,
+          "raw": 2898884,
+          "gzip": 297267,
+          "file_paths": [
+            "assets/AssetsView-BFxhAJ3P.css",
+            "assets/AssetsView-DGtE-olF.js",
+            "assets/BusinessStatusDetails-6gl28wxf.js",
+            "assets/BusinessStatusDetails-lAtGXyYI.css",
+            "assets/DashboardPagination-Be9CNkrn.js",
+            "assets/DashboardPagination-C_VqQi-Z.css",
+            "assets/assets-C3YqZWq2.js",
+            "assets/index-DlLpv22J.js",
+            "assets/main-CvjEB2Os.css",
+            "assets/main-DrK7CYBO.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js",
+            "index.html"
+          ]
+        }
+      },
+      "reports": {
+        "increment": {
+          "files": 4,
+          "raw": 53208,
+          "gzip": 16294,
+          "file_paths": [
+            "assets/ReportsView-C74chq6l.js",
+            "assets/ReportsView-Df_QYYqM.css",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js"
+          ]
+        },
+        "total": {
+          "files": 8,
+          "raw": 2865329,
+          "gzip": 286782,
+          "file_paths": [
+            "assets/ReportsView-C74chq6l.js",
+            "assets/ReportsView-Df_QYYqM.css",
+            "assets/index-DlLpv22J.js",
+            "assets/main-CvjEB2Os.css",
+            "assets/main-DrK7CYBO.js",
+            "assets/useDashboardSections-5bTnn-NE.css",
+            "assets/useDashboardSections-BeZfz8H9.js",
+            "index.html"
+          ]
+        }
+      }
+    },
+    "all_routes": {
+      "files": 21,
+      "raw": 3219601,
+      "gzip": 378391,
+      "file_paths": [
+        "assets/AssetsView-BFxhAJ3P.css",
+        "assets/AssetsView-DGtE-olF.js",
+        "assets/BriefView-B3wLdJ7Z.css",
+        "assets/BriefView-tVPN6FD7.js",
+        "assets/BusinessStatusDetails-6gl28wxf.js",
+        "assets/BusinessStatusDetails-lAtGXyYI.css",
+        "assets/DashboardPagination-Be9CNkrn.js",
+        "assets/DashboardPagination-C_VqQi-Z.css",
+        "assets/EmployeesView-CMZiVwhU.css",
+        "assets/EmployeesView-DL_7Aqhb.js",
+        "assets/FundsView-BqVGvQW7.js",
+        "assets/FundsView-DG7gc9nZ.css",
+        "assets/ReportsView-C74chq6l.js",
+        "assets/ReportsView-Df_QYYqM.css",
+        "assets/assets-C3YqZWq2.js",
+        "assets/index-DlLpv22J.js",
+        "assets/main-CvjEB2Os.css",
+        "assets/main-DrK7CYBO.js",
+        "assets/useDashboardSections-5bTnn-NE.css",
+        "assets/useDashboardSections-BeZfz8H9.js",
+        "index.html"
+      ]
+    },
+    "total_unique": {
+      "files": 22,
+      "raw": 3219972,
+      "gzip": 378686,
+      "file_paths": [
+        "assets/AssetsView-BFxhAJ3P.css",
+        "assets/AssetsView-DGtE-olF.js",
+        "assets/BriefView-B3wLdJ7Z.css",
+        "assets/BriefView-tVPN6FD7.js",
+        "assets/BusinessStatusDetails-6gl28wxf.js",
+        "assets/BusinessStatusDetails-lAtGXyYI.css",
+        "assets/DashboardPagination-Be9CNkrn.js",
+        "assets/DashboardPagination-C_VqQi-Z.css",
+        "assets/EmployeesView-CMZiVwhU.css",
+        "assets/EmployeesView-DL_7Aqhb.js",
+        "assets/FundsView-BqVGvQW7.js",
+        "assets/FundsView-DG7gc9nZ.css",
+        "assets/ReportsView-C74chq6l.js",
+        "assets/ReportsView-Df_QYYqM.css",
+        "assets/assets-C3YqZWq2.js",
+        "assets/index-DlLpv22J.js",
+        "assets/main-CvjEB2Os.css",
+        "assets/main-DrK7CYBO.js",
+        "assets/useDashboardSections-5bTnn-NE.css",
+        "assets/useDashboardSections-BeZfz8H9.js",
+        "index.html",
+        "local.html"
+      ]
+    },
+    "main_js": {
+      "files": 1,
+      "raw": 2795905,
+      "gzip": 265674,
+      "file_paths": [
+        "assets/main-DrK7CYBO.js"
+      ]
+    },
+    "lazy_jobs": null
+  },
+  "current": {
+    "initial": {
+      "files": 4,
+      "raw": 193738,
+      "gzip": 59490,
+      "file_paths": [
+        "assets/index-C4f50Goi.js",
+        "assets/main-CQF9P1bO.js",
+        "assets/main-sEWac9LI.css",
+        "index.html"
+      ]
+    },
+    "pages": {
+      "brief": {
+        "increment": {
+          "files": 8,
+          "raw": 1433340,
+          "gzip": 155665,
+          "file_paths": [
+            "assets/BriefView-B7qwJL6H.css",
+            "assets/BriefView-BQ5JtFyX.js",
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css"
+          ]
+        },
+        "total": {
+          "files": 12,
+          "raw": 1627078,
+          "gzip": 215155,
+          "file_paths": [
+            "assets/BriefView-B7qwJL6H.css",
+            "assets/BriefView-BQ5JtFyX.js",
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/index-C4f50Goi.js",
+            "assets/main-CQF9P1bO.js",
+            "assets/main-sEWac9LI.css",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css",
+            "index.html"
+          ]
+        }
+      },
+      "funds": {
+        "increment": {
+          "files": 6,
+          "raw": 424412,
+          "gzip": 51185,
+          "file_paths": [
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/FundsView-BzAoJppv.css",
+            "assets/FundsView-D37uWk4H.js",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css"
+          ]
+        },
+        "total": {
+          "files": 10,
+          "raw": 618150,
+          "gzip": 110675,
+          "file_paths": [
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/FundsView-BzAoJppv.css",
+            "assets/FundsView-D37uWk4H.js",
+            "assets/index-C4f50Goi.js",
+            "assets/main-CQF9P1bO.js",
+            "assets/main-sEWac9LI.css",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css",
+            "index.html"
+          ]
+        }
+      },
+      "employees": {
+        "increment": {
+          "files": 9,
+          "raw": 1302202,
+          "gzip": 130260,
+          "file_paths": [
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/EmployeesView-BfOaBFCR.css",
+            "assets/EmployeesView-_BmJ_QUy.js",
+            "assets/assets-D53l3iJt.js",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css"
+          ]
+        },
+        "total": {
+          "files": 13,
+          "raw": 1495940,
+          "gzip": 189750,
+          "file_paths": [
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/EmployeesView-BfOaBFCR.css",
+            "assets/EmployeesView-_BmJ_QUy.js",
+            "assets/assets-D53l3iJt.js",
+            "assets/index-C4f50Goi.js",
+            "assets/main-CQF9P1bO.js",
+            "assets/main-sEWac9LI.css",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css",
+            "index.html"
+          ]
+        }
+      },
+      "assets": {
+        "increment": {
+          "files": 9,
+          "raw": 858715,
+          "gzip": 91358,
+          "file_paths": [
+            "assets/AssetsView-CpoAVqNk.css",
+            "assets/AssetsView-EK-oo9qa.js",
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/assets-D53l3iJt.js",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css"
+          ]
+        },
+        "total": {
+          "files": 13,
+          "raw": 1052453,
+          "gzip": 150848,
+          "file_paths": [
+            "assets/AssetsView-CpoAVqNk.css",
+            "assets/AssetsView-EK-oo9qa.js",
+            "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+            "assets/BusinessStatusDetails-CuLj0-F1.css",
+            "assets/DashboardPagination-DVAZZgmy.js",
+            "assets/DashboardPagination-DrFVmDzH.css",
+            "assets/assets-D53l3iJt.js",
+            "assets/index-C4f50Goi.js",
+            "assets/main-CQF9P1bO.js",
+            "assets/main-sEWac9LI.css",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css",
+            "index.html"
+          ]
+        }
+      },
+      "reports": {
+        "increment": {
+          "files": 5,
+          "raw": 261124,
+          "gzip": 35285,
+          "file_paths": [
+            "assets/ReportsView-BEc4AweU.css",
+            "assets/ReportsView-CxYWM-ca.js",
+            "assets/reports-hR45zD-5.js",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css"
+          ]
+        },
+        "total": {
+          "files": 9,
+          "raw": 454862,
+          "gzip": 94775,
+          "file_paths": [
+            "assets/ReportsView-BEc4AweU.css",
+            "assets/ReportsView-CxYWM-ca.js",
+            "assets/index-C4f50Goi.js",
+            "assets/main-CQF9P1bO.js",
+            "assets/main-sEWac9LI.css",
+            "assets/reports-hR45zD-5.js",
+            "assets/useDashboardSections-CPa8sSFS.js",
+            "assets/useDashboardSections-CsVm1N0_.css",
+            "index.html"
+          ]
+        }
+      }
+    },
+    "all_routes": {
+      "files": 22,
+      "raw": 3222252,
+      "gzip": 386403,
+      "file_paths": [
+        "assets/AssetsView-CpoAVqNk.css",
+        "assets/AssetsView-EK-oo9qa.js",
+        "assets/BriefView-B7qwJL6H.css",
+        "assets/BriefView-BQ5JtFyX.js",
+        "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+        "assets/BusinessStatusDetails-CuLj0-F1.css",
+        "assets/DashboardPagination-DVAZZgmy.js",
+        "assets/DashboardPagination-DrFVmDzH.css",
+        "assets/EmployeesView-BfOaBFCR.css",
+        "assets/EmployeesView-_BmJ_QUy.js",
+        "assets/FundsView-BzAoJppv.css",
+        "assets/FundsView-D37uWk4H.js",
+        "assets/ReportsView-BEc4AweU.css",
+        "assets/ReportsView-CxYWM-ca.js",
+        "assets/assets-D53l3iJt.js",
+        "assets/index-C4f50Goi.js",
+        "assets/main-CQF9P1bO.js",
+        "assets/main-sEWac9LI.css",
+        "assets/reports-hR45zD-5.js",
+        "assets/useDashboardSections-CPa8sSFS.js",
+        "assets/useDashboardSections-CsVm1N0_.css",
+        "index.html"
+      ]
+    },
+    "total_unique": {
+      "files": 25,
+      "raw": 3227212,
+      "gzip": 388991,
+      "file_paths": [
+        "assets/AssetsView-CpoAVqNk.css",
+        "assets/AssetsView-EK-oo9qa.js",
+        "assets/BackgroundJobsPanel-6YrJflrY.js",
+        "assets/BackgroundJobsPanel-CiDlz4gc.css",
+        "assets/BriefView-B7qwJL6H.css",
+        "assets/BriefView-BQ5JtFyX.js",
+        "assets/BusinessStatusDetails-Bfv5R7Hr.js",
+        "assets/BusinessStatusDetails-CuLj0-F1.css",
+        "assets/DashboardPagination-DVAZZgmy.js",
+        "assets/DashboardPagination-DrFVmDzH.css",
+        "assets/EmployeesView-BfOaBFCR.css",
+        "assets/EmployeesView-_BmJ_QUy.js",
+        "assets/FundsView-BzAoJppv.css",
+        "assets/FundsView-D37uWk4H.js",
+        "assets/ReportsView-BEc4AweU.css",
+        "assets/ReportsView-CxYWM-ca.js",
+        "assets/assets-D53l3iJt.js",
+        "assets/index-C4f50Goi.js",
+        "assets/main-CQF9P1bO.js",
+        "assets/main-sEWac9LI.css",
+        "assets/reports-hR45zD-5.js",
+        "assets/useDashboardSections-CPa8sSFS.js",
+        "assets/useDashboardSections-CsVm1N0_.css",
+        "index.html",
+        "local.html"
+      ]
+    },
+    "main_js": {
+      "files": 1,
+      "raw": 178183,
+      "gzip": 54816,
+      "file_paths": [
+        "assets/main-CQF9P1bO.js"
+      ]
+    },
+    "lazy_jobs": {
+      "files": 1,
+      "raw": 3903,
+      "gzip": 1954,
+      "file_paths": [
+        "assets/BackgroundJobsPanel-6YrJflrY.js"
+      ]
+    }
+  }
+}

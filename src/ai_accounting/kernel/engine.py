@@ -14,8 +14,9 @@ from pydantic import ValidationError
 from .accounting import AccountingBook, compatibility
 from .build import calculator_build_id
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
-from .dependencies import calculation_matches, checked_lanes, read_matches, scope_keys
+from .dependencies import checked_lanes, read_matches, scope_keys
 from .storage import Store
+from .stored_json import load_outcome
 from .types import YearMonth, canonical, checked, digest, sum_fen
 
 PROGRAM_VERSION = calculator_build_id()
@@ -251,17 +252,19 @@ class Engine:
                         "role", "accounting" if model.lane == "accounting" else "management"
                     )
                     precision = metadata.get("precision")
-                    issues.append({
-                        "field": field,
-                        "message": (
-                            "缺少必需管理资料"
-                            if semantics == "management"
-                            else "缺少必需核算事实"
-                        ),
-                        "semantics": semantics,
-                        "reusable_sources": [subject_id],
-                        "allowed_precision": [precision] if isinstance(precision, str) else [],
-                    })
+                    issues.append(
+                        {
+                            "field": field,
+                            "message": (
+                                "缺少必需管理资料"
+                                if semantics == "management"
+                                else "缺少必需核算事实"
+                            ),
+                            "semantics": semantics,
+                            "reusable_sources": [subject_id],
+                            "allowed_precision": [precision] if isinstance(precision, str) else [],
+                        }
+                    )
                 raise NeedsInformation(
                     issues,
                     "缺少必需事实",
@@ -692,6 +695,39 @@ class Engine:
         )
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
+        declared = {sid: self._reads(version) for sid, version in facts.items()}
+        scopes = {
+            sid: scope_keys("calculation", version.fact, sid) for sid, version in facts.items()
+        }
+        by_kind, by_scope = {}, {}
+        for sid, version in facts.items():
+            by_kind.setdefault(version.fact.kind, set()).add(sid)
+            for key in scopes[sid]:
+                by_scope.setdefault(key, set()).add(sid)
+        # Resolve in-flight dependencies once. Exact historical reads stay pinned;
+        # range reads use the same matcher as persisted selections after narrowing
+        # by their declared kind and scope, never by allocation claims.
+        matching = {}
+        for read in {read for reads in declared.values() for read in reads}:
+            if read.source != "calculation" or read.key.startswith("#"):
+                continue
+            candidates = (
+                by_kind.get(read.kind, set()) if read.key == "*" else by_scope.get(read.key, set())
+            )
+            if read.kind != "*" and read.key != "*":
+                candidates = candidates & by_kind.get(read.kind, set())
+            matching[read] = tuple(
+                sid
+                for sid in candidates
+                if read_matches(
+                    read,
+                    source="calculation",
+                    kind=facts[sid].fact.kind,
+                    ident="",
+                    period=facts[sid].fact.period,
+                    scopes=scopes[sid],
+                )
+            )
         dependencies = {sid: set() for sid in facts}
         for sid, version in facts.items():
             if any(
@@ -699,23 +735,10 @@ class Engine:
                 for period in version.fact.required_closed_periods()
             ):
                 raise KernelError("awaiting_close", "该业务须等待所依据期间关账")
-            for read in self._reads(version):
+            for read in declared[sid]:
                 if read.source != "calculation" or read.key.startswith("#"):
                     continue
-                for other, upstream in facts.items():
-                    if other != sid and calculation_matches(
-                        read,
-                        Calculation(
-                            "",
-                            other,
-                            upstream.fact.kind,
-                            upstream.fact.period,
-                            {},
-                            upstream.id,
-                        ),
-                        upstream.fact,
-                    ):
-                        dependencies[sid].add(other)
+                dependencies[sid].update(other for other in matching[read] if other != sid)
                 for selected in selections[read]:
                     if selected.subject_id in pending and selected.subject_id not in facts:
                         raise KernelError(
@@ -736,16 +759,13 @@ class Engine:
         for sid in ordered:
             version = facts[sid]
             selected = {}
-            for read in self._reads(version):
+            for read in declared[sid]:
                 values = list(selections[read])
                 if read.source == "calculation" and not read.key.startswith("#"):
                     values = [v for v in values if v.subject_id not in overlays]
-                    for upstream_id, calc in overlays.items():
-                        upstream = facts[upstream_id]
-                        if self._selection_enabled(upstream_id) and calculation_matches(
-                            read, calc, upstream.fact
-                        ):
-                            values.append(calc)
+                    for upstream_id in matching[read]:
+                        if upstream_id in overlays and self._selection_enabled(upstream_id):
+                            values.append(overlays[upstream_id])
                     values.sort(key=lambda item: (item.period.ordinal, item.subject_id))
                 selected[read] = tuple(values)
             context = Context(selected, accounting=accounting.signature)
@@ -989,9 +1009,14 @@ class Engine:
             projection_check = prepare_projection_check(
                 connection, prepared, posting_period=posting_period
             )
+            publication_highwater = connection.execute(
+                "SELECT coalesce(max(sequence),0) FROM calculation_publication"
+            ).fetchone()[0]
             results = [self._publish(connection, item, posting_period) for item in prepared]
             self._sync_publication_projections(
-                connection, [item.version.subject_id for item in prepared]
+                connection,
+                [item.version.subject_id for item in prepared],
+                new_publication_after=publication_highwater,
             )
             verify_publication(self, connection, [item.calculation_id for item in prepared])
             verify_projection_change(connection, projection_check)
@@ -1069,7 +1094,7 @@ class Engine:
             "WHERE a.subject_id=?",
             (version.subject_id,),
         ).fetchone()
-        old_outcome = json.loads(old["outcome"]) if old else None
+        old_outcome = load_outcome(old["outcome"]) if old else None
         if (old["id"] if old else None) != prepared.previous_calculation_id:
             raise KernelError("preview_expired", "当前发布版本与已审阅预览不一致")
         previous = head(connection, version.subject_id)
@@ -1096,6 +1121,18 @@ class Engine:
                 raise KernelError(
                     "opening_after_accounting", "期初必须在首次正式业务入账和关账之前确认"
                 )
+            from .stored_json import verify_sql_outcomes
+
+            verify_sql_outcomes(
+                connection,
+                {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT c.id FROM calculation_current a "
+                        "JOIN calculation c ON c.id=a.calculation_id"
+                    )
+                },
+            )
             if connection.execute(
                 "SELECT 1 FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
                 "WHERE json_extract(c.outcome,'$.opening')=1 LIMIT 1"
@@ -1255,8 +1292,12 @@ class Engine:
         )
         return result
 
-    def _sync_publication_projections(self, connection, subjects):
+    def _sync_publication_projections(
+        self, connection, subjects, *, new_publication_after=None
+    ):
         from .period_balances import sync_period_balances
+        from .report_open_contribution import sync_open_contributions
+        from .report_projection import sync_report_lines
         from .settlement_projection import sync_settlement_publications
 
         periods = sync_period_balances(connection, subjects)
@@ -1269,6 +1310,9 @@ class Engine:
             )
         ]
         sync_settlement_publications(self, connection, publications, periods)
+        sync_report_lines(connection, periods)
+        if new_publication_after is not None:
+            sync_open_contributions(self, connection, new_publication_after)
 
     def _check_publication_projections(self, connection, prepared=(), *, subjects=()):
         from .period_balances import verify_selected_balances
@@ -1466,7 +1510,10 @@ class Engine:
         return Maintenance(self).rebuild_projections(request_id=request_id)
 
     def overview(self, period: str):
-        month = YearMonth(period).ordinal
+        try:
+            month = YearMonth(period).ordinal
+        except ValueError as exc:
+            raise KernelError("invalid_command", "会计月份格式不正确") from exc
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             result = {
@@ -1566,12 +1613,13 @@ class Engine:
 
     def jobs(self, *, status: str | None = None, limit: int = 50, job_id: str | None = None):
         from .diagnostics import job_error_message, public_job_code
+
         if status not in (None, "pending", "running", "succeeded", "failed"):
-            raise ValueError("unknown job status")
+            raise KernelError("invalid_command", "未知任务状态")
         if type(limit) is not int or not 1 <= limit <= 100:
-            raise ValueError("job limit must be 1..100")
+            raise KernelError("invalid_command", "任务每页数量必须为 1 至 100")
         if job_id is not None and (not isinstance(job_id, str) or not 1 <= len(job_id) <= 200):
-            raise ValueError("invalid job identity")
+            raise KernelError("invalid_command", "任务标识不正确")
         with self.store.connection(read_only=True) as connection:
             rows = connection.execute(
                 "SELECT id,kind,status,attempts,error_code,result FROM jobs "
@@ -1582,17 +1630,23 @@ class Engine:
             result = []
             for row in rows:
                 code = public_job_code(row["error_code"]) if row["status"] == "failed" else None
-                result.append({
-                    **dict(row),
-                    "error_code": code,
-                    "error_message": job_error_message(code),
-                    "result": json.loads(row["result"]) if row["result"] else None,
-                })
+                result.append(
+                    {
+                        **dict(row),
+                        "error_code": code,
+                        "error_message": job_error_message(code),
+                        "result": json.loads(row["result"]) if row["result"] else None,
+                    }
+                )
             return result
 
     def ledger(self, period: str, *, after_number: int = 0, limit: int = 100):
         if type(limit) is not int or not 1 <= limit <= 500:
-            raise ValueError("page limit must be 1..500")
+            raise KernelError("invalid_command", "每页数量必须为 1 至 500")
+        try:
+            month = YearMonth(period).ordinal
+        except ValueError as exc:
+            raise KernelError("invalid_command", "会计月份格式不正确") from exc
         with self.store.connection(read_only=True) as connection:
             rows = connection.execute(
                 "SELECT "
@@ -1602,7 +1656,7 @@ class Engine:
                 "voucher_version h ON h.id=a.version_id "
                 "JOIN calculation c ON c.id=h.calculation_id "
                 "WHERE h.period=? AND v.number>? ORDER BY v.number LIMIT ?",
-                (YearMonth(period).ordinal, after_number, limit),
+                (month, after_number, limit),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -1711,7 +1765,7 @@ class Engine:
                             }
                         )
             if not calculation_id:
-                raise ValueError("需要计算或凭证版本")
+                raise KernelError("invalid_command", "需要计算或凭证版本")
             row = connection.execute(
                 "SELECT * FROM calculation WHERE id=?", (calculation_id,)
             ).fetchone()
@@ -1793,7 +1847,7 @@ class Engine:
                 "calculation": {
                     **dict(row),
                     "digest": row["digest"].hex(),
-                    "outcome": json.loads(row["outcome"]),
+                    "outcome": load_outcome(row["outcome"]),
                 },
                 "facts": [
                     {
@@ -1997,7 +2051,7 @@ class Engine:
                 calculation = connection.execute(
                     "SELECT outcome,period FROM calculation WHERE id=?", (calc,)
                 ).fetchone()
-                outcome = json.loads(calculation[0])
+                outcome = load_outcome(calculation[0])
                 self._opening_projection(
                     connection, calculation[1], outcome.get("opening_lines", ()), -1
                 )

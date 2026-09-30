@@ -201,6 +201,56 @@ def test_batch_selection_cost_and_results_follow_matches_not_unrelated_history(
     assert sum("identity_correction_item" in sql for sql in statements) == 1
 
 
+def test_typed_scope_selection_does_not_scan_other_kinds_in_the_same_month(dependency_engine):
+    engine, proof = dependency_engine
+    save(engine, proof, ClaimSource.kind, "selected-source", source_data())
+    publish(engine, "selected-source")
+    reads = tuple(Read(source, ClaimSource.kind, "2026-01") for source in ("fact", "calculation"))
+
+    def measured():
+        with engine.store.connection(read_only=True) as connection:
+            steps = 0
+
+            def tick():
+                nonlocal steps
+                steps += 1
+                return 0
+
+            connection.set_progress_handler(tick, 1)
+            try:
+                selected = engine.store.select_many(connection, reads)
+            finally:
+                connection.set_progress_handler(None, 0)
+        return steps, {read: tuple(row.id for row in rows) for read, rows in selected.items()}
+
+    before, expected = measured()
+    engine.save_facts(
+        [
+            {
+                "kind": MaterialCalculation.kind,
+                "subject_id": f"unrelated-{index}",
+                "data": {"period": "2026-01", "amount": index + 1},
+                "evidence": (proof,),
+                "expected_revision": 0,
+            }
+            for index in range(500)
+        ],
+        request_id="same-month-unrelated-facts",
+    )
+    subjects = [f"unrelated-{index}" for index in range(500)]
+    preview = engine.preview(subjects)
+    engine.confirm(
+        subjects, preview_digest=preview["digest"], epochs=preview["epochs"],
+        request_id="publish-unrelated-scope-sources",
+    )
+    after, actual = measured()
+    assert actual == expected
+    assert all(len(rows) == 1 for rows in actual.values())
+    # B-tree seeks can change a little; traversing 500 unrelated scope rows
+    # (for either source) cannot fit inside this bound.
+    assert after < before + 200, (before, after)
+
+
 def test_context_copies_inputs_and_traces_empty_reads_without_exposing_selections():
     read = Read("fact", MaterialNote.kind, "missing")
     supplied = {read: ()}
@@ -211,6 +261,120 @@ def test_context_copies_inputs_and_traces_empty_reads_without_exposing_selection
     assert context.used == frozenset({read})
     assert context.versions == frozenset()
     assert context.trace().selections == ((read, ()),)
+
+
+def test_inflight_batch_matches_scoped_sources_once(dependency_engine, monkeypatch):
+    from ai_accounting.kernel import engine as engine_module
+
+    engine, proof = dependency_engine
+    items = []
+    for index in range(40):
+        items.append(
+            {
+                "kind": ClaimSource.kind,
+                "subject_id": f"source-{index}",
+                "data": source_data(index + 1, str(index)),
+                "evidence": (proof,),
+                "expected_revision": 0,
+            }
+        )
+        for copy in range(2):
+            items.append(
+                {
+                    "kind": PendingReader.kind,
+                    "subject_id": f"reader-{index}-{copy}",
+                    "data": {
+                        "period": "2026-01",
+                        "source": "calculation",
+                        "source_kind": ClaimSource.kind,
+                        "source_key": "custom:" + str(index),
+                    },
+                    "evidence": (proof,),
+                    "expected_revision": 0,
+                }
+            )
+    engine.save_facts(items, request_id="save-inflight-batch")
+    match = engine_module.read_matches
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return match(*args, **kwargs)
+
+    monkeypatch.setattr(engine_module, "read_matches", counted)
+    preview = engine.preview([item["subject_id"] for item in reversed(items)])
+    assert calls == 40
+    results = {item["subject_id"]: item for item in preview["results"]}
+    for index in range(40):
+        source = results[f"source-{index}"]["calculation_id"]
+        for copy in range(2):
+            assert results[f"reader-{index}-{copy}"]["values"]["selected"] == [source]
+
+
+@pytest.mark.parametrize(
+    ("kind", "key", "before", "expected"),
+    [
+        (ClaimSource.kind, "*", None, True),
+        ("*", "custom:one", None, True),
+        (ClaimSource.kind, "@source", "2026-02", True),
+        (ClaimSource.kind, "custom:one", "2026-01", False),
+        (ClaimSource.kind, "capacity:one", None, False),
+    ],
+)
+def test_inflight_selection_preserves_dependency_contract(
+    dependency_engine, kind, key, before, expected
+):
+    engine, proof = dependency_engine
+    save(engine, proof, ClaimSource.kind, "source", source_data())
+    save(
+        engine,
+        proof,
+        PendingReader.kind,
+        "reader",
+        {
+            "period": "2026-02",
+            "source": "calculation",
+            "source_kind": kind,
+            "source_key": key,
+            "before_period": before,
+        },
+    )
+    results = {item["subject_id"]: item for item in engine.preview(["reader", "source"])["results"]}
+    assert results["reader"]["values"]["selected"] == (
+        [results["source"]["calculation_id"]] if expected else []
+    )
+
+
+def test_inflight_replacement_does_not_replace_an_exact_historical_read(dependency_engine):
+    engine, proof = dependency_engine
+    save(engine, proof, ClaimSource.kind, "source", source_data())
+    previous = publish(engine, "source")["results"][0]["calculation_id"]
+    save(
+        engine,
+        proof,
+        ClaimSource.kind,
+        "source",
+        source_data(200),
+        revision=1,
+        amend=True,
+        request="amend-pinned-source",
+    )
+    save(
+        engine,
+        proof,
+        PendingReader.kind,
+        "reader",
+        {
+            "period": "2026-01",
+            "source": "calculation",
+            "source_kind": ClaimSource.kind,
+            "source_key": "#" + previous,
+        },
+    )
+    results = {item["subject_id"]: item for item in engine.preview(["reader", "source"])["results"]}
+    assert results["source"]["calculation_id"] != previous
+    assert results["reader"]["values"]["selected"] == [previous]
 
 
 def test_empty_reads_check_their_kind_lane_and_cross_kind_checks_all_lanes():

@@ -1,7 +1,6 @@
 import { DashboardApiError, requestGeneratedJson } from "./client";
 import type { DashboardReadContext } from "./dashboardContracts";
-import type { DashboardPeriodPreparationResponse } from "./generated/dashboardResponses";
-import { validateDashboardPeriodPreparationResponse } from "./generated/dashboardValidators.js";
+import type { DashboardPeriodPreparationResponse } from "./generated/dashboardPeriodPreparation";
 
 export type PeriodPreparationResult = DashboardPeriodPreparationResponse;
 
@@ -14,6 +13,8 @@ function matchesRequest(url: URL, response: DashboardPeriodPreparationResponse) 
 
 export async function fetchPeriodPreparation(context: DashboardReadContext, period: string, signal?: AbortSignal) {
   const query = new URLSearchParams({ company_id: context.company_id, period, expected_read_version: context.read_version, as_of: context.as_of });
+  const { validateDashboardPeriodPreparationResponse } = await import("./generated/dashboardPeriodPreparation.js");
+  signal?.throwIfAborted();
   const result = await requestGeneratedJson(`/api/dashboard/period-preparation?${query}`, "/api/dashboard/period-preparation", validateDashboardPeriodPreparationResponse, matchesRequest, { signal });
   if (result.read_context.database_id !== context.database_id) {
     throw new DashboardApiError(409, "dashboard_snapshot_changed", "资料已变化，请刷新主页面后重新核对。");

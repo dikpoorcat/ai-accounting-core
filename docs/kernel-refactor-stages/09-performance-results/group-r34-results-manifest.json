@@ -1,0 +1,45 @@
+{
+  "counts": {
+    "tests": 496,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "files": [
+    {
+      "source": ".tmp\\stage9-group-r34\\result.json",
+      "archive": "group-r34-result.json.gz",
+      "bytes": 3233,
+      "raw_sha256": "5c881880eca521344ab6f052e6db9178b8126ececd9a84e17118927f27bd398a",
+      "archive_sha256": "380e0ea6426c831f7bf22dabaa2a15c7ef22aa4ea0a3af0945e2e2d85f012b54"
+    },
+    {
+      "source": ".tmp\\stage9-group-r34\\shard-1-junit.xml",
+      "archive": "group-r34-shard-1-junit.xml.gz",
+      "bytes": 40324,
+      "raw_sha256": "dc0f22e4c8006f5840debacb563e82f35e571039d5c8d385ada2e856039be87f",
+      "archive_sha256": "f9f9f79b878ed5eda568dd4a3316a7e1fbcc3f01080ae44376df4b1e77e7de62"
+    },
+    {
+      "source": ".tmp\\stage9-group-r34\\shard-1.log",
+      "archive": "group-r34-shard-1.log.gz",
+      "bytes": 1959,
+      "raw_sha256": "4a268efa5dd5b29ff5d31f4c7404a702e20bd89fe6f8ec5d87f49f27a6caf84a",
+      "archive_sha256": "8268030ca01052637e607b810b36fd87a9982fdffa561ebe6afc274ad31de0bc"
+    },
+    {
+      "source": ".tmp\\stage9-group-r34\\shard-2-junit.xml",
+      "archive": "group-r34-shard-2-junit.xml.gz",
+      "bytes": 45185,
+      "raw_sha256": "e26b8987d4dc357cec9126fee25ee31fe4b993d6d434da9976983116653933ac",
+      "archive_sha256": "9ab864150847e46cd6248b8169fd37940aafa28d1ecbfe70b6ce0b3ebee6e065"
+    },
+    {
+      "source": ".tmp\\stage9-group-r34\\shard-2.log",
+      "archive": "group-r34-shard-2.log.gz",
+      "bytes": 11205,
+      "raw_sha256": "3d7fbb66290d21ddf9d4970a7436800e649741f9cb336c5ae69cf009b6abaaaa",
+      "archive_sha256": "973e1969fbc3b8c66e635ad99cfa3430e0988820384e11064105a978cf2ff39d"
+    }
+  ]
+}

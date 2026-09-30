@@ -1,88 +1,11 @@
-# 个人劳务报酬受控工作流
+# 个人劳务报酬的当前核算流程
 
-> **已退役实现**：本文使用已退役的 `finance_record_event` 组件协议与旧命令名，正文只作历史说明，不应再调用。
-> 当前做法：劳务事实为 `labor`／`labor_accrual`／`labor_project_cost` 等类型化事实，用 `save_fact` 登记、
-> `preview` 试算、`confirm` 发布；发现入口是 `schema`（MCP `finance_local_schema`）。
-> 名称对应：`finance_record_event`→`save_fact`／`save_facts` + `preview` + `confirm`，
-> `finance_get_event_schema`→`schema`，`finance_amend_event`→`amend_fact`，
-> `finance_delete_event`→`preview_delete` + `delete`，
-> `finance_reverse_event`→`preview`／`confirm` 指定开放的 `posting_period` 生成关联冲正。
-> `finance_register_labor_service_person`、`finance_end_labor_service_person` 在当前内核**没有对应入口**，
-> 不存在与 `Employee` 分离的独立劳务人员登记及结束命令；
-> `finance_confirm_labor_external_declaration` 也没有劳务专用入口，外部完成改由通用 `external_completion` 事实表达。
+先用 `finance_local_schema` 确认所选劳务事实的字段、来源、精度和专用入口。当前劳务相关类型包括 `labor`、`labor_accrual` 和 `labor_project_cost`；不同类型分别表达实际业务、已赚取但尚未收付的报酬以及项目归集，不可互相代填。公司内自然人可承担不同业务角色，身份登记与核算事实分开；不因姓名相同自动合并，也不以技术字段把劳务改成工资。
 
-本模块只处理公司确认不按员工工资口径核算的自然人临时劳务。是否存在法律上的劳动关系不由记账内核判断；按员工工资核算的人员继续使用工资、社保、公积金和累计工资薪金个税模块，也不得通过“免参保”等技术字段把个人劳务塞入工资流程。
+登记前查人员、服务依据和同月现有事实，留存原件，明确所属月、金额、费用归属及实际已知的扣缴情况。按类型化入口登记，`preview` 核对政策版本、金额、来源与凭证，`confirm` 才正式发布。真实发放、税款缴纳、外部申报和账务核对分别保存各自依据；未实际扣缴不得由理论税额推定为已扣，未付款不得因计提而标成已付。缺少会改变会计处理的事实时用结构化 `fact_issues` 指出缺项，先查可复用来源再询问负责人。
 
-## 身份与批次
+未关账修改或撤去遵守依赖和审计约束；已关账内容不原地改写，更正在开放月建立关联冲正。政策日期、税率、可用类型和明确的官方来源以当前运行时 Schema 与版本化政策为准。外部完成由通用办理事实记录，文件生成不代表申报或付款已完成。通用流程见[类型化业务事实](business-components.md)。
 
-`finance_register_labor_service_person` 创建与 `Employee` 分离的劳务人员记录，以 `Counterparty(kind=labor_person)` 作为历史往来锚点，并保存关系开始日、可选结束日及证据。`finance_end_labor_service_person` 是结束有效期的唯一公共写入口；结束后，现有员工登记可用 `prior_labor_person_id` 显式保留同一自然人的角色转换链，且入职日必须晚于劳务关系结束日。员工与劳务记录使用各自的角色化往来主体，历史凭证不改写。每个报酬所属月的批次逐人保存服务期间、总报酬 `gross_remuneration_fen`、费用角色、税收身份、收入归组和学生状态。固定劳务费与佣金分解可一起省略；提供分解时核对合计，未知分项保留为空。外部申报状态和编号是可选管理资料，不进入计税输入或确认哈希。
+## 历史边界
 
-公共入口不接收科目代码、借贷方向、税率、速算扣除数或自由分录行。金额均为整数分；税率、20% 费用扣除和税额计算使用 `Decimal`，逐步按分四舍五入。
-
-## 首期税务边界
-
-首期仅支持已明确不是全日制在校学生的普通居民个人劳务报酬。缺少居民身份、按次或连续收入按月归组、服务日期、费用角色或证据时返回 `needs_information`。明确为非居民时返回 `NONRESIDENT_LABOR_REMUNERATION_NOT_SUPPORTED`；明确为全日制学生时返回 `STUDENT_INTERNSHIP_WITHHOLDING_METHOD_NOT_SUPPORTED`，不会回落到工资或普通劳务算法。
-
-有效政策版本 `cn_resident_labor_remuneration_withholding/2019.1` 从 2019-01-01 起生效：
-
-- 每次收入不超过 4,000 元：收入额减除 800 元后的余额为应纳税所得额，最低为零；
-- 每次收入超过 4,000 元：减除 20% 费用后的余额为应纳税所得额；
-- 应纳税所得额不超过 20,000 元按 20%，超过 20,000 元至 50,000 元按 30%并减 2,000 元，超过 50,000 元按 40%并减 7,000 元；
-- 零预扣税仍冻结计算输入、政策快照、结果、轨迹和确认哈希，但不生成零金额凭证行或开放项。
-
-首要政策来源：
-
-- [国家税务总局公告 2018 年第 61 号](https://12366.chinatax.gov.cn/bzds/070/070-5-4.html)
-- [浙江税务关于个人劳务发票扣缴义务的答复](https://zhejiang.chinatax.gov.cn/art/2025/3/25/art_13314_634526.html)
-- [中华人民共和国个人所得税法](https://www.chinatax.gov.cn/n810219/n810744/n3752930/n3752974/c3970366/content.html)
-
-## 会计模板与开放项
-
-确认计提批次：
-
-- 借：管理费用—个人劳务、销售费用—个人劳务或主营业务成本—个人劳务；
-- 贷：其他应付款—个人劳务报酬（毛额）；
-- 每人创建一个 `labor_remuneration` 开放项和一个包含零税额在内的扣缴权益事实。
-
-将工资结算与劳务结算组件放入同一笔 `finance_record_event`：
-
-- 借：应付职工薪酬—工资（工资子项毛额）和其他应付款—个人劳务报酬（劳务子项毛额）；
-- 贷：银行存款（所有子项净额之和）、工资扣缴项目及应交个人所得税；
-- 每个非零劳务预扣税创建独立 `labor_individual_income_tax` 开放项，并以规范来源表关联到唯一劳务人员、劳务明细和扣缴权益。
-
-每个劳务子项必须显式选择结算模式：
-
-- `net_after_withholding`：按政策计算的预扣税作为实际扣缴额，银行支付毛额减预扣税后的净额，并生成劳务个税开放项；扣缴机构名称和编号可在管理资料中补充。
-- `gross_paid_without_withholding`：仅用于有证据证明毛额已经全部付出、实际扣缴为零的历史事实。调用方必须另行提供 `withholding_exception_evidence_references`，且这些证据也必须包含在通用 `evidence_references` 中。内核仍保存政策计算的理论预扣税、实际扣缴零元和全部未扣差额，不把理论税额改写为零；银行按毛额精确匹配，不生成个税应付、开放项或凭证行。
-
-后一模式记录的是已发生的合规例外，不代表免税、不改变政策计算，也不是允许调用方自由输入税额的接口。示例：
-
-劳务组件明确提供 `key`、`kind="labor_settlement"`、确认事实、
-`source_open_item_id`、毛额 `amount_fen`、`settlement_mode` 及适用时的例外证据。
-父请求提供公司、记账日期、幂等键和 `funds`，每笔真实资金收付提供实际日期并按组件键分配；单一资金日期可直接复用，无需重复填写组件付款日期。
-完整字段通过 `finance_get_event_schema(component_type="labor_settlement")` 获取。
-
-缴纳劳务个税使用 `labor_tax_settlement` 组件，其来源必须是劳务个税开放项。
-可以与工资个税、其他税费或费用组件同笔结算，每个组件保留自己的来源验证。
-实际完成外部申报后，使用 `finance_confirm_labor_external_declaration` 追加申报日期、
-外部引用和证据；原劳务批次中的确认时状态保持不变。
-
-## 组合发放与资金结算
-
-工资和劳务各自保留计算批次、人员及扣缴来源，没有另建混合发放封装表。
-一笔事件可重复使用 `salary_settlement`、`labor_settlement`，并加入其他已有组件。
-
-- 工资组件显式提供逐险种、个税及实际扣款分配，不按比例推断。
-- 劳务组件逐人核对确认过的来源，保留全额结算等实际业务规则。
-- 每个资金项指定已登记账户、付款日、金额和组件分配，支持多个资金账户。
-- 提供银行流水引用时，必须来自受控导入，账户、日期、方向和金额完全匹配，且只匹配一次。
-- 同笔任一来源、金额或扣缴事实失败时，整个业务图不产生正式写入。
-
-## 不可变、更正与月结
-
-未关账业务通过 `finance_amend_event` 原子重算，保留原凭证编号与审计历史；无外部后续依赖的误记通过 `finance_delete_event` 整笔撤去。已关账业务使用 `finance_reverse_event` 生成关联冲正。更正遍历全部组件及扣缴分配；存在外部后续缴款时，先处理其依赖。同一事件内部的来源和核销一起撤销。
-
-单纯存在 `calculated` 试算草稿不阻止关账；已知应计业务、税额事实和账务完整性继续检查。月结建议清单列示未支付劳务应付、已扣未缴劳务个税和到期外部申报提示，外部办理进度不作为硬门禁。`gross_paid_without_withholding` 已经全额结清劳务应付，且没有虚构个税应付，因此不会被列成未结清账款或阻断待办；清单仍以 `completed_with_warning` 展示理论预扣税与实际零扣缴差异。个人年度汇算不属于本内核管理范围。
-
-劳务模块、毛额实付未扣税结算模式及 PostgreSQL 终态事件保护均已并入业务库空库基线
-`0001_business_baseline_v4`。该基线只建立结构和版本化税收政策，不迁移或写入任何业务数据。
+旧 `finance_record_event` 劳务组件、`finance_register_labor_service_person`、`finance_end_labor_service_person`、`finance_confirm_labor_external_declaration`、`finance_get_event_schema` 及 PostgreSQL `0001_business_baseline_v4` 是退役设计，不是当前命令或升级步骤。原税务边界和组合发放方案由 Git 历史保留，不能据其旧字段向当前内核提交请求。当前仍为 `ai-accounting-kernel/2` 开发合同，正式首版尚未冻结。

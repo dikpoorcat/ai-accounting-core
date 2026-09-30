@@ -1,0 +1,39 @@
+{
+  "source_manifest_sha256": "bbb18c584ee827224daade05fbb138d688b4249d35b850d3d02171dcff84da2b",
+  "gzip_mtime": 0,
+  "lossless_restore_checked": true,
+  "files": [
+    {
+      "source": ".tmp/stage9-r30-main12-rowid-two-stage-ab.json",
+      "archive": "stage9-r30-main12-rowid-two-stage-ab.json.gz",
+      "raw_bytes": 148397,
+      "raw_sha256": "2ae54c6c0bcdc79f7a913ef1c40fae1c5590a64bd793a345d7a7ac19e33b02fe",
+      "gzip_bytes": 23968,
+      "gzip_sha256": "41ab60f840a2400d9c71f4478d327ed38985533f070a605cb1697cd528e7b9d3"
+    },
+    {
+      "source": ".tmp/stage9-r30-main48-rowid-two-stage-ab.json",
+      "archive": "stage9-r30-main48-rowid-two-stage-ab.json.gz",
+      "raw_bytes": 148283,
+      "raw_sha256": "4141d76030ae39adc5bf8b80478b0520b330e548620421bc7876686a6e82d0e4",
+      "gzip_bytes": 25412,
+      "gzip_sha256": "9d95e23d7de334bb5303d01c0f895780bf8f10d1cefe2ac1ab9069aad26ef09b"
+    },
+    {
+      "source": ".tmp/stage9-r30-main12-rowid-two-stage-ab-r2.json",
+      "archive": "stage9-r30-main12-rowid-two-stage-ab-r2.json.gz",
+      "raw_bytes": 148370,
+      "raw_sha256": "427355892aab5a08cebaf09eef069a9af25a839e52ad9c80969e357a0613e22c",
+      "gzip_bytes": 23962,
+      "gzip_sha256": "c3a12a40e54d9962d8e649563c11e8096811fdd92bbbad5d68fe3042d6407104"
+    },
+    {
+      "source": ".tmp/stage9-r30-main48-rowid-two-stage-ab-r2.json",
+      "archive": "stage9-r30-main48-rowid-two-stage-ab-r2.json.gz",
+      "raw_bytes": 148280,
+      "raw_sha256": "deb83cb30ef0717e1ad39dac0a854e60ae48426808c1ce78a588d4a37ec15e23",
+      "gzip_bytes": 25436,
+      "gzip_sha256": "0c3faaa3ea633b7feaba37ba6457549b0d232598e82ec5bdd44c48f0cc808333"
+    }
+  ]
+}

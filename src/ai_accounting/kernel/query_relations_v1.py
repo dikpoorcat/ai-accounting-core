@@ -1,0 +1,715 @@
+"""Retained v1 read-only relation interpretation for frozen calculations."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from typing import Any
+
+SETTLEMENT_PAYMENT_KINDS = (
+    "payment", "cash_payment", "platform_payment", "payroll_reserve_payment"
+)
+_PAYMENT_FUNDS_ACCOUNTS = {
+    "payment": "1002",
+    "cash_payment": "1001",
+    "platform_payment": "1012",
+    "payroll_reserve_payment": "1002",
+}
+
+
+def payment_funds_account(kind: str) -> str:
+    return _PAYMENT_FUNDS_ACCOUNTS[kind]
+
+
+ACCEPTANCE_KINDS = {"reimbursement_acceptance"}
+SETTLEMENT_SOURCE_SLOTS = {
+    **{
+        kind: ("allocations", "settlements", "source_calculation")
+        for kind in SETTLEMENT_PAYMENT_KINDS
+    },
+    **{
+        kind: ("sources", "accepted_sources", "source_calculation_id")
+        for kind in {"employee_advance", *ACCEPTANCE_KINDS}
+    },
+}
+
+
+def _issue(field: str, message: str, **details) -> dict:
+    return {"field": field, "message": message, "semantics": "accounting", **details}
+
+
+def _outcome(calculation: Mapping[str, Any]) -> Mapping[str, Any]:
+    return calculation.get("outcome") or calculation.get("decoded") or {}
+
+
+def _values(calculation: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _outcome(calculation).get("values", {})
+
+
+def _lines(calculation: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
+    return _outcome(calculation).get("lines", ())
+
+
+def _fact(calculation: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = calculation.get("fact_data") or calculation.get("fact") or {}
+    return value.get("data", value) if isinstance(value, Mapping) else {}
+
+
+def _line_amount(line: Mapping[str, Any]) -> int:
+    return line.get("debit", 0) - line.get("credit", 0)
+
+
+def _business(calculation: Mapping[str, Any]) -> dict:
+    return {"kind": calculation.get("kind"), "subject_id": calculation.get("subject_id")}
+
+
+def _party(calculation: Mapping[str, Any], obligation: Mapping[str, Any]):
+    party = obligation.get("counterparty_id")
+    if isinstance(party, str) and party:
+        return ("party", party), party, "creditor"
+    if (
+        calculation.get("kind") in {"payroll", "payroll_bounded"}
+        and (obligation.get("name"), obligation.get("account"))
+        in {("employee_social", "224102"), ("employee_housing", "224103")}
+        and obligation.get("normal") == "credit"
+    ):
+        return ("statutory_payroll_obligation", obligation.get("key")), None, "statutory"
+    return None, None, "unresolved"
+
+
+def _obligation(calculation: Mapping[str, Any], item: Mapping[str, Any]) -> dict:
+    party_key, creditor_id, party_role = _party(calculation, item)
+    return {
+        **dict(item),
+        "source_business": _business(calculation),
+        "source_calculation_id": calculation.get("id"),
+        "source_fact_id": calculation.get("fact_id"),
+        "source_period": calculation.get("period"),
+        "source_result_digest": calculation.get("result_digest"),
+        "party_key": party_key,
+        "creditor_id": creditor_id,
+        "party_role": party_role,
+        "state": "resolved" if party_key is not None else "unresolved",
+    }
+
+
+def resolve_calculation_relations(
+    calculation: Mapping[str, Any],
+    *,
+    load_calculation: Callable[[str], Mapping[str, Any]],
+    load_parents: Callable[[str], Iterable[str]],
+    source_cache: dict | None = None,
+    collect_ancestry: bool = True,
+) -> dict:
+    """Resolve supported frozen calculations to stable obligations and exact source lines."""
+
+    issues: list[dict] = []
+    calculations: dict[str, Mapping[str, Any]] = {}
+    obligations: dict[str, dict] = {}
+    parents: dict[str, tuple[str, ...]] = {}
+
+    def loaded(ident: str) -> Mapping[str, Any] | None:
+        if ident not in calculations:
+            try:
+                record = calculation if ident == calculation.get("id") else load_calculation(ident)
+            except (KeyError, ValueError):
+                record = None
+            if record is None:
+                issues.append(
+                    _issue(
+                        "query_source.calculation_id",
+                        "冻结来源核算不存在或不可读取",
+                        calculation_id=ident,
+                    )
+                )
+                return None
+            calculations[ident] = record
+        return calculations[ident]
+
+    def parent_ids(ident: str) -> tuple[str, ...]:
+        if ident not in parents:
+            parents[ident] = tuple(load_parents(ident))
+        return parents[ident]
+
+    sources = {} if source_cache is None else source_cache
+
+    def source_records(record):
+        """Memoize obligation-bearing ancestry without recursion or graph copies."""
+        root_id = record.get("id")
+        if not isinstance(root_id, str):
+            return ()
+        stack, visiting = [(record, False)], set()
+        while stack:
+            current, expanded = stack.pop()
+            ident = current.get("id")
+            if not isinstance(ident, str) or ident in sources:
+                continue
+            if not expanded:
+                if ident in visiting:
+                    continue
+                visiting.add(ident)
+                stack.append((current, True))
+                for parent_id in reversed(parent_ids(ident)):
+                    parent = loaded(parent_id)
+                    if parent is not None and parent_id not in visiting:
+                        stack.append((parent, False))
+                continue
+            branches = [sources.get(parent_id, ()) for parent_id in parent_ids(ident)]
+            own = _values(current).get("obligations", ())
+            if not own and len(branches) == 1:
+                result = branches[0]
+            else:
+                combined = {}
+                for branch in branches:
+                    for source_id, items in branch:
+                        combined.setdefault(source_id, items)
+                if own:
+                    combined[ident] = tuple(_obligation(current, item) for item in own)
+                result = tuple(combined.items())
+            sources[ident] = result
+            visiting.discard(ident)
+        return sources.get(root_id, ())
+
+    def collect(record):
+        for ident, items in source_records(record):
+            for resolved in items:
+                item = resolved
+                key = item.get("key")
+                if not isinstance(key, str) or not key:
+                    issues.append(
+                        _issue(
+                            "report_source.obligations", "核算义务缺少稳定键", calculation_id=ident
+                        )
+                    )
+                    continue
+                previous = obligations.get(key)
+                if previous is not None and previous != resolved:
+                    issues.append(
+                        _issue(
+                            "report_source.obligations",
+                            "稳定义务键指向不一致的冻结来源",
+                            calculation_id=ident,
+                            obligation_key=key,
+                        )
+                    )
+                    continue
+                obligations[key] = resolved
+
+    loaded(str(calculation.get("id")))
+    if collect_ancestry:
+        collect(calculation)
+    line_relations: list[dict] = []
+    settlements: list[dict] = []
+    lines = _lines(calculation)
+    fact = _fact(calculation)
+    values = _values(calculation)
+    kind = calculation.get("kind")
+
+    def source_by_business(reference: Mapping[str, Any]):
+        matches = []
+        for parent_id in parent_ids(str(calculation.get("id"))):
+            candidate = loaded(parent_id)
+            if candidate is None:
+                continue
+            if candidate.get("kind") == reference.get("source_kind") and candidate.get(
+                "subject_id"
+            ) == reference.get("source_id"):
+                matches.append(candidate)
+        return matches[0] if len(matches) == 1 else None
+
+    def source_obligation(source, *, key=None, name=None, binding_id=None):
+        if source is None:
+            return None
+        source_values = _values(source)
+        if binding_id is not None:
+            binding = loaded(binding_id)
+            if (
+                binding is None
+                or binding.get("kind") != "opening_identity_binding"
+                or _values(binding).get("source_calculation_id") != source.get("id")
+                or _values(binding).get("superseded")
+                or binding_id not in parent_ids(str(calculation.get("id")))
+            ):
+                issues.append(
+                    _issue(
+                        "query_source.identity_binding",
+                        "清偿归属缺少精确的身份纠错采用依据",
+                        calculation_id=calculation.get("id"),
+                    )
+                )
+                return None
+            source_values = _values(binding)["basis_values"]
+        candidates = [
+            item
+            for item in source_values.get("obligations", ())
+            if (key is None or item.get("key") == key)
+            and (name is None or item.get("name") == name)
+        ]
+        if len(candidates) != 1:
+            return None
+        item = _obligation(source, candidates[0])
+        if binding_id is not None:
+            item["identity_binding_calculation_id"] = binding_id
+            obligations[item["key"]] = item
+        elif not collect_ancestry:
+            direct_key = item.get("key")
+            if not isinstance(direct_key, str) or not direct_key:
+                issues.append(
+                    _issue(
+                        "report_source.obligations",
+                        "核算义务缺少稳定键",
+                        calculation_id=source.get("id"),
+                    )
+                )
+            elif direct_key in obligations and obligations[direct_key] != item:
+                issues.append(
+                    _issue(
+                        "report_source.obligations",
+                        "稳定义务键指向不一致的冻结来源",
+                        calculation_id=source.get("id"),
+                        obligation_key=direct_key,
+                    )
+                )
+            else:
+                obligations[direct_key] = item
+        return item
+
+    def add_relation(line_no: int, role: str, amount: int, source, item, **extra):
+        line_relations.append(
+            {
+                "line_no": line_no,
+                "role": role,
+                "amount_fen": amount,
+                "party_key": item.get("party_key") if item else None,
+                "creditor_id": item.get("creditor_id") if item else None,
+                "recipient_id": extra.pop("recipient_id", None),
+                "obligation_key": item.get("key") if item else None,
+                "obligation_name": item.get("name") if item else None,
+                "source_business": (
+                    item.get("source_business")
+                    if item
+                    else (_business(source) if source is not None else None)
+                ),
+                "source_calculation_id": (
+                    item.get("source_calculation_id")
+                    if item
+                    else (source.get("id") if source is not None else None)
+                ),
+                "source_fact_id": (
+                    item.get("source_fact_id")
+                    if item
+                    else (source.get("fact_id") if source is not None else None)
+                ),
+                "state": "resolved" if item is not None else "unresolved",
+                **extra,
+            }
+        )
+
+    def validate_line(line_no: int, *, account: str, amount: int, field: str) -> bool:
+        valid = 0 < line_no <= len(lines)
+        line = lines[line_no - 1] if valid else {}
+        valid = valid and line.get("account") == account and _line_amount(line) == amount
+        if not valid:
+            issues.append(
+                _issue(
+                    field,
+                    "冻结清偿来源与对应凭证行不一致",
+                    calculation_id=calculation.get("id"),
+                    line_no=line_no,
+                )
+            )
+        return valid
+
+    if kind in SETTLEMENT_PAYMENT_KINDS:
+        allocations = fact.get("allocations", ())
+        frozen = values.get("settlements", ())
+        if len(allocations) != len(frozen):
+            issues.append(
+                _issue(
+                    "query_source.settlement",
+                    "冻结付款的分配与清偿来源数量不一致",
+                    calculation_id=calculation.get("id"),
+                )
+            )
+        outgoing = values.get("direction") == "outflow"
+        funds_account = payment_funds_account(kind)
+        if values.get("direction") not in {"inflow", "outflow"}:
+            issues.append(
+                _issue(
+                    "query_source.settlement",
+                    "冻结付款方向无效",
+                    calculation_id=calculation.get("id"),
+                )
+            )
+        for index, (allocation, frozen_item) in enumerate(zip(allocations, frozen, strict=False)):
+            pointer = frozen_item.get("source_calculation")
+            source = loaded(pointer) if isinstance(pointer, str) and pointer else None
+            item = source_obligation(
+                source,
+                key=frozen_item.get("obligation"),
+                binding_id=frozen_item.get("binding_calculation_id"),
+            )
+            amount = frozen_item.get("amount_fen")
+            recipient = (
+                allocation.get("recipient_id")
+                if fact.get("payment_method", "individual") == "bank_batch"
+                else fact.get("counterparty_id")
+            )
+            stable = (
+                source is not None
+                and item is not None
+                and source.get("kind") == allocation.get("source_kind")
+                and source.get("subject_id") == allocation.get("source_id")
+                and item.get("name") == allocation.get("obligation")
+                and item.get("normal") == ("credit" if outgoing else "debit")
+                and type(amount) is int
+                and amount > 0
+                and amount == allocation.get("amount_fen")
+            )
+            obligation_line = index * 2 + (1 if outgoing else 2)
+            funds_line = index * 2 + (2 if outgoing else 1)
+            if stable:
+                expected = amount if outgoing else -amount
+                stable = validate_line(
+                    obligation_line,
+                    account=item["account"],
+                    amount=expected,
+                    field="query_source.settlement",
+                ) and validate_line(
+                    funds_line,
+                    account=funds_account,
+                    amount=-expected,
+                    field="query_source.settlement",
+                )
+            if not stable:
+                issues.append(
+                    _issue(
+                        "query_source.settlement",
+                        "付款未能关联唯一的冻结义务、金额和行序",
+                        calculation_id=calculation.get("id"),
+                        allocation_index=index,
+                    )
+                )
+                item = None
+            add_relation(
+                obligation_line,
+                "settlement",
+                (amount if outgoing else -amount) if type(amount) is int else 0,
+                source,
+                item,
+                recipient_id=recipient,
+            )
+            add_relation(
+                funds_line,
+                "funds",
+                (-amount if outgoing else amount) if type(amount) is int else 0,
+                source,
+                item,
+                recipient_id=recipient,
+            )
+            settlements.append(
+                {
+                    "index": index,
+                    "mode": "payment",
+                    "settlement_business": _business(calculation),
+                    "settlement_calculation_id": calculation.get("id"),
+                    "settlement_fact_id": calculation.get("fact_id"),
+                    "source_business": _business(source) if source else None,
+                    "source_calculation_id": source.get("id") if source else pointer,
+                    "source_fact_id": source.get("fact_id") if source else None,
+                    "obligation_key": item.get("key") if item else frozen_item.get("obligation"),
+                    "obligation_name": item.get("name") if item else allocation.get("obligation"),
+                    "amount_fen": amount,
+                    "party_key": item.get("party_key") if item else None,
+                    "creditor_id": item.get("creditor_id") if item else None,
+                    "recipient_id": recipient,
+                    "line_numbers": [obligation_line, funds_line],
+                    "state": "resolved" if stable else "unresolved",
+                }
+            )
+        cursor = 2 * len(frozen)
+        for transfer in values.get("tax_transfers", ()):
+            vat = transfer.get("vat_fen")
+            if type(vat) is not int or vat < 0:
+                issues.append(
+                    _issue(
+                        "query_source.tax_transfer",
+                        "冻结转税金额无效",
+                        calculation_id=calculation.get("id"),
+                    )
+                )
+                continue
+            if not vat:
+                continue
+            pointer = transfer.get("source_calculation")
+            source = loaded(pointer) if isinstance(pointer, str) and pointer else None
+            for account, amount in (("222104", vat), ("222101", -vat)):
+                cursor += 1
+                valid = (
+                    source is not None
+                    and source.get("subject_id") == transfer.get("source_id")
+                    and validate_line(
+                        cursor,
+                        account=account,
+                        amount=amount,
+                        field="query_source.tax_transfer",
+                    )
+                )
+                add_relation(
+                    cursor,
+                    "tax_transfer",
+                    amount,
+                    source,
+                    None,
+                    state="resolved" if valid else "unresolved",
+                    tax_source_calculation_id=pointer,
+                )
+        if kind == "payroll_reserve_payment":
+            amount = values.get("reserve_expense_fen")
+            for account, signed in (
+                ("5602", amount),
+                (funds_account, -amount if type(amount) is int else amount),
+            ):
+                cursor += 1
+                valid = (
+                    type(amount) is int
+                    and amount > 0
+                    and validate_line(
+                        cursor,
+                        account=account,
+                        amount=signed,
+                        field="query_source.reserve_expense",
+                    )
+                )
+                add_relation(
+                    cursor,
+                    "reserve_expense",
+                    signed if type(signed) is int else 0,
+                    None,
+                    None,
+                    state="resolved" if valid else "unresolved",
+                )
+
+    elif kind == "settlement":
+        for reference in (fact.get("first"), fact.get("second")):
+            reference = reference or {}
+            source = source_by_business(reference)
+            item = source_obligation(source, name=reference.get("obligation"))
+            amount = reference.get("amount_fen")
+            line_no = 1 if item and item.get("normal") == "credit" else 2
+            expected = amount if line_no == 1 else -amount if type(amount) is int else amount
+            valid = (
+                item is not None
+                and type(amount) is int
+                and amount > 0
+                and validate_line(
+                    line_no,
+                    account=item["account"],
+                    amount=expected,
+                    field="query_source.settlement",
+                )
+            )
+            add_relation(
+                line_no,
+                "offset",
+                expected if type(expected) is int else 0,
+                source,
+                item if valid else None,
+            )
+            settlements.append(
+                {
+                    "index": len(settlements),
+                    "mode": "offset",
+                    "settlement_business": _business(calculation),
+                    "settlement_calculation_id": calculation.get("id"),
+                    "settlement_fact_id": calculation.get("fact_id"),
+                    "source_business": _business(source) if source else None,
+                    "source_calculation_id": source.get("id") if source else None,
+                    "source_fact_id": source.get("fact_id") if source else None,
+                    "obligation_key": item.get("key") if item else None,
+                    "obligation_name": reference.get("obligation"),
+                    "amount_fen": amount,
+                    "party_key": item.get("party_key") if valid else None,
+                    "creditor_id": item.get("creditor_id") if valid else None,
+                    "recipient_id": None,
+                    "line_numbers": [line_no],
+                    "state": "resolved" if valid else "unresolved",
+                }
+            )
+
+    elif kind in {"employee_advance", *ACCEPTANCE_KINDS}:
+        sources = fact.get("sources", ())
+        accepted = values.get("accepted_sources", ())
+        requires_frozen_acceptance = kind in ACCEPTANCE_KINDS
+        if requires_frozen_acceptance and len(sources) != len(accepted):
+            issues.append(
+                _issue(
+                    "query_source.accepted",
+                    "冻结承接来源与业务来源数量不一致",
+                    calculation_id=calculation.get("id"),
+                )
+            )
+        for index, reference in enumerate(sources):
+            frozen_item = accepted[index] if index < len(accepted) else {}
+            pointer = frozen_item.get("source_calculation_id")
+            source = (
+                loaded(pointer)
+                if pointer
+                else (None if requires_frozen_acceptance else source_by_business(reference))
+            )
+            item = source_obligation(
+                source,
+                key=frozen_item.get("obligation") if frozen_item else None,
+                name=None if frozen_item else reference.get("obligation"),
+            )
+            amount = frozen_item.get("amount_fen", reference.get("amount_fen"))
+            recipient = frozen_item.get("recipient_id", reference.get("recipient_id"))
+            frozen_source_fact_id = frozen_item.get("source_fact_id")
+            frozen_matches = not requires_frozen_acceptance or (
+                frozen_item.get("amount_fen") == reference.get("amount_fen")
+                and item is not None
+                and frozen_item.get("obligation") == item.get("key")
+                and reference.get("obligation") == item.get("name")
+                and (
+                    kind != "reimbursement_acceptance"
+                    or frozen_source_fact_id == source.get("fact_id")
+                )
+                and (
+                    frozen_source_fact_id is None or frozen_source_fact_id == source.get("fact_id")
+                )
+                and (
+                    frozen_item.get("recipient_id") is None
+                    or frozen_item.get("recipient_id") == reference.get("recipient_id")
+                )
+            )
+            valid = (
+                item is not None
+                and source.get("kind") == reference.get("source_kind")
+                and source.get("subject_id") == reference.get("source_id")
+                and item.get("normal") == "credit"
+                and frozen_matches
+                and type(amount) is int
+                and amount > 0
+                and validate_line(
+                    index + 1, account=item["account"], amount=amount, field="query_source.accepted"
+                )
+            )
+            if not valid:
+                issues.append(
+                    _issue(
+                        "query_source.accepted",
+                        "承接来源事实、冻结引用、原义务与凭证行不一致",
+                        calculation_id=calculation.get("id"),
+                        source_index=index,
+                    )
+                )
+            add_relation(
+                index + 1,
+                "advance" if kind == "employee_advance" else "accepted",
+                amount if type(amount) is int else 0,
+                source,
+                item if valid else None,
+                recipient_id=recipient,
+            )
+            settlements.append(
+                {
+                    "index": index,
+                    "mode": "advance" if kind == "employee_advance" else "accepted",
+                    "settlement_business": _business(calculation),
+                    "settlement_calculation_id": calculation.get("id"),
+                    "settlement_fact_id": calculation.get("fact_id"),
+                    "source_business": _business(source) if source else None,
+                    "source_calculation_id": source.get("id") if source else pointer,
+                    "source_fact_id": (
+                        frozen_item.get("source_fact_id")
+                        if "source_fact_id" in frozen_item
+                        else (source.get("fact_id") if source else None)
+                    ),
+                    "obligation_key": frozen_item.get("obligation")
+                    if frozen_item
+                    else (item.get("key") if item else None),
+                    "obligation_name": reference.get("obligation"),
+                    "amount_fen": amount,
+                    "party_key": item.get("party_key") if valid else None,
+                    "creditor_id": item.get("creditor_id") if valid else None,
+                    "recipient_id": recipient,
+                    "line_numbers": [index + 1],
+                    "state": "resolved" if valid else "unresolved",
+                }
+            )
+
+    elif kind == "overpayment":
+        reference = {
+            "source_kind": fact.get("source_kind"),
+            "source_id": fact.get("source_id"),
+            "obligation": fact.get("obligation_name"),
+        }
+        source = source_by_business(reference)
+        item = source_obligation(source, name=reference["obligation"])
+        amount = values.get("overpayment_fen")
+        valid = (
+            item is not None
+            and type(amount) is int
+            and amount > 0
+            and validate_line(
+                2, account=item["account"], amount=-amount, field="query_source.overpayment"
+            )
+        )
+        add_relation(
+            2,
+            "overpayment_source",
+            -amount if type(amount) is int else 0,
+            source,
+            item if valid else None,
+        )
+
+    # A calculation's own obligations can share one aggregate line.  Expand only
+    # when their stable amounts exactly conserve that line.
+    own = [_obligation(calculation, item) for item in values.get("obligations", ())]
+    own_party_accounts = {item.get("account") for item in own if item.get("party_key") is not None}
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for item in own:
+        if type(item.get("amount_fen")) is int and item["amount_fen"] > 0:
+            grouped[(item.get("account"), item.get("normal"))].append(item)
+    for (account, normal), items in grouped.items():
+        expected = sum(item["amount_fen"] for item in items) * (1 if normal == "debit" else -1)
+        candidates = [
+            number
+            for number, line in enumerate(lines, 1)
+            if line.get("account") == account and _line_amount(line) == expected
+        ]
+        if len(candidates) != 1:
+            continue
+        line_no = candidates[0]
+        existing = {
+            relation.get("obligation_key")
+            for relation in line_relations
+            if relation["line_no"] == line_no
+        }
+        for item in items:
+            if item["key"] not in existing:
+                add_relation(
+                    line_no,
+                    "created_obligation",
+                    item["amount_fen"] * (1 if normal == "debit" else -1),
+                    calculation,
+                    item,
+                )
+
+    candidates_by_account: dict[str, set[Hashable]] = defaultdict(set)
+    for item in obligations.values():
+        if item.get("party_key") is not None:
+            candidates_by_account[item["account"]].add(item["party_key"])
+    return {
+        "business": _business(calculation),
+        "calculation_id": calculation.get("id"),
+        "fact_id": calculation.get("fact_id"),
+        "obligations": list(obligations.values()),
+        "settlements": settlements,
+        "line_relations": line_relations,
+        "party_candidates_by_account": dict(candidates_by_account),
+        "own_party_accounts": own_party_accounts,
+        "issues": issues,
+    }
+
+

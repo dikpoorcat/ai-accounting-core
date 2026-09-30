@@ -23,6 +23,7 @@ from .asset_batch_models import (
 from .contracts import FactVersion, KernelError, NeedsInformation, Read
 from .domains.assets import AssetActivation, AssetConsumption
 from .engine import Engine
+from .stored_json import load_outcome
 from .types import YearMonth, canonical, digest, sum_fen
 
 
@@ -43,34 +44,93 @@ def frozen_members(connection, owner_calculation_id: str) -> list[dict]:
     return _checked_members(connection, owner_calculation_id, require_seals=True)
 
 
+def frozen_members_many(connection, owner_calculation_ids) -> dict[str, list[dict]]:
+    """Validate selected owners and their members in one bounded read batch."""
+    return _checked_members_many(connection, owner_calculation_ids, require_seals=True)
+
+
 def _checked_members(connection, owner_calculation_id, *, require_seals):
-    owner = connection.execute(
-        "SELECT * FROM calculation WHERE id=?", (owner_calculation_id,)
-    ).fetchone()
+    return _checked_members_many(
+        connection, (owner_calculation_id,), require_seals=require_seals
+    )[owner_calculation_id]
+
+
+def _checked_members_many(connection, owner_calculation_ids, *, require_seals):
+    owner_ids = tuple(dict.fromkeys(owner_calculation_ids))
+    if not owner_ids:
+        return {}
+    selected = json.dumps(owner_ids)
+    owners = {
+        row["id"]: row
+        for row in connection.execute(
+            "SELECT c.*, EXISTS(SELECT 1 FROM calculation_seal s "
+            "WHERE s.calculation_id=c.id) AS _sealed FROM calculation c "
+            "WHERE c.id IN (SELECT value FROM json_each(?))",
+            (selected,),
+        )
+    }
+    member_rows = {ident: [] for ident in owner_ids}
+    for row in connection.execute(
+        "SELECT m.*, "
+        "EXISTS(SELECT 1 FROM asset_batch_member other "
+        "JOIN calculation other_owner ON other_owner.id=other.owner_calculation_id "
+        "JOIN calculation owner ON owner.id=m.owner_calculation_id "
+        "WHERE other.member_calculation_id=m.member_calculation_id "
+        "AND other_owner.subject_id<>owner.subject_id) AS _foreign_owned, "
+        "EXISTS(SELECT 1 FROM dependency_calculation d "
+        "WHERE d.calculation_id=m.owner_calculation_id "
+        "AND d.upstream_id=m.member_calculation_id) AS _has_dependency "
+        "FROM asset_batch_member m "
+        "WHERE m.owner_calculation_id IN (SELECT value FROM json_each(?)) "
+        "ORDER BY m.owner_calculation_id,m.position",
+        (selected,),
+    ):
+        member_rows[row["owner_calculation_id"]].append(row)
+    member_ids = tuple(
+        dict.fromkeys(
+            row["member_calculation_id"]
+            for rows in member_rows.values()
+            for row in rows
+        )
+    )
+    calculated_rows = (
+        {
+            row["id"]: row
+            for row in connection.execute(
+                "SELECT c.*, EXISTS(SELECT 1 FROM calculation_seal s "
+                "WHERE s.calculation_id=c.id) AS _sealed FROM calculation c "
+                "WHERE c.id IN (SELECT value FROM json_each(?))",
+                (json.dumps(member_ids),),
+            )
+        }
+        if member_ids
+        else {}
+    )
+    return {
+        ident: _validate_members(
+            owners.get(ident), member_rows[ident], calculated_rows, require_seals
+        )
+        for ident in owner_ids
+    }
+
+
+def _validate_members(owner, member_rows, calculated_rows, require_seals):
     if owner is None or owner["kind"] not in OWNER_KINDS:
         raise KernelError("asset_batch_identity", "资产汇总计算不存在")
-    if (
-        require_seals
-        and not connection.execute(
-            "SELECT 1 FROM calculation_seal WHERE calculation_id=?", (owner_calculation_id,)
-        ).fetchone()
-    ):
+    if require_seals and not owner["_sealed"]:
         raise KernelError("asset_batch_unsealed", "资产汇总计算尚未封印")
-    outcome = json.loads(owner["outcome"])
+    outcome = load_outcome(owner["outcome"])
     if digest(outcome) != owner["digest"]:
         raise KernelError("asset_batch_digest", "资产汇总结果摘要不匹配")
     members, position, balances = [], 1, []
-    for row in connection.execute(
-        "SELECT * FROM asset_batch_member WHERE owner_calculation_id=? ORDER BY position",
-        (owner_calculation_id,),
-    ):
+    for row in member_rows:
         member = dict(row)
         member.pop("owner_calculation_id")
+        member.pop("_foreign_owned")
+        member.pop("_has_dependency")
         member["result_digest"] = member["result_digest"].hex()
         member["summary"] = json.loads(member["summary"])
-        calculated = connection.execute(
-            "SELECT * FROM calculation WHERE id=?", (member["member_calculation_id"],)
-        ).fetchone()
+        calculated = calculated_rows.get(member["member_calculation_id"])
         expected_kind = (
             "asset_activation" if owner["kind"] == "asset_activation_batch" else "asset_consumption"
         )
@@ -86,20 +146,11 @@ def _checked_members(connection, owner_calculation_id, *, require_seals):
             owner["period"],
         ):
             raise KernelError("asset_batch_identity", "资产汇总成员身份不匹配")
-        if (
-            require_seals
-            and not connection.execute(
-                "SELECT 1 FROM calculation_seal WHERE calculation_id=?", (calculated["id"],)
-            ).fetchone()
-        ):
+        if require_seals and not calculated["_sealed"]:
             raise KernelError("asset_batch_unsealed", "资产汇总成员尚未封印")
-        if connection.execute(
-            "SELECT 1 FROM asset_batch_member m JOIN calculation c ON c.id=m.owner_calculation_id "
-            "WHERE m.member_calculation_id=? AND c.subject_id<>? LIMIT 1",
-            (calculated["id"], owner["subject_id"]),
-        ).fetchone():
+        if row["_foreign_owned"]:
             raise KernelError("asset_member_owned", "同一成员计算不得被不同批次采用")
-        result = json.loads(calculated["outcome"])
+        result = load_outcome(calculated["outcome"])
         count = len(result["lines"])
         if (
             member["position"] != len(members) + 1
@@ -112,10 +163,7 @@ def _checked_members(connection, owner_calculation_id, *, require_seals):
             or outcome["lines"][position - 1 : position - 1 + count] != result["lines"]
         ):
             raise KernelError("asset_batch_digest", "资产汇总成员或分录范围不匹配")
-        if not connection.execute(
-            "SELECT 1 FROM dependency_calculation WHERE calculation_id=? AND upstream_id=?",
-            (owner_calculation_id, calculated["id"]),
-        ).fetchone():
+        if not row["_has_dependency"]:
             raise KernelError("asset_batch_identity", "资产汇总缺少精确成员依赖")
         member["kind"] = expected_kind
         members.append(member)
@@ -601,14 +649,14 @@ class AssetBatches:
                 ).fetchone()
                 previous[sid] = row["id"] if row else None
                 if row:
-                    outcomes[sid] = json.loads(row["outcome"])
+                    outcomes[sid] = load_outcome(row["outcome"])
             for values in selections.values():
                 for value in values:
                     if not isinstance(value, FactVersion) and value.subject_id not in outcomes:
                         row = connection.execute(
                             "SELECT outcome FROM calculation WHERE id=?", (value.id,)
                         ).fetchone()
-                        outcomes[value.subject_id] = json.loads(row[0])
+                        outcomes[value.subject_id] = load_outcome(row[0])
             book = AccountingBook(self.store.registry)
             book.facts.update((v.id, v) for v in facts.values())
             book.facts.update(
@@ -829,6 +877,9 @@ class AssetBatches:
                 from .discovery_indexes import sync_discovery_subjects
 
                 sync_discovery_subjects(connection, removed)
+            publication_highwater = connection.execute(
+                "SELECT coalesce(max(sequence), 0) FROM calculation_publication"
+            ).fetchone()[0]
             results = []
             for item in prepared:
                 if item.version.fact.kind in MEMBER_KINDS:
@@ -846,7 +897,9 @@ class AssetBatches:
                 else:
                     results.append(self.engine._publish(connection, item, posting_period))
             self.engine._sync_publication_projections(
-                connection, [item.version.subject_id for item in prepared]
+                connection,
+                [item.version.subject_id for item in prepared],
+                new_publication_after=publication_highwater,
             )
             verify_publication(self.engine, connection, [item.calculation_id for item in prepared])
             verify_projection_change(connection, projection_check)

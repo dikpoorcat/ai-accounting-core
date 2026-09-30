@@ -1,0 +1,26 @@
+[
+  {
+    "source": ".tmp\\stage9-r33-prime-selection-ids.py",
+    "archive": "stage9-r33-prime-selection-ids.py.gz",
+    "raw_sha256": "c691ef6d018dc11a8bf0aca93ada452af5a6a886d8c3eb40f82231831d5f908d",
+    "archive_sha256": "628537150e0728414ada6f0dd0ac35e474ef156ebe5c3e23e6c205f988b2efa1"
+  },
+  {
+    "source": ".tmp\\stage9-r33-main12-prime-selection-ids.json",
+    "archive": "stage9-r33-main12-prime-selection-ids.json.gz",
+    "raw_sha256": "c094692d2eda0558a87bff871a2a0d8ada4e9b5de470d24e46c6bee904215b52",
+    "archive_sha256": "6b4b219064abdcf684027ef41384a5e695e153de8354577f9d1f0062e434b812"
+  },
+  {
+    "source": ".tmp\\stage9-r33-main48-prime-selection-ids.json",
+    "archive": "stage9-r33-main48-prime-selection-ids.json.gz",
+    "raw_sha256": "7c2e662c70a1c9a3fed968c3fd411f1ac55b8fe6e4e67c38fa461ee6167f75cd",
+    "archive_sha256": "cdc6d81331ed14e79125566c2bd0bd392c0b19473d75eec48bb976a197506371"
+  },
+  {
+    "source": ".tmp\\stage9-r33-prime-selection-ids.md",
+    "archive": "stage9-r33-prime-selection-ids.md.gz",
+    "raw_sha256": "670fe3c04a33014707c09937459d26a46434f28cd6f03f6a8cbb10ed07893076",
+    "archive_sha256": "8f7ce9af3b19065de6b33770481a73b85e928e2841162178015a93fb72545e7e"
+  }
+]

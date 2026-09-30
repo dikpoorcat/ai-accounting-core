@@ -1,0 +1,14 @@
+[
+  {
+    "source": ".tmp\\stage9-readiness-prime-scope-r33.md",
+    "archive": "stage9-readiness-prime-scope-r33.md.gz",
+    "raw_sha256": "24bc39442faa895751b2dce4615dbae61bf6697242f3cfa6fc65df4b70ec02c1",
+    "archive_sha256": "bbff2dfeeffc068ac665807f565b0339c2c37180a9093a3cead266dd763e89dd"
+  },
+  {
+    "source": ".tmp\\stage9-asset-latest-read-scope-r34.md",
+    "archive": "stage9-asset-latest-read-scope-r34.md.gz",
+    "raw_sha256": "d607f30186ebbf457f77ab9970680db97213883761214c0431cec954e15a358e",
+    "archive_sha256": "310b8abeeeeabc9f59c0295d2405a1f71d07b81b1901d684f0eb468682957df3"
+  }
+]

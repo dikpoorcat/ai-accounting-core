@@ -1,0 +1,124 @@
+{
+  "status": "two_pure_browser_runs_over_target",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r32-release",
+  "source_sha256": "5c54c9cd4ef1909a2d07f0cb5998313ea988eef0d0e9f5943688827de5a06191",
+  "months": [
+    12,
+    48
+  ],
+  "sample_count_per_page": 30,
+  "slow_counts_by_month": {
+    "12": {
+      "brief": 5,
+      "funds": 0,
+      "employees": 0,
+      "assets": 0,
+      "reports": 0
+    },
+    "48": {
+      "brief": 30,
+      "funds": 0,
+      "employees": 0,
+      "assets": 2,
+      "reports": 30
+    }
+  },
+  "files": [
+    {
+      "source": ".tmp/stage9-release-main-12-browser-pure-r32.json",
+      "archive": "stage9-release-main-12-browser-pure-r32.json.gz",
+      "bytes": 9638,
+      "sha256": "a50ce4c6b5b6b2126bfb82de7cfb7e439241082b9782d4cd74df15d8e07c8548",
+      "gzip_bytes": 3190,
+      "gzip_sha256": "4066269016ad9e126c016f70e3bf3d95383442170c302b716106cc830af60f31"
+    },
+    {
+      "source": ".tmp/stage9-release-main-12-browser-pure-r32.log",
+      "archive": "stage9-release-main-12-browser-pure-r32.log.gz",
+      "bytes": 123,
+      "sha256": "9e25542d38f5c004a92777319f39e3d543c541d2defe8cbf5c2baa7ae865252a",
+      "gzip_bytes": 130,
+      "gzip_sha256": "72516144e269652d22e912f7816e3d052fee979d931fb6f940511099fbd2e8f1"
+    },
+    {
+      "source": ".tmp/stage9-release-main-12-browser-pure-r32-exit.json",
+      "archive": "stage9-release-main-12-browser-pure-r32-exit.json.gz",
+      "bytes": 141,
+      "sha256": "a735b10d6082e2f6169dacd905f11c5acf1de1d41847bfc4e27c690ec6b03f9c",
+      "gzip_bytes": 122,
+      "gzip_sha256": "993ee9b5beffd0fd078625f16ecbc5ad2294a093ae50fd0c0f40dc42b93aa381"
+    },
+    {
+      "source": ".tmp/stage9-release-main-48-browser-pure-r32.json",
+      "archive": "stage9-release-main-48-browser-pure-r32.json.gz",
+      "bytes": 9589,
+      "sha256": "d041776e442896f65f467b40b84ff3457179da24713dbfc998037968dc4b245d",
+      "gzip_bytes": 3182,
+      "gzip_sha256": "4a5b02f654f3ed7f61067b3199d41a17d36dd78ef1e21331c7d278b333bab631"
+    },
+    {
+      "source": ".tmp/stage9-release-main-48-browser-pure-r32.log",
+      "archive": "stage9-release-main-48-browser-pure-r32.log.gz",
+      "bytes": 123,
+      "sha256": "fd90e87372088f9df40ce62351774ebaa831f92ae1c2d5536edc1d7f269789ce",
+      "gzip_bytes": 131,
+      "gzip_sha256": "c7498f6ccc13ba576003c1e54476f9c54461afd2eae7432fcd2d6888032df46b"
+    },
+    {
+      "source": ".tmp/stage9-release-main-48-browser-pure-r32-exit.json",
+      "archive": "stage9-release-main-48-browser-pure-r32-exit.json.gz",
+      "bytes": 141,
+      "sha256": "744a744c2659a1ea5e3f66790449a9981384efce4a4eef2d8fd12a5451d7d5f3",
+      "gzip_bytes": 124,
+      "gzip_sha256": "7e6363fe025a1252668c087ff5ae680ed3967876c14d9b05a865368253e1c621"
+    },
+    {
+      "source": ".tmp/stage9-release-main-12-switch-verified-r32.json",
+      "archive": "stage9-release-main-12-switch-verified-r32.json.gz",
+      "bytes": 3892,
+      "sha256": "d4480897043875504df90cd3cc01b0a7cb045fc920d591923a7be167522151f8",
+      "gzip_bytes": 1445,
+      "gzip_sha256": "84cd9342f33cbbcb99f271be4426ebe87c4596bd4e3ca625754a0805923a99d9"
+    },
+    {
+      "source": ".tmp/stage9-r32-browser-window.json",
+      "archive": "stage9-r32-browser-window.json.gz",
+      "bytes": 550,
+      "sha256": "b3ee3ff300b6cc5a0140d6fe5bc4dceca426edd1ceac7506dccae371c7f913d2",
+      "gzip_bytes": 225,
+      "gzip_sha256": "27790a9364bebbe9c124567bf722b415c34a66588ddc3df3e836f14f6b50bad6"
+    },
+    {
+      "source": ".tmp/stage9-r32-browser-window.release",
+      "archive": "stage9-r32-browser-window.release.gz",
+      "bytes": 243,
+      "sha256": "8631327d9c2fb13e1461d5dfe08b5c30f973e25ac6cba5536169f7defa3f41dc",
+      "gzip_bytes": 174,
+      "gzip_sha256": "08c7b7095e85516bb1c80baa93d5023395200f0e4b55f75f84729e650fb5e59e"
+    },
+    {
+      "source": ".tmp/stage9-browser-window-r32.stdout.log",
+      "archive": "stage9-browser-window-r32.stdout.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-browser-window-r32.stderr.log",
+      "archive": "stage9-browser-window-r32.stderr.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-run-browser-window-r32.ps1",
+      "archive": "stage9-run-browser-window-r32.ps1.gz",
+      "bytes": 2655,
+      "sha256": "cd678bf3fe03987277365a8c653dc13997f9f572991fd892c61cdf771af385ce",
+      "gzip_bytes": 967,
+      "gzip_sha256": "c8b1f54b436588f5560b21e31651f22dfd742582ecffd84841ac89865fff37b5"
+    }
+  ]
+}

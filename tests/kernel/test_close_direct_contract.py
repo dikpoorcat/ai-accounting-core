@@ -34,7 +34,7 @@ from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import PositiveFen, canonical, digest
+from ai_accounting.kernel.types import PositiveFen, YearMonth, canonical, digest
 
 
 class PartyMovement(Fact):
@@ -83,11 +83,83 @@ def calculate_cash_spend(version, _context):
 
 
 def replace_manifest(engine, manifest):
+    from ai_accounting.kernel.close_review import reviewed_preview_digest
+
+    # This isolated damage case removes the sole state-only adoption while
+    # coherently resealing the private storage layers. Integrity must then
+    # reject the missing *logical* adoption, not stop at a stale storage SHA.
+    period = YearMonth(manifest["period"]).ordinal
+    with engine.store.connection(read_only=True) as connection:
+        block = connection.execute(
+            "SELECT bucket,part,content FROM close_storage_block "
+            "WHERE period=? AND field='adopted_results'", (period,)
+        ).fetchone()
+        assert len(json.loads(block["content"])) == 1
+        directory = json.loads(connection.execute(
+            "SELECT content FROM close_storage_directory "
+            "WHERE period=? AND field='adopted_results' AND bucket=?",
+            (period, block["bucket"]),
+        ).fetchone()[0])
+        subroot = json.loads(connection.execute(
+            "SELECT content FROM close_storage_subroot "
+            "WHERE period=? AND family='accounting'", (period,)
+        ).fetchone()[0])
+        root = json.loads(connection.execute(
+            "SELECT manifest FROM period_close WHERE period=?", (period,)
+        ).fetchone()[0])
+
+    def hashed(value):
+        return hashlib.sha256(canonical(value).encode("utf-8")).digest()
+
+    empty_digest = hashed([])
+    damage(
+        engine, "close_storage_block",
+        "UPDATE close_storage_block SET content=?,digest=? "
+        "WHERE period=? AND field='adopted_results' AND bucket=? AND part=?",
+        (canonical([]), empty_digest, period, block["bucket"], block["part"]),
+    )
+    directory[block["part"]][1:] = [empty_digest.hex(), 0]
+    directory_digest = hashed(directory)
+    damage(
+        engine, "close_storage_directory",
+        "UPDATE close_storage_directory SET content=?,digest=? "
+        "WHERE period=? AND field='adopted_results' AND bucket=?",
+        (canonical(directory), directory_digest, period, block["bucket"]),
+    )
+    for descriptor in subroot["directories"]["adopted_results"]:
+        if descriptor[0] == block["bucket"]:
+            descriptor[1:] = [directory_digest.hex(), 0]
+    from ai_accounting.kernel.key_membership_filter import build_keys_filter
+
+    subroot["subject_filter"] = build_keys_filter(
+        item["subject_id"] for item in manifest["adopted_results"]
+    )
+    subroot_digest = hashed(subroot)
+    damage(
+        engine, "close_storage_subroot",
+        "UPDATE close_storage_subroot SET content=?,digest=? "
+        "WHERE period=? AND family='accounting'",
+        (canonical(subroot), subroot_digest, period),
+    )
+    root["subroots"]["accounting"] = subroot_digest.hex()
+    root["logical_digest"] = digest(manifest).hex()
+    root["preview_digest"] = reviewed_preview_digest(manifest)
     damage(
         engine,
         "period_close",
         "UPDATE period_close SET manifest=?,digest=?",
-        (canonical(manifest), digest(manifest)),
+        (canonical(root), digest(manifest)),
+    )
+    damage(
+        engine, "close_storage_root",
+        "UPDATE close_storage_root SET storage_digest=? WHERE period=?",
+        (hashed(root), period),
+    )
+    damage(
+        engine, "read_index_source",
+        "UPDATE read_index_source SET source_digest=? "
+        "WHERE source_kind='close' AND source_id=?",
+        (digest(manifest), str(period)),
     )
 
 
@@ -475,9 +547,10 @@ def test_close_verification_batches_inventory_and_shared_evidence(engine, monkey
         connection.set_trace_callback(statements.append)
         assert verify_integrity(engine, connection, include_indexes=False)["status"] == "verified"
     inventory_reads = [sql for sql in statements if "FROM material_revision" in sql]
-    # Full owner-review verification rebuilds the frozen inventory summary in
-    # bounded batches; it must never regress to one query per category/month.
-    assert len(inventory_reads) <= 5
+    # Full owner-review verification rebuilds both months in bounded batches;
+    # the source-change journal also independently checks all inventory heads.
+    # Neither path may issue one query per category or inventory ID.
+    assert len(inventory_reads) <= 6, "\n".join(inventory_reads)
     assert len(evidence_hashes) == 1
 
 
@@ -567,9 +640,11 @@ def test_cumulative_dependencies_are_not_repeated_in_each_close(tmp_path):
     assert [len(item["adopted_results"]) for item in manifests] == [1, 1, 1]
     with engine.store.connection(read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM dependency_calculation").fetchone()[0] == 3
+        from ai_accounting.kernel.close_storage import decode_close
+
         roots = [
-            json.loads(row[0])["adopted_results"]
-            for row in connection.execute("SELECT manifest FROM period_close")
+            decode_close(connection, row)["adopted_results"]
+            for row in connection.execute("SELECT * FROM period_close")
         ]
         assert sum(map(len, roots)) == 3
     assert verify(engine)["status"] == "verified"

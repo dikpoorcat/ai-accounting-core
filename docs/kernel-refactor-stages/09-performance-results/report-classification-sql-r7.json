@@ -1,0 +1,488 @@
+{
+  "purpose": "in_memory_sql_comparison_not_product_verification",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r7",
+  "cases": [
+    {
+      "case": "pilot2",
+      "book_report": ".tmp/stage9-open-pilot-6-verified-r1.json",
+      "periods": [
+        {
+          "period": 24180,
+          "original_count": 412,
+          "baseline_ms": 2.5987999979406595,
+          "baseline_vm_rounded_100": 31000,
+          "same_after_index": true,
+          "baseline_after_index_ms": 2.5046998634934425,
+          "baseline_after_index_vm_rounded_100": 30900,
+          "split_ms": 2.8973999433219433,
+          "split_vm_rounded_100": 44700,
+          "split_count": 412
+        }
+      ],
+      "baseline_plan": [
+        [
+          3,
+          0,
+          0,
+          "MATERIALIZE candidate"
+        ],
+        [
+          11,
+          3,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=?)"
+        ],
+        [
+          15,
+          3,
+          62,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_2 (subject_id=?)"
+        ],
+        [
+          20,
+          3,
+          39,
+          "SEARCH c USING INDEX sqlite_autoindex_fact_report_classification_1 (revision_id=?)"
+        ],
+        [
+          30,
+          3,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          33,
+          30,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          42,
+          30,
+          0,
+          "CREATE BLOOM FILTER"
+        ],
+        [
+          64,
+          0,
+          81,
+          "SCAN candidate"
+        ],
+        [
+          66,
+          0,
+          50,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period<?)"
+        ],
+        [
+          88,
+          0,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          89,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "split_plan": [
+        [
+          3,
+          0,
+          0,
+          "MATERIALIZE candidate"
+        ],
+        [
+          6,
+          3,
+          0,
+          "MERGE (UNION)"
+        ],
+        [
+          8,
+          6,
+          0,
+          "LEFT"
+        ],
+        [
+          16,
+          8,
+          0,
+          "SCAN ids VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          21,
+          8,
+          37,
+          "SEARCH c USING COVERING INDEX stage9_probe_classification_voucher (voucher_version_id=?)"
+        ],
+        [
+          26,
+          8,
+          47,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)"
+        ],
+        [
+          31,
+          8,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ],
+        [
+          43,
+          8,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        [
+          53,
+          6,
+          0,
+          "RIGHT"
+        ],
+        [
+          59,
+          53,
+          62,
+          "SEARCH f USING INDEX fact_period (period=?)"
+        ],
+        [
+          66,
+          53,
+          36,
+          "SEARCH c USING COVERING INDEX sqlite_autoindex_fact_report_classification_1 (revision_id=?)"
+        ],
+        [
+          70,
+          53,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ],
+        [
+          81,
+          53,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        [
+          131,
+          0,
+          98,
+          "SCAN candidate"
+        ],
+        [
+          133,
+          0,
+          50,
+          "SEARCH r EXISTS USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period<?)"
+        ]
+      ],
+      "index_pages": 18669,
+      "pages_before_index": 18645,
+      "page_size": 4096
+    },
+    {
+      "case": "main12",
+      "book_report": ".tmp/stage9-body-main-12-verified-r1.json",
+      "periods": [
+        {
+          "period": 24180,
+          "original_count": 412,
+          "baseline_ms": 9.89570003002882,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 9.218299994245172,
+          "baseline_after_index_vm_rounded_100": 109000,
+          "split_ms": 3.929500002413988,
+          "split_vm_rounded_100": 44700,
+          "split_count": 412
+        },
+        {
+          "period": 24181,
+          "original_count": 411,
+          "baseline_ms": 9.174400009214878,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.8943000882864,
+          "baseline_after_index_vm_rounded_100": 109000,
+          "split_ms": 3.540600184351206,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24182,
+          "original_count": 411,
+          "baseline_ms": 9.196499828249216,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.869400015100837,
+          "baseline_after_index_vm_rounded_100": 109000,
+          "split_ms": 3.398400032892823,
+          "split_vm_rounded_100": 44200,
+          "split_count": 411
+        },
+        {
+          "period": 24183,
+          "original_count": 411,
+          "baseline_ms": 9.388299891725183,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 9.044700069352984,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.8528000004589558,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24184,
+          "original_count": 411,
+          "baseline_ms": 9.180000051856041,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.92990012653172,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.5369000397622585,
+          "split_vm_rounded_100": 44200,
+          "split_count": 411
+        },
+        {
+          "period": 24185,
+          "original_count": 411,
+          "baseline_ms": 9.120000060647726,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.986300090327859,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.5222999285906553,
+          "split_vm_rounded_100": 44200,
+          "split_count": 411
+        },
+        {
+          "period": 24186,
+          "original_count": 411,
+          "baseline_ms": 9.10089979879558,
+          "baseline_vm_rounded_100": 109100,
+          "same_after_index": true,
+          "baseline_after_index_ms": 9.121500188484788,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.7377001717686653,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24187,
+          "original_count": 411,
+          "baseline_ms": 10.411999886855483,
+          "baseline_vm_rounded_100": 109000,
+          "same_after_index": true,
+          "baseline_after_index_ms": 9.357600007206202,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.9401999674737453,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24188,
+          "original_count": 411,
+          "baseline_ms": 9.235600009560585,
+          "baseline_vm_rounded_100": 109000,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.688499918207526,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.4320999402552843,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24189,
+          "original_count": 411,
+          "baseline_ms": 8.919100044295192,
+          "baseline_vm_rounded_100": 109000,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.831999963149428,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.3807000145316124,
+          "split_vm_rounded_100": 44100,
+          "split_count": 411
+        },
+        {
+          "period": 24190,
+          "original_count": 411,
+          "baseline_ms": 8.91060009598732,
+          "baseline_vm_rounded_100": 109000,
+          "same_after_index": true,
+          "baseline_after_index_ms": 8.801199961453676,
+          "baseline_after_index_vm_rounded_100": 109100,
+          "split_ms": 3.4250998869538307,
+          "split_vm_rounded_100": 44200,
+          "split_count": 411
+        }
+      ],
+      "baseline_plan": [
+        [
+          3,
+          0,
+          0,
+          "MATERIALIZE candidate"
+        ],
+        [
+          11,
+          3,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=?)"
+        ],
+        [
+          15,
+          3,
+          62,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_2 (subject_id=?)"
+        ],
+        [
+          20,
+          3,
+          42,
+          "SEARCH c USING INDEX sqlite_autoindex_fact_report_classification_1 (revision_id=?)"
+        ],
+        [
+          30,
+          3,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          33,
+          30,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          42,
+          30,
+          0,
+          "CREATE BLOOM FILTER"
+        ],
+        [
+          64,
+          0,
+          81,
+          "SCAN candidate"
+        ],
+        [
+          66,
+          0,
+          50,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period<?)"
+        ],
+        [
+          88,
+          0,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          89,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "split_plan": [
+        [
+          3,
+          0,
+          0,
+          "MATERIALIZE candidate"
+        ],
+        [
+          6,
+          3,
+          0,
+          "MERGE (UNION)"
+        ],
+        [
+          8,
+          6,
+          0,
+          "LEFT"
+        ],
+        [
+          16,
+          8,
+          0,
+          "SCAN ids VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          21,
+          8,
+          39,
+          "SEARCH c USING COVERING INDEX stage9_probe_classification_voucher (voucher_version_id=?)"
+        ],
+        [
+          26,
+          8,
+          47,
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)"
+        ],
+        [
+          31,
+          8,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ],
+        [
+          43,
+          8,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        [
+          53,
+          6,
+          0,
+          "RIGHT"
+        ],
+        [
+          59,
+          53,
+          62,
+          "SEARCH f USING INDEX fact_period (period=?)"
+        ],
+        [
+          66,
+          53,
+          39,
+          "SEARCH c USING COVERING INDEX sqlite_autoindex_fact_report_classification_1 (revision_id=?)"
+        ],
+        [
+          70,
+          53,
+          56,
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ],
+        [
+          81,
+          53,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        [
+          131,
+          0,
+          98,
+          "SCAN candidate"
+        ],
+        [
+          133,
+          0,
+          50,
+          "SEARCH r EXISTS USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period<?)"
+        ]
+      ],
+      "index_pages": 142875,
+      "pages_before_index": 142739,
+      "page_size": 4096
+    }
+  ]
+}

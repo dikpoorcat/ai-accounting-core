@@ -1,0 +1,111 @@
+{
+  "left_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r23-release",
+  "right_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r24-release",
+  "left_book_report_status": "measuring",
+  "right_book_report_status": "measuring",
+  "period": "2019-12",
+  "pages": {
+    "assets": {
+      "left_sha256": "80caacc62aa5fface95e5442bc53da120b0f4ad51e586dc9adce69f38d59898a",
+      "right_sha256": "617a5d604796c01e681d4e110d254cce1c913222cd418342e1fd9c61327c70b9",
+      "difference_count": 1,
+      "by_top_level": {
+        "read_context": 1
+      },
+      "differences": [
+        {
+          "path": "read_context.read_version",
+          "left": "ecc59bc9ce71f56b79a0c41eba053d4b1fa4951eef9a968cf8a90b6ef16de579",
+          "right": "080052d59242d05e2d3747e90821d897ee3b795da6cc8308fd02338156b4a45d"
+        }
+      ]
+    },
+    "brief": {
+      "left_sha256": "d1b85bb5366ad288c3e592d79d05a721d151bb0112667e43e2921c3308b8f9c4",
+      "right_sha256": "85930b869ec78813964d70130886510f85a1c936e409123fc8fdcbf98c39d1c5",
+      "difference_count": 2,
+      "by_top_level": {
+        "data": 1,
+        "read_context": 1
+      },
+      "differences": [
+        {
+          "path": "data.generated_at",
+          "left": "2026-09-27T14:39:16.636760+00:00",
+          "right": "2026-09-27T15:15:50.131674+00:00"
+        },
+        {
+          "path": "read_context.read_version",
+          "left": "ecc59bc9ce71f56b79a0c41eba053d4b1fa4951eef9a968cf8a90b6ef16de579",
+          "right": "080052d59242d05e2d3747e90821d897ee3b795da6cc8308fd02338156b4a45d"
+        }
+      ]
+    },
+    "context": {
+      "left_sha256": "805835c0454fa9325dec876bced1e39145ae658435e3dce1e6b5dba35a11022f",
+      "right_sha256": "1d78c14388f89016bbde80a232501618a425547c7c6fe03bff8955cc65910117",
+      "difference_count": 1,
+      "by_top_level": {
+        "generated_at": 1
+      },
+      "differences": [
+        {
+          "path": "generated_at",
+          "left": "2026-09-27T14:39:10.048140+00:00",
+          "right": "2026-09-27T15:15:47.351629+00:00"
+        }
+      ]
+    },
+    "employees": {
+      "left_sha256": "9aeda898d35e40764acb3e77f4c3b88602ee80511698d002b57a6adb5dbca1ee",
+      "right_sha256": "2ee04d8d3f589f5eae042917ab6679da41b256c764d6bb5f4d8c300691e2798b",
+      "difference_count": 1,
+      "by_top_level": {
+        "read_context": 1
+      },
+      "differences": [
+        {
+          "path": "read_context.read_version",
+          "left": "ecc59bc9ce71f56b79a0c41eba053d4b1fa4951eef9a968cf8a90b6ef16de579",
+          "right": "080052d59242d05e2d3747e90821d897ee3b795da6cc8308fd02338156b4a45d"
+        }
+      ]
+    },
+    "funds": {
+      "left_sha256": "dfcca6c59a0be63e930c4ce4fbe2ee1a0b63228250d151dcc22b2bc2d8c2feca",
+      "right_sha256": "da1302ae7aa1a2bb78f5e10df4c793ca53b7f6e440f028e2cc562a0777555229",
+      "difference_count": 1,
+      "by_top_level": {
+        "read_context": 1
+      },
+      "differences": [
+        {
+          "path": "read_context.read_version",
+          "left": "ecc59bc9ce71f56b79a0c41eba053d4b1fa4951eef9a968cf8a90b6ef16de579",
+          "right": "080052d59242d05e2d3747e90821d897ee3b795da6cc8308fd02338156b4a45d"
+        }
+      ]
+    },
+    "reports": {
+      "left_sha256": "dc78db85e2c9ffc391e66b55322c3824f195619dd340fd0e570aff49bf578783",
+      "right_sha256": "4a3ea9d65a11b28ee4df0a78914dc5bf260391c4fb35c32f03b436cb3133eb5b",
+      "difference_count": 2,
+      "by_top_level": {
+        "checked_at": 1,
+        "read_context": 1
+      },
+      "differences": [
+        {
+          "path": "checked_at",
+          "left": "2026-09-27T14:39:32.528536+00:00",
+          "right": "2026-09-27T15:15:58.954618+00:00"
+        },
+        {
+          "path": "read_context.read_version",
+          "left": "ecc59bc9ce71f56b79a0c41eba053d4b1fa4951eef9a968cf8a90b6ef16de579",
+          "right": "080052d59242d05e2d3747e90821d897ee3b795da6cc8308fd02338156b4a45d"
+        }
+      ]
+    }
+  }
+}

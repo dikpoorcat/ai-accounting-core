@@ -1,0 +1,930 @@
+--- r37/src/ai_accounting/kernel/close_storage.py
++++ r38/src/ai_accounting/kernel/close_storage.py
+@@ -124,6 +124,27 @@
+         ):
+             _invalid(header.period, "storage_accounting_authority_scope_mismatch")
+         return self.publications[header.period], self.vouchers[header.period]
++
++
++@dataclass(frozen=True)
++class _AccountingBucketSelection:
++    """One filter result bound to the same connection, root, and subject set."""
++
++    connection: object
++    period: int
++    storage_digest: bytes
++    subjects: frozenset[str]
++    buckets: frozenset[int]
++
++    def for_close(self, connection, header, subjects):
++        if (
++            self.connection is not connection
++            or self.period != header.period
++            or self.storage_digest != header.storage_digest
++            or self.subjects != subjects
++        ):
++            _invalid(header.period, "storage_accounting_bucket_scope_mismatch")
++        return self.buckets
+ 
+ 
+ def _invalid(period, reason):
+@@ -408,28 +429,41 @@
+     return logical_digest
+ 
+ 
+-def verified_header(connection, row, *, require_marker=True) -> CloseHeader:
++def verified_header(connection, row, *, require_marker=True, _stored=None) -> CloseHeader:
+     """Verify root SHA, logical digest, marker, and actual company identity."""
+     from .change_journal import CONTRACT as SOURCE_CHANGE_CONTRACT
+ 
+     period = row["period"]
+-    storage = connection.execute(
+-        "SELECT storage_digest FROM close_storage_root WHERE period=?", (period,)
+-    ).fetchone()
++    storage = (
++        connection.execute(
++            "SELECT storage_digest FROM close_storage_root WHERE period=?", (period,)
++        ).fetchone()
++        if _stored is None
++        else _stored[0]
++    )
+     if storage is None or _sha(row["manifest"]) != bytes(storage[0]):
+         _invalid(period, "storage_root_digest_mismatch")
+     if require_marker:
+-        marker = connection.execute(
+-            "SELECT source_digest FROM read_index_source WHERE source_kind='close' AND source_id=?",
+-            (str(period),),
+-        ).fetchone()
++        marker = (
++            connection.execute(
++                "SELECT source_digest FROM read_index_source "
++                "WHERE source_kind='close' AND source_id=?",
++                (str(period),),
++            ).fetchone()
++            if _stored is None
++            else _stored[1]
++        )
+         if marker is None or bytes(marker[0]) != bytes(row["digest"]):
+             _invalid(period, "source_digest_or_marker_mismatch")
+     try:
+         root = json.loads(row["manifest"])
+-        identity = connection.execute(
+-            "SELECT company_id,database_id FROM identity WHERE id=1"
+-        ).fetchone()
++        identity = (
++            connection.execute(
++                "SELECT company_id,database_id FROM identity WHERE id=1"
++            ).fetchone()
++            if _stored is None
++            else _stored[2]
++        )
+         if (
+             not isinstance(root, dict)
+             or set(root)
+@@ -483,17 +517,64 @@
+     return CloseHeader(period, bytes(row["digest"]), bytes(storage[0]), root)
+ 
+ 
++def verified_headers(connection, rows, *, require_marker=True) -> tuple[CloseHeader, ...]:
++    """Verify exact close roots in one read view, preserving input order."""
++    rows = tuple(rows)
++    if not rows:
++        return ()
++    periods = [row["period"] for row in rows]
++    if len(set(periods)) != len(periods):
++        _invalid(periods[0], "storage_header_period_duplicate")
++    roots = {
++        row["period"]: row
++        for row in connection.execute(
++            "SELECT r.storage_digest,r.period FROM json_each(?) requested "
++            "CROSS JOIN close_storage_root r ON r.period=requested.value",
++            (canonical(periods),),
++        )
++    }
++    markers = (
++        {
++            int(row["source_id"]): row
++            for row in connection.execute(
++                "SELECT m.source_digest,m.source_id FROM json_each(?) requested "
++                "CROSS JOIN read_index_source m ON m.source_kind='close' "
++                "AND m.source_id=CAST(requested.value AS TEXT)",
++                (canonical(periods),),
++            )
++        }
++        if require_marker
++        else {}
++    )
++    identity = connection.execute(
++        "SELECT company_id,database_id FROM identity WHERE id=1"
++    ).fetchone()
++    return tuple(
++        verified_header(
++            connection,
++            row,
++            require_marker=require_marker,
++            _stored=(roots.get(row["period"]), markers.get(row["period"]), identity),
++        )
++        for row in rows
++    )
++
++
+ def derived_root(header: CloseHeader, name: str) -> bytes | None:
+     """Return a named, committed private projection root from a verified header."""
+     value = header.root["derived_roots"].get(name)
+     return bytes.fromhex(value) if value is not None else None
+ 
+ 
+-def _family(connection, header: CloseHeader, family: str):
+-    row = connection.execute(
+-        "SELECT content,digest FROM close_storage_subroot WHERE period=? AND family=?",
+-        (header.period, family),
+-    ).fetchone()
++def _family(connection, header: CloseHeader, family: str, *, _stored=None):
++    row = (
++        connection.execute(
++            "SELECT content,digest FROM close_storage_subroot WHERE period=? AND family=?",
++            (header.period, family),
++        ).fetchone()
++        if _stored is None
++        else _stored[0]
++    )
+     expected = header.root["subroots"].get(family)
+     if (
+         row is None
+@@ -622,6 +703,57 @@
+     }
+ 
+ 
++def _subroot_rows_many(connection, periods, family):
++    if not periods:
++        return {}
++    return {
++        row["period"]: row
++        for row in connection.execute(
++            "SELECT s.period,s.content,s.digest FROM json_each(?) requested "
++            "CROSS JOIN close_storage_subroot s ON s.period=requested.value "
++            "AND s.family=?",
++            (canonical(periods), family),
++        )
++    }
++
++
++def _read_stored_bucket_chunks(connection, keys, consume):
++    """Visit exact raw buckets in groups of at most 64, releasing each group."""
++    keys = tuple(dict.fromkeys(keys))
++    for start in range(0, len(keys), 64):
++        chunk = keys[start : start + 64]
++        encoded = canonical(chunk)
++        directories = {
++            (row["period"], row["field"], row["bucket"]): row
++            for row in connection.execute(
++                "SELECT d.period,d.field,d.bucket,d.content,d.digest "
++                "FROM json_each(?) requested CROSS JOIN close_storage_directory d "
++                "ON d.period=json_extract(requested.value,'$[0]') "
++                "AND d.field=json_extract(requested.value,'$[1]') "
++                "AND d.bucket=json_extract(requested.value,'$[2]')",
++                (encoded,),
++            )
++        }
++        blocks = defaultdict(dict)
++        for row in connection.execute(
++            "SELECT b.period,b.field,b.bucket,b.part,b.content,b.digest "
++            "FROM json_each(?) requested CROSS JOIN close_storage_block b "
++            "ON b.period=json_extract(requested.value,'$[0]') "
++            "AND b.field=json_extract(requested.value,'$[1]') "
++            "AND b.bucket=json_extract(requested.value,'$[2]')",
++            (encoded,),
++        ):
++            blocks[row["period"], row["field"], row["bucket"]][row["part"]] = row
++        stored = {
++            key: (directories.get(key), blocks.get(key, {}))
++            for key in chunk
++        }
++        consume(stored)
++        stored.clear()
++        directories.clear()
++        blocks.clear()
++
++
+ def _prime_buckets(connection, header, subroot, field, buckets, parts):
+     prefix = (header.period, header.storage_digest, "bucket", field)
+     missing = [bucket for bucket in buckets if (*prefix, bucket) not in parts]
+@@ -645,8 +777,12 @@
+     return [value for _, value in sorted(values)]
+ 
+ 
+-def _management_subroot(connection, header, *, _subroots=None):
+-    subroot = _family_once(connection, header, "management", _subroots)
++def _management_subroot(connection, header, *, _subroots=None, _stored=None):
++    subroot = (
++        _family(connection, header, "management", _stored=_stored)
++        if _stored is not None
++        else _family_once(connection, header, "management", _subroots)
++    )
+     if not isinstance(subroot, dict) or set(subroot) != {"directories"}:
+         _invalid(header.period, "storage_management_contract_invalid")
+     directories = subroot["directories"]
+@@ -671,10 +807,10 @@
+     return subroot
+ 
+ 
+-def _management_value(connection, header, subroot, name):
++def _management_value(connection, header, subroot, name, *, _stored=None):
+     if name not in subroot["directories"]:
+         _invalid(header.period, "storage_management_section_missing")
+-    entries = _bucket_rows(connection, header, subroot, name, 0)
++    entries = _bucket_rows(connection, header, subroot, name, 0, _stored=_stored)
+     if len(entries) != 1 or entries[0][0] != 0:
+         _invalid(header.period, "storage_management_section_invalid")
+     return entries[0][1]
+@@ -689,6 +825,42 @@
+     if section not in subroot["directories"]:
+         return {}
+     return _management_value(connection, header, subroot, section)
++
++
++def read_readiness_checks_many(connection, headers, name: str) -> tuple[dict, ...]:
++    """Read one named management section for each already verified close."""
++    if type(name) is not str or not name:
++        raise ValueError("readiness checker name must be nonempty")
++    headers = tuple(headers)
++    if not headers:
++        return ()
++    periods = [header.period for header in headers]
++    if len(set(periods)) != len(periods):
++        _invalid(periods[0], "storage_header_period_duplicate")
++    stored = _subroot_rows_many(connection, periods, "management")
++    subroots = {
++        header.period: _management_subroot(
++            connection, header, _stored=(stored.get(header.period),)
++        )
++        for header in headers
++    }
++    section = "readiness:" + name
++    wanted = [
++        (header.period, section, 0)
++        for header in headers
++        if section in subroots[header.period]["directories"]
++    ]
++    results = {header.period: {} for header in headers}
++    by_period = {header.period: header for header in headers}
++    def consume(chunk):
++        for (period, _, _), raw in chunk.items():
++            header = by_period[period]
++            results[period] = _management_value(
++                connection, header, subroots[period], section, _stored=raw
++            )
++
++    _read_stored_bucket_chunks(connection, wanted, consume)
++    return tuple(results[header.period] for header in headers)
+ 
+ 
+ def _may_contain_with_positions(value, key, positions_cache):
+@@ -707,6 +879,7 @@
+ def read_accounting(
+     connection, header: CloseHeader, subjects, *, _verified_parts=None, _positions_cache=None,
+     _authority: _AccountingAuthorityBatch | None = None,
++    _prepared_buckets: _AccountingBucketSelection | None = None,
+ ) -> CloseAccountingSlice:
+     """Read only committed subject buckets; publication rows decide existence."""
+     subjects = frozenset(subjects)
+@@ -731,18 +904,21 @@
+         parts[filter_key] = _accounting_subject_filter(subroot, header.period)
+     subject_filter = parts[filter_key]
+     adopted, vouchers = [], []
+-    try:
+-        subject_buckets = {
+-            _bucket(subject)
+-            for subject in subjects
+-            if (
+-                may_contain(subject_filter, subject)
+-                if positions is None
+-                else _may_contain_with_positions(subject_filter, subject, positions)
+-            )
+-        }
+-    except ValueError:
+-        _invalid(header.period, "storage_accounting_filter_invalid")
++    if _prepared_buckets is not None:
++        subject_buckets = _prepared_buckets.for_close(connection, header, subjects)
++    else:
++        try:
++            subject_buckets = {
++                _bucket(subject)
++                for subject in subjects
++                if (
++                    may_contain(subject_filter, subject)
++                    if positions is None
++                    else _may_contain_with_positions(subject_filter, subject, positions)
++                )
++            }
++        except ValueError:
++            _invalid(header.period, "storage_accounting_filter_invalid")
+     for field in ("adopted_results", "vouchers"):
+         _prime_buckets(connection, header, subroot, field, subject_buckets, parts)
+     for bucket in sorted(subject_buckets):
+@@ -892,10 +1068,70 @@
+         ChainMap(new_positions, _positions_cache)
+         if _positions_cache is not None else new_positions
+     )
++    missing_families = [
++        header.period
++        for header in headers
++        if (header.period, header.storage_digest, "family", "accounting") not in parts
++    ]
++    stored_families = _subroot_rows_many(connection, missing_families, "accounting")
++    wanted = {}
++    selections = {}
++    for header in headers:
++        prefix = (header.period, header.storage_digest)
++        family_key = (*prefix, "family", "accounting")
++        if family_key not in parts:
++            parts[family_key] = _family(
++                connection, header, "accounting",
++                _stored=(stored_families.get(header.period),),
++            )
++        subroot = parts[family_key]
++        filter_key = (*prefix, "accounting_subject_filter")
++        if filter_key not in parts:
++            parts[filter_key] = _accounting_subject_filter(subroot, header.period)
++        subject_filter = parts[filter_key]
++        try:
++            subject_buckets = {
++                _bucket(subject)
++                for subject in subjects
++                if (
++                    may_contain(subject_filter, subject)
++                    if _positions_cache is None
++                    else _may_contain_with_positions(subject_filter, subject, positions)
++                )
++            }
++        except ValueError:
++            _invalid(header.period, "storage_accounting_filter_invalid")
++        selections[header.period] = _AccountingBucketSelection(
++            connection, header.period, header.storage_digest, subjects,
++            frozenset(subject_buckets),
++        )
++        for field in ACCOUNTING_FIELDS:
++            present = {entry[0] for entry in subroot["directories"][field]}
++            for bucket in sorted(subject_buckets):
++                part_key = (*prefix, "bucket", field, bucket)
++                if part_key in parts:
++                    continue
++                if bucket not in present:
++                    parts[part_key] = {}
++                else:
++                    wanted[header.period, field, bucket] = (header, subroot, part_key)
++    def consume(chunk):
++        for key, raw in chunk.items():
++            header, subroot, part_key = wanted[key]
++            values = _bucket_rows(
++                connection, header, subroot, key[1], key[2], _stored=raw
++            )
++            by_position = dict(values)
++            if len(by_position) != len(values):
++                _invalid(header.period, "storage_reference_position_missing")
++            parts[part_key] = by_position
++
++    _read_stored_bucket_chunks(connection, wanted, consume)
+     result = tuple(
+         read_accounting(
+             connection, header, subjects, _verified_parts=parts,
+             _positions_cache=positions, _authority=authority,
++            _prepared_buckets=selections[header.period],
+         )
+         for header in headers
+     )
+--- r37/src/ai_accounting/kernel/query_reads.py
++++ r38/src/ai_accounting/kernel/query_reads.py
+@@ -1294,6 +1294,28 @@
+             self._close_headers[period] = header
+         return header
+ 
++    def _staged_close_headers(self, rows, reader):
++        """Read exact missing headers without publishing a partial group."""
++        from . import close_storage
++
++        headers, missing = {}, {}
++        for row in rows:
++            period = row["period"]
++            if self._snapshot_active and period in self._close_headers:
++                headers[period] = self._close_headers[period]
++            else:
++                missing.setdefault(period, row)
++        if missing:
++            verified = (
++                reader.verified_headers(self.connection, tuple(missing.values()))
++                if reader is close_storage
++                else tuple(
++                    reader.verified_header(self.connection, row) for row in missing.values()
++                )
++            )
++            headers.update(zip(missing, verified, strict=True))
++        return headers
++
+     def close_accounting(self, row, *, subjects):
+         from . import close_storage
+         from .content_history_context import close_reader
+@@ -1341,16 +1363,8 @@
+         staged = {}
+         staged_headers = {}
+         if pending:
+-            headers = []
+-            for key, row in pending.items():
+-                period = key[0]
+-                header = (
+-                    self._close_headers[period]
+-                    if self._snapshot_active and period in self._close_headers
+-                    else reader.verified_header(self.connection, row)
+-                )
+-                staged_headers[period] = header
+-                headers.append(header)
++            staged_headers = self._staged_close_headers(pending.values(), reader)
++            headers = [staged_headers[key[0]] for key in pending]
+             results = reader.read_accounting_many(
+                 self.connection, headers, subjects,
+                 _verified_parts=(
+@@ -1408,6 +1422,41 @@
+         if self._snapshot_active:
+             self._close_sections[key] = result
+         return result
++
++    def close_readiness_checks(self, rows, name):
++        """Read one named checker for an exact group, retaining each month's proof."""
++        from . import close_storage
++        from .content_history_context import close_reader
++
++        rows = tuple(rows)
++        if not rows:
++            return ()
++        if type(name) is not str or not name:
++            raise ValueError("readiness checker name must be nonempty")
++        reader = close_reader()
++        pending = {}
++        for row in rows:
++            key = (row["period"], "readiness:" + name)
++            if not self._snapshot_active or key not in self._close_sections:
++                pending.setdefault(key, row)
++        staged, headers = {}, {}
++        if pending:
++            headers = self._staged_close_headers(pending.values(), reader)
++            selected = tuple(headers[key[0]] for key in pending)
++            results = (
++                reader.read_readiness_checks_many(self.connection, selected, name)
++                if reader is close_storage
++                else tuple(
++                    reader.read_readiness_check(self.connection, header, name)
++                    for header in selected
++                )
++            )
++            staged.update(zip(pending, results, strict=True))
++        if self._snapshot_active:
++            self._close_headers.update(headers)
++            self._close_sections.update(staged)
++        values = self._close_sections if self._snapshot_active else staged
++        return tuple(values[row["period"], "readiness:" + name] for row in rows)
+ 
+     def authoritative_close_rows(self, *, periods, through_period=None):
+         """Read exact publication periods without trusting reverse directory discovery.
+--- r37/src/ai_accounting/kernel/reports.py
++++ r38/src/ai_accounting/kernel/reports.py
+@@ -359,21 +359,33 @@
+ 
+     from .content_history_context import close_reader
+ 
+-    selected = (
++    selected = tuple(
+         closes
+         if closes is not None
+         else connection.execute(
+             "SELECT * FROM period_close WHERE period<=? ORDER BY period", (end.ordinal,)
+         ).fetchall()
+     )
++    if reads is None:
++        from . import close_storage
++
++        reader = close_reader()
++        if reader is close_storage:
++            headers = reader.verified_headers(connection, selected, require_marker=True)
++            financials = reader.read_readiness_checks_many(connection, headers, "financial_reports")
++        else:
++            financials = tuple(
++                reader.read_readiness_check(
++                    connection,
++                    reader.verified_header(connection, close, require_marker=True),
++                    "financial_reports",
++                )
++                for close in selected
++            )
++    else:
++        financials = reads.close_readiness_checks(selected, "financial_reports")
+     sources = []
+-    for close in selected:
+-        if reads is None:
+-            reader = close_reader()
+-            header = reader.verified_header(connection, close, require_marker=True)
+-            financial = reader.read_readiness_check(connection, header, "financial_reports")
+-        else:
+-            financial = reads.close_readiness_check(close, "financial_reports")
++    for close, financial in zip(selected, financials, strict=True):
+         fact_ids = financial.get("facts", []) if isinstance(financial, dict) else None
+         if not isinstance(fact_ids, list) or any(
+             type(ident) is not str or not ident for ident in fact_ids
+--- r37/tests/kernel/test_close_management_sections.py
++++ r38/tests/kernel/test_close_management_sections.py
+@@ -2,6 +2,7 @@
+ 
+ import hashlib
+ import json
++from contextlib import nullcontext
+ 
+ import pytest
+ from schema_fixture import TEST_FAMILY, full_contract, write_contract
+@@ -10,10 +11,12 @@
+ from test_integrity_content import damage
+ from test_reports import book as book_fixture
+ from test_reports import scenario
++from test_t7_quarter_coverage import insert_closes, save_profile
+ 
+ from ai_accounting.kernel import close_storage, close_storage_v1, content_v1, service
+ from ai_accounting.kernel.backup import create_portable, verify_portable
+ from ai_accounting.kernel.catalog import catalog_sql
++from ai_accounting.kernel.content_history_context import historical_content
+ from ai_accounting.kernel.contracts import KernelError
+ from ai_accounting.kernel.integrity import verify_integrity
+ from ai_accounting.kernel.query_reads import QueryReads
+@@ -30,6 +33,22 @@
+     scenario(book)
+     book[3]("2026-01")
+     return book[0], YearMonth("2026-01").ordinal
++
++
++def _three_report_closes(book):
++    first = save_profile(book, "batch-first", "2026-01", "2026-01")
++    second = save_profile(book, "batch-second", "2026-02", "2026-02")
++    insert_closes(
++        book[0],
++        [("2026-01", [first]), ("2026-02", [second]), ("2026-03", [])],
++    )
++    return book[0]
++
++
++def _close_rows(reads):
++    return reads.connection.execute(
++        "SELECT * FROM period_close ORDER BY period"
++    ).fetchall()
+ 
+ 
+ def test_released_v1_portable_backup_replays_nonempty_history_position(
+@@ -266,6 +285,99 @@
+         )
+ 
+ 
++def test_batch_readiness_checks_match_serial_and_keep_requested_order(book):
++    engine = _three_report_closes(book)
++    with QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        expected = tuple(
++            reads.close_readiness_check(row, "financial_reports") for row in rows
++        )
++    with QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        requested = (rows[2], rows[0], rows[1], rows[0])
++        actual = reads.close_readiness_checks(requested, "financial_reports")
++        assert isinstance(actual, tuple)
++        assert actual == (expected[2], expected[0], expected[1], expected[0])
++        assert actual[1] is actual[3]
++        assert reads.close_readiness_check(rows[0], "financial_reports") is actual[1]
++
++
++def test_batch_readiness_checks_reuse_existing_snapshot_result(book, monkeypatch):
++    engine = _three_report_closes(book)
++    with QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        first = reads.close_readiness_check(rows[0], "financial_reports")
++        batches = []
++        original = close_storage.read_readiness_checks_many
++
++        def counted(connection, headers, name, **options):
++            batches.append(tuple(header.period for header in headers))
++            return original(connection, headers, name, **options)
++
++        monkeypatch.setattr(close_storage, "read_readiness_checks_many", counted)
++        actual = reads.close_readiness_checks(
++            (rows[0], rows[1], rows[1], rows[0]), "financial_reports"
++        )
++        assert actual[0] is actual[3] is first
++        assert actual[1] is actual[2]
++        assert batches == [(rows[1]["period"],)]
++        assert reads.close_readiness_checks((rows[1], rows[0]), "financial_reports") == (
++            actual[1], first
++        )
++        assert batches == [(rows[1]["period"],)]
++
++
++@pytest.mark.parametrize("v1", [False, True])
++def test_batch_readiness_failure_does_not_publish_new_snapshot_cache(book, v1):
++    engine = _three_report_closes(book)
++    last = YearMonth("2026-03").ordinal
++    damage(
++        engine,
++        "close_storage_block",
++        "UPDATE close_storage_block SET content='{}' "
++        "WHERE period=? AND field='readiness:financial_reports'",
++        (last,),
++    )
++    history = historical_content(1) if v1 else nullcontext()
++    with history, QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        first = reads.close_readiness_check(rows[0], "financial_reports")
++        headers_before = dict(reads._close_headers)
++        sections_before = dict(reads._close_sections)
++        with pytest.raises(KernelError):
++            reads.close_readiness_checks(rows, "financial_reports")
++        assert reads._close_headers == headers_before
++        assert reads._close_sections == sections_before
++        assert reads.close_readiness_check(rows[0], "financial_reports") is first
++        assert (rows[1]["period"], "readiness:financial_reports") not in reads._close_sections
++        assert rows[1]["period"] not in reads._close_headers
++
++
++def test_batch_readiness_checks_use_independent_v1_reader(book, monkeypatch):
++    engine = _three_report_closes(book)
++    seen = []
++    original = close_storage_v1.read_readiness_check
++
++    def counted(connection, header, name):
++        seen.append(header.period)
++        return original(connection, header, name)
++
++    monkeypatch.setattr(close_storage_v1, "read_readiness_check", counted)
++    with historical_content(1), QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        expected = tuple(
++            reads.close_readiness_check(row, "financial_reports") for row in rows
++        )
++    seen.clear()
++    with historical_content(1), QueryReads.snapshot(engine) as reads:
++        rows = _close_rows(reads)
++        actual = reads.close_readiness_checks(
++            (rows[2], rows[0], rows[1], rows[0]), "financial_reports"
++        )
++    assert actual == (expected[2], expected[0], expected[1], expected[0])
++    assert seen == [row["period"] for row in (rows[2], rows[0], rows[1])]
++
++
+ def test_full_close_decode_reads_each_authenticated_family_and_adoption_once(book, monkeypatch):
+     engine, period = _close_report_book(book)
+     with engine.store.connection(read_only=True) as connection:
+@@ -389,5 +501,8 @@
+     close_custom(custom_engine)
+     with QueryReads.snapshot(custom_engine) as reads:
+         row = reads.authoritative_close_rows(periods=[YearMonth("2026-01").ordinal])[0]
+-        assert reads.close_readiness_check(row, "financial_reports") == {}
++        absent = reads.close_readiness_checks((row, row), "financial_reports")
++        assert absent == ({}, {})
++        assert absent[0] is absent[1]
++        assert reads.close_readiness_check(row, "financial_reports") is absent[0]
+         assert "financial_reports" not in reads.close_section(row, "readiness")
+--- r37/tests/kernel/test_close_storage_batch_io.py
++++ r38/tests/kernel/test_close_storage_batch_io.py
+@@ -0,0 +1,213 @@
++"""Exact close I/O batches retain the single-close content checks."""
++
++import hashlib
++import sqlite3
++
++import pytest
++from test_close_accounting_filter import _close_empty_months, _closed_charge
++from test_engine import engine as engine_fixture
++from test_integrity_content import damage
++
++from ai_accounting.kernel import close_storage
++from ai_accounting.kernel.contracts import KernelError
++
++engine = engine_fixture
++
++
++def _rows(connection):
++    return connection.execute("SELECT * FROM period_close ORDER BY period").fetchall()
++
++
++def test_batched_headers_and_named_readiness_keep_order_and_exact_content(engine):
++    _closed_charge(engine)
++    _close_empty_months(engine, ("2026-02",))
++    with engine.store.connection(read_only=True) as connection:
++        rows = list(reversed(_rows(connection)))
++        headers = close_storage.verified_headers(connection, rows)
++        assert [header.period for header in headers] == [row["period"] for row in rows]
++        assert headers == tuple(close_storage.verified_header(connection, row) for row in rows)
++        assert close_storage.read_readiness_checks_many(
++            connection, headers, "financial_reports"
++        ) == tuple(
++            close_storage.read_readiness_check(connection, header, "financial_reports")
++            for header in headers
++        )
++        assert close_storage.read_readiness_checks_many(
++            connection, headers, "missing_checker"
++        ) == ({}, {})
++
++
++def test_accounting_batch_uses_exact_buckets_and_original_slice_comparisons(engine):
++    _closed_charge(engine)
++    _close_empty_months(engine, ("2026-02", "2026-03"))
++    with engine.store.connection(read_only=True) as connection:
++        rows = _rows(connection)
++        headers = close_storage.verified_headers(connection, rows)
++        serial = tuple(
++            close_storage.read_accounting(connection, header, {"included", "unrelated"})
++            for header in headers
++        )
++        statements = []
++        connection.set_trace_callback(statements.append)
++        try:
++            staged = {}
++            batch = close_storage.read_accounting_many(
++                connection, headers, {"included", "unrelated"},
++                _verified_parts=staged,
++            )
++        finally:
++            connection.set_trace_callback(None)
++        assert batch == serial
++        assert [len(item.adopted_results) for item in batch] == [1, 0, 0]
++        assert sum("CROSS JOIN close_storage_directory d" in sql for sql in statements) <= 2
++        assert sum("CROSS JOIN close_storage_block b" in sql for sql in statements) <= 2
++        assert all(key[0] in {row["period"] for row in rows} for key in staged)
++
++
++@pytest.mark.parametrize("broken", ["root_missing", "marker_missing", "root_digest"])
++def test_batched_headers_reject_missing_or_damaged_root(engine, broken):
++    first = _closed_charge(engine)
++    _close_empty_months(engine, ("2026-02",))
++    if broken == "root_missing":
++        damage(engine, "close_storage_root", "DELETE FROM close_storage_root WHERE period=?",
++               (first,), foreign_keys=False)
++    elif broken == "marker_missing":
++        damage(engine, "read_index_source",
++               "DELETE FROM read_index_source WHERE source_kind='close' AND source_id=?",
++               (str(first),), foreign_keys=False)
++    else:
++        damage(engine, "close_storage_root",
++               "UPDATE close_storage_root SET storage_digest=? WHERE period=?",
++               (bytes(32), first))
++    with engine.store.connection(read_only=True) as connection:
++        with pytest.raises(KernelError):
++            close_storage.verified_headers(connection, _rows(connection))
++
++
++@pytest.mark.parametrize(
++    "broken", ["family_missing", "family_digest", "directory_missing",
++               "directory_digest", "block_missing", "block_digest", "block_extra"]
++)
++def test_batched_accounting_rejects_damaged_exact_bucket_without_cache(engine, broken):
++    first = _closed_charge(engine)
++    _close_empty_months(engine, ("2026-02",))
++    if broken == "family_missing":
++        damage(engine, "close_storage_subroot",
++               "DELETE FROM close_storage_subroot WHERE period=? AND family='accounting'",
++               (first,), foreign_keys=False)
++    elif broken == "family_digest":
++        damage(engine, "close_storage_subroot",
++               "UPDATE close_storage_subroot SET digest=? "
++               "WHERE period=? AND family='accounting'", (bytes(32), first))
++    elif broken == "directory_missing":
++        damage(engine, "close_storage_directory",
++               "DELETE FROM close_storage_directory "
++               "WHERE period=? AND field='adopted_results'", (first,))
++    elif broken == "directory_digest":
++        damage(engine, "close_storage_directory",
++               "UPDATE close_storage_directory SET digest=? "
++               "WHERE period=? AND field='adopted_results'", (bytes(32), first))
++    elif broken == "block_missing":
++        damage(engine, "close_storage_block",
++               "DELETE FROM close_storage_block "
++               "WHERE period=? AND field='adopted_results'", (first,))
++    elif broken == "block_digest":
++        damage(engine, "close_storage_block",
++               "UPDATE close_storage_block SET digest=? "
++               "WHERE period=? AND field='adopted_results'", (bytes(32), first))
++    else:
++        damage(engine, "close_storage_block",
++               "INSERT INTO close_storage_block(period,field,bucket,part,content,digest) "
++               "SELECT period,field,bucket,part+10,content,digest FROM close_storage_block "
++               "WHERE period=? AND field='adopted_results'", (first,))
++    with engine.store.connection(read_only=True) as connection:
++        headers = close_storage.verified_headers(connection, _rows(connection))
++        staged = {}
++        with pytest.raises(KernelError):
++            close_storage.read_accounting_many(
++                connection, headers, {"included"}, _verified_parts=staged
++            )
++        assert staged == {}
++
++
++def test_raw_batch_is_capped_at_64_exact_buckets():
++    connection = sqlite3.connect(":memory:")
++    connection.row_factory = sqlite3.Row
++    connection.executescript(
++        "CREATE TABLE close_storage_directory(period INTEGER,field TEXT,bucket INTEGER,"
++        "content TEXT,digest BLOB,PRIMARY KEY(period,field,bucket));"
++        "CREATE TABLE close_storage_block(period INTEGER,field TEXT,bucket INTEGER,"
++        "part INTEGER,content TEXT,digest BLOB,PRIMARY KEY(period,field,bucket,part));"
++    )
++    checksum = hashlib.sha256(b"[]").digest()
++    keys = [(month, "adopted_results", 0) for month in range(130)]
++    connection.executemany(
++        "INSERT INTO close_storage_directory VALUES(?,?,?,?,?)",
++        [(month, field, bucket, "[]", checksum) for month, field, bucket in keys],
++    )
++    connection.executemany(
++        "INSERT INTO close_storage_block VALUES(?,?,?,?,?,?)",
++        [(month, field, bucket, 0, "[]", checksum) for month, field, bucket in keys],
++    )
++
++    def probe():
++        steps = [0]
++        chunks = []
++        returned = []
++
++        def progressed():
++            steps[0] += 1
++            return 0
++
++        def consume(chunk):
++            chunks.append(tuple(chunk))
++            for key, (directory, blocks) in chunk.items():
++                returned.append((
++                    key,
++                    None if directory is None else (
++                        directory["content"], bytes(directory["digest"])
++                    ),
++                    tuple(
++                        (part, row["content"], bytes(row["digest"]))
++                        for part, row in sorted(blocks.items())
++                    ),
++                ))
++
++        connection.set_progress_handler(progressed, 1)
++        try:
++            close_storage._read_stored_bucket_chunks(connection, keys, consume)
++        finally:
++            connection.set_progress_handler(None, 0)
++        rows = sum((item[1] is not None) + len(item[2]) for item in returned)
++        value_bytes = sum(
++            (len(item[1][0].encode()) + len(item[1][1]) if item[1] else 0)
++            + sum(len(body.encode()) + len(digest) for _, body, digest in item[2])
++            for item in returned
++        )
++        return steps[0], chunks, returned, rows, value_bytes
++
++    baseline = probe()
++    unrelated = [
++        (500 + index, "vouchers" if index % 2 else "adopted_results",
++         1 if index % 2 else 2, "[]", checksum)
++        for index in range(5000)
++    ]
++    connection.executemany(
++        "INSERT INTO close_storage_directory VALUES(?,?,?,?,?)", unrelated
++    )
++    connection.executemany(
++        "INSERT INTO close_storage_block VALUES(?,?,?,?,?,?)",
++        [(period, field, bucket, 0, content, digest)
++         for period, field, bucket, content, digest in unrelated],
++    )
++    try:
++        noisy = probe()
++    finally:
++        connection.close()
++    assert baseline[1] == noisy[1]
++    assert list(map(len, noisy[1])) == [64, 64, 2]
++    assert set().union(*(set(chunk) for chunk in noisy[1])) == set(keys)
++    assert noisy[2:] == baseline[2:]
++    assert noisy[3] == 260
++    assert noisy[4] == 260 * (2 + len(checksum))
++    assert noisy[0] <= baseline[0] * 1.25 + 1000
+--- r37/tests/kernel/test_t7_quarter_coverage.py
++++ r38/tests/kernel/test_t7_quarter_coverage.py
+@@ -169,17 +169,18 @@
+         connection.execute("BEGIN")
+         expected = {key: legacy_coverage(reports, connection, *key) for key in quarters}
+     verified = []
+-    original = QueryReads.close_readiness_check
+-
+-    def verify(reads, row, name):
++    original = QueryReads.close_readiness_checks
++
++    def verify(reads, rows, name):
++        rows = tuple(rows)
+         if name == "financial_reports":
+-            verified.append(row["period"])
+-        return original(reads, row, name)
++            verified.extend(row["period"] for row in rows)
++        return original(reads, rows, name)
+ 
+     def no_statements(*args, **kwargs):
+         raise AssertionError("quarter coverage must not build financial statements")
+ 
+-    monkeypatch.setattr(QueryReads, "close_readiness_check", verify)
++    monkeypatch.setattr(QueryReads, "close_readiness_checks", verify)
+     monkeypatch.setattr(reports, "_report", no_statements)
+     actual = reports.closed_period_coverages(quarters)
+     assert actual == expected

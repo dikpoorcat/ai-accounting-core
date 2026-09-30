@@ -63,6 +63,14 @@ def rewrite_manifest(source: Path, target: Path, change) -> None:
         archive.writestr(backup.DATABASE_MEMBER, content[backup.DATABASE_MEMBER])
 
 
+def select_opposite_schema_status(manifest) -> None:
+    current = manifest["database_format"]
+    current.update(
+        status="released" if current["status"] == "draft" else "draft",
+        version=1 if current["status"] == "draft" else 0,
+    )
+
+
 def test_manifest_v2_has_exact_format_identity_and_size(portable: Path) -> None:
     content = entries(portable)
     manifest = json.loads(content[backup.MANIFEST_MEMBER])
@@ -95,7 +103,7 @@ def test_manifest_v2_has_exact_format_identity_and_size(portable: Path) -> None:
             "backup_schema_unsupported",
         ),
         (
-            lambda value: value["database_format"].update(status="released", version=1),
+            select_opposite_schema_status,
             "backup_schema_unsupported",
         ),
         (lambda value: value["identity"].pop("database_id"), "backup_manifest_invalid"),

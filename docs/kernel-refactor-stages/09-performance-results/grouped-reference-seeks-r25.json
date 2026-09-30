@@ -1,0 +1,791 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r25-final-release",
+  "status": "private_diagnostic",
+  "calls": [
+    {
+      "label": "actual_asset_page",
+      "pairs": 47,
+      "periods": 47,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 521100,
+          "cpu_ns": 31250000,
+          "rows": 47
+        },
+        {
+          "version": "candidate",
+          "vm": 3100,
+          "cpu_ns": 0,
+          "rows": 47
+        },
+        {
+          "version": "candidate",
+          "vm": 3200,
+          "cpu_ns": 0,
+          "rows": 47
+        },
+        {
+          "version": "original",
+          "vm": 521200,
+          "cpu_ns": 31250000,
+          "rows": 47
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "actual_asset_page",
+      "pairs": 47,
+      "periods": 47,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 521200,
+          "cpu_ns": 15625000,
+          "rows": 47
+        },
+        {
+          "version": "candidate",
+          "vm": 3200,
+          "cpu_ns": 0,
+          "rows": 47
+        },
+        {
+          "version": "candidate",
+          "vm": 3200,
+          "cpu_ns": 0,
+          "rows": 47
+        },
+        {
+          "version": "original",
+          "vm": 521200,
+          "cpu_ns": 31250000,
+          "rows": 47
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "actual_asset_page",
+      "pairs": 93,
+      "periods": 47,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 522500,
+          "cpu_ns": 31250000,
+          "rows": 93
+        },
+        {
+          "version": "candidate",
+          "vm": 6200,
+          "cpu_ns": 15625000,
+          "rows": 93
+        },
+        {
+          "version": "candidate",
+          "vm": 6100,
+          "cpu_ns": 0,
+          "rows": 93
+        },
+        {
+          "version": "original",
+          "vm": 522400,
+          "cpu_ns": 31250000,
+          "rows": 93
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "dense_1",
+      "pairs": 1,
+      "periods": 1,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 11100,
+          "cpu_ns": 0,
+          "rows": 1
+        },
+        {
+          "version": "candidate",
+          "vm": 200,
+          "cpu_ns": 0,
+          "rows": 1
+        },
+        {
+          "version": "candidate",
+          "vm": 200,
+          "cpu_ns": 0,
+          "rows": 1
+        },
+        {
+          "version": "original",
+          "vm": 11100,
+          "cpu_ns": 0,
+          "rows": 1
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "dense_100",
+      "pairs": 100,
+      "periods": 1,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 13800,
+          "cpu_ns": 0,
+          "rows": 100
+        },
+        {
+          "version": "candidate",
+          "vm": 6600,
+          "cpu_ns": 0,
+          "rows": 100
+        },
+        {
+          "version": "candidate",
+          "vm": 6600,
+          "cpu_ns": 0,
+          "rows": 100
+        },
+        {
+          "version": "original",
+          "vm": 13800,
+          "cpu_ns": 0,
+          "rows": 100
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "dense_500",
+      "pairs": 500,
+      "periods": 1,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 24600,
+          "cpu_ns": 0,
+          "rows": 500
+        },
+        {
+          "version": "candidate",
+          "vm": 32200,
+          "cpu_ns": 15625000,
+          "rows": 500
+        },
+        {
+          "version": "candidate",
+          "vm": 32200,
+          "cpu_ns": 0,
+          "rows": 500
+        },
+        {
+          "version": "original",
+          "vm": 24600,
+          "cpu_ns": 0,
+          "rows": 500
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    },
+    {
+      "label": "dense_1000",
+      "pairs": 1000,
+      "periods": 1,
+      "equal": true,
+      "measurements": [
+        {
+          "version": "original",
+          "vm": 38100,
+          "cpu_ns": 0,
+          "rows": 1000
+        },
+        {
+          "version": "candidate",
+          "vm": 64200,
+          "cpu_ns": 15625000,
+          "rows": 1000
+        },
+        {
+          "version": "candidate",
+          "vm": 64200,
+          "cpu_ns": 0,
+          "rows": 1000
+        },
+        {
+          "version": "original",
+          "vm": 38100,
+          "cpu_ns": 15625000,
+          "rows": 1000
+        }
+      ],
+      "plan": [
+        [
+          2,
+          0,
+          0,
+          "CO-ROUTINE types"
+        ],
+        [
+          5,
+          2,
+          0,
+          "SETUP"
+        ],
+        [
+          8,
+          5,
+          212,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup"
+        ],
+        [
+          26,
+          2,
+          0,
+          "RECURSIVE STEP"
+        ],
+        [
+          27,
+          26,
+          216,
+          "SCAN types"
+        ],
+        [
+          31,
+          26,
+          0,
+          "CORRELATED SCALAR SUBQUERY 2"
+        ],
+        [
+          36,
+          31,
+          192,
+          "SEARCH close_reference USING COVERING INDEX close_reference_lookup (reference_type>?)"
+        ],
+        [
+          58,
+          0,
+          0,
+          "MATERIALIZE wanted"
+        ],
+        [
+          62,
+          58,
+          0,
+          "SCAN json_each VIRTUAL TABLE INDEX 1:"
+        ],
+        [
+          78,
+          58,
+          0,
+          "USE TEMP B-TREE FOR DISTINCT"
+        ],
+        [
+          83,
+          0,
+          215,
+          "SCAN types"
+        ],
+        [
+          88,
+          0,
+          32,
+          "SCAN wanted"
+        ],
+        [
+          90,
+          0,
+          60,
+          "SEARCH r USING INDEX close_reference_lookup (reference_type=? AND reference_id=? AND close_period=?)"
+        ]
+      ]
+    }
+  ],
+  "note": "ABBA VM/CPU with concurrent builders; not browser timing. No DDL/data/source changes."
+}

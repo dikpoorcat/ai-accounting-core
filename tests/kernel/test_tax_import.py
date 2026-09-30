@@ -9,8 +9,13 @@ from test_payroll_corrections import Company
 from test_payroll_preparation import company
 
 from ai_accounting.kernel import tax_import
-from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.domains.payroll import ContributionRuleFact, PayrollContributionPolicy
+from ai_accounting.kernel.contracts import KernelError, Read
+from ai_accounting.kernel.domains.payroll import (
+    PAYROLL_KINDS,
+    ContributionRuleFact,
+    PayrollContributionPolicy,
+)
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth
 
 
@@ -123,6 +128,83 @@ def test_unpublished_wage_is_pending_publication_without_inventing_a_mapping_que
     assert assessment["status"] == "pending_publication"
     assert assessment["calculation_ids"] == []
     assert [issue["code"] for issue in assessment["issues"]] == ["tax_import_payroll_pending"]
+
+
+def test_monthly_mapping_loads_shared_policies_once(tmp_path, monkeypatch):
+    instance = company(tmp_path)
+    for index in range(2):
+        employee = f"employee-{index}"
+        instance.save(profile(employee_id=employee), f"profile-{index}")
+        instance.save(opening(employee_id=employee), f"opening-{index}")
+        instance.save(
+            payroll(employee_id=employee, profile_id=f"profile-{index}"), f"payroll-{index}"
+        )
+        instance.confirm_payroll(f"payroll-{index}")
+        instance.publish(f"payroll-{index}")
+    store = instance.engine.store
+    original = store.select_many
+    policy_reads = []
+
+    def counted(connection, reads):
+        reads = tuple(reads)
+        policy_reads.extend(read for read in reads if read.kind == "payroll_contribution_policy")
+        return original(connection, reads)
+
+    monkeypatch.setattr(store, "select_many", counted)
+    result = mapping_assessment(instance)
+    assert len(result["calculation_ids"]) == 3
+    assert result["status"] == "needs_information"
+    assert result["issues"][0]["code"] == "tax_import_mapping_required"
+    assert len(policy_reads) == 1
+    assert policy_reads[0].key.startswith("#")
+
+
+def test_mapping_reuses_only_successful_fact_selection_in_its_active_snapshot(
+    tmp_path, monkeypatch
+):
+    instance = company(tmp_path)
+    complete_details(instance)
+    expected = mapping_assessment(instance)
+    store = instance.engine.store
+    month = YearMonth("2026-01")
+    selections = [
+        Read(source, kind, str(month))
+        for source in ("fact", "calculation")
+        for kind in PAYROLL_KINDS
+    ] + [Read("fact", tax_import.TaxImportMapping.kind, str(month))]
+    with QueryReads.snapshot(instance.engine) as reads:
+        reads.prime_select(selections)
+        selected_fact_ids = {
+            version.id
+            for selection in selections
+            if selection.source == "fact"
+            for version in reads.select(selection)
+        }
+        assert selected_fact_ids
+        loaded = []
+        original = store.facts
+
+        def counted(connection, identifiers):
+            loaded.extend(identifiers)
+            return original(connection, identifiers)
+
+        monkeypatch.setattr(store, "facts", counted)
+        actual = tax_import.assess_tax_import_mapping(
+            store, reads.connection, month, reads=reads
+        )
+        assert actual == expected
+        assert not selected_fact_ids.intersection(loaded)
+
+    with QueryReads.snapshot(instance.engine) as current:
+        with pytest.raises(ValueError, match="another active snapshot"):
+            tax_import.assess_tax_import_mapping(
+                store, current.connection, month, reads=reads
+            )
+        with QueryReads.snapshot(instance.engine) as other:
+            with pytest.raises(ValueError, match="another active snapshot"):
+                tax_import.assess_tax_import_mapping(
+                    store, current.connection, month, reads=other
+                )
 
 
 def test_mapping_assessment_reports_no_wage_as_pending_without_inventing_a_question(tmp_path):

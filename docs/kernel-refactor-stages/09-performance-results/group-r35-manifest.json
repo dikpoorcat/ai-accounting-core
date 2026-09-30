@@ -1,0 +1,37 @@
+{
+  "changed_from_r34": [
+    "tests/kernel/test_brief_adopted_basis_reads.py"
+  ],
+  "files": [
+    {
+      "source": ".tmp\\stage9-group-r35\\result.json",
+      "archive": "group-r35-result.json.gz",
+      "raw_sha256": "c06fc08e87e44b74f19791954bad899a01a39bdddec3befdb16d3e98c59b9416",
+      "archive_sha256": "27e096301db285f09ce383f037c530f2840de0930293ff088a4f8343293ddd37"
+    },
+    {
+      "source": ".tmp\\stage9-group-r35\\shard-1-junit.xml",
+      "archive": "group-r35-shard-1-junit.xml.gz",
+      "raw_sha256": "906feecd4cf472eff22627226fd05d81c8a52ffeb325173cd2163784c3b1c8ce",
+      "archive_sha256": "7565df70e8c0e478803bde864b4cebd56a43c3a2546b742791bd64fe37f191e9"
+    },
+    {
+      "source": ".tmp\\stage9-group-r35\\shard-1.log",
+      "archive": "group-r35-shard-1.log.gz",
+      "raw_sha256": "545a5bc4a9a30c2a6a487eb83fc9d4d705a34f266896302aac434b977c57f6b4",
+      "archive_sha256": "88c994cbf4bfc2749cc4cb95d65977b3277ba08530670dbe18d75732c07c4f42"
+    },
+    {
+      "source": ".tmp\\stage9-release-candidate-work-r35\\candidate-provenance.json",
+      "archive": "group-r35-candidate-provenance.json.gz",
+      "raw_sha256": "f353b9c811ec35b9eddcf8d486a6afad8ef3fef24425064c4358f0a4f5c0c5db",
+      "archive_sha256": "017bda8be70b4b6de432f61c9ab59654ad39aaafd837d521d882c4aa8d1c7059"
+    },
+    {
+      "source": ".tmp\\stage9-build-source-r35-release\\source-manifest.json",
+      "archive": "group-r35-source-manifest.json.gz",
+      "raw_sha256": "e7e1adb9fc7815cc8ff4fee2865a6aa9a7f4697f841aeb66b055579d15a9b134",
+      "archive_sha256": "f8261ca1f12cb8c8ebfdde57d5112e074a3d60ffb87cd27c910bad0851a976f3"
+    }
+  ]
+}

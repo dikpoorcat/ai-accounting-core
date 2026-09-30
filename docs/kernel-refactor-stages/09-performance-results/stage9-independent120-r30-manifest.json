@@ -1,0 +1,100 @@
+{
+  "status": "registered_verification_and_current_preview_complete",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r30-release",
+  "source_sha256": "bbb18c584ee827224daade05fbb138d688b4249d35b850d3d02171dcff84da2b",
+  "integrity_ms_diagnostic": 3993160.845000064,
+  "peak_process_working_set_bytes": 6712758272,
+  "original_observer_error": "System.IO.IOException",
+  "observer_resumed_same_pid": true,
+  "pure_timing": false,
+  "files": [
+    {
+      "source": ".tmp/stage9-release-independent-120-verified-r30.json",
+      "archive": "stage9-release-independent-120-verified-r30.json.gz",
+      "bytes": 69048,
+      "sha256": "1318f7993c1de621c01ae24eef452b0ea4ab07c796f8f002ef83bf5053923986",
+      "gzip_bytes": 13836,
+      "gzip_sha256": "fb34491aab5a59b3a49f8d1fabd0cac7462df42894db727981a6f1cece81b83c"
+    },
+    {
+      "source": ".tmp/stage9-release-independent-120-verified-r30.stdout.log",
+      "archive": "stage9-release-independent-120-verified-r30.stdout.log.gz",
+      "bytes": 92,
+      "sha256": "678752bf72e854307bd4c455f27fa96e37f84bc0cccccff58224e938b4cc7ce9",
+      "gzip_bytes": 107,
+      "gzip_sha256": "6e4ad2af2a02d561c64bcdae15ac8310b7e52760f55a7178fe8f792903cdce72"
+    },
+    {
+      "source": ".tmp/stage9-release-independent-120-verified-r30.stderr.log",
+      "archive": "stage9-release-independent-120-verified-r30.stderr.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30-memory.json",
+      "archive": "stage9-independent120-r30-memory.json.gz",
+      "bytes": 350557,
+      "sha256": "749d80d4c85a18db7f7d3848f30e8b887b13d9e1a2066a4f88a508aa8f82597a",
+      "gzip_bytes": 39749,
+      "gzip_sha256": "846412831a6e6f9714d17d156c5256853b15a926edf289fa3716355095cddb73"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30-memory.stdout.log",
+      "archive": "stage9-independent120-r30-memory.stdout.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30-memory.stderr.log",
+      "archive": "stage9-independent120-r30-memory.stderr.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30-observation-restart.json",
+      "archive": "stage9-independent120-r30-observation-restart.json.gz",
+      "bytes": 290,
+      "sha256": "10a7648878dfa2c714578d3fbdc118e16a2d192eb9f3606293948130270812b1",
+      "gzip_bytes": 210,
+      "gzip_sha256": "10012609ef45feaf91623be1312db421a74dee7a15d14abf75117269ceab72a5"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30b-memory.json",
+      "archive": "stage9-independent120-r30b-memory.json.gz",
+      "bytes": 290766,
+      "sha256": "5b1f2c1e3f05b2c31037e10a816cc6e9277f3d2a950eaf92a6b6fed0c684210c",
+      "gzip_bytes": 35604,
+      "gzip_sha256": "4557fb0f1fe497a1d1b5e99dfc8923efaf6ba82eb506baca54f1a8ec80f2e085"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30b-memory.stdout.log",
+      "archive": "stage9-independent120-r30b-memory.stdout.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30b-memory.stderr.log",
+      "archive": "stage9-independent120-r30b-memory.stderr.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-independent120-r30-processes.json",
+      "archive": "stage9-independent120-r30-processes.json.gz",
+      "bytes": 633,
+      "sha256": "793cdee967eca4a37ed0630c5b80c6f3c62ac5ccaa8c078396801536f515c0e8",
+      "gzip_bytes": 362,
+      "gzip_sha256": "220d39b86f2d44f01fff0819bd0caafe4567cd7c55dab64e383afcd64c9acad0"
+    }
+  ]
+}

@@ -110,7 +110,8 @@ class Display:
     @staticmethod
     def _closed(connection, period):
         return connection.execute(
-            "SELECT manifest,digest FROM period_close WHERE period=?", (YearMonth(period).ordinal,)
+            "SELECT period,manifest,digest FROM period_close WHERE period=?",
+            (YearMonth(period).ordinal,),
         ).fetchone()
 
     @staticmethod
@@ -118,7 +119,11 @@ class Display:
         """Use the caller's transaction; old closes never acquire newly entered profiles."""
         closed = Display._closed(connection, period) if period is not None else None
         if closed is not None:
-            snapshot = json.loads(closed["manifest"]).get("management_snapshot", {})
+            from .close_storage import read_section, verified_header
+
+            snapshot = read_section(
+                connection, verified_header(connection, closed), "management_snapshot"
+            )
             identifiers = [item["id"] for item in snapshot.get("profiles", [])]
             rows = connection.execute(
                 "SELECT p.* FROM display_profile_revision p JOIN json_each(?) i ON p.id=i.value "
@@ -165,7 +170,7 @@ class Display:
         from .entities import profiles as entity_profiles
 
         return {
-            "employee_entities": employee_entities(connection, period),
+            "employee_entities": employee_entities(connection, period, registry=registry),
             "entity_profiles": [
                 {key: item[key] for key in ("id", "entity_id", "revision", "digest")}
                 for item in entity_profiles(connection).values()
@@ -372,7 +377,11 @@ class Display:
             "SELECT period,manifest,digest FROM period_close WHERE period<=? ORDER BY period",
             (month,),
         ):
-            manifest = json.loads(row["manifest"])
+            from .close_storage import read_section, verified_header
+
+            header = verified_header(connection, row)
+            adopted = read_section(connection, header, "adopted_results")
+            adopted_vouchers = read_section(connection, header, "vouchers")
             closes.append(
                 {
                     "period": str(YearMonth.from_ordinal(row["period"])),
@@ -381,11 +390,16 @@ class Display:
             )
             if row["period"] == month:
                 close_digest = row["digest"].hex()
-            from .close_contract import direct_calculation_ids
-
-            calculations.update(direct_calculation_ids(manifest))
-            fact_ids.update(item["fact_id"] for item in manifest["adopted_results"])
-            vouchers.update(item["id"] for item in manifest.get("vouchers", ()))
+            calculations.update(item["calculation_id"] for item in adopted)
+            calculations.update(item["calculation_id"] for item in adopted_vouchers)
+            for item in read_section(connection, header, "asset_card_adoptions"):
+                calculations.update((item["calculation_id"], item["acceptance_calculation_id"]))
+            calculations.update(
+                item["owner_calculation_id"]
+                for item in read_section(connection, header, "asset_batch_adoptions")
+            )
+            fact_ids.update(item["fact_id"] for item in adopted)
+            vouchers.update(item["id"] for item in adopted_vouchers)
         calculations.update(
             row[0]
             for row in connection.execute(
@@ -695,7 +709,11 @@ class Display:
         frozen_id = None
         frozen_digest = None
         if closed:
-            snapshot = json.loads(closed["manifest"]).get("management_snapshot", {})
+            from .close_storage import read_section, verified_header
+
+            snapshot = read_section(
+                connection, verified_header(connection, closed), "management_snapshot"
+            )
             frozen_id = (snapshot.get("commentary") or {}).get("id")
             frozen_digest = (snapshot.get("commentary") or {}).get("digest")
         frozen = next((item for item in rows if item["id"] == frozen_id), None)

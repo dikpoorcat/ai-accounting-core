@@ -1,0 +1,19 @@
+{
+  "note": "Read-only synthetic main12 diagnostic. Independent processes, each warmed once. Concurrent environment; not a browser acceptance measurement. Fixed r10/r11 dashboard.py differed only in the source-row batching hunk.",
+  "database": ".tmp/stage9-release-main-12",
+  "book_report": ".tmp/stage9-release-main-12-verified-r1.json",
+  "script": ".tmp/stage9-asset-batch-compare-r11.py",
+  "order": ["r10", "r11", "r11", "r10"],
+  "native_asset_ms": [407.3732, 231.2021, 267.3061, 409.7471],
+  "asset_items": 12,
+  "response_data_equal_except_generated_at": true,
+  "response_data_sha256_both": "9a5c26e6a3b3976743d4c136a8c92e9cc176f97e34bb6b41978ae6a12c09d73a",
+  "sql_work": {
+    "r10": {"subject_select_calls": 12, "returned_rows": 12, "row_value_bytes_approx": 5645, "sqlite_vm_steps_approx": 1586700},
+    "r11": {"subject_select_calls": 1, "returned_rows": 12, "row_value_bytes_approx": 5645, "sqlite_vm_steps_approx": 591100}
+  },
+  "raw_work_records": [
+    ".tmp/stage9-asset-batch-stage9-build-source-r10-release.json",
+    ".tmp/stage9-asset-batch-stage9-build-source-r11-release.json"
+  ]
+}

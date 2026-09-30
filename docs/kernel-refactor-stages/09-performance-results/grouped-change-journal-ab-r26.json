@@ -1,0 +1,172 @@
+{
+  "status": "diagnostic",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r26-release",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48-verified-r26.json",
+  "period": "2019-12",
+  "cases": [
+    {
+      "preparation": "complete",
+      "mode": "A",
+      "wall_ms": 3104.8385999165475,
+      "cpu_ms": 3078.125,
+      "response_sha256": "f652d1fbe0efff138c1f60ac57c5c48991c4ebd1796fbd532e731e44ab62b1e0",
+      "response_without_checked_at_sha256": "5c37c15aa126dbdf38b0e4f049bc8ced2dc9a2bf7d1755813df70a04296b300e",
+      "checked_at": "2026-09-27T18:01:42.346277+00:00",
+      "journal_physical": [
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 354102,
+          "through": 369678,
+          "rows": 15576,
+          "sequences_sha256": "83bc190d9d618ec9e45d4f8dc0f51ce8d8489cd02756749f34976c289070127c"
+        },
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        }
+      ],
+      "journal_rows": 38946
+    },
+    {
+      "preparation": "complete",
+      "mode": "B",
+      "wall_ms": 3024.226500187069,
+      "cpu_ms": 3015.625,
+      "response_sha256": "a1d1c601bcc8f6467041538c7542ab22a2ed179bb7300a92aad60b6615825542",
+      "response_without_checked_at_sha256": "5c37c15aa126dbdf38b0e4f049bc8ced2dc9a2bf7d1755813df70a04296b300e",
+      "checked_at": "2026-09-27T18:01:45.394388+00:00",
+      "journal_physical": [
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 354102,
+          "through": 369678,
+          "rows": 15576,
+          "sequences_sha256": "83bc190d9d618ec9e45d4f8dc0f51ce8d8489cd02756749f34976c289070127c"
+        }
+      ],
+      "journal_rows": 23366
+    },
+    {
+      "preparation": "complete",
+      "mode": "B",
+      "wall_ms": 3064.594900002703,
+      "cpu_ms": 3046.875,
+      "response_sha256": "ecff7083e9a42f72e61cbfcfdbe279f311917447282f4b2436fcf1c57748985b",
+      "response_without_checked_at_sha256": "5c37c15aa126dbdf38b0e4f049bc8ced2dc9a2bf7d1755813df70a04296b300e",
+      "checked_at": "2026-09-27T18:01:48.517723+00:00",
+      "journal_physical": [
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 354102,
+          "through": 369678,
+          "rows": 15576,
+          "sequences_sha256": "83bc190d9d618ec9e45d4f8dc0f51ce8d8489cd02756749f34976c289070127c"
+        }
+      ],
+      "journal_rows": 23366
+    },
+    {
+      "preparation": "complete",
+      "mode": "A",
+      "wall_ms": 3075.857800198719,
+      "cpu_ms": 2984.375,
+      "response_sha256": "201ccf84e4aaa2490723be0144ea9ec41ae1dd0e0e15124269073cf58272219f",
+      "response_without_checked_at_sha256": "5c37c15aa126dbdf38b0e4f049bc8ced2dc9a2bf7d1755813df70a04296b300e",
+      "checked_at": "2026-09-27T18:01:51.514191+00:00",
+      "journal_physical": [
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 354102,
+          "through": 369678,
+          "rows": 15576,
+          "sequences_sha256": "83bc190d9d618ec9e45d4f8dc0f51ce8d8489cd02756749f34976c289070127c"
+        },
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        },
+        {
+          "after": 361888,
+          "through": 369678,
+          "rows": 7790,
+          "sequences_sha256": "b76822fb56038831e1580c38d18ff850c0d73d9ac1f4bb9f37f723da857ee77d"
+        }
+      ],
+      "journal_rows": 38946
+    },
+    {
+      "preparation": "deferred",
+      "mode": "A",
+      "wall_ms": 1198.6715998500586,
+      "cpu_ms": 1203.125,
+      "response_sha256": "47419295fecc1995f6f2f215d3efd5f14923ba6a4c267e9d8e9096a172d1795f",
+      "response_without_checked_at_sha256": "626d704d7a0b6dd96cd698c4eedfa5a855e473ed77cd50304a55deec257d195e",
+      "checked_at": "2026-09-27T18:01:54.624427+00:00",
+      "journal_physical": [],
+      "journal_rows": 0
+    },
+    {
+      "preparation": "deferred",
+      "mode": "B",
+      "wall_ms": 1224.7411999851465,
+      "cpu_ms": 1218.75,
+      "response_sha256": "4cf70a8d789251778aecf2158f7a7dfffd026fc9640f934d7b47bb9a95b6e1a7",
+      "response_without_checked_at_sha256": "626d704d7a0b6dd96cd698c4eedfa5a855e473ed77cd50304a55deec257d195e",
+      "checked_at": "2026-09-27T18:01:55.850543+00:00",
+      "journal_physical": [],
+      "journal_rows": 0
+    },
+    {
+      "preparation": "deferred",
+      "mode": "B",
+      "wall_ms": 1323.1788000557572,
+      "cpu_ms": 1312.5,
+      "response_sha256": "85caf0222594f83f720701581fe79bdfd6c45453bee4a471bc0937bb4d1098f7",
+      "response_without_checked_at_sha256": "626d704d7a0b6dd96cd698c4eedfa5a855e473ed77cd50304a55deec257d195e",
+      "checked_at": "2026-09-27T18:01:57.173624+00:00",
+      "journal_physical": [],
+      "journal_rows": 0
+    },
+    {
+      "preparation": "deferred",
+      "mode": "A",
+      "wall_ms": 1455.2901000715792,
+      "cpu_ms": 1421.875,
+      "response_sha256": "152e66f7de2cea35ef037347070668b89bc4e47638b90b6beb2c7e42608fe4a4",
+      "response_without_checked_at_sha256": "626d704d7a0b6dd96cd698c4eedfa5a855e473ed77cd50304a55deec257d195e",
+      "checked_at": "2026-09-27T18:01:58.632000+00:00",
+      "journal_physical": [],
+      "journal_rows": 0
+    }
+  ]
+}

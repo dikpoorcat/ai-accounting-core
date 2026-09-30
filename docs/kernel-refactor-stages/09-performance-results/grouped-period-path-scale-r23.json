@@ -1,0 +1,58 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r23-release",
+  "report_status": "complete",
+  "database": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48\\91310000123456789S\\company.sqlite",
+  "note": "Current working tree selector on fixed r23 DB; read-only workload diagnostic.",
+  "samples": {
+    "1": {
+      "candidates": 1,
+      "new": {
+        "vm_sampled": 11100,
+        "rows": 1,
+        "value_bytes": 171
+      },
+      "old": {
+        "vm_sampled": 7000,
+        "rows": 1,
+        "value_bytes": 171
+      },
+      "multiset_equal": true
+    },
+    "100": {
+      "candidates": 100,
+      "new": {
+        "vm_sampled": 13800,
+        "rows": 100,
+        "value_bytes": 17095
+      },
+      "old": {
+        "vm_sampled": 705100,
+        "rows": 100,
+        "value_bytes": 17095
+      },
+      "multiset_equal": true
+    },
+    "500": {
+      "candidates": 500,
+      "new": {
+        "vm_sampled": 24600,
+        "rows": 500,
+        "value_bytes": 85443
+      },
+      "old": {
+        "vm_sampled": 3525500,
+        "rows": 500,
+        "value_bytes": 85443
+      },
+      "multiset_equal": true
+    },
+    "3000": {
+      "candidates": 3000,
+      "new": {
+        "vm_sampled": 114200,
+        "rows": 3000,
+        "value_bytes": 512686
+      }
+    }
+  }
+}

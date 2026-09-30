@@ -1,0 +1,80 @@
+{
+  "status": "diagnostic_exclusive_native_abba",
+  "source_baseline": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r13-release",
+  "source_candidate": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-r13-overview-worker-prototype-source",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-12-verified-r13.json",
+  "order": [
+    "A1",
+    "B1",
+    "B2",
+    "A2",
+    "A3",
+    "B3",
+    "B4",
+    "A4"
+  ],
+  "samples_per_block": 6,
+  "warmups_per_block": 2,
+  "complete_response_normalized_sha256": "b01d8ef43fc9f129037161f63d9cff7ccb03bd0a7fe1d36f332ff65abd03074b",
+  "complete_response_normalized_bytes": 877982,
+  "all_eight_hashes_equal": true,
+  "normalized_exclusions": [
+    "data.generated_at",
+    "read_context.read_version"
+  ],
+  "three_worker": {
+    "n": 24,
+    "median_wall_ms": 392.4047,
+    "mean_wall_ms": 404.5687875,
+    "p95_nearest_rank_ms": 516.7004,
+    "max_wall_ms": 525.3638,
+    "median_total_process_cpu_ms": 1109.375,
+    "median_parent_process_cpu_ms": 296.875,
+    "block_median_wall_ms": {
+      "A1": 392.4047,
+      "A2": 445.88070000000005,
+      "A3": 383.41499999999996,
+      "A4": 386.51345
+    }
+  },
+  "four_worker": {
+    "n": 24,
+    "median_wall_ms": 399.2961,
+    "mean_wall_ms": 410.65921249999997,
+    "p95_nearest_rank_ms": 476.4529,
+    "max_wall_ms": 486.174,
+    "median_total_process_cpu_ms": 1156.25,
+    "median_parent_process_cpu_ms": 187.5,
+    "block_median_wall_ms": {
+      "B1": 405.24735,
+      "B2": 392.90549999999996,
+      "B3": 409.9395,
+      "B4": 398.86555
+    }
+  },
+  "instrumented_work_separate": {
+    "three_worker": {
+      "sql_calls": 1078,
+      "returned_rows": 92390,
+      "returned_value_bytes": 21533602,
+      "sqlite_vm_steps": 4332200,
+      "typed_fact_json_decodes": 4226,
+      "stdlib_json_loads": 4820,
+      "calculation_result_json_decodes": 525
+    },
+    "four_worker": {
+      "sql_calls": 1096,
+      "returned_rows": 93484,
+      "returned_value_bytes": 21913351,
+      "sqlite_vm_steps": 4371200,
+      "typed_fact_json_decodes": 4226,
+      "stdlib_json_loads": 4821,
+      "calculation_result_json_decodes": 525
+    },
+    "within_source_serial_parallel_equal": {
+      "baseline": true,
+      "candidate": true
+    }
+  },
+  "interpretation": "Four-worker median is slower and total process CPU is higher; overview worker does not meet the 30ms net-gain threshold. No production change."
+}

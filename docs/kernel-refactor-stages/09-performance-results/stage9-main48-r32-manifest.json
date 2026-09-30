@@ -1,0 +1,43 @@
+{
+  "status": "registered_verification_and_current_preview_complete",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r32-release",
+  "source_sha256": "5c54c9cd4ef1909a2d07f0cb5998313ea988eef0d0e9f5943688827de5a06191",
+  "integrity": {
+    "status": "verified",
+    "coverage": {
+      "sources": "verified",
+      "historical_adoption": "verified",
+      "projections": "verified",
+      "read_indexes": "verified"
+    },
+    "limitations": [],
+    "counts": {
+      "facts": 121593,
+      "calculations": 50519,
+      "vouchers": 49245,
+      "closes": 47,
+      "evidence": 337
+    }
+  },
+  "integrity_ms_diagnostic": 858576.7996998038,
+  "peak_process_working_set_bytes": 2571268096,
+  "pure_timing": false,
+  "files": [
+    {
+      "source": ".tmp/stage9-release-main-48-verified-r32.json",
+      "archive": "stage9-release-main-48-verified-r32.json.gz",
+      "bytes": 28076,
+      "sha256": "102bfc10fad007c601357532c2b81624477224e5c658e72f12b35382c8316ce6",
+      "gzip_bytes": 6644,
+      "gzip_sha256": "ac7b3b5d1d2944fec36aa4af8483ecb8bcdc05fe28df39183a99fe88feac657a"
+    },
+    {
+      "source": ".tmp/stage9-main48-r32-memory.json",
+      "archive": "stage9-main48-r32-memory.json.gz",
+      "bytes": 139479,
+      "sha256": "9d93dcfc211501694bafb2404e4ed1f885be0443936ddb510f990559d28b7b9a",
+      "gzip_bytes": 17313,
+      "gzip_sha256": "453b743dc0c3cfa448f8cdbb75e0417331283f065b588e7a1a7bd103b2a63ff9"
+    }
+  ]
+}

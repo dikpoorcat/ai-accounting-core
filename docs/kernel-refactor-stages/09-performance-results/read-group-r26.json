@@ -1,0 +1,80 @@
+{
+  "status": "passed",
+  "started_unix": 1790529878.5123808,
+  "temp_root": "C:\\Users\\MD01\\AppData\\Local\\Temp\\ai-accounting-stage9-r26-group",
+  "repository_source_sha256": "a7eca99e533c49c9d179dddc4c2420d83c7441641453d83e4e9de6651ae76eaf",
+  "candidate_sha256": "d1c574e1d0dc729b9c5e773304b65219381a3cae0dcd9461059ce8b912e4bdfa",
+  "file_count": 46,
+  "shards": [
+    {
+      "index": 1,
+      "pid": 24376,
+      "files": [
+        "tests\\kernel\\test_bank_identity_correction.py",
+        "tests\\kernel\\test_close_direct_contract.py",
+        "tests\\kernel\\test_close_management_sections.py",
+        "tests\\kernel\\test_current_adoption_damage.py",
+        "tests\\kernel\\test_dashboard_metadata.py",
+        "tests\\kernel\\test_dashboard_projection.py",
+        "tests\\kernel\\test_dashboard_provenance.py",
+        "tests\\kernel\\test_dashboard_reports_adapter.py",
+        "tests\\kernel\\test_display.py",
+        "tests\\kernel\\test_entities.py",
+        "tests\\kernel\\test_funds_bounded_reads.py",
+        "tests\\kernel\\test_identity_corrections.py",
+        "tests\\kernel\\test_maintenance.py",
+        "tests\\kernel\\test_opening_adoption.py",
+        "tests\\kernel\\test_query_semantics.py",
+        "tests\\kernel\\test_read_indexes.py",
+        "tests\\kernel\\test_report_classification_v1.py",
+        "tests\\kernel\\test_report_flow_integrity.py",
+        "tests\\kernel\\test_reports.py",
+        "tests\\kernel\\test_reports_bounded_reads.py",
+        "tests\\kernel\\test_review_no_impact.py",
+        "tests\\kernel\\test_single_month_close.py",
+        "tests\\kernel\\test_stage9_backup_upgrade_history.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-group-r26\\shard-1.log",
+      "exit_code": 0
+    },
+    {
+      "index": 2,
+      "pid": 78068,
+      "files": [
+        "tests\\kernel\\test_asset_batch_reads.py",
+        "tests\\kernel\\test_brief_adopted_basis_reads.py",
+        "tests\\kernel\\test_business_queries.py",
+        "tests\\kernel\\test_close_reference_selection_work.py",
+        "tests\\kernel\\test_dashboard_bounded_reads.py",
+        "tests\\kernel\\test_dashboard_business_queries.py",
+        "tests\\kernel\\test_dashboard_funds_alignment.py",
+        "tests\\kernel\\test_dashboard_identity_attribution.py",
+        "tests\\kernel\\test_dashboard_opening_position_scope.py",
+        "tests\\kernel\\test_dashboard_transport.py",
+        "tests\\kernel\\test_dashboard_workforce_assets.py",
+        "tests\\kernel\\test_discovery.py",
+        "tests\\kernel\\test_employee_role_identity_scope.py",
+        "tests\\kernel\\test_entity_positive_witnesses.py",
+        "tests\\kernel\\test_entity_recent_source_scope.py",
+        "tests\\kernel\\test_local_service.py",
+        "tests\\kernel\\test_offline_upgrade_history_preservation.py",
+        "tests\\kernel\\test_payroll_head_line_scope.py",
+        "tests\\kernel\\test_position_classification_candidates.py",
+        "tests\\kernel\\test_query_reads.py",
+        "tests\\kernel\\test_report_classification_directory.py",
+        "tests\\kernel\\test_stage9_registered_verifier.py",
+        "tests\\kernel\\test_v1_position_classification_selector.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-group-r26\\shard-2.log",
+      "exit_code": 0
+    }
+  ],
+  "elapsed_seconds": 445.1348674297333,
+  "source_unchanged": true,
+  "junit_totals": {
+    "tests": 503,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

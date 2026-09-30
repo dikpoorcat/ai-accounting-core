@@ -1,4 +1,5 @@
-import type { DashboardFundsContract, DashboardPeriodPreparationContract } from "./generated/dashboardResponses";
+import type { DashboardFundsContract } from "./generated/dashboardFunds";
+import type { DashboardPeriodPreparationContract } from "./generated/dashboardPeriodPreparation";
 
 export type BusinessIssue = DashboardPeriodPreparationContract.ReadinessIssue;
 export type PeriodPreparation = DashboardPeriodPreparationContract.PeriodPreparation;

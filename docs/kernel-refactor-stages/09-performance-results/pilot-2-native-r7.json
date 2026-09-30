@@ -1,0 +1,110 @@
+{
+  "purpose": "native_pilot_diagnostic_not_page_acceptance",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r7",
+  "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-pilot-6",
+  "build_id": "local-kernel-2:1b974366bd01ac328f8c2e34a847ed874b04e905da45e84352df114394000108",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-pilot-6-verified-r1.json",
+  "period": "2016-02",
+  "measurements": {
+    "complete": {
+      "samples_ms": [
+        712.3209999408573,
+        737.6210000365973,
+        720.7134999334812,
+        749.8890999704599,
+        705.3876998834312,
+        687.8074000123888,
+        680.0235998816788,
+        683.754300000146,
+        715.8608001191169,
+        701.2162997853011
+      ],
+      "median_ms": 708.8543499121442,
+      "max_ms": 749.8890999704599,
+      "gc_before": [
+        {
+          "collections": 1426,
+          "collected": 56885,
+          "uncollectable": 0
+        },
+        {
+          "collections": 129,
+          "collected": 10987,
+          "uncollectable": 0
+        },
+        {
+          "collections": 11,
+          "collected": 3416,
+          "uncollectable": 0
+        }
+      ],
+      "gc_after": [
+        {
+          "collections": 3634,
+          "collected": 64015,
+          "uncollectable": 0
+        },
+        {
+          "collections": 329,
+          "collected": 11607,
+          "uncollectable": 0
+        },
+        {
+          "collections": 29,
+          "collected": 3416,
+          "uncollectable": 0
+        }
+      ]
+    },
+    "deferred": {
+      "samples_ms": [
+        340.94249992631376,
+        352.47069993056357,
+        336.8571000173688,
+        368.771499954164,
+        366.6305001825094,
+        378.30550014041364,
+        350.80210003070533,
+        370.46930007636547,
+        416.02460015565157,
+        342.60400012135506
+      ],
+      "median_ms": 359.5506000565365,
+      "max_ms": 416.02460015565157,
+      "gc_before": [
+        {
+          "collections": 3962,
+          "collected": 66185,
+          "uncollectable": 0
+        },
+        {
+          "collections": 359,
+          "collected": 11762,
+          "uncollectable": 0
+        },
+        {
+          "collections": 32,
+          "collected": 3416,
+          "uncollectable": 0
+        }
+      ],
+      "gc_after": [
+        {
+          "collections": 5006,
+          "collected": 72695,
+          "uncollectable": 0
+        },
+        {
+          "collections": 454,
+          "collected": 13002,
+          "uncollectable": 0
+        },
+        {
+          "collections": 41,
+          "collected": 3416,
+          "uncollectable": 0
+        }
+      ]
+    }
+  }
+}

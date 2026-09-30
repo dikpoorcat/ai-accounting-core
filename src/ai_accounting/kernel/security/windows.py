@@ -41,7 +41,12 @@ class _ACL(ctypes.Structure):
     ]
 
 
+@lru_cache(maxsize=1)
 def _apis():
+    # WinDLL function wrappers retain ctypes type graphs. Recreating both DLL
+    # wrappers for each handle check leaves thousands of cyclic objects per
+    # dashboard read; the bindings themselves are process-static, while each
+    # caller still opens and verifies its own handle and DACL.
     if sys.platform != "win32":
         raise IdentityError("OWNER_SECURITY_WINDOW_UNAVAILABLE")
     kernel = ctypes.WinDLL("Kernel32.dll", use_last_error=True)

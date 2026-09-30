@@ -2,11 +2,13 @@
 
 import pytest
 
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.query_semantics import (
     classify_financial_position,
     report_party_splits,
     resolve_calculation_relations,
 )
+from ai_accounting.kernel.report_semantics import immutable_line_fields
 
 
 def calculation(
@@ -216,7 +218,135 @@ def test_payment_relation_rejects_wrong_funds_line_instead_of_guessing():
     assert split["splits"] is None
 
 
-def test_missing_frozen_source_is_a_local_issue_without_current_fallback():
+def test_report_line_uses_exact_payment_source_without_unrelated_ancestor(monkeypatch):
+    source = calculation(
+        "source",
+        subject_id="expense",
+        values={
+            "obligations": [
+                {
+                    "key": "expense:primary",
+                    "name": "primary",
+                    "account": "2202",
+                    "normal": "credit",
+                    "amount_fen": 100,
+                    "category": "payable",
+                    "counterparty_id": "supplier",
+                }
+            ]
+        },
+    )
+    payment = calculation(
+        "payment",
+        kind="payment",
+        fact={
+            "payment_method": "individual",
+            "counterparty_id": "supplier",
+            "allocations": [
+                {
+                    "source_kind": "expense",
+                    "source_id": "expense",
+                    "obligation": "primary",
+                    "amount_fen": 40,
+                }
+            ],
+        },
+        lines=[
+            {"account": "2202", "debit": 40, "credit": 0},
+            {"account": "1002", "debit": 0, "credit": 40},
+        ],
+        values={
+            "direction": "outflow",
+            "settlements": [
+                {"source_calculation": "source", "obligation": "expense:primary", "amount_fen": 40}
+            ],
+        },
+    )
+    loaded = []
+
+    def load(ident):
+        loaded.append(ident)
+        return {"source": source}[ident]
+
+    def parents(ident):
+        if ident == "source":
+            pytest.fail("a report line must not walk an unrelated cumulative ancestor")
+        return ("source",)
+
+    direct = resolve_calculation_relations(
+        payment, load_calculation=load, load_parents=parents, collect_ancestry=False
+    )
+    row = {"account": "2202", "amount": 40, "line_no": 1}
+    assert direct["issues"] == []
+    assert report_party_splits(row, direct)["splits"] == ((("party", "supplier"), 40),)
+    assert [(item["key"], item["account"]) for item in direct["obligations"]] == [
+        ("expense:primary", "2202")
+    ]
+    cash = immutable_line_fields(
+        {"line_no": 2},
+        "payment",
+        calculation=lambda ident: {"payment": payment, "source": source}[ident],
+        source_fact=lambda _ident: object(),
+        relations=lambda _ident: direct,
+    )
+    assert cash["cash_obligation"]["account"] == "2202"
+    assert loaded == ["source"]
+
+    class ScopedReads:
+        report_line_relations_many = QueryReads.report_line_relations_many
+
+        def __init__(self):
+            self._snapshot_active = True
+            self._parents = {}
+            self._relation_sources = {}
+            self._report_direct_relations = {}
+            self.reject_next_verification = True
+            self.loaded = set()
+            self.verified = set()
+
+        def calculations(self, identifiers):
+            self.loaded.update(identifiers)
+            return {ident: {"payment": payment, "source": source}[ident] for ident in identifiers}
+
+        def calculation(self, ident):
+            return self.calculations((ident,))[ident]
+
+        def prime_parents(self, identifiers):
+            self._parents.update(
+                {ident: {"payment": ("source",), "source": ("old-payroll",)}[ident]
+                 for ident in identifiers}
+            )
+
+        def parents(self, ident):
+            if ident not in self._parents:
+                self.prime_parents((ident,))
+            return self._parents[ident]
+
+        def relations_many(self, _identifiers):
+            pytest.fail("an exact report line must not invoke full ancestry resolution")
+
+        def verify_selected_content(self, identifiers):
+            if self.reject_next_verification:
+                self.reject_next_verification = False
+                raise RuntimeError("damaged report source")
+            self.verified.update(identifiers)
+
+    scoped = ScopedReads()
+    with pytest.raises(RuntimeError, match="damaged report source"):
+        scoped.report_line_relations_many({"payment": (row,)})
+    assert scoped._report_direct_relations == {}
+    relation = scoped.report_line_relations_many({"payment": (row,)})["payment"]
+    assert report_party_splits(row, relation)["splits"] == ((("party", "supplier"), 40),)
+    assert scoped.loaded == scoped.verified == {"payment", "source"}
+    monkeypatch.setattr(
+        "ai_accounting.kernel.query_reads.resolve_calculation_relations",
+        lambda *_args, **_kwargs: pytest.fail("the same snapshot must reuse its direct relation"),
+    )
+    assert scoped.report_line_relations_many({"payment": ()})["payment"] is relation
+
+
+@pytest.mark.parametrize("collect_ancestry", [True, False])
+def test_missing_frozen_source_is_a_local_issue_without_current_fallback(collect_ancestry):
     payment = calculation(
         "payment",
         kind="payment",
@@ -248,7 +378,9 @@ def test_missing_frozen_source_is_a_local_issue_without_current_fallback():
         },
     )
 
-    resolved = resolve_calculation_relations(payment, **resolver({}))
+    resolved = resolve_calculation_relations(
+        payment, **resolver({}), collect_ancestry=collect_ancestry
+    )
 
     assert resolved["settlements"][0]["state"] == "unresolved"
     assert {item["field"] for item in resolved["issues"]} == {
@@ -559,6 +691,72 @@ def test_payroll_reserve_expense_is_checked_without_creating_a_settlement():
     reserve = [item for item in resolved["line_relations"] if item["role"] == "reserve_expense"]
     assert [(item["line_no"], item["amount_fen"]) for item in reserve] == [(3, 20), (4, -20)]
     assert all(item["obligation_key"] is None and item["party_key"] is None for item in reserve)
+
+
+def test_relation_source_cache_reuses_own_obligation_without_changing_binding(monkeypatch):
+    import ai_accounting.kernel.query_semantics as semantics
+    from ai_accounting.kernel.query_relations_v1 import (
+        resolve_calculation_relations as prior_resolver,
+    )
+
+    payroll, payment = payroll_reserve_relation_inputs()
+    original = semantics._obligation
+    calls = []
+
+    def counted(record, item):
+        calls.append(record["id"])
+        return original(record, item)
+
+    monkeypatch.setattr(semantics, "_obligation", counted)
+    cache = {}
+    plain = resolve_calculation_relations(
+        payment,
+        **resolver({"payroll": payroll}, {"payment": ("payroll",)}),
+        source_cache=cache,
+    )
+    assert plain == prior_resolver(
+        payment, **resolver({"payroll": payroll}, {"payment": ("payroll",)})
+    )
+    assert plain["issues"] == []
+    assert calls == ["payroll"], "the ancestor, selected settlement and own list share one source"
+    resolve_calculation_relations(payroll, **resolver({}), source_cache=cache)
+    assert calls == ["payroll"], "a later root reuses the same immutable source"
+
+    binding = calculation(
+        "binding",
+        kind="opening_identity_binding",
+        values={
+            "source_calculation_id": "payroll",
+            "basis_values": {
+                "obligations": [
+                    {
+                        **payroll["outcome"]["values"]["obligations"][0],
+                        "counterparty_id": "repaired",
+                    }
+                ]
+            },
+        },
+    )
+    payment["outcome"]["values"]["settlements"][0]["binding_calculation_id"] = "binding"
+    corrected = resolve_calculation_relations(
+        payment,
+        **resolver(
+            {"payroll": payroll, "binding": binding},
+            {"payment": ("payroll", "binding")},
+        ),
+        source_cache=cache,
+    )
+    assert corrected == prior_resolver(
+        payment,
+        **resolver(
+            {"payroll": payroll, "binding": binding},
+            {"payment": ("payroll", "binding")},
+        ),
+    )
+    assert corrected["line_relations"][0]["party_key"] == ("party", "repaired")
+    assert calls == ["payroll", "payroll"], "identity correction resolves a separate basis"
+    assert cache["payroll"][0][1][0]["party_key"] == ("party", "employee")
+    assert "identity_binding_calculation_id" not in cache["payroll"][0][1][0]
 
 
 @pytest.mark.parametrize("line_no", [3, 4])

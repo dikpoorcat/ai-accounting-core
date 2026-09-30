@@ -12,7 +12,7 @@ async function moduleUrl(url) {
   let { outputText } = ts.transpileModule(readFileSync(url, "utf8"), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
-  for (const [, relative] of [...outputText.matchAll(/from "(\.[^"]+)"/g)]) {
+  for (const [, relative] of [...outputText.matchAll(/(?:from |import\()"(\.[^"]+)"/g)]) {
     const modulePath = /\.[cm]?[jt]s$/.test(relative) ? relative : `${relative}.ts`;
     outputText = outputText.replaceAll(`"${relative}"`, JSON.stringify(await moduleUrl(new URL(modulePath, url))));
   }

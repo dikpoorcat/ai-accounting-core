@@ -1,0 +1,22 @@
+{
+  "source": "fixed r29 main12 read-only v1 settlement requirement",
+  "result": {
+    "rows": 14950,
+    "periods": 12
+  },
+  "cpu_seconds": 3.531,
+  "calls_requested_cache_bounded_large_traversed": {
+    "_load_calculations": [
+      8139,
+      67914,
+      98241936,
+      98193648
+    ],
+    "prime_parents": [
+      2,
+      23854,
+      11927,
+      0
+    ]
+  }
+}

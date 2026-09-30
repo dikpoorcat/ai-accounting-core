@@ -1,0 +1,94 @@
+{
+  "status": "read_only_diagnostic",
+  "synthetic_root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48",
+  "results": [
+    {
+      "kind": "material_source_v2",
+      "ids": 336,
+      "existing": {
+        "vm_steps": 8400,
+        "rows": 336,
+        "digest": "2fb63339c5d6f25c9027cd2a7f2b67a31b59c33fd9490d2f3c97ebf30a8427ca",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH t USING COVERING INDEX sqlite_autoindex_fact_material_source_v2_1 (revision_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      },
+      "candidate": {
+        "vm_steps": 9000,
+        "rows": 336,
+        "digest": "2fb63339c5d6f25c9027cd2a7f2b67a31b59c33fd9490d2f3c97ebf30a8427ca",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)",
+          "SEARCH t USING COVERING INDEX sqlite_autoindex_fact_material_source_v2_1 (revision_id=?)"
+        ]
+      }
+    },
+    {
+      "kind": "material_period_allocation",
+      "ids": 336,
+      "existing": {
+        "vm_steps": 9700,
+        "rows": 336,
+        "digest": "61eb411538ed7ce79c24b3b0c2365cf5df03a6c53887aacbdcb2b849aad2e318",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH t USING INDEX sqlite_autoindex_fact_material_period_allocation_1 (revision_id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      },
+      "candidate": {
+        "vm_steps": 9000,
+        "rows": 336,
+        "digest": "61eb411538ed7ce79c24b3b0c2365cf5df03a6c53887aacbdcb2b849aad2e318",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH t USING INDEX sqlite_autoindex_fact_material_period_allocation_1 (revision_id=?)",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      }
+    },
+    {
+      "kind": "material_resolution_v2",
+      "ids": 1000,
+      "existing": {
+        "vm_steps": 29000,
+        "rows": 1000,
+        "digest": "efaf0d56549ddec39c68a571883acebb626be4b4c8b2a7dfa53a6bc55725301a",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH t USING INDEX sqlite_autoindex_fact_material_resolution_v2_1 (revision_id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      },
+      "candidate": {
+        "vm_steps": 27000,
+        "rows": 1000,
+        "digest": "efaf0d56549ddec39c68a571883acebb626be4b4c8b2a7dfa53a6bc55725301a",
+        "plan": [
+          "SCAN ids VIRTUAL TABLE INDEX 1:",
+          "SEARCH t USING INDEX sqlite_autoindex_fact_material_resolution_v2_1 (revision_id=?)",
+          "SEARCH f USING INDEX sqlite_autoindex_fact_revision_1 (id=?)",
+          "SEARCH seal USING COVERING INDEX sqlite_autoindex_fact_seal_1 (fact_id=?)",
+          "SEARCH s USING COVERING INDEX subject_kind (kind=? AND id=?)"
+        ]
+      }
+    },
+    {
+      "kind": "material_group_resolution",
+      "status": "no_sample"
+    }
+  ]
+}

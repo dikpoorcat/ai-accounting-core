@@ -27,6 +27,11 @@
     },
     {
       "type": "index",
+      "name": "bank_reconciliation_reference",
+      "sql": "CREATE INDEX bank_reconciliation_reference ON fact_bank_reconciliation_matches(\n revision_id,reference,source_kind,source_id)"
+    },
+    {
+      "type": "index",
       "name": "business_duplicate_check_selected",
       "sql": "CREATE INDEX business_duplicate_check_selected ON business_duplicate_check(\n selected_fact_id,created_at,id) WHERE selected_fact_id IS NOT NULL"
     },
@@ -237,6 +242,21 @@
     },
     {
       "type": "index",
+      "name": "fact_digest",
+      "sql": "CREATE INDEX fact_digest ON fact_revision(digest,id)"
+    },
+    {
+      "type": "index",
+      "name": "fact_evidence_source",
+      "sql": "CREATE INDEX fact_evidence_source ON fact_evidence(evidence_digest,fact_id)"
+    },
+    {
+      "type": "index",
+      "name": "fact_id_subject_cover",
+      "sql": "CREATE INDEX fact_id_subject_cover ON fact_revision(id,subject_id)"
+    },
+    {
+      "type": "index",
       "name": "fact_period",
       "sql": "CREATE INDEX fact_period ON fact_revision(period,subject_id,id)"
     },
@@ -272,13 +292,38 @@
     },
     {
       "type": "index",
+      "name": "material_group_resolution_source",
+      "sql": "CREATE INDEX material_group_resolution_source ON fact_material_group_resolution(source_id,revision_id)"
+    },
+    {
+      "type": "index",
       "name": "material_period",
       "sql": "CREATE INDEX material_period ON material_revision(period,category,id)"
     },
     {
       "type": "index",
+      "name": "material_period_allocation_source",
+      "sql": "CREATE INDEX material_period_allocation_source ON fact_material_period_allocation(source_id,revision_id)"
+    },
+    {
+      "type": "index",
+      "name": "material_resolution_link_fact",
+      "sql": "CREATE INDEX material_resolution_link_fact ON fact_material_resolution_v2_links(fact_id,revision_id)"
+    },
+    {
+      "type": "index",
+      "name": "material_resolution_v2_source",
+      "sql": "CREATE INDEX material_resolution_v2_source ON fact_material_resolution_v2(source_id,revision_id)"
+    },
+    {
+      "type": "index",
       "name": "pending_cause",
       "sql": "CREATE INDEX pending_cause ON pending(cause_id,subject_id)"
+    },
+    {
+      "type": "index",
+      "name": "period_balance_freeze_row_bucket",
+      "sql": "CREATE INDEX period_balance_freeze_row_bucket\n  ON period_balance_freeze_row(period,category,bucket,balance_key)"
     },
     {
       "type": "index",
@@ -307,8 +352,23 @@
     },
     {
       "type": "index",
+      "name": "report_classification_voucher_revision",
+      "sql": "CREATE INDEX report_classification_voucher_revision ON fact_report_classification(voucher_version_id,revision_id)"
+    },
+    {
+      "type": "index",
+      "name": "report_line_source_account",
+      "sql": "CREATE INDEX report_line_source_account ON report_line_source(\n scope,account,posting_period,version_id,line_no)"
+    },
+    {
+      "type": "index",
       "name": "settlement_change_category",
       "sql": "CREATE INDEX settlement_change_category ON settlement_change(category,posting_period,obligation_key)"
+    },
+    {
+      "type": "index",
+      "name": "settlement_change_obligation_period",
+      "sql": "CREATE INDEX settlement_change_obligation_period ON settlement_change(obligation_key,posting_period)"
     },
     {
       "type": "index",
@@ -319,6 +379,21 @@
       "type": "index",
       "name": "settlement_change_source",
       "sql": "CREATE INDEX settlement_change_source ON settlement_change(source_subject_id,posting_period)"
+    },
+    {
+      "type": "index",
+      "name": "settlement_freeze_ref_range",
+      "sql": "CREATE INDEX settlement_freeze_ref_range\n ON settlement_freeze_ref(period,kind,last_key,first_key)"
+    },
+    {
+      "type": "index",
+      "name": "source_change_reference",
+      "sql": "CREATE INDEX source_change_reference ON source_change(source,after_ref,sequence)"
+    },
+    {
+      "type": "index",
+      "name": "subject_id_kind_cover",
+      "sql": "CREATE INDEX subject_id_kind_cover ON subject(id,kind)"
     },
     {
       "type": "index",
@@ -402,6 +477,26 @@
     },
     {
       "type": "table",
+      "name": "close_storage_block",
+      "sql": "CREATE TABLE close_storage_block(period INTEGER NOT NULL REFERENCES period_close(period)\n DEFERRABLE INITIALLY DEFERRED,field TEXT NOT NULL,bucket INTEGER NOT NULL CHECK(bucket>=0),\n part INTEGER NOT NULL CHECK(part>=0),content TEXT NOT NULL CHECK(json_valid(content)),\n digest BLOB NOT NULL CHECK(length(digest)=32),PRIMARY KEY(period,field,bucket,part)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "close_storage_directory",
+      "sql": "CREATE TABLE close_storage_directory(period INTEGER NOT NULL REFERENCES period_close(period)\n DEFERRABLE INITIALLY DEFERRED,field TEXT NOT NULL,bucket INTEGER NOT NULL CHECK(bucket>=0),\n content TEXT NOT NULL CHECK(json_valid(content)),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(period,field,bucket)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "close_storage_root",
+      "sql": "CREATE TABLE close_storage_root(period INTEGER PRIMARY KEY REFERENCES period_close(period)\n DEFERRABLE INITIALLY DEFERRED,storage_digest BLOB NOT NULL\n CHECK(length(storage_digest)=32)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "close_storage_subroot",
+      "sql": "CREATE TABLE close_storage_subroot(period INTEGER NOT NULL REFERENCES period_close(period)\n DEFERRABLE INITIALLY DEFERRED,family TEXT NOT NULL\n CHECK(family IN('accounting','material','management','review')),\n content TEXT NOT NULL CHECK(json_valid(content)),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(period,family)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "company_note_revision",
       "sql": "CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE\n CHECK(revision>0), text TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32),\n evidence_digest BLOB REFERENCES evidence(digest)) STRICT"
     },
@@ -439,6 +534,21 @@
       "type": "table",
       "name": "disposition",
       "sql": "CREATE TABLE disposition(id INTEGER PRIMARY KEY, subject_id TEXT NOT NULL REFERENCES subject,\n cause_id TEXT NOT NULL REFERENCES fact_revision, action TEXT NOT NULL,\n calculation_id TEXT REFERENCES calculation, explanation TEXT NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "duplicate_freeze_bucket",
+      "sql": "CREATE TABLE duplicate_freeze_bucket(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n content TEXT NOT NULL CHECK(json_valid(content))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "duplicate_freeze_directory",
+      "sql": "CREATE TABLE duplicate_freeze_directory(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n content TEXT NOT NULL CHECK(json_valid(content))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "duplicate_freeze_root",
+      "sql": "CREATE TABLE duplicate_freeze_root(\n period INTEGER PRIMARY KEY REFERENCES period_close(period) DEFERRABLE INITIALLY DEFERRED,\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n journal_highwater INTEGER NOT NULL CHECK(journal_highwater>=0),\n payload TEXT NOT NULL CHECK(json_valid(payload))\n  CHECK(json_extract(payload,'$.format') IS 'ai-accounting-kernel/2/duplicate-freeze/2')\n  CHECK(json_type(payload,'$.key_filter') IS 'object'),\n digest BLOB NOT NULL CHECK(length(digest)=32)\n) STRICT"
     },
     {
       "type": "table",
@@ -1282,6 +1392,11 @@
     },
     {
       "type": "table",
+      "name": "material_close_rule",
+      "sql": "CREATE TABLE material_close_rule(period INTEGER PRIMARY KEY REFERENCES period_close(period),\n rule_digest BLOB NOT NULL CHECK(length(rule_digest)=32)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "material_item",
       "sql": "CREATE TABLE material_item(inventory_id INTEGER NOT NULL REFERENCES material_revision,\n evidence_digest BLOB NOT NULL REFERENCES evidence,PRIMARY KEY(inventory_id,evidence_digest))\n STRICT"
     },
@@ -1289,6 +1404,21 @@
       "type": "table",
       "name": "material_revision",
       "sql": "CREATE TABLE material_revision(id INTEGER PRIMARY KEY,period INTEGER NOT NULL,\n category TEXT NOT NULL,expected INTEGER NOT NULL CHECK(expected>=0),\n received INTEGER NOT NULL CHECK(received>=0),\n no_business INTEGER NOT NULL CHECK(no_business IN(0,1)), evidence_digest BLOB NOT NULL\n REFERENCES evidence,\n CHECK(no_business=0 OR(expected=0 AND received=0))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "material_watch_bucket",
+      "sql": "CREATE TABLE material_watch_bucket(period INTEGER NOT NULL REFERENCES period_close(period),\n bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 65535),\n content TEXT NOT NULL CHECK(json_valid(content)),\n content_digest BLOB NOT NULL CHECK(length(content_digest)=32),\n PRIMARY KEY(period,bucket)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "material_watch_directory",
+      "sql": "CREATE TABLE material_watch_directory(period INTEGER NOT NULL REFERENCES period_close(period),\n directory INTEGER NOT NULL CHECK(directory BETWEEN 0 AND 255),\n content TEXT NOT NULL CHECK(json_valid(content)),\n content_digest BLOB NOT NULL CHECK(length(content_digest)=32),\n PRIMARY KEY(period,directory)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "material_watch_root",
+      "sql": "CREATE TABLE material_watch_root(period INTEGER PRIMARY KEY REFERENCES period_close(period),\n content TEXT NOT NULL CHECK(json_valid(content)),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32)) STRICT"
     },
     {
       "type": "table",
@@ -1322,6 +1452,21 @@
     },
     {
       "type": "table",
+      "name": "period_balance_freeze_bucket",
+      "sql": "CREATE TABLE period_balance_freeze_bucket(\n  period INTEGER NOT NULL REFERENCES period_balance_freeze_root(period),\n  category TEXT NOT NULL,\n  bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),\n  row_count INTEGER NOT NULL CHECK(row_count>0),\n  digest BLOB NOT NULL CHECK(length(digest)=32),\n  PRIMARY KEY(period,category,bucket)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "period_balance_freeze_root",
+      "sql": "CREATE TABLE period_balance_freeze_root(\n  period INTEGER PRIMARY KEY REFERENCES period_close(period),\n  close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n  publication_highwater INTEGER NOT NULL,\n  payload TEXT NOT NULL,\n  digest BLOB NOT NULL CHECK(length(digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "period_balance_freeze_row",
+      "sql": "CREATE TABLE period_balance_freeze_row(\n  period INTEGER NOT NULL REFERENCES period_balance_freeze_root(period),\n  category TEXT NOT NULL,\n  balance_key TEXT NOT NULL,\n  bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),\n  ending INTEGER NOT NULL,\n  activity INTEGER NOT NULL,\n  ending_present INTEGER NOT NULL CHECK(ending_present IN (0,1)),\n  activity_present INTEGER NOT NULL CHECK(activity_present IN (0,1)),\n  PRIMARY KEY(period,category,balance_key)\n) STRICT"
+    },
+    {
+      "type": "table",
       "name": "period_balance_seal",
       "sql": "CREATE TABLE period_balance_seal(posting_period INTEGER NOT NULL,category TEXT NOT NULL,\n row_count INTEGER NOT NULL CHECK(row_count>=0),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(posting_period,category)) STRICT"
     },
@@ -1344,6 +1489,71 @@
       "type": "table",
       "name": "read_index_source",
       "sql": "CREATE TABLE read_index_source(source_kind TEXT NOT NULL\n CHECK(source_kind IN ('close','job','audit')),source_id TEXT NOT NULL,\n source_digest BLOB NOT NULL CHECK(length(source_digest)=32),\n PRIMARY KEY(source_kind,source_id)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_classification_directory",
+      "sql": "CREATE TABLE report_classification_directory(\n period INTEGER PRIMARY KEY REFERENCES period_close(period),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n content TEXT NOT NULL CHECK(json_valid(content)),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_classification_node",
+      "sql": "CREATE TABLE report_classification_node(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n content TEXT NOT NULL CHECK(json_valid(content))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_line_source",
+      "sql": "CREATE TABLE report_line_source(\n scope TEXT NOT NULL CHECK(scope IN('open','closed')),\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n version_id TEXT NOT NULL REFERENCES voucher_version(id),\n line_no INTEGER NOT NULL CHECK(line_no>0),\n voucher_calculation_id TEXT NOT NULL REFERENCES calculation(id),\n basis_calculation_id TEXT NOT NULL REFERENCES calculation(id),\n publication_id TEXT REFERENCES calculation_publication(id),\n reverses_id TEXT REFERENCES voucher_version(id),\n account TEXT NOT NULL,\n debit INTEGER NOT NULL CHECK(debit>=0),\n credit INTEGER NOT NULL CHECK(credit>=0),\n cashflow TEXT,\n kind TEXT NOT NULL,\n fact_id TEXT NOT NULL REFERENCES fact_revision(id),\n calculation_period INTEGER NOT NULL,\n calculation_subject_id TEXT NOT NULL REFERENCES subject(id),\n result_digest BLOB NOT NULL CHECK(length(result_digest)=32),\n PRIMARY KEY(scope,posting_period,version_id,line_no)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_line_source_seal",
+      "sql": "CREATE TABLE report_line_source_seal(\n scope TEXT NOT NULL CHECK(scope IN('open','closed')),\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n row_count INTEGER NOT NULL CHECK(row_count>=0),\n digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(scope,posting_period)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_open_contribution",
+      "sql": "CREATE TABLE report_open_contribution(\n publication_id TEXT PRIMARY KEY REFERENCES report_open_contribution_anchor(publication_id),\n content TEXT NOT NULL CHECK(json_valid(content)),\n content_digest BLOB NOT NULL CHECK(length(content_digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_open_contribution_anchor",
+      "sql": "CREATE TABLE report_open_contribution_anchor(\n publication_id TEXT PRIMARY KEY REFERENCES calculation_publication(id),\n calculation_id TEXT NOT NULL UNIQUE REFERENCES calculation(id),\n content_digest BLOB NOT NULL CHECK(length(content_digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_party_checkpoint",
+      "sql": "CREATE TABLE report_party_checkpoint(\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n account TEXT NOT NULL,party_key TEXT NOT NULL CHECK(json_valid(party_key)),\n amount INTEGER NOT NULL,PRIMARY KEY(posting_period,account,party_key)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_party_checkpoint_seal",
+      "sql": "CREATE TABLE report_party_checkpoint_seal(\n posting_period INTEGER PRIMARY KEY CHECK(posting_period BETWEEN 0 AND 119987),\n row_count INTEGER NOT NULL CHECK(row_count>=0),\n usable INTEGER NOT NULL CHECK(usable IN(0,1)),\n inputs TEXT NOT NULL CHECK(json_valid(inputs)),\n digest BLOB NOT NULL CHECK(length(digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_party_delta",
+      "sql": "CREATE TABLE report_party_delta(\n posting_period INTEGER NOT NULL CHECK(posting_period BETWEEN 0 AND 119987),\n account TEXT NOT NULL,party_key TEXT NOT NULL CHECK(json_valid(party_key)),\n amount INTEGER NOT NULL,PRIMARY KEY(posting_period,account,party_key)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_party_month_seal",
+      "sql": "CREATE TABLE report_party_month_seal(\n posting_period INTEGER PRIMARY KEY CHECK(posting_period BETWEEN 0 AND 119987),\n row_count INTEGER NOT NULL CHECK(row_count>=0),\n usable INTEGER NOT NULL CHECK(usable IN(0,1)),\n digest BLOB NOT NULL CHECK(length(digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_period_flow",
+      "sql": "CREATE TABLE report_period_flow(\n posting_period INTEGER PRIMARY KEY REFERENCES period_close(period),\n content TEXT NOT NULL CHECK(json_valid(content)),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_semantic_line",
+      "sql": "CREATE TABLE report_semantic_line(\n posting_period INTEGER NOT NULL REFERENCES period_close(period),\n version_id TEXT NOT NULL REFERENCES voucher_version(id),\n line_no INTEGER NOT NULL CHECK(line_no>0),\n content TEXT NOT NULL CHECK(json_valid(content)),\n PRIMARY KEY(posting_period,version_id,line_no)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "report_semantic_seal",
+      "sql": "CREATE TABLE report_semantic_seal(\n posting_period INTEGER PRIMARY KEY REFERENCES period_close(period),\n row_count INTEGER NOT NULL CHECK(row_count>=0),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32)\n) STRICT"
     },
     {
       "type": "table",
@@ -1372,8 +1582,38 @@
     },
     {
       "type": "table",
+      "name": "settlement_freeze_block",
+      "sql": "CREATE TABLE settlement_freeze_block(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n payload TEXT NOT NULL CHECK(json_valid(payload))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "settlement_freeze_ref",
+      "sql": "CREATE TABLE settlement_freeze_ref(\n period INTEGER NOT NULL REFERENCES settlement_freeze_root(period),\n kind TEXT NOT NULL CHECK(kind IN ('all','open')),\n ordinal INTEGER NOT NULL CHECK(ordinal>=0),\n first_key TEXT NOT NULL,\n last_key TEXT NOT NULL,\n row_count INTEGER NOT NULL CHECK(row_count>0),\n block_digest BLOB NOT NULL REFERENCES settlement_freeze_block(digest),\n PRIMARY KEY(period,kind,ordinal)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "settlement_freeze_root",
+      "sql": "CREATE TABLE settlement_freeze_root(\n period INTEGER PRIMARY KEY REFERENCES period_close(period),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n root_json TEXT NOT NULL CHECK(json_valid(root_json)),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "settlement_projection_seal",
       "sql": "CREATE TABLE settlement_projection_seal(posting_period INTEGER PRIMARY KEY,\n row_count INTEGER NOT NULL CHECK(row_count>=0),digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "settlement_state_revision",
+      "sql": "CREATE TABLE settlement_state_revision(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n obligation_key TEXT NOT NULL,\n payload TEXT NOT NULL CHECK(json_valid(payload))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "source_change",
+      "sql": "CREATE TABLE source_change(sequence INTEGER PRIMARY KEY CHECK(sequence>0),source TEXT NOT NULL CHECK(source IN('fact','calculation','pending','identity','duplicate','inventory','inventory_item','publication')),target_id TEXT NOT NULL,before_ref TEXT,after_ref TEXT,CHECK(before_ref IS NOT after_ref)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "source_change_head",
+      "sql": "CREATE TABLE source_change_head(id INTEGER PRIMARY KEY CHECK(id=1),sequence INTEGER NOT NULL CHECK(sequence>=0)) STRICT"
     },
     {
       "type": "table",
@@ -1454,6 +1694,86 @@
       "type": "trigger",
       "name": "calculation_scope_owner",
       "sql": "CREATE TRIGGER calculation_scope_owner BEFORE INSERT ON calculation_scope WHEN NOT EXISTS(\n SELECT 1 FROM calculation c WHERE c.id=NEW.calculation_id AND c.kind=NEW.kind)\n BEGIN SELECT RAISE(ABORT,'calculation scope ownership mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_calculation_delete",
+      "sql": "CREATE TRIGGER change_calculation_delete AFTER DELETE ON calculation_current BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'calculation',OLD.subject_id,OLD.calculation_id,NULL FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_calculation_insert",
+      "sql": "CREATE TRIGGER change_calculation_insert AFTER INSERT ON calculation_current BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'calculation',NEW.subject_id,NULL,NEW.calculation_id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_calculation_key",
+      "sql": "CREATE TRIGGER change_calculation_key BEFORE UPDATE OF subject_id ON calculation_current WHEN NEW.subject_id IS NOT OLD.subject_id BEGIN SELECT RAISE(ABORT,'stable source identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_calculation_update",
+      "sql": "CREATE TRIGGER change_calculation_update AFTER UPDATE ON calculation_current WHEN NEW.calculation_id IS NOT OLD.calculation_id BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'calculation',NEW.subject_id,OLD.calculation_id,NEW.calculation_id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_duplicate_insert",
+      "sql": "CREATE TRIGGER change_duplicate_insert AFTER INSERT ON business_duplicate_check BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'duplicate',NEW.proposed_subject_id,NULL,NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_fact_delete",
+      "sql": "CREATE TRIGGER change_fact_delete AFTER DELETE ON fact_current BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'fact',OLD.subject_id,OLD.fact_id,NULL FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_fact_insert",
+      "sql": "CREATE TRIGGER change_fact_insert AFTER INSERT ON fact_current BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'fact',NEW.subject_id,NULL,NEW.fact_id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_fact_key",
+      "sql": "CREATE TRIGGER change_fact_key BEFORE UPDATE OF subject_id ON fact_current WHEN NEW.subject_id IS NOT OLD.subject_id BEGIN SELECT RAISE(ABORT,'stable source identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_fact_update",
+      "sql": "CREATE TRIGGER change_fact_update AFTER UPDATE ON fact_current WHEN NEW.fact_id IS NOT OLD.fact_id BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'fact',NEW.subject_id,OLD.fact_id,NEW.fact_id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_identity_insert",
+      "sql": "CREATE TRIGGER change_identity_insert AFTER INSERT ON identity_correction_item BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'identity',NEW.subject_id,NULL,NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_inventory_insert",
+      "sql": "CREATE TRIGGER change_inventory_insert AFTER INSERT ON material_revision BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'inventory',NEW.period||':'||NEW.category,NULL,CAST(NEW.id AS TEXT) FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_inventory_item_insert",
+      "sql": "CREATE TRIGGER change_inventory_item_insert AFTER INSERT ON material_item BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'inventory_item',CAST(NEW.inventory_id AS TEXT),NULL,lower(hex(NEW.evidence_digest)) FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_pending_delete",
+      "sql": "CREATE TRIGGER change_pending_delete AFTER DELETE ON pending BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'pending',OLD.subject_id,OLD.cause_id,NULL FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_pending_insert",
+      "sql": "CREATE TRIGGER change_pending_insert AFTER INSERT ON pending BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'pending',NEW.subject_id,NULL,NEW.cause_id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_pending_update",
+      "sql": "CREATE TRIGGER change_pending_update BEFORE UPDATE ON pending BEGIN SELECT RAISE(ABORT,'replace pending causes by insert or delete'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_publication_insert",
+      "sql": "CREATE TRIGGER change_publication_insert AFTER INSERT ON calculation_publication BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'publication',NEW.subject_id,NULL,NEW.id FROM source_change_head WHERE id=1; END"
     },
     {
       "type": "trigger",
@@ -1614,6 +1934,46 @@
       "type": "trigger",
       "name": "immutable_close_reference_UPDATE",
       "sql": "CREATE TRIGGER immutable_close_reference_UPDATE BEFORE UPDATE ON close_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_block_DELETE",
+      "sql": "CREATE TRIGGER immutable_close_storage_block_DELETE BEFORE DELETE ON close_storage_block BEGIN SELECT RAISE(ABORT,'immutable close_storage_block'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_block_UPDATE",
+      "sql": "CREATE TRIGGER immutable_close_storage_block_UPDATE BEFORE UPDATE ON close_storage_block BEGIN SELECT RAISE(ABORT,'immutable close_storage_block'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_directory_DELETE",
+      "sql": "CREATE TRIGGER immutable_close_storage_directory_DELETE BEFORE DELETE ON close_storage_directory BEGIN SELECT RAISE(ABORT,'immutable close_storage_directory'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_directory_UPDATE",
+      "sql": "CREATE TRIGGER immutable_close_storage_directory_UPDATE BEFORE UPDATE ON close_storage_directory BEGIN SELECT RAISE(ABORT,'immutable close_storage_directory'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_root_DELETE",
+      "sql": "CREATE TRIGGER immutable_close_storage_root_DELETE BEFORE DELETE ON close_storage_root BEGIN SELECT RAISE(ABORT,'immutable close_storage_root'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_root_UPDATE",
+      "sql": "CREATE TRIGGER immutable_close_storage_root_UPDATE BEFORE UPDATE ON close_storage_root BEGIN SELECT RAISE(ABORT,'immutable close_storage_root'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_subroot_DELETE",
+      "sql": "CREATE TRIGGER immutable_close_storage_subroot_DELETE BEFORE DELETE ON close_storage_subroot BEGIN SELECT RAISE(ABORT,'immutable close_storage_subroot'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_storage_subroot_UPDATE",
+      "sql": "CREATE TRIGGER immutable_close_storage_subroot_UPDATE BEFORE UPDATE ON close_storage_subroot BEGIN SELECT RAISE(ABORT,'immutable close_storage_subroot'); END"
     },
     {
       "type": "trigger",
@@ -3297,6 +3657,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_material_close_rule_DELETE",
+      "sql": "CREATE TRIGGER immutable_material_close_rule_DELETE BEFORE DELETE ON material_close_rule BEGIN SELECT RAISE(ABORT,'immutable material_close_rule'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_material_close_rule_UPDATE",
+      "sql": "CREATE TRIGGER immutable_material_close_rule_UPDATE BEFORE UPDATE ON material_close_rule BEGIN SELECT RAISE(ABORT,'immutable material_close_rule'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_material_item_DELETE",
       "sql": "CREATE TRIGGER immutable_material_item_DELETE BEFORE DELETE ON material_item BEGIN SELECT RAISE(ABORT,'immutable material_item'); END"
     },
@@ -3984,6 +4354,16 @@
       "type": "trigger",
       "name": "read_index_source_owner",
       "sql": "CREATE TRIGGER read_index_source_owner BEFORE INSERT ON read_index_source\n WHEN (NEW.source_kind='close' AND NOT EXISTS(\n SELECT 1 FROM period_close WHERE period=CAST(NEW.source_id AS INTEGER)\n AND CAST(period AS TEXT)=NEW.source_id))\n OR (NEW.source_kind='job' AND NOT EXISTS(SELECT 1 FROM jobs WHERE id=NEW.source_id\n AND kind IN ('payment_export','tax_import','report_export')))\n OR (NEW.source_kind='audit' AND NOT EXISTS(SELECT 1 FROM audit\n WHERE id=CAST(NEW.source_id AS INTEGER) AND CAST(id AS TEXT)=NEW.source_id AND action IN\n ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee',\n 'register_entity','update_entity_profile')))\n BEGIN SELECT RAISE(ABORT,'read index source ownership mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "report_open_contribution_anchor_delete",
+      "sql": "CREATE TRIGGER report_open_contribution_anchor_delete\n BEFORE DELETE ON report_open_contribution_anchor\n BEGIN SELECT RAISE(ABORT,'immutable report contribution anchor'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "report_open_contribution_anchor_update",
+      "sql": "CREATE TRIGGER report_open_contribution_anchor_update\n BEFORE UPDATE ON report_open_contribution_anchor\n BEGIN SELECT RAISE(ABORT,'immutable report contribution anchor'); END"
     },
     {
       "type": "trigger",
@@ -4819,7 +5199,37 @@
       "type": "trigger",
       "name": "security_approval_sealed",
       "sql": "CREATE TRIGGER security_approval_sealed BEFORE UPDATE ON security_close_approval\n        WHEN OLD.consumed_at IS NOT NULL OR NEW.consumed_at IS NULL\n          OR NEW.id IS NOT OLD.id OR NEW.catalog_instance_id IS NOT OLD.catalog_instance_id\n          OR NEW.company_id IS NOT OLD.company_id OR NEW.database_id IS NOT OLD.database_id\n          OR NEW.period IS NOT OLD.period OR NEW.preview_digest IS NOT OLD.preview_digest\n          OR NEW.accounting_epoch IS NOT OLD.accounting_epoch\n          OR NEW.material_epoch IS NOT OLD.material_epoch\n          OR NEW.management_epoch IS NOT OLD.management_epoch\n          OR NEW.owner_id IS NOT OLD.owner_id OR NEW.session_id IS NOT OLD.session_id\n          OR NEW.credential_version IS NOT OLD.credential_version\n          OR NEW.confirmed_at IS NOT OLD.confirmed_at OR NEW.expires_at IS NOT OLD.expires_at\n        BEGIN SELECT RAISE(ABORT,'sealed close approval'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_advance",
+      "sql": "CREATE TRIGGER source_change_advance AFTER INSERT ON source_change BEGIN UPDATE source_change_head SET sequence=NEW.sequence WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_head_order",
+      "sql": "CREATE TRIGGER source_change_head_order BEFORE UPDATE ON source_change_head WHEN NEW.id IS NOT OLD.id OR NEW.sequence<>OLD.sequence+1 OR NOT EXISTS(SELECT 1 FROM source_change WHERE sequence=NEW.sequence) BEGIN SELECT RAISE(ABORT,'source change head mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_head_retained",
+      "sql": "CREATE TRIGGER source_change_head_retained BEFORE DELETE ON source_change_head BEGIN SELECT RAISE(ABORT,'retained source change head'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_immutable",
+      "sql": "CREATE TRIGGER source_change_immutable BEFORE UPDATE ON source_change BEGIN SELECT RAISE(ABORT,'immutable source change'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_order",
+      "sql": "CREATE TRIGGER source_change_order BEFORE INSERT ON source_change WHEN NEW.sequence IS NOT (SELECT sequence+1 FROM source_change_head WHERE id=1) BEGIN SELECT RAISE(ABORT,'source change sequence mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "source_change_retained",
+      "sql": "CREATE TRIGGER source_change_retained BEFORE DELETE ON source_change BEGIN SELECT RAISE(ABORT,'retained source change'); END"
     }
   ],
-  "sha256": "d9511f9ff429bbfb3580d5a0717fa06a4fd64b3cbd462d3281a618c982448348"
+  "sha256": "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
 }

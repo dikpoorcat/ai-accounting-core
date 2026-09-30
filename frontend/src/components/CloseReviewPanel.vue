@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
-import { fetchCloseReview, mergeCloseReviewSection, type CloseReviewCollection, type CloseReviewCollections, type CloseReviewSection } from "../api/closeReview";
-import type { DashboardCloseReviewResponse } from "../api/generated/dashboardResponses";
+import { fetchCloseReview, mergeCloseReviewSection, type CloseReviewCollection, type CloseReviewCollections, type CloseReviewPrefetch, type CloseReviewSection } from "../api/closeReview";
+import type { DashboardCloseReviewResponse } from "../api/generated/dashboardCloseReview";
 import { businessStateLabel } from "../api/dashboardContracts";
 import { formatFen } from "../utils/money";
 import DashboardPagination from "./DashboardPagination.vue";
 
-const props = defineProps<{ companyId: string; period: string; refreshKey: number }>();
+const props = defineProps<{ companyId: string; period: string; refreshKey: number; prefetch?: CloseReviewPrefetch | null }>();
 type ReviewCollection = CloseReviewCollection;
 
-const response = ref<DashboardCloseReviewResponse | null>(null);
+const response = shallowRef<DashboardCloseReviewResponse | null>(null);
 const pinnedDigest = ref<string | null>(null);
 const loading = ref(false);
 const error = ref("");
@@ -44,7 +44,12 @@ async function loadSummary() {
   if (!props.companyId || !props.period) return;
   const request = new AbortController(); controller = request; loading.value = true; error.value = "";
   try {
-    const result = await fetchCloseReview(props.companyId, props.period, request.signal);
+    const prefetched = props.prefetch?.companyId === props.companyId && props.prefetch.period === props.period
+      ? props.prefetch.result : null;
+    const settled = prefetched ? await prefetched : null;
+    if (settled?.status === "rejected") throw settled.reason;
+    const result = settled?.status === "fulfilled"
+      ? settled.value : await fetchCloseReview(props.companyId, props.period, request.signal);
     if (!mounted || generation !== current || controller !== request) return;
     response.value = result;
     if ((result.state === "prepared" || result.state === "closed") && result.preview_digest) pinnedDigest.value = result.preview_digest;
@@ -127,7 +132,7 @@ function referenceLabel(reference: ReviewCollection["items"][number]["references
   return { voucher: "凭证记录", calculation: "核算结果", fact: "业务事实", evidence: "原始凭据", inventory: "资料清单" }[reference.source_type];
 }
 
-watch(() => [props.companyId, props.period, props.refreshKey], loadSummary, { immediate: true, flush: "post" });
+watch(() => [props.companyId, props.period, props.refreshKey, props.prefetch], loadSummary, { immediate: true, flush: "post" });
 onBeforeUnmount(() => { mounted = false; generation += 1; cancel(); });
 </script>
 

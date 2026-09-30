@@ -1,0 +1,2222 @@
+{
+  "scope": "fixed_r26_main48_public_http_diagnostic_with_possible_parallel_build_load_not_browser_acceptance",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r26-release",
+  "verified_book": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48-verified-r26.json",
+  "period": "2019-12",
+  "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+  "method": "actual ThreadingHTTPServer /api/dashboard GET; service.dispatch(response_format=http_json); one warmup per route, one cProfile sample plus one stages-only sample; no preview_close",
+  "limitations": [
+    "cProfile inclusive wall includes waits and instrumentation; do not compare to the 500 ms browser target",
+    "brief worker CPU executes in other processes and is not captured by this parent cProfile",
+    "close-review sample has no active preview and is not the prepared browser review",
+    "client JSON parse is Python-only and not the frontend Ajv/DOM cost"
+  ],
+  "samples": [
+    {
+      "action": "context",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9"
+      },
+      "status": 200,
+      "response_bytes": 10317,
+      "response_sha256": "67665eb2267d9d1cd27677996c34e1c0fb33d7e8699805eb309d6c9cd8f2c383",
+      "client_receive_wall_ms": 126.152,
+      "client_json_parse_ms": 0.144,
+      "data_status": null
+    },
+    {
+      "action": "brief",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "complete",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 882716,
+      "response_sha256": "dce3bf8fa228e9973f7ad46b6c87b73d6b98af0480c8584474033d781fa4da97",
+      "client_receive_wall_ms": 1011.154,
+      "client_json_parse_ms": 9.427,
+      "data_status": null
+    },
+    {
+      "action": "funds",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 348414,
+      "response_sha256": "5374e5ec02d7265155c37ccaa944d038359d7593dbe2423ece6be938303b906e",
+      "client_receive_wall_ms": 438.575,
+      "client_json_parse_ms": 3.155,
+      "data_status": null
+    },
+    {
+      "action": "employees",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 168114,
+      "response_sha256": "6f09880821011dffec95b3c18c28edf3f2faaa579daafb8b4cba0cd442c3290a",
+      "client_receive_wall_ms": 554.215,
+      "client_json_parse_ms": 1.498,
+      "data_status": null
+    },
+    {
+      "action": "assets",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 190766,
+      "response_sha256": "c2a111dad18736b1fb9ce2951735e47e6930bceee4536cb4e241ce74bd999baf",
+      "client_receive_wall_ms": 587.67,
+      "client_json_parse_ms": 1.826,
+      "data_status": null
+    },
+    {
+      "action": "quarterly-report",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "year": 2019,
+        "quarter": 4,
+        "preparation": "deferred"
+      },
+      "status": 200,
+      "response_bytes": 20944,
+      "response_sha256": "5c951b29e3e5d47d04fd692e2767ae6903b32263cef3cc4baeae55043856988c",
+      "client_receive_wall_ms": 804.683,
+      "client_json_parse_ms": 0.327,
+      "data_status": "in_progress"
+    },
+    {
+      "action": "close-review",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "limit": 50
+      },
+      "status": 200,
+      "response_bytes": 282,
+      "response_sha256": "6ca36057e06312c2f1f5cdb0156afc206bee29372cf6f949d5c1ee17c292e36a",
+      "client_receive_wall_ms": 41.552,
+      "client_json_parse_ms": 0.025,
+      "data_status": null,
+      "review_state": "unprepared"
+    },
+    {
+      "action": "context",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9"
+      },
+      "status": 200,
+      "response_bytes": 10317,
+      "response_sha256": "dff043fa2b8ee38ea27c14d36904b06080baa82e1e411cc461cc2498dbf7f569",
+      "client_receive_wall_ms": 91.419,
+      "client_json_parse_ms": 0.216,
+      "data_status": null
+    },
+    {
+      "action": "brief",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "complete",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 882716,
+      "response_sha256": "6ef470cff90c027cc1538d7025a9a9b620ed332a6b2dc96e0ba5c5addcfc7287",
+      "client_receive_wall_ms": 750.477,
+      "client_json_parse_ms": 10.543,
+      "data_status": null
+    },
+    {
+      "action": "funds",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 348414,
+      "response_sha256": "5374e5ec02d7265155c37ccaa944d038359d7593dbe2423ece6be938303b906e",
+      "client_receive_wall_ms": 405.084,
+      "client_json_parse_ms": 2.769,
+      "data_status": null
+    },
+    {
+      "action": "employees",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 168114,
+      "response_sha256": "6f09880821011dffec95b3c18c28edf3f2faaa579daafb8b4cba0cd442c3290a",
+      "client_receive_wall_ms": 445.728,
+      "client_json_parse_ms": 1.581,
+      "data_status": null
+    },
+    {
+      "action": "assets",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "period": "2019-12",
+        "preparation": "deferred",
+        "limit": 100
+      },
+      "status": 200,
+      "response_bytes": 190766,
+      "response_sha256": "c2a111dad18736b1fb9ce2951735e47e6930bceee4536cb4e241ce74bd999baf",
+      "client_receive_wall_ms": 408.817,
+      "client_json_parse_ms": 1.611,
+      "data_status": null
+    },
+    {
+      "action": "quarterly-report",
+      "parameters": {
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "year": 2019,
+        "quarter": 4,
+        "preparation": "deferred"
+      },
+      "status": 200,
+      "response_bytes": 20944,
+      "response_sha256": "cac463f7a3ad50fcb32bf842a1dce0b762f066d2bc58d2169ece2d182cf0b860",
+      "client_receive_wall_ms": 660.958,
+      "client_json_parse_ms": 0.301,
+      "data_status": "in_progress"
+    }
+  ],
+  "dispatch": [
+    {
+      "command": "dashboard_context",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 106.815,
+      "dispatch_thread_cpu_ms": 93.75,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.091,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 10.887,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_context_body",
+          "wall_ms": 94.614,
+          "thread_cpu_ms": 93.75
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 94.653,
+          "thread_cpu_ms": 93.75
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 0.201,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 0.078,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 2,
+          "self_ms": 0.043,
+          "inclusive_ms": 105.861
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.006,
+          "inclusive_ms": 94.631
+        },
+        {
+          "function": "service.py:422:dashboard_context",
+          "calls": 1,
+          "self_ms": 0.056,
+          "inclusive_ms": 94.596
+        },
+        {
+          "function": "dashboard.py:1441:context",
+          "calls": 1,
+          "self_ms": 1.056,
+          "inclusive_ms": 81.315
+        },
+        {
+          "function": "reports.py:852:closed_period_coverages",
+          "calls": 1,
+          "self_ms": 10.13,
+          "inclusive_ms": 65.13
+        },
+        {
+          "function": "reports.py:323:_closed_report_fact_sources",
+          "calls": 1,
+          "self_ms": 0.164,
+          "inclusive_ms": 38.13
+        },
+        {
+          "function": "query_reads.py:1233:close_readiness_check",
+          "calls": 47,
+          "self_ms": 0.266,
+          "inclusive_ms": 22.993
+        },
+        {
+          "function": "runtime.py:277:connect",
+          "calls": 4,
+          "self_ms": 0.252,
+          "inclusive_ms": 20.078
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 398,
+          "self_ms": 0.529,
+          "inclusive_ms": 15.785
+        },
+        {
+          "function": "query_reads.py:1172:close_header",
+          "calls": 47,
+          "self_ms": 0.138,
+          "inclusive_ms": 12.639
+        },
+        {
+          "function": "close_storage.py:387:verified_header",
+          "calls": 47,
+          "self_ms": 0.947,
+          "inclusive_ms": 12.317
+        },
+        {
+          "function": "query_reads.py:344:snapshot",
+          "calls": 2,
+          "self_ms": 0.022,
+          "inclusive_ms": 12.268
+        },
+        {
+          "function": "catalog.py:152:connection",
+          "calls": 2,
+          "self_ms": 0.011,
+          "inclusive_ms": 12.07
+        },
+        {
+          "function": "storage.py:300:connection",
+          "calls": 2,
+          "self_ms": 0.005,
+          "inclusive_ms": 11.768
+        },
+        {
+          "function": "resident_reads.py:95:borrow",
+          "calls": 2,
+          "self_ms": 0.024,
+          "inclusive_ms": 11.717
+        },
+        {
+          "function": "service.py:433:authorize",
+          "calls": 1,
+          "self_ms": 0.008,
+          "inclusive_ms": 10.866
+        },
+        {
+          "function": "service.py:157:_transaction",
+          "calls": 2,
+          "self_ms": 0.024,
+          "inclusive_ms": 10.671
+        },
+        {
+          "function": "close_storage.py:659:read_readiness_check",
+          "calls": 47,
+          "self_ms": 0.076,
+          "inclusive_ms": 9.787
+        },
+        {
+          "function": "runtime.py:84:_existing_sidecars",
+          "calls": 4,
+          "self_ms": 0.069,
+          "inclusive_ms": 8.959
+        },
+        {
+          "function": "runtime.py:427:validate_reused_read_connection",
+          "calls": 1,
+          "self_ms": 0.019,
+          "inclusive_ms": 8.471
+        },
+        {
+          "function": "permissions.py:84:assert_private_file",
+          "calls": 14,
+          "self_ms": 0.065,
+          "inclusive_ms": 8.022
+        },
+        {
+          "function": "permissions.py:64:_translate",
+          "calls": 14,
+          "self_ms": 0.008,
+          "inclusive_ms": 7.79
+        },
+        {
+          "function": "permissions.py:89:<lambda>",
+          "calls": 14,
+          "self_ms": 0.018,
+          "inclusive_ms": 7.781
+        },
+        {
+          "function": "windows.py:299:assert_private_path",
+          "calls": 14,
+          "self_ms": 0.177,
+          "inclusive_ms": 7.764
+        },
+        {
+          "function": "runtime.py:169:require_local_database",
+          "calls": 8,
+          "self_ms": 0.153,
+          "inclusive_ms": 7.737
+        },
+        {
+          "function": "close_storage.py:444:<genexpr>",
+          "calls": 423,
+          "self_ms": 0.441,
+          "inclusive_ms": 7.026
+        },
+        {
+          "function": "close_storage.py:650:_management_value",
+          "calls": 47,
+          "self_ms": 0.109,
+          "inclusive_ms": 6.907
+        },
+        {
+          "function": "close_storage.py:494:_bucket_rows",
+          "calls": 47,
+          "self_ms": 0.694,
+          "inclusive_ms": 6.792
+        },
+        {
+          "function": "windows.py:370:_safe_path",
+          "calls": 14,
+          "self_ms": 0.24,
+          "inclusive_ms": 6.403
+        },
+        {
+          "function": "permissions.py:39:reject_reparse_path",
+          "calls": 20,
+          "self_ms": 0.026,
+          "inclusive_ms": 6.04
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.355,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 109.012,
+          "thread_cpu_ms": 93.75
+        }
+      ]
+    },
+    {
+      "command": "dashboard_brief",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 991.158,
+      "dispatch_thread_cpu_ms": 968.75,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.087,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 11.487,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 12.418,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_brief",
+          "wall_ms": 940.06,
+          "thread_cpu_ms": 921.875
+        },
+        {
+          "name": "parallel_brief_parent",
+          "wall_ms": 953.237,
+          "thread_cpu_ms": 937.5
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 965.79,
+          "thread_cpu_ms": 937.5
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 6.625,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 6.502,
+          "thread_cpu_ms": 15.625
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 2,
+          "self_ms": 0.163,
+          "inclusive_ms": 966.555
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 2,
+          "self_ms": 0.392,
+          "inclusive_ms": 940.506
+        },
+        {
+          "function": "service.py:351:_dashboard_brief",
+          "calls": 1,
+          "self_ms": 0.033,
+          "inclusive_ms": 799.089
+        },
+        {
+          "function": "dashboard.py:1577:brief",
+          "calls": 1,
+          "self_ms": 0.122,
+          "inclusive_ms": 530.046
+        },
+        {
+          "function": "dashboard.py:420:preparation",
+          "calls": 1,
+          "self_ms": 0.19,
+          "inclusive_ms": 279.678
+        },
+        {
+          "function": "business_queries.py:2725:_period_readiness",
+          "calls": 1,
+          "self_ms": 0.156,
+          "inclusive_ms": 279.487
+        },
+        {
+          "function": "periods.py:392:check_readiness",
+          "calls": 1,
+          "self_ms": 0.046,
+          "inclusive_ms": 230.666
+        },
+        {
+          "function": "periods.py:473:collect_current_readiness",
+          "calls": 1,
+          "self_ms": 14.891,
+          "inclusive_ms": 230.408
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 1520,
+          "self_ms": 2.79,
+          "inclusive_ms": 207.567
+        },
+        {
+          "function": "business_queries.py:399:_selected_accounting",
+          "calls": 6,
+          "self_ms": 4.644,
+          "inclusive_ms": 189.089
+        },
+        {
+          "function": "query_reads.py:1183:close_accounting",
+          "calls": 141,
+          "self_ms": 2.051,
+          "inclusive_ms": 183.838
+        },
+        {
+          "function": "close_storage.py:683:read_accounting",
+          "calls": 141,
+          "self_ms": 15.582,
+          "inclusive_ms": 179.213
+        },
+        {
+          "function": "dashboard.py:4232:_long_term_assets",
+          "calls": 1,
+          "self_ms": 0.087,
+          "inclusive_ms": 131.731
+        },
+        {
+          "function": "dashboard.py:4170:_asset_card_sources",
+          "calls": 1,
+          "self_ms": 0.062,
+          "inclusive_ms": 130.935
+        },
+        {
+          "function": "query_reads.py:482:prime_select",
+          "calls": 72,
+          "self_ms": 0.612,
+          "inclusive_ms": 126.334
+        },
+        {
+          "function": "storage.py:595:select_many",
+          "calls": 73,
+          "self_ms": 8.934,
+          "inclusive_ms": 125.335
+        },
+        {
+          "function": "dashboard_funds.py:57:__init__",
+          "calls": 1,
+          "self_ms": 0.064,
+          "inclusive_ms": 122.267
+        },
+        {
+          "function": "dashboard.py:344:calculations_of_kind",
+          "calls": 4,
+          "self_ms": 0.024,
+          "inclusive_ms": 121.475
+        },
+        {
+          "function": "dashboard_reads.py:530:selected",
+          "calls": 4,
+          "self_ms": 0.335,
+          "inclusive_ms": 121.449
+        },
+        {
+          "function": "dashboard.py:2806:_funds",
+          "calls": 1,
+          "self_ms": 0.058,
+          "inclusive_ms": 111.404
+        },
+        {
+          "function": "dashboard_funds.py:1202:funds",
+          "calls": 1,
+          "self_ms": 0.054,
+          "inclusive_ms": 111.343
+        },
+        {
+          "function": "dashboard.py:2817:_open_items",
+          "calls": 1,
+          "self_ms": 0.798,
+          "inclusive_ms": 106.837
+        },
+        {
+          "function": "dashboard_funds.py:177:account_summary",
+          "calls": 1,
+          "self_ms": 0.743,
+          "inclusive_ms": 105.293
+        },
+        {
+          "function": "settlement_projection.py:714:settlement_dashboard_open",
+          "calls": 2,
+          "self_ms": 0.057,
+          "inclusive_ms": 103.878
+        },
+        {
+          "function": "settlement_freeze.py:1603:frozen_dashboard_open",
+          "calls": 2,
+          "self_ms": 5.092,
+          "inclusive_ms": 103.818
+        },
+        {
+          "function": "settlement_freeze.py:888:_scope",
+          "calls": 4,
+          "self_ms": 4.283,
+          "inclusive_ms": 85.603
+        },
+        {
+          "function": "close_storage.py:670:_may_contain_with_positions",
+          "calls": 9071,
+          "self_ms": 14.548,
+          "inclusive_ms": 61.863
+        },
+        {
+          "function": "dashboard.py:371:asset_member_events",
+          "calls": 4,
+          "self_ms": 0.023,
+          "inclusive_ms": 58.343
+        },
+        {
+          "function": "business_queries.py:696:_selected_asset_members",
+          "calls": 4,
+          "self_ms": 0.149,
+          "inclusive_ms": 58.319
+        },
+        {
+          "function": "close_storage.py:601:_prime_buckets",
+          "calls": 376,
+          "self_ms": 2.54,
+          "inclusive_ms": 56.396
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.569,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 998.096,
+          "thread_cpu_ms": 968.75
+        }
+      ]
+    },
+    {
+      "command": "dashboard_funds",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 433.356,
+      "dispatch_thread_cpu_ms": 421.875,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.091,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 11.47,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 12.115,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_funds",
+          "wall_ms": 404.766,
+          "thread_cpu_ms": 406.25
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 417.022,
+          "thread_cpu_ms": 406.25
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 2.541,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 1.876,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 1,
+          "self_ms": 0.064,
+          "inclusive_ms": 433.107
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.075,
+          "inclusive_ms": 416.997
+        },
+        {
+          "function": "dashboard.py:2005:funds",
+          "calls": 1,
+          "self_ms": 0.019,
+          "inclusive_ms": 404.75
+        },
+        {
+          "function": "dashboard.py:2806:_funds",
+          "calls": 1,
+          "self_ms": 0.07,
+          "inclusive_ms": 385.793
+        },
+        {
+          "function": "dashboard_funds.py:1202:funds",
+          "calls": 1,
+          "self_ms": 0.347,
+          "inclusive_ms": 385.723
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 645,
+          "self_ms": 1.011,
+          "inclusive_ms": 141.237
+        },
+        {
+          "function": "dashboard_funds.py:177:account_summary",
+          "calls": 1,
+          "self_ms": 1.212,
+          "inclusive_ms": 106.8
+        },
+        {
+          "function": "dashboard_funds.py:57:__init__",
+          "calls": 1,
+          "self_ms": 0.035,
+          "inclusive_ms": 102.926
+        },
+        {
+          "function": "business_queries.py:399:_selected_accounting",
+          "calls": 1,
+          "self_ms": 0.716,
+          "inclusive_ms": 102.841
+        },
+        {
+          "function": "query_reads.py:1183:close_accounting",
+          "calls": 47,
+          "self_ms": 0.623,
+          "inclusive_ms": 85.026
+        },
+        {
+          "function": "close_storage.py:683:read_accounting",
+          "calls": 47,
+          "self_ms": 4.957,
+          "inclusive_ms": 83.941
+        },
+        {
+          "function": "dashboard_funds.py:89:events",
+          "calls": 5,
+          "self_ms": 0.09,
+          "inclusive_ms": 73.762
+        },
+        {
+          "function": "dashboard_reads.py:318:sql",
+          "calls": 3,
+          "self_ms": 0.034,
+          "inclusive_ms": 57.756
+        },
+        {
+          "function": "dashboard_reads.py:328:_sql",
+          "calls": 3,
+          "self_ms": 52.822,
+          "inclusive_ms": 57.698
+        },
+        {
+          "function": "dashboard_funds.py:130:movements",
+          "calls": 2,
+          "self_ms": 0.012,
+          "inclusive_ms": 47.664
+        },
+        {
+          "function": "dashboard_funds.py:401:movement_item",
+          "calls": 100,
+          "self_ms": 1.505,
+          "inclusive_ms": 44.234
+        },
+        {
+          "function": "dashboard_funds.py:23:_sql_page",
+          "calls": 3,
+          "self_ms": 0.065,
+          "inclusive_ms": 42.611
+        },
+        {
+          "function": "dashboard_funds.py:440:prepare_calculation_items",
+          "calls": 2,
+          "self_ms": 0.589,
+          "inclusive_ms": 41.696
+        },
+        {
+          "function": "period_balances.py:354:_totals",
+          "calls": 2,
+          "self_ms": 0.096,
+          "inclusive_ms": 36.566
+        },
+        {
+          "function": "dashboard_funds.py:1098:investment_summary",
+          "calls": 1,
+          "self_ms": 0.04,
+          "inclusive_ms": 30.906
+        },
+        {
+          "function": "period_balances.py:438:balance_totals",
+          "calls": 1,
+          "self_ms": 0.007,
+          "inclusive_ms": 29.21
+        },
+        {
+          "function": "dashboard_funds.py:373:money_parties",
+          "calls": 200,
+          "self_ms": 1.488,
+          "inclusive_ms": 29.095
+        },
+        {
+          "function": "close_storage.py:670:_may_contain_with_positions",
+          "calls": 4559,
+          "self_ms": 6.268,
+          "inclusive_ms": 26.796
+        },
+        {
+          "function": "dashboard_funds.py:1056:investment_source",
+          "calls": 3,
+          "self_ms": 0.016,
+          "inclusive_ms": 26.136
+        },
+        {
+          "function": "dashboard_funds.py:1075:investment_events",
+          "calls": 2,
+          "self_ms": 0.007,
+          "inclusive_ms": 25.404
+        },
+        {
+          "function": "dashboard.py:683:voucher_relations",
+          "calls": 300,
+          "self_ms": 2.948,
+          "inclusive_ms": 23.112
+        },
+        {
+          "function": "query_reads.py:678:prime_calculations",
+          "calls": 4,
+          "self_ms": 2.916,
+          "inclusive_ms": 23.023
+        },
+        {
+          "function": "close_storage.py:601:_prime_buckets",
+          "calls": 94,
+          "self_ms": 0.873,
+          "inclusive_ms": 21.977
+        },
+        {
+          "function": "close_storage.py:561:_buckets_rows",
+          "calls": 94,
+          "self_ms": 4.835,
+          "inclusive_ms": 20.521
+        },
+        {
+          "function": "query_reads.py:597:calculations",
+          "calls": 4,
+          "self_ms": 0.695,
+          "inclusive_ms": 19.178
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.33,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 437.372,
+          "thread_cpu_ms": 421.875
+        }
+      ]
+    },
+    {
+      "command": "dashboard_employees",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 549.747,
+      "dispatch_thread_cpu_ms": 531.25,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.09,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 10.487,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 10.852,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_employees",
+          "wall_ms": 524.405,
+          "thread_cpu_ms": 515.625
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 535.404,
+          "thread_cpu_ms": 515.625
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 2.23,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 1.185,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 2,
+          "self_ms": 0.115,
+          "inclusive_ms": 538.887
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.009,
+          "inclusive_ms": 524.427
+        },
+        {
+          "function": "dashboard.py:2067:employees",
+          "calls": 1,
+          "self_ms": 6.043,
+          "inclusive_ms": 511.017
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 340,
+          "self_ms": 0.566,
+          "inclusive_ms": 191.469
+        },
+        {
+          "function": "entity_references.py:505:current_role_matches",
+          "calls": 1,
+          "self_ms": 8.837,
+          "inclusive_ms": 174.92
+        },
+        {
+          "function": "entity_references.py:540:verify_hits",
+          "calls": 2,
+          "self_ms": 18.535,
+          "inclusive_ms": 169.579
+        },
+        {
+          "function": "entity_references.py:354:_expected_rows",
+          "calls": 2,
+          "self_ms": 17.62,
+          "inclusive_ms": 148.558
+        },
+        {
+          "function": "dashboard_reads.py:79:adopted_head_metadata",
+          "calls": 2,
+          "self_ms": 17.149,
+          "inclusive_ms": 147.885
+        },
+        {
+          "function": "dashboard_reads.py:149:payroll_head_metadata",
+          "calls": 1,
+          "self_ms": 0.018,
+          "inclusive_ms": 145.806
+        },
+        {
+          "function": "dashboard.py:3403:_employees",
+          "calls": 1,
+          "self_ms": 2.646,
+          "inclusive_ms": 119.145
+        },
+        {
+          "function": "settlement_freeze.py:888:_scope",
+          "calls": 1,
+          "self_ms": 3.929,
+          "inclusive_ms": 97.157
+        },
+        {
+          "function": "storage.py:354:fact_data_many",
+          "calls": 3,
+          "self_ms": 24.458,
+          "inclusive_ms": 45.824
+        },
+        {
+          "function": "settlement_freeze.py:834:_tail_rows",
+          "calls": 1,
+          "self_ms": 7.606,
+          "inclusive_ms": 41.536
+        },
+        {
+          "function": "entity_references.py:320:references_from_data",
+          "calls": 2500,
+          "self_ms": 12.445,
+          "inclusive_ms": 37.716
+        },
+        {
+          "function": "content_history_context.py:33:source_digest",
+          "calls": 2600,
+          "self_ms": 1.454,
+          "inclusive_ms": 36.738
+        },
+        {
+          "function": "types.py:118:digest",
+          "calls": 2651,
+          "self_ms": 3.193,
+          "inclusive_ms": 34.399
+        },
+        {
+          "function": "types.py:112:canonical",
+          "calls": 2807,
+          "self_ms": 1.518,
+          "inclusive_ms": 32.084
+        },
+        {
+          "function": "dashboard_reads.py:202:metric_rows",
+          "calls": 3,
+          "self_ms": 0.49,
+          "inclusive_ms": 27.45
+        },
+        {
+          "function": "dashboard.py:3121:_workforce_payroll_rows",
+          "calls": 1,
+          "self_ms": 0.361,
+          "inclusive_ms": 26.305
+        },
+        {
+          "function": "settlement_projection.py:497:verify_settlement_periods",
+          "calls": 1,
+          "self_ms": 0.039,
+          "inclusive_ms": 23.784
+        },
+        {
+          "function": "entity_references.py:297:_at",
+          "calls": 40072,
+          "self_ms": 16.897,
+          "inclusive_ms": 19.889
+        },
+        {
+          "function": "dashboard.py:1406:_snapshot",
+          "calls": 2,
+          "self_ms": 0.017,
+          "inclusive_ms": 18.256
+        },
+        {
+          "function": "settlement_freeze.py:928:read_root_once",
+          "calls": 1,
+          "self_ms": 0.035,
+          "inclusive_ms": 18.225
+        },
+        {
+          "function": "settlement_freeze.py:311:_read_root",
+          "calls": 1,
+          "self_ms": 7.532,
+          "inclusive_ms": 18.19
+        },
+        {
+          "function": "runtime.py:277:connect",
+          "calls": 4,
+          "self_ms": 0.076,
+          "inclusive_ms": 17.671
+        },
+        {
+          "function": "storage.py:112:decode_fields",
+          "calls": 2600,
+          "self_ms": 6.988,
+          "inclusive_ms": 17.449
+        },
+        {
+          "function": "query_reads.py:344:snapshot",
+          "calls": 2,
+          "self_ms": 0.03,
+          "inclusive_ms": 16.674
+        },
+        {
+          "function": "settlement_freeze.py:140:_add_group",
+          "calls": 753,
+          "self_ms": 5.916,
+          "inclusive_ms": 12.128
+        },
+        {
+          "function": "storage.py:300:connection",
+          "calls": 2,
+          "self_ms": 0.006,
+          "inclusive_ms": 11.921
+        },
+        {
+          "function": "query_reads.py:1246:authoritative_close_rows",
+          "calls": 4,
+          "self_ms": 0.076,
+          "inclusive_ms": 11.872
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.333,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 553.047,
+          "thread_cpu_ms": 546.875
+        }
+      ]
+    },
+    {
+      "command": "dashboard_assets",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 559.831,
+      "dispatch_thread_cpu_ms": 562.5,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.116,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 12.217,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 15.126,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "dashboard_assets",
+          "wall_ms": 527.425,
+          "thread_cpu_ms": 531.25
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 542.72,
+          "thread_cpu_ms": 546.875
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 3.072,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 1.349,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 2,
+          "self_ms": 0.064,
+          "inclusive_ms": 547.202
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.01,
+          "inclusive_ms": 527.444
+        },
+        {
+          "function": "dashboard.py:2120:assets",
+          "calls": 1,
+          "self_ms": 4.369,
+          "inclusive_ms": 513.951
+        },
+        {
+          "function": "business_queries.py:399:_selected_accounting",
+          "calls": 6,
+          "self_ms": 8.559,
+          "inclusive_ms": 204.763
+        },
+        {
+          "function": "business_queries.py:817:_selected_asset_member_heads",
+          "calls": 1,
+          "self_ms": 32.439,
+          "inclusive_ms": 155.68
+        },
+        {
+          "function": "query_reads.py:1183:close_accounting",
+          "calls": 141,
+          "self_ms": 1.578,
+          "inclusive_ms": 153.354
+        },
+        {
+          "function": "close_storage.py:683:read_accounting",
+          "calls": 141,
+          "self_ms": 19.878,
+          "inclusive_ms": 150.438
+        },
+        {
+          "function": "dashboard.py:4170:_asset_card_sources",
+          "calls": 1,
+          "self_ms": 0.062,
+          "inclusive_ms": 148.773
+        },
+        {
+          "function": "dashboard.py:4265:_assets",
+          "calls": 1,
+          "self_ms": 2.132,
+          "inclusive_ms": 141.34
+        },
+        {
+          "function": "dashboard.py:344:calculations_of_kind",
+          "calls": 4,
+          "self_ms": 0.026,
+          "inclusive_ms": 138.728
+        },
+        {
+          "function": "dashboard_reads.py:530:selected",
+          "calls": 4,
+          "self_ms": 0.178,
+          "inclusive_ms": 138.701
+        },
+        {
+          "function": "business_queries.py:772:_selected_asset_owner_events",
+          "calls": 5,
+          "self_ms": 0.832,
+          "inclusive_ms": 127.113
+        },
+        {
+          "function": "dashboard.py:400:prepare_settlements",
+          "calls": 50,
+          "self_ms": 0.141,
+          "inclusive_ms": 103.909
+        },
+        {
+          "function": "dashboard.py:412:settlement_summary",
+          "calls": 2,
+          "self_ms": 0.023,
+          "inclusive_ms": 103.744
+        },
+        {
+          "function": "business_queries.py:1322:settlement_summary",
+          "calls": 2,
+          "self_ms": 0.022,
+          "inclusive_ms": 103.719
+        },
+        {
+          "function": "settlement_projection.py:868:settlement_summary",
+          "calls": 2,
+          "self_ms": 0.16,
+          "inclusive_ms": 103.694
+        },
+        {
+          "function": "settlement_freeze.py:888:_scope",
+          "calls": 2,
+          "self_ms": 4.033,
+          "inclusive_ms": 89.001
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 1546,
+          "self_ms": 2.253,
+          "inclusive_ms": 78.659
+        },
+        {
+          "function": "dashboard.py:371:asset_member_events",
+          "calls": 4,
+          "self_ms": 0.025,
+          "inclusive_ms": 57.23
+        },
+        {
+          "function": "business_queries.py:696:_selected_asset_members",
+          "calls": 4,
+          "self_ms": 0.153,
+          "inclusive_ms": 57.204
+        },
+        {
+          "function": "close_storage.py:670:_may_contain_with_positions",
+          "calls": 9024,
+          "self_ms": 12.327,
+          "inclusive_ms": 52.98
+        },
+        {
+          "function": "close_storage.py:601:_prime_buckets",
+          "calls": 422,
+          "self_ms": 2.026,
+          "inclusive_ms": 41.169
+        },
+        {
+          "function": "types.py:112:canonical",
+          "calls": 1724,
+          "self_ms": 1.244,
+          "inclusive_ms": 40.747
+        },
+        {
+          "function": "close_storage.py:561:_buckets_rows",
+          "calls": 422,
+          "self_ms": 8.151,
+          "inclusive_ms": 37.629
+        },
+        {
+          "function": "types.py:118:digest",
+          "calls": 774,
+          "self_ms": 1.214,
+          "inclusive_ms": 31.067
+        },
+        {
+          "function": "period_balances.py:438:balance_totals",
+          "calls": 1,
+          "self_ms": 0.004,
+          "inclusive_ms": 29.361
+        },
+        {
+          "function": "period_balances.py:354:_totals",
+          "calls": 1,
+          "self_ms": 0.122,
+          "inclusive_ms": 29.356
+        },
+        {
+          "function": "settlement_freeze.py:834:_tail_rows",
+          "calls": 2,
+          "self_ms": 7.249,
+          "inclusive_ms": 23.085
+        },
+        {
+          "function": "runtime.py:277:connect",
+          "calls": 4,
+          "self_ms": 0.251,
+          "inclusive_ms": 21.903
+        },
+        {
+          "function": "settlement_freeze.py:1228:frozen_subject_summary",
+          "calls": 2,
+          "self_ms": 1.02,
+          "inclusive_ms": 20.333
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.477,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 564.273,
+          "thread_cpu_ms": 562.5
+        }
+      ]
+    },
+    {
+      "command": "dashboard_quarterly_report",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 799.925,
+      "dispatch_thread_cpu_ms": 796.875,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.086,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 10.396,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 12.58,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "dashboard_quarterly_report",
+          "wall_ms": 775.975,
+          "thread_cpu_ms": 781.25
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 788.704,
+          "thread_cpu_ms": 796.875
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 0.303,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 0.18,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 2,
+          "self_ms": 0.051,
+          "inclusive_ms": 789.215
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.009,
+          "inclusive_ms": 775.994
+        },
+        {
+          "function": "dashboard.py:2336:quarterly_report",
+          "calls": 1,
+          "self_ms": 32.794,
+          "inclusive_ms": 762.903
+        },
+        {
+          "function": "reports.py:931:_report",
+          "calls": 1,
+          "self_ms": 11.684,
+          "inclusive_ms": 513.365
+        },
+        {
+          "function": "reports.py:1074:cached_party_balance",
+          "calls": 2,
+          "self_ms": 0.011,
+          "inclusive_ms": 409.657
+        },
+        {
+          "function": "report_projection.py:786:party_balance_rows",
+          "calls": 2,
+          "self_ms": 0.703,
+          "inclusive_ms": 409.443
+        },
+        {
+          "function": "report_projection.py:813:_party_balance_rows_uncached",
+          "calls": 2,
+          "self_ms": 7.758,
+          "inclusive_ms": 281.348
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 665,
+          "self_ms": 1.17,
+          "inclusive_ms": 180.605
+        },
+        {
+          "function": "report_projection.py:265:_party_delta",
+          "calls": 1,
+          "self_ms": 25.43,
+          "inclusive_ms": 156.489
+        },
+        {
+          "function": "reports.py:731:_report_classifications",
+          "calls": 2,
+          "self_ms": 0.778,
+          "inclusive_ms": 82.81
+        },
+        {
+          "function": "report_open_contribution.py:398:read_open_contributions",
+          "calls": 2,
+          "self_ms": 28.78,
+          "inclusive_ms": 78.809
+        },
+        {
+          "function": "report_projection.py:118:_authoritative_rows",
+          "calls": 1,
+          "self_ms": 12.146,
+          "inclusive_ms": 69.638
+        },
+        {
+          "function": "report_projection.py:826:stored_month",
+          "calls": 13,
+          "self_ms": 0.764,
+          "inclusive_ms": 67.371
+        },
+        {
+          "function": "reports.py:1839:browser_report_details",
+          "calls": 1,
+          "self_ms": 0.168,
+          "inclusive_ms": 67.208
+        },
+        {
+          "function": "report_flow.py:309:read_report_flow",
+          "calls": 23,
+          "self_ms": 9.714,
+          "inclusive_ms": 66.589
+        },
+        {
+          "function": "types.py:112:canonical",
+          "calls": 2538,
+          "self_ms": 1.439,
+          "inclusive_ms": 53.399
+        },
+        {
+          "function": "report_open_contribution.py:331:_decode",
+          "calls": 1004,
+          "self_ms": 15.738,
+          "inclusive_ms": 40.016
+        },
+        {
+          "function": "reports.py:323:_closed_report_fact_sources",
+          "calls": 1,
+          "self_ms": 0.159,
+          "inclusive_ms": 38.451
+        },
+        {
+          "function": "reports.py:2412:_statements",
+          "calls": 1,
+          "self_ms": 0.317,
+          "inclusive_ms": 35.862
+        },
+        {
+          "function": "reports.py:706:_verify_report_classification_facts",
+          "calls": 2,
+          "self_ms": 0.343,
+          "inclusive_ms": 33.309
+        },
+        {
+          "function": "query_reads.py:35:verify_current_voucher_publications",
+          "calls": 1,
+          "self_ms": 16.066,
+          "inclusive_ms": 32.99
+        },
+        {
+          "function": "integrity.py:1402:verify_sources",
+          "calls": 2,
+          "self_ms": 0.066,
+          "inclusive_ms": 32.954
+        },
+        {
+          "function": "reports.py:361:_report_references",
+          "calls": 1,
+          "self_ms": 3.741,
+          "inclusive_ms": 32.921
+        },
+        {
+          "function": "integrity.py:254:_check_sources",
+          "calls": 2,
+          "self_ms": 0.971,
+          "inclusive_ms": 32.885
+        },
+        {
+          "function": "query_reads.py:972:_verify_anchored_source_bytes",
+          "calls": 2,
+          "self_ms": 11.201,
+          "inclusive_ms": 32.76
+        },
+        {
+          "function": "integrity.py:149:_check_facts",
+          "calls": 2,
+          "self_ms": 9.161,
+          "inclusive_ms": 30.789
+        },
+        {
+          "function": "reports.py:2423:balance",
+          "calls": 2,
+          "self_ms": 0.139,
+          "inclusive_ms": 29.932
+        },
+        {
+          "function": "query_semantics.py:868:classify_financial_position",
+          "calls": 2,
+          "self_ms": 13.391,
+          "inclusive_ms": 29.751
+        },
+        {
+          "function": "reports.py:369:<genexpr>",
+          "calls": 413,
+          "self_ms": 27.743,
+          "inclusive_ms": 27.743
+        },
+        {
+          "function": "types.py:118:digest",
+          "calls": 1439,
+          "self_ms": 1.79,
+          "inclusive_ms": 26.575
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.406,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 803.645,
+          "thread_cpu_ms": 796.875
+        }
+      ]
+    },
+    {
+      "command": "dashboard_close_review",
+      "status": "ok",
+      "profile_mode": "cprofile",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 38.619,
+      "dispatch_thread_cpu_ms": 31.25,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.075,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 10.545,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 12.841,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "close_review_read",
+          "wall_ms": 14.745,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 27.731,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 0.012,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 0.024,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [
+        {
+          "function": "service.py:453:dispatch",
+          "calls": 1,
+          "self_ms": 0.021,
+          "inclusive_ms": 38.449
+        },
+        {
+          "function": "service.py:488:_dispatch",
+          "calls": 1,
+          "self_ms": 0.082,
+          "inclusive_ms": 27.709
+        },
+        {
+          "function": "runtime.py:277:connect",
+          "calls": 4,
+          "self_ms": 0.084,
+          "inclusive_ms": 19.522
+        },
+        {
+          "function": "close_review.py:1389:read",
+          "calls": 1,
+          "self_ms": 0.03,
+          "inclusive_ms": 14.731
+        },
+        {
+          "function": "storage.py:300:connection",
+          "calls": 2,
+          "self_ms": 0.007,
+          "inclusive_ms": 14.548
+        },
+        {
+          "function": "resident_reads.py:95:borrow",
+          "calls": 2,
+          "self_ms": 0.031,
+          "inclusive_ms": 14.501
+        },
+        {
+          "function": "service.py:332:engine",
+          "calls": 1,
+          "self_ms": 0.006,
+          "inclusive_ms": 12.86
+        },
+        {
+          "function": "catalog.py:466:bind",
+          "calls": 1,
+          "self_ms": 0.01,
+          "inclusive_ms": 12.83
+        },
+        {
+          "function": "catalog.py:152:connection",
+          "calls": 2,
+          "self_ms": 0.013,
+          "inclusive_ms": 11.677
+        },
+        {
+          "function": "runtime.py:427:validate_reused_read_connection",
+          "calls": 1,
+          "self_ms": 0.023,
+          "inclusive_ms": 10.533
+        },
+        {
+          "function": "service.py:433:authorize",
+          "calls": 1,
+          "self_ms": 0.007,
+          "inclusive_ms": 10.531
+        },
+        {
+          "function": "service.py:157:_transaction",
+          "calls": 2,
+          "self_ms": 0.019,
+          "inclusive_ms": 10.359
+        },
+        {
+          "function": "runtime.py:169:require_local_database",
+          "calls": 8,
+          "self_ms": 0.17,
+          "inclusive_ms": 8.499
+        },
+        {
+          "function": "runtime.py:62:execute",
+          "calls": 62,
+          "self_ms": 0.09,
+          "inclusive_ms": 8.331
+        },
+        {
+          "function": "runtime.py:84:_existing_sidecars",
+          "calls": 4,
+          "self_ms": 0.067,
+          "inclusive_ms": 8.071
+        },
+        {
+          "function": "versions.py:127:verify_schema",
+          "calls": 4,
+          "self_ms": 0.185,
+          "inclusive_ms": 7.612
+        },
+        {
+          "function": "permissions.py:84:assert_private_file",
+          "calls": 14,
+          "self_ms": 0.07,
+          "inclusive_ms": 7.453
+        },
+        {
+          "function": "versions.py:138:_verify_schema",
+          "calls": 4,
+          "self_ms": 0.904,
+          "inclusive_ms": 7.427
+        },
+        {
+          "function": "permissions.py:64:_translate",
+          "calls": 14,
+          "self_ms": 0.009,
+          "inclusive_ms": 7.222
+        },
+        {
+          "function": "permissions.py:89:<lambda>",
+          "calls": 14,
+          "self_ms": 0.019,
+          "inclusive_ms": 7.213
+        },
+        {
+          "function": "windows.py:299:assert_private_path",
+          "calls": 14,
+          "self_ms": 0.18,
+          "inclusive_ms": 7.195
+        },
+        {
+          "function": "storage.py:286:validate_connection",
+          "calls": 1,
+          "self_ms": 0.009,
+          "inclusive_ms": 6.791
+        },
+        {
+          "function": "permissions.py:39:reject_reparse_path",
+          "calls": 20,
+          "self_ms": 0.03,
+          "inclusive_ms": 6.208
+        },
+        {
+          "function": "permissions.py:27:_reject_links",
+          "calls": 20,
+          "self_ms": 0.283,
+          "inclusive_ms": 5.903
+        },
+        {
+          "function": "windows.py:370:_safe_path",
+          "calls": 14,
+          "self_ms": 0.231,
+          "inclusive_ms": 5.825
+        },
+        {
+          "function": "resident_reads.py:41:_signature",
+          "calls": 2,
+          "self_ms": 0.01,
+          "inclusive_ms": 3.884
+        },
+        {
+          "function": "versions.py:55:fingerprint",
+          "calls": 4,
+          "self_ms": 0.025,
+          "inclusive_ms": 3.06
+        },
+        {
+          "function": "versions.py:45:objects",
+          "calls": 4,
+          "self_ms": 2.145,
+          "inclusive_ms": 3.016
+        },
+        {
+          "function": "types.py:112:canonical",
+          "calls": 5,
+          "self_ms": 0.017,
+          "inclusive_ms": 2.749
+        }
+      ],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.162,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 39.989,
+          "thread_cpu_ms": 31.25
+        }
+      ]
+    },
+    {
+      "command": "dashboard_context",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 72.688,
+      "dispatch_thread_cpu_ms": 62.5,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.07,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 9.631,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_context_body",
+          "wall_ms": 62.6,
+          "thread_cpu_ms": 62.5
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 62.625,
+          "thread_cpu_ms": 62.5
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 0.216,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 0.079,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.428,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 73.203,
+          "thread_cpu_ms": 62.5
+        }
+      ]
+    },
+    {
+      "command": "dashboard_brief",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 748.396,
+      "dispatch_thread_cpu_ms": 734.375,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.063,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 9.561,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 9.689,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "dashboard_brief",
+          "wall_ms": 704.43,
+          "thread_cpu_ms": 687.5
+        },
+        {
+          "name": "parallel_brief_parent",
+          "wall_ms": 714.617,
+          "thread_cpu_ms": 703.125
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 724.414,
+          "thread_cpu_ms": 718.75
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 7.854,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 5.478,
+          "thread_cpu_ms": 15.625
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.667,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 749.124,
+          "thread_cpu_ms": 734.375
+        }
+      ]
+    },
+    {
+      "command": "dashboard_funds",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 389.875,
+      "dispatch_thread_cpu_ms": 375.0,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.111,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 12.36,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 12.232,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_funds",
+          "wall_ms": 360.415,
+          "thread_cpu_ms": 359.375
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 372.796,
+          "thread_cpu_ms": 359.375
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 2.523,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 1.882,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.462,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 390.417,
+          "thread_cpu_ms": 375.0
+        }
+      ]
+    },
+    {
+      "command": "dashboard_employees",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 444.318,
+      "dispatch_thread_cpu_ms": 421.875,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.051,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 8.717,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 9.43,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_employees",
+          "wall_ms": 420.919,
+          "thread_cpu_ms": 421.875
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 430.469,
+          "thread_cpu_ms": 421.875
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 2.823,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 2.069,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.468,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 444.839,
+          "thread_cpu_ms": 421.875
+        }
+      ]
+    },
+    {
+      "command": "dashboard_assets",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 393.461,
+      "dispatch_thread_cpu_ms": 390.625,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.082,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 9.079,
+          "thread_cpu_ms": 15.625
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 10.12,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_assets",
+          "wall_ms": 369.448,
+          "thread_cpu_ms": 375.0
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 379.675,
+          "thread_cpu_ms": 375.0
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 3.104,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 1.359,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.39,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 393.923,
+          "thread_cpu_ms": 390.625
+        }
+      ]
+    },
+    {
+      "command": "dashboard_quarterly_report",
+      "status": "ok",
+      "profile_mode": "stages_only",
+      "response_format": "http_json",
+      "dispatch_wall_ms": 642.665,
+      "dispatch_thread_cpu_ms": 625.0,
+      "stages": [
+        {
+          "name": "validate_command",
+          "wall_ms": 0.093,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "authorize",
+          "wall_ms": 9.326,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "catalog_bind",
+          "wall_ms": 9.875,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "dashboard_quarterly_report",
+          "wall_ms": 622.747,
+          "thread_cpu_ms": 625.0
+        },
+        {
+          "name": "service_dispatch_body",
+          "wall_ms": 632.732,
+          "thread_cpu_ms": 625.0
+        },
+        {
+          "name": "validate_response",
+          "wall_ms": 0.267,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "response_dump_json",
+          "wall_ms": 0.171,
+          "thread_cpu_ms": 0.0
+        }
+      ],
+      "profile_top": [],
+      "http_events": [
+        {
+          "name": "http_reply_write",
+          "wall_ms": 0.389,
+          "thread_cpu_ms": 0.0
+        },
+        {
+          "name": "http_get_total",
+          "wall_ms": 643.123,
+          "thread_cpu_ms": 625.0
+        }
+      ]
+    }
+  ]
+}

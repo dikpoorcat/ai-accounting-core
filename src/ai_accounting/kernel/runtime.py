@@ -281,6 +281,7 @@ def connect(
     timeout_seconds: float = 5.0,
     validator=None,
     _permissions: bool = True,
+    _cross_thread: bool = False,
 ) -> sqlite3.Connection:
     """Open one company file with explicit, durable transactions.
 
@@ -294,10 +295,40 @@ def connect(
         raise ValueError("Company databases must be files so WAL durability is available")
     if timeout_seconds < 0:
         raise ValueError("timeout_seconds must be nonnegative")
+    if _cross_thread and not read_only:
+        raise ValueError("Cross-thread SQLite connections are limited to resident reads")
 
     database = require_local_database(path)
     if not _permissions:
         assert_private_file(database)
+    if validator is not None and _permissions and read_only:
+        # The existing probe already requires private ownership before opening.
+        # A read-only caller needs no permission mutation or second connection:
+        # retain this privately opened connection and validate it in its own
+        # normal SQLite transaction, including committed WAL contents.
+        return connect(
+            database,
+            read_only=True,
+            timeout_seconds=timeout_seconds,
+            validator=validator,
+            _permissions=False,
+            _cross_thread=_cross_thread,
+        )
+    if validator is not None and _permissions and not read_only:
+        try:
+            assert_private_file(database)
+            _existing_sidecars(database, tighten=False)
+        except PrivatePathError:
+            # A known database with wider permissions still takes the original
+            # verify-before-tightening path below.
+            pass
+        else:
+            # An already private database needs no filesystem mutation. Open
+            # once and validate before enabling WAL or permitting any writes.
+            return connect(
+                database, timeout_seconds=timeout_seconds, validator=validator,
+                _permissions=False,
+            )
     if validator is not None and _permissions:
         # Establish that an existing path is one of our databases before
         # changing its permissions. The actual connection validates again.
@@ -334,6 +365,7 @@ def connect(
             isolation_level=None,
             timeout=timeout_seconds,
             factory=_PrivateConnection,
+            check_same_thread=not _cross_thread,
         )
         connection._private_database = database
         connection._private_known_sidecars = existing_sidecars
@@ -390,3 +422,36 @@ def connect(
             connection.close()
         _cleanup_empty_wal_pair(created_sidecars)
         raise
+
+
+def validate_reused_read_connection(path, connection, validator):
+    """Recheck an exclusively borrowed resident read connection without reopening it."""
+    database = require_local_database(path)
+    assert_private_file(database)
+    _existing_sidecars(database, tighten=False)
+    if connection.in_transaction:
+        raise RuntimeConfigurationError("Reused read connection has an unfinished transaction")
+    configs = (
+        (sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True),
+        (sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True),
+        (sqlite3.SQLITE_DBCONFIG_TRUSTED_SCHEMA, False),
+    )
+    if any(connection.getconfig(key) != expected for key, expected in configs):
+        raise RuntimeConfigurationError("Reused read connection lost its SQLite safety settings")
+    if connection.getlimit(sqlite3.SQLITE_LIMIT_ATTACHED) != 0:
+        raise RuntimeConfigurationError("Reused read connection permits attached databases")
+    for name, expected in (
+        ("foreign_keys", 1),
+        ("recursive_triggers", 1),
+        ("read_uncommitted", 0),
+        ("synchronous", 2),
+        ("query_only", 1),
+    ):
+        row = connection.execute(f"PRAGMA {name}").fetchone()
+        if row is None or row[0] != expected:
+            raise RuntimeConfigurationError(f"Reused read connection changed PRAGMA {name}")
+    connection.execute("BEGIN")
+    try:
+        validator(connection)
+    finally:
+        connection.rollback()

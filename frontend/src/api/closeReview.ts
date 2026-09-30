@@ -1,10 +1,15 @@
 import { requestGeneratedJson } from "./client";
-import type { DashboardCloseReviewResponse } from "./generated/dashboardResponses";
-import { validateDashboardCloseReviewResponse } from "./generated/dashboardValidators.js";
+import type { DashboardCloseReviewResponse } from "./generated/dashboardCloseReview";
+import { validateDashboardCloseReviewResponse } from "./generated/dashboardCloseReview.js";
 
 export type CloseReviewSection = "vouchers" | "adopted_bases" | "policies" | "payroll_confirmations" | "evidence";
 export type CloseReviewCollection = NonNullable<DashboardCloseReviewResponse["collection"]>;
 export type CloseReviewCollections = Partial<Record<CloseReviewSection, CloseReviewCollection>>;
+export type CloseReviewPrefetch = {
+  companyId: string;
+  period: string;
+  result: Promise<PromiseSettledResult<DashboardCloseReviewResponse>>;
+};
 
 export interface CloseReviewQuery {
   previewDigest?: string;
@@ -66,4 +71,15 @@ export function fetchCloseReview(companyId: string, period: string, signal?: Abo
     matchesRequest,
     { signal },
   );
+}
+
+export function prefetchCloseReview(companyId: string, period: string, signal: AbortSignal): CloseReviewPrefetch {
+  return {
+    companyId,
+    period,
+    result: fetchCloseReview(companyId, period, signal).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    ),
+  };
 }

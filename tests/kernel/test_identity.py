@@ -243,6 +243,52 @@ def test_logout_is_idempotent_and_gate_orders_revocation_after_business_commit(i
         service.validate_authority(login.authority)
 
 
+@pytest.mark.parametrize("change", ["logout", "catalog_identity"])
+def test_authorization_rechecks_state_after_connection_opens_before_gate(
+    identity, monkeypatch, change
+):
+    import ai_accounting.kernel.security.service as security_module
+
+    service, _, _ = identity
+    login = service.login("owner", PASSWORD)
+    original_connect = security_module.connect
+    opened = threading.Event()
+    resume = threading.Event()
+
+    def pause_after_open(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        if threading.current_thread().name.startswith("preopen-authorizer"):
+            opened.set()
+            if not resume.wait(timeout=5):
+                connection.close()
+                raise TimeoutError("authorization did not resume")
+        return connection
+
+    monkeypatch.setattr(security_module, "connect", pause_after_open)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="preopen-authorizer") as pool:
+        future = pool.submit(service.authorize, login.session_token)
+        assert opened.wait(timeout=5)
+        try:
+            if change == "logout":
+                assert service.logout(login.session_token)["status"] == "logged_out"
+            else:
+                with closing(original_connect(service.path)) as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "UPDATE catalog_identity SET instance_id='changed' WHERE id=1"
+                    )
+                    connection.commit()
+        finally:
+            resume.set()
+        with pytest.raises(IdentityError) as caught:
+            future.result(timeout=5)
+        assert caught.value.code == (
+            "IDENTITY_SESSION_INVALID"
+            if change == "logout"
+            else "OWNER_SECURITY_TARGET_MISMATCH"
+        )
+
+
 def test_authority_is_bound_to_catalogue_and_credentials(identity):
     service, _, _ = identity
     authority = service.login("owner", PASSWORD).authority

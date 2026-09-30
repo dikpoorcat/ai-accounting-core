@@ -1,5 +1,7 @@
-import { requestDashboardFunds } from "./client";
-import type { DashboardFundsContract, DashboardFundsResponse } from "./generated/dashboardResponses";
+import { requestGeneratedJson } from "./client";
+import { validDashboardCollections } from "./dashboardContracts";
+import type { DashboardFundsContract, DashboardFundsResponse } from "./generated/dashboardFunds";
+import { validateDashboardFundsResponse } from "./generated/dashboardFunds.js";
 
 export type FundsDashboardResponse = DashboardFundsResponse;
 export type FundsData = DashboardFundsContract.FundsData;
@@ -13,6 +15,35 @@ export interface FundsQuery {
   movement_account_type?: FundAccount["type"];
   movement_account_id?: string;
   statement_account_id?: string;
+}
+
+function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
+  const period = url.searchParams.get("period");
+  if (companyId !== null && response.read_context.company_id !== companyId) return false;
+  if (period !== null && response.selected_period?.key !== period) return false;
+  const expectedVersion = url.searchParams.get("expected_version");
+  if (expectedVersion !== null && response.snapshot_version !== expectedVersion) return false;
+  if (response.data === null) return url.searchParams.get("section") === null;
+
+  const data = response.data;
+  if (!validDashboardCollections(data)) return false;
+  const deferred = url.searchParams.get("preparation") === "deferred";
+  if (deferred ? data.period_preparation !== null : data.period_preparation === null) return false;
+  const requestedSection = url.searchParams.get("section") ?? "movements";
+  if (!(requestedSection in data.collections)) return false;
+
+  const { movements, statements } = data.collections;
+  const movementType = url.searchParams.get("movement_account_type");
+  const movementAccount = url.searchParams.get("movement_account_id");
+  const statementAccount = url.searchParams.get("statement_account_id");
+  return (!movementType || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === movementType))
+    && (!movementAccount || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_id === movementAccount))
+    && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
+}
+
+export function requestDashboardFunds(path: string, options: { signal?: AbortSignal } = {}): Promise<DashboardFundsResponse> {
+  return requestGeneratedJson(path, "/api/dashboard/funds", validateDashboardFundsResponse, fundsMatchesRequest, options);
 }
 
 export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {

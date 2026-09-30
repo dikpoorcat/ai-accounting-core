@@ -1,0 +1,141 @@
+{
+  "scope": "private_r29_fixed_reader_on_r28_verified_main48_guarded_native_ABBA_diagnostic_not_pure_or_acceptance",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r29-release",
+  "book_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-main-48-verified-r28.json",
+  "period": "2019-12",
+  "response_equal_except_generated_at": true,
+  "trials": [
+    {
+      "mode": "A",
+      "parent_wall_ms": 906.6,
+      "parent_cpu_ms": 890.62,
+      "total_cpu_ms": 2140.62,
+      "response_sha256": "870129ef93cfc2bb5ed010b80b752aca05e60a0b12dd2d2954eaf474edf2d763",
+      "workers": {
+        "materials": {
+          "kind": "materials",
+          "pid": 27828,
+          "wall_ms": 319.37,
+          "cpu_ms": 312.5,
+          "asset": null
+        },
+        "duplicates": {
+          "kind": "duplicates",
+          "pid": 39960,
+          "wall_ms": 352.81,
+          "cpu_ms": 343.75,
+          "asset": null
+        },
+        "reports": {
+          "kind": "reports",
+          "pid": 37160,
+          "wall_ms": 692.7,
+          "cpu_ms": 593.75,
+          "asset": null
+        }
+      }
+    },
+    {
+      "mode": "B",
+      "parent_wall_ms": 623.3,
+      "parent_cpu_ms": 625.0,
+      "total_cpu_ms": 1875.0,
+      "response_sha256": "870129ef93cfc2bb5ed010b80b752aca05e60a0b12dd2d2954eaf474edf2d763",
+      "workers": {
+        "materials": {
+          "kind": "materials",
+          "pid": 27828,
+          "wall_ms": 399.74,
+          "cpu_ms": 390.62,
+          "asset": {
+            "material_wall_ms": 282.2,
+            "material_cpu_ms": 281.25,
+            "new_fact_versions": 1460,
+            "new_typed_calculations": 1415,
+            "result_pickle_bytes": 192432
+          }
+        },
+        "duplicates": {
+          "kind": "duplicates",
+          "pid": 39960,
+          "wall_ms": 322.41,
+          "cpu_ms": 312.5,
+          "asset": null
+        },
+        "reports": {
+          "kind": "reports",
+          "pid": 37160,
+          "wall_ms": 577.67,
+          "cpu_ms": 546.88,
+          "asset": null
+        }
+      }
+    },
+    {
+      "mode": "B",
+      "parent_wall_ms": 645.93,
+      "parent_cpu_ms": 656.25,
+      "total_cpu_ms": 2000.0,
+      "response_sha256": "870129ef93cfc2bb5ed010b80b752aca05e60a0b12dd2d2954eaf474edf2d763",
+      "workers": {
+        "materials": {
+          "kind": "materials",
+          "pid": 39960,
+          "wall_ms": 427.28,
+          "cpu_ms": 421.88,
+          "asset": {
+            "material_wall_ms": 309.17,
+            "material_cpu_ms": 312.5,
+            "new_fact_versions": 1460,
+            "new_typed_calculations": 1415,
+            "result_pickle_bytes": 192432
+          }
+        },
+        "duplicates": {
+          "kind": "duplicates",
+          "pid": 27828,
+          "wall_ms": 348.79,
+          "cpu_ms": 343.75,
+          "asset": null
+        },
+        "reports": {
+          "kind": "reports",
+          "pid": 37160,
+          "wall_ms": 580.3,
+          "cpu_ms": 578.12,
+          "asset": null
+        }
+      }
+    },
+    {
+      "mode": "A",
+      "parent_wall_ms": 708.43,
+      "parent_cpu_ms": 671.88,
+      "total_cpu_ms": 1828.12,
+      "response_sha256": "870129ef93cfc2bb5ed010b80b752aca05e60a0b12dd2d2954eaf474edf2d763",
+      "workers": {
+        "materials": {
+          "kind": "materials",
+          "pid": 27828,
+          "wall_ms": 275.13,
+          "cpu_ms": 281.25,
+          "asset": null
+        },
+        "duplicates": {
+          "kind": "duplicates",
+          "pid": 39960,
+          "wall_ms": 325.33,
+          "cpu_ms": 328.12,
+          "asset": null
+        },
+        "reports": {
+          "kind": "reports",
+          "pid": 37160,
+          "wall_ms": 547.8,
+          "cpu_ms": 546.88,
+          "asset": null
+        }
+      }
+    }
+  ]
+}

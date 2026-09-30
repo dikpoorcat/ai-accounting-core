@@ -10,9 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import ChainMap
+from dataclasses import dataclass
 
+from .content_history_context import month_type
+from .content_history_context import source_canonical as canonical
 from .contracts import KernelError
-from .types import YearMonth, canonical
 
 JOB_KINDS = ("payment_export", "tax_import", "report_export")
 AUDIT_ACTIONS = (
@@ -145,10 +148,11 @@ def _text(value):
     return isinstance(value, str) and bool(value)
 
 
-def _close_references(row):
-    from .close_contract import require_close_contract
+def _close_references(row, *, manifest=None):
+    from .content_history_context import close_contract
 
-    manifest = require_close_contract(_object(row["manifest"]))
+    if manifest is None:
+        manifest = close_contract().require_close_contract(_object(row["manifest"]))
     result = []
 
     def add(path, position, typ, ident, related=None):
@@ -222,7 +226,7 @@ def _job_references(row):
         if not isinstance(value, str):
             return
         try:
-            period = YearMonth(value)
+            period = month_type()(value)
         except ValueError:
             return
         add(path, position, "period", value, start=period.ordinal, end=period.ordinal)
@@ -263,7 +267,7 @@ def _job_references(row):
             start, end = period.get("quarter_start"), period.get("quarter_end")
             if isinstance(start, str) and isinstance(end, str):
                 try:
-                    first, last = YearMonth(start[:7]), YearMonth(end[:7])
+                    first, last = month_type()(start[:7]), month_type()(end[:7])
                 except ValueError:
                     pass
                 else:
@@ -357,6 +361,64 @@ def _invalid(kind, ident, reason):
     )
 
 
+def _verified_close_manifest(connection, row, marker, identity):
+    from .content_history_context import close_reader
+
+    decode_close = close_reader().decode_close
+
+    period = row["period"]
+    if marker is None or bytes(marker) != bytes(row["digest"]):
+        _invalid("close", period, "source_digest_or_marker_mismatch")
+    manifest = decode_close(connection, row)
+    if (
+        manifest["period"] != str(month_type().from_ordinal(period))
+        or manifest["company_id"] != identity["company_id"]
+        or manifest["database_id"] != identity["database_id"]
+    ):
+        _invalid("close", period, "manifest_identity_mismatch")
+    return manifest
+
+
+@dataclass(frozen=True)
+class _VerifiedCloses:
+    connection: object
+    lease: object
+    closes: tuple
+
+
+def _verified_closes_for_indexes(connection, closes):
+    """Carry the integrity loop's decoded closes only within its transaction."""
+    from .verified_close_archive import VerifiedCloseArchive
+    from .verified_source_lease import current_verified_lease
+
+    return _VerifiedCloses(
+        connection,
+        current_verified_lease(connection),
+        closes if isinstance(closes, VerifiedCloseArchive) else tuple(closes),
+    )
+
+
+def _require_verified_closes_for_indexes(connection, token):
+    from .verified_source_lease import require_verified_lease
+
+    if type(token) is not _VerifiedCloses or token.connection is not connection:
+        raise ValueError("verified closes belong to another connection")
+    require_verified_lease(connection, token.lease)
+    from .verified_close_archive import VerifiedCloseArchive
+
+    if isinstance(token.closes, VerifiedCloseArchive):
+        rows = tuple(connection.execute("SELECT * FROM period_close ORDER BY period"))
+        return token.closes.lookup(connection, rows)
+    saved = tuple(
+        (row["period"], bytes(row["digest"]))
+        for row in connection.execute("SELECT period,digest FROM period_close ORDER BY period")
+    )
+    verified = tuple((row["period"], bytes(row["digest"])) for row, _ in token.closes)
+    if saved != verified:
+        _invalid("close", "*", "predecoded_close_set_mismatch")
+    return {str(row["period"]): (row, manifest) for row, manifest in token.closes}
+
+
 def verify_source(connection, source_kind, source_id, *, source=None):
     """Check one selected source, including its complete occurrence multiset."""
     row = source if source is not None else _source(connection, source_kind, source_id)
@@ -369,7 +431,9 @@ def verify_sources(connection, source_kind, sources):
     _, source_key, table, key, columns, extract = _SOURCES[source_kind]
     sources = {str(row[source_key]): row for row in sources}
     if not sources:
-        return
+        return {}
+    if source_kind == "close":
+        return _verify_close_sources(connection, sources)
     identities = json.dumps(list(sources))
     markers = {
         row[0]: bytes(row[1])
@@ -390,21 +454,159 @@ def verify_sources(connection, source_kind, sources):
             _invalid(source_kind, source_id, "marker_missing_or_unsupported")
         if markers[source_id] != _source_digest(source_kind, row):
             _invalid(source_kind, source_id, "source_digest_mismatch")
-        if source_kind == "close" and (
-            hashlib.sha256(row["manifest"].encode("utf-8")).digest() != bytes(row["digest"])
-        ):
-            _invalid(source_kind, source_id, "manifest_digest_mismatch")
         if sorted(entries.get(source_id, ())) != sorted(extract(row)):
             _invalid(source_kind, source_id, "reference_multiset_mismatch")
+    return {}
 
 
-def verify_close_references(connection, references):
-    """Check indexed hits at their fixed JSON leaves without loading whole manifests.
+def _verify_close_sources(connection, sources, *, verified_manifests=None):
+    """Compare complete sealed close memberships in primary-key order, one row at a time."""
+    identities = json.dumps(list(sources))
+    identity = connection.execute(
+        "SELECT company_id,database_id FROM identity WHERE id=1"
+    ).fetchone()
+    if identity is None:
+        _invalid("close", "*", "company_identity_missing")
+    markers = {
+        row[0]: bytes(row[1])
+        for row in connection.execute(
+            "SELECT source_id,source_digest FROM read_index_source WHERE source_kind='close' "
+            "AND source_id IN (SELECT value FROM json_each(?))",
+            (identities,),
+        )
+    }
+    entries = iter(
+        connection.execute(
+            "SELECT close_period,path,position,reference_type,reference_id,related_id "
+            "FROM close_reference WHERE close_period IN (SELECT value FROM json_each(?)) "
+            "ORDER BY close_period,path,position,reference_type",
+            (identities,),
+        )
+    )
+    actual = next(entries, None)
+    parsed = {}
+    for source_id, row in sorted(sources.items(), key=lambda item: item[1]["period"]):
+        if verified_manifests is None:
+            manifest = _verified_close_manifest(connection, row, markers.get(source_id), identity)
+        else:
+            adopted = verified_manifests.get(source_id)
+            if (
+                adopted is None
+                or adopted[0]["period"] != row["period"]
+                or bytes(adopted[0]["digest"]) != bytes(row["digest"])
+                or markers.get(source_id) != bytes(row["digest"])
+            ):
+                _invalid("close", source_id, "source_digest_or_marker_mismatch")
+            manifest = adopted[1]
+            if (
+                manifest["period"] != str(month_type().from_ordinal(row["period"]))
+                or manifest["company_id"] != identity["company_id"]
+                or manifest["database_id"] != identity["database_id"]
+            ):
+                _invalid("close", source_id, "manifest_identity_mismatch")
+        for expected in _close_references(row, manifest=manifest):
+            if (
+                actual is None
+                or actual[0] != row["period"]
+                or (
+                    actual[1] != expected[0]
+                    or actual[2] != expected[1]
+                    or actual[3] != expected[2]
+                    or actual[4] != expected[3]
+                    or actual[5] != expected[4]
+                )
+            ):
+                _invalid("close", source_id, "reference_multiset_mismatch")
+            actual = next(entries, None)
+        if actual is not None and actual[0] == row["period"]:
+            _invalid("close", source_id, "reference_multiset_mismatch")
+        parsed[row["period"]] = manifest
+    if actual is not None:
+        _invalid("close", actual[0], "reference_multiset_mismatch")
+    return parsed
 
-    Immutable source digest and leaf identity are checked locally. This is not a
-    completeness check: an omitted source cannot be discovered from its hits.
+
+def authoritative_close_rows(connection, *, periods, through_period=None):
+    """Read exact published periods without using the reverse reference directory.
+
+    This verifies immutable close content and its seal, but does not mark the
+    close_reference multiset as checked. Callers must have independently obtained
+    these exact periods from authoritative calculation publications.
     """
-    requested = []
+    periods = sorted(set(periods))
+    if not periods:
+        return [], {}
+    if any(type(period) is not int for period in periods):
+        raise ValueError("authoritative close periods must be integer ordinals")
+    sql = "SELECT p.* FROM period_close p WHERE p.period IN (SELECT value FROM json_each(?))"
+    parameters = [json.dumps(periods)]
+    if through_period is not None:
+        sql += " AND p.period<=?"
+        parameters.append(through_period)
+    rows = list(connection.execute(sql + " ORDER BY p.period", parameters))
+    if not rows:
+        return [], {}
+    identity = connection.execute(
+        "SELECT company_id,database_id FROM identity WHERE id=1"
+    ).fetchone()
+    if identity is None:
+        _invalid("close", "*", "company_identity_missing")
+    markers = {
+        row[0]: bytes(row[1])
+        for row in connection.execute(
+            "SELECT source_id,source_digest FROM read_index_source WHERE source_kind='close' "
+            "AND source_id IN (SELECT value FROM json_each(?))",
+            (json.dumps([str(row["period"]) for row in rows]),),
+        )
+    }
+    from .content_history_context import close_reader
+
+    verified_header = close_reader().verified_header
+
+    headers = {}
+    for row in rows:
+        period = row["period"]
+        if markers.get(str(period)) != bytes(row["digest"]):
+            _invalid("close", period, "source_digest_or_marker_mismatch")
+        header = verified_header(connection, row)
+        if (
+            header.root["company_id"] != identity["company_id"]
+            or header.root["database_id"] != identity["database_id"]
+        ):
+            _invalid("close", period, "manifest_identity_mismatch")
+        headers[period] = header
+    return rows, headers
+
+
+def selected_voucher_references(connection, voucher_ids, *, through_period):
+    """Select all indexed voucher leaves through a close, with IDs driving lookup.
+
+    This only selects directory rows. Callers retain their own missing-hit rules
+    and must verify every returned reference against immutable close content.
+    Duplicate input IDs retain their original SQL multiset behavior.
+    """
+    voucher_ids = list(voucher_ids)
+    if not voucher_ids:
+        return []
+    return connection.execute(
+        "SELECT r.* FROM json_each(?) ids "
+        "CROSS JOIN close_reference r INDEXED BY close_reference_lookup "
+        "WHERE r.reference_type='voucher' AND r.reference_id=ids.value "
+        "AND r.close_period<=?",
+        (canonical(voucher_ids), through_period),
+    ).fetchall()
+
+
+def verify_close_references(
+    connection, references, *, _verified_manifests=None, _verified_headers=None,
+    _verified_storage_parts=None,
+):
+    """Check indexed hits at their fixed JSON leaves, parsing each close once.
+
+    The selected immutable source, its digest, marker, and each leaf are checked.
+    An omitted source cannot be discovered from its indexed hits.
+    """
+    requested = {}
     for reference in references:
         item = {
             field: reference[field]
@@ -428,37 +630,105 @@ def verify_close_references(connection, references):
             _invalid("close", item["close_period"], "invalid_reference_path")
         if item["reference_type"] != reference_type:
             _invalid("close", item["close_period"], "invalid_reference_type")
-        item["json_path"] = "$." + path.replace("[*]", f"[{int(position)}]")
-        item["related_path"] = (
-            f"$.vouchers[{int(position)}].calculation_id" if path == CLOSE_VOUCHERS else None
-        )
-        requested.append(item)
+        item["index"] = int(position)
+        item["segments"] = path.split(".")
+        period_key = json.dumps(item["close_period"])
+        requested.setdefault(period_key, []).append(item)
     if not requested:
         return
-    rows = connection.execute(
-        "SELECT q.key,json_extract(q.value,'$.close_period') period,p.digest,s.source_digest,"
-        "json_extract(p.manifest,json_extract(q.value,'$.json_path')) leaf,"
-        "json_extract(p.manifest,json_extract(q.value,'$.related_path')) related "
-        "FROM json_each(?) q LEFT JOIN period_close p "
-        "ON p.period=json_extract(q.value,'$.close_period') LEFT JOIN read_index_source s "
-        "ON s.source_kind='close' AND s.source_id=CAST(p.period AS TEXT)",
-        (json.dumps(requested),),
-    )
-    for row in rows:
-        expected = requested[int(row[0])]
-        leaf = row["leaf"]
-        if row["digest"] is None or row["source_digest"] != row["digest"]:
-            _invalid("close", row["period"], "source_digest_or_marker_mismatch")
-        valid_leaf = _text(leaf) or (
-            expected["reference_type"] == "management" and type(leaf) is int
+
+    def leaf(manifest, segments, index):
+        value = manifest
+        for segment in segments:
+            if segment.endswith("[*]"):
+                value = value.get(segment[:-3]) if isinstance(value, dict) else None
+                value = value[index] if isinstance(value, list) and index < len(value) else None
+            else:
+                value = value.get(segment) if isinstance(value, dict) else None
+            if value is None:
+                break
+        return value
+
+    def verify_leaves(manifest, expected):
+        period = expected[0]["close_period"]
+        for item in expected:
+            value = leaf(manifest, item["segments"], item["index"])
+            valid_leaf = _text(value) or (
+                item["reference_type"] == "management" and type(value) is int
+            )
+            related = (
+                leaf(manifest, ["vouchers[*]", "calculation_id"], item["index"])
+                if item["path"] == CLOSE_VOUCHERS
+                else None
+            )
+            related = related if _text(related) else None
+            if (
+                not valid_leaf
+                or str(value) != item["reference_id"]
+                or related != item.get("related_id")
+            ):
+                _invalid("close", period, "reference_leaf_mismatch")
+
+    added_parts = {}
+    storage_parts = ChainMap(added_parts, _verified_storage_parts or {})
+
+    def verify_storage_leaves(header, expected):
+        from .content_history_context import close_reader
+
+        reference_leaves = close_reader().reference_leaves
+
+        period = expected[0]["close_period"]
+        values = reference_leaves(
+            connection, header,
+            [(item["path"], item["index"], item["reference_id"]) for item in expected],
+            parts=storage_parts,
         )
-        related = row["related"] if _text(row["related"]) else None
-        if (
-            not valid_leaf
-            or str(leaf) != expected["reference_id"]
-            or related != expected.get("related_id")
-        ):
-            _invalid("close", row["period"], "reference_leaf_mismatch")
+        for item, (value, related) in zip(expected, values, strict=True):
+            valid_leaf = _text(value) or (
+                item["reference_type"] == "management" and type(value) is int
+            )
+            if (
+                not valid_leaf
+                or str(value) != item["reference_id"]
+                or related != item.get("related_id")
+            ):
+                _invalid("close", period, "reference_leaf_mismatch")
+
+    # Only a managed QueryReads snapshot supplies these already checked sources.
+    # Leaf identities are still compared, even when another leaf used this source.
+    remaining = {}
+    for key, expected in requested.items():
+        period = expected[0]["close_period"]
+        if type(period) is int and period in (_verified_manifests or {}):
+            verify_leaves(_verified_manifests[period], expected)
+        elif type(period) is int and period in (_verified_headers or {}):
+            verify_storage_leaves(_verified_headers[period], expected)
+        else:
+            remaining[key] = expected
+    requested = remaining
+    if not requested:
+        if _verified_storage_parts is not None:
+            _verified_storage_parts.update(added_parts)
+        return
+    periods = [items[0]["close_period"] for items in requested.values()]
+    for row in connection.execute(
+        "SELECT q.key,p.period,p.manifest,p.digest,s.source_digest "
+        "FROM json_each(?) q LEFT JOIN period_close p ON p.period=q.value "
+        "LEFT JOIN read_index_source s "
+        "ON s.source_kind='close' AND s.source_id=CAST(p.period AS TEXT)",
+        (json.dumps(periods),),
+    ):
+        expected = requested[json.dumps(periods[int(row[0])])]
+        period = expected[0]["close_period"]
+        if row["digest"] is None or row["source_digest"] != row["digest"]:
+            _invalid("close", period, "source_digest_or_marker_mismatch")
+        from .content_history_context import close_reader
+
+        verified_header = close_reader().verified_header
+
+        verify_storage_leaves(verified_header(connection, row), expected)
+    if _verified_storage_parts is not None:
+        _verified_storage_parts.update(added_parts)
 
 
 def _sync(connection, kind, ident):
@@ -474,7 +744,16 @@ def _sync(connection, kind, ident):
         verify_source(connection, kind, ident, source=row)
         return
     _, _, table, key, columns, extract = _SOURCES[kind]
-    entries = extract(row)
+    if kind == "close":
+        from .content_history_context import close_reader
+
+        decode_close = close_reader().decode_close
+
+        entries = _close_references(
+            row, manifest=decode_close(connection, row, require_marker=False)
+        )
+    else:
+        entries = extract(row)
     placeholders = ",".join("?" for _ in range(len(columns.split(",")) + 1))
     connection.executemany(
         f"INSERT INTO {table}({key},{columns}) VALUES({placeholders})",
@@ -519,12 +798,24 @@ def backfill_read_indexes(connection):
     verify_read_indexes(connection)
 
 
-def verify_read_indexes(connection):
+def verify_read_indexes(connection, *, _verified_closes=None):
     """Explicit full verification; never called by ordinary connection validation."""
+    verified_closes = (
+        None
+        if _verified_closes is None
+        else _require_verified_closes_for_indexes(connection, _verified_closes)
+    )
     expected = set()
     for kind, ident in _all_sources(connection):
         expected.add((kind, str(ident)))
-        verify_source(connection, kind, ident)
+        if kind == "close" and verified_closes is not None:
+            _verify_close_sources(
+                connection,
+                {str(ident): _source(connection, kind, ident)},
+                verified_manifests=verified_closes,
+            )
+        else:
+            verify_source(connection, kind, ident)
     actual = {
         tuple(row)
         for row in connection.execute("SELECT source_kind,source_id FROM read_index_source")
@@ -565,10 +856,12 @@ def repair_read_indexes(connection, *, bundle, fault=None):
     sources = []
     for kind, ident in _all_sources(connection):
         row = _source(connection, kind, ident)
-        if kind == "close" and (
-            hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]
-        ):
-            _invalid(kind, ident, "manifest_digest_mismatch")
+        if kind == "close":
+            from .content_history_context import close_reader
+
+            decode_close = close_reader().decode_close
+
+            decode_close(connection, row, require_marker=False)
         sources.append((kind, ident))
     tables = ("close_reference", "job_reference", "audit_reference", "read_index_source")
     names = tuple(
@@ -621,6 +914,7 @@ def close_rows(
     fact_ids=None,
     through_period=None,
     verified_periods=(),
+    parsed_manifests=None,
 ):
     """Find closes and check hits not already checked in this caller's transaction."""
     predicates, parameters = [], []
@@ -667,12 +961,16 @@ def close_rows(
         )
     )
     checked = set(verified_periods)
-    verify_sources(connection, "close", [row for row in rows if row["period"] not in checked])
+    verified = verify_sources(
+        connection, "close", [row for row in rows if row["period"] not in checked]
+    )
+    if parsed_manifests is not None:
+        parsed_manifests.update(verified)
     return rows
 
 
 def job_rows(connection, *, subject_id=None, period):
-    month = YearMonth(period).ordinal
+    month = month_type()(period).ordinal
     parameters = [month, month]
     period_match = (
         "SELECT job_id FROM job_reference WHERE start_period IS NOT NULL "

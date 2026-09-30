@@ -1,7 +1,7 @@
 import { DashboardApiError, requestGeneratedJson } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
-import type { DashboardQuarterlyReportContract, DashboardQuarterlyReportResponse } from "./generated/dashboardResponses";
-import { validateDashboardQuarterlyReportResponse, validateReportExportReceiptResponse } from "./generated/dashboardValidators.js";
+import type { DashboardQuarterlyReportContract, DashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport";
+import { validateDashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport.js";
 
 export type QuarterlyReport = DashboardQuarterlyReportResponse;
 export type DeferredQuarterlyReport = DashboardQuarterlyReportResponse;
@@ -29,12 +29,16 @@ export async function requestQuarterlyExport(companyId: string, report: Quarterl
   if (!report.export.available || !report.export.preview_digest || !report.export.epochs) {
     throw new DashboardApiError(409, "REPORT_EXPORT_UNAVAILABLE", "季度报表尚未准备完成，当前不能导出。");
   }
-  const result = await requestLocalJson("/api/local/report-export", { method: "POST", signal, body: JSON.stringify({
+  const previewDigest = report.export.preview_digest;
+  const body = JSON.stringify({
     company_id: companyId, year: report.period.year, quarter: report.period.quarter,
     preview_digest: report.export.preview_digest, epochs: report.export.epochs, request_id: requestId,
     ...(report.carry_forward.selected_fact_id ? { carry_forward_fact_id: report.carry_forward.selected_fact_id } : {}),
-  }) });
-  if (!validateReportExportReceiptResponse(result) || result.preview_digest !== report.export.preview_digest) {
+  });
+  const { validateReportExportReceiptResponse } = await import("./generated/reportExportReceipt.js");
+  signal?.throwIfAborted();
+  const result = await requestLocalJson("/api/local/report-export", { method: "POST", signal, body });
+  if (!validateReportExportReceiptResponse(result) || result.preview_digest !== previewDigest) {
     throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请刷新后台任务核对。");
   }
   return result;

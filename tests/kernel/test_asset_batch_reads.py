@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from close_storage_fixture import stored_manifest
 from test_payroll_corrections import Company
 from test_reimbursement_assets import accepted_batch, activation, asset, batch_card
 from test_reimbursement_assets import book as book_fixture
@@ -152,6 +153,59 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
         )
 
 
+def test_selected_asset_members_batches_exact_metadata_and_rejects_missing(monkeypatch):
+    events = [
+        {"calculation_id": "owner-1", "posting_period": "2026-01", "selection_source": "close"},
+        {"calculation_id": "owner-empty", "posting_period": "2026-02", "selection_source": "close"},
+        {"calculation_id": "owner-2", "posting_period": "2026-03", "selection_source": "current"},
+    ]
+    members = {
+        "owner-1": [{"member_calculation_id": "member-1", "asset_id": "asset-1",
+                     "line_start": 1, "line_count": 2}],
+        "owner-empty": [],
+        "owner-2": [{"member_calculation_id": "member-2", "asset_id": "asset-2",
+                     "line_start": 1, "line_count": 2}],
+    }
+    metadata = {
+        ident: {"id": ident, "subject_id": ident, "fact_id": "fact-" + ident,
+                "kind": "asset_activation", "period": "2026-01", "result_digest": "digest"}
+        for ident in ("member-1", "member-2")
+    }
+
+    class Reads:
+        def __init__(self):
+            self.member_calls = []
+            self.metadata_calls = []
+
+        def asset_members_many(self, owner_ids):
+            ids = tuple(owner_ids)
+            self.member_calls.append(ids)
+            return {ident: members[ident] for ident in ids}
+
+        def metadata(self, member_ids):
+            ids = set(member_ids)
+            self.metadata_calls.append(ids)
+            return {ident: metadata[ident] for ident in ids if ident in metadata}
+
+    reads = Reads()
+    queries = object.__new__(BusinessQueries)
+    monkeypatch.setattr(queries, "_reads", lambda _connection: reads)
+    monkeypatch.setattr(queries, "_selected_asset_owner_events", lambda *a, **kw: events)
+    selected = queries._selected_asset_members(None, "2026-03", kinds={"asset_activation"})
+    assert [item["calculation_id"] for item in selected] == ["member-1", "member-2"]
+    assert reads.member_calls == [("owner-1", "owner-empty", "owner-2")]
+    assert reads.metadata_calls == [{"member-1", "member-2"}]
+
+    metadata.pop("member-2")
+    with pytest.raises(KeyError, match="member-2"):
+        queries._selected_asset_members(None, "2026-03", kinds={"asset_activation"})
+
+    monkeypatch.setattr(queries, "_selected_asset_owner_events", lambda *a, **kw: [])
+    before = len(reads.metadata_calls)
+    assert queries._selected_asset_members(None, "2026-03", kinds={"asset_activation"}) == []
+    assert len(reads.metadata_calls) == before
+
+
 def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
     company = Company(tmp_path / "asset-card-close.sqlite")
     prepare_batch_assets(company)
@@ -164,12 +218,7 @@ def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
     assert assets["unestablished_count"] == 0
     assert assets["card_cost_fen"] == assets["ledger_cost_fen"] == 150000
     with company.engine.store.connection(read_only=True) as connection:
-        manifest = json.loads(
-            connection.execute(
-                "SELECT manifest FROM period_close WHERE period=?",
-                (YearMonth("2026-02").ordinal,),
-            ).fetchone()[0]
-        )
+        manifest = stored_manifest(connection, "2026-02")
         assert {item["asset_id"] for item in manifest["asset_card_adoptions"]} == {
             "computer",
             "chair",

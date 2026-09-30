@@ -10,6 +10,7 @@ from schema_fixture import test_bundle
 from test_engine import close, evidence, publish, save
 from test_engine import engine as engine  # noqa: F401
 
+from ai_accounting.kernel import settlement_projection
 from ai_accounting.kernel.contracts import BalanceEffect, Fact, KernelError, Line, Outcome, Registry
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.integrity import (
@@ -20,8 +21,9 @@ from ai_accounting.kernel.integrity import (
 )
 from ai_accounting.kernel.projections import compare_projections, repair_projections
 from ai_accounting.kernel.read_indexes import repair_read_indexes
+from ai_accounting.kernel.settlement_freeze import require_frozen_settlement_projection
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import PositiveFen, canonical, digest
+from ai_accounting.kernel.types import PositiveFen, YearMonth, canonical, digest
 
 
 def damage(engine, table, sql, parameters=(), *, foreign_keys=True):
@@ -79,6 +81,77 @@ def test_full_verification_reuses_only_its_own_verified_decoded_sources(engine, 
     with pytest.raises(KernelError) as failure:
         verify(engine)
     assert failure.value.details["component"] in {"projections", "period_balance"}
+
+
+def test_full_verification_passes_authenticated_closes_to_read_index_check(engine, monkeypatch):
+    from ai_accounting.kernel import close_storage, read_indexes
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    decoded = []
+    original_decode = close_storage.decode_close
+
+    def counted_decode(connection, row, *, require_marker=True):
+        decoded.append(row["period"])
+        return original_decode(connection, row, require_marker=require_marker)
+
+    monkeypatch.setattr(close_storage, "decode_close", counted_decode)
+    with monkeypatch.context() as patch:
+        # A full verify has already authenticated each complete close. The
+        # read-index pass still checks its marker and every reference row.
+        patch.setattr(
+            read_indexes,
+            "_verified_close_manifest",
+            lambda *args: pytest.fail("read-index check decoded a close again"),
+        )
+        assert verify(engine)["status"] == "verified"
+    assert len(decoded) == 1
+
+    decoded.clear()
+    assert verify(engine, include_projections=False)["status"] == "verified"
+    # A source/index-only check has no fully verified projection result to
+    # carry, so its read-index pass must authenticate the close itself.
+    assert len(decoded) == 2
+
+    damage(
+        engine,
+        "close_reference",
+        "DELETE FROM close_reference WHERE rowid=(SELECT rowid FROM close_reference LIMIT 1)",
+    )
+    with pytest.raises(KernelError) as failure:
+        verify(engine)
+    assert failure.value.code == "read_index_integrity_failed"
+
+
+def test_predecoded_close_index_token_requires_same_transaction_and_complete_set(engine):
+    from ai_accounting.kernel import close_storage, read_indexes
+    from ai_accounting.kernel.verified_source_lease import verified_source_lease
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        row = connection.execute("SELECT * FROM period_close").fetchone()
+        manifest = close_storage.decode_close(connection, row)
+        with verified_source_lease(connection):
+            token = read_indexes._verified_closes_for_indexes(connection, [(row, manifest)])
+            assert read_indexes.verify_read_indexes(connection, _verified_closes=token)
+            with engine.store.connection(read_only=True) as other:
+                other.execute("BEGIN")
+                with pytest.raises(ValueError, match="another connection"):
+                    read_indexes.verify_read_indexes(other, _verified_closes=token)
+            with pytest.raises(KernelError) as failure:
+                read_indexes.verify_read_indexes(
+                    connection,
+                    _verified_closes=read_indexes._verified_closes_for_indexes(connection, []),
+                )
+            assert failure.value.code == "read_index_integrity_failed"
+        connection.commit()
+        connection.execute("BEGIN")
+        with pytest.raises(ValueError, match="scope"):
+            read_indexes.verify_read_indexes(connection, _verified_closes=token)
 
 
 @pytest.mark.parametrize("kind", ["total", "account", "cashflow", "order", "outcome", "fact"])
@@ -215,6 +288,24 @@ def test_read_index_repair_restores_triggers_and_rolls_back_on_fault(engine, sta
     assert verify(engine)["status"] == "verified"
 
 
+def test_close_marker_repair_verifies_compact_source_without_the_broken_marker(engine):
+    save(engine)
+    publish(engine)
+    close(engine)
+    damage(
+        engine,
+        "read_index_source",
+        "DELETE FROM read_index_source WHERE source_kind='close'",
+        foreign_keys=False,
+    )
+    assert verify(engine, include_indexes=False, include_projections=False)["status"] == "verified"
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert repair_read_indexes(connection, bundle=engine.store.bundle)["changed"]
+        connection.commit()
+    assert verify(engine)["status"] == "verified"
+
+
 class Opening(Fact):
     kind: ClassVar[str] = "test_opening"
     amount: PositiveFen
@@ -266,12 +357,90 @@ def frozen_opening(engine, *, selected=True, amount=100):
             {"account": "4001", "debit": 0, "credit": amount},
         ]
     if not selected or amount != 100:
+        reseal_close_for_semantic_test(engine, manifest)
+
+
+def reseal_close_for_semantic_test(engine, manifest):
+    """Keep private storage coherent so a synthetic logical defect reaches its checker."""
+    from ai_accounting.kernel.close_review import reviewed_preview_digest
+    from ai_accounting.kernel.close_storage import decode_close
+
+    period = YearMonth(manifest["period"]).ordinal
+    with engine.store.connection(read_only=True) as connection:
+        close_row = connection.execute(
+            "SELECT * FROM period_close WHERE period=?", (period,)
+        ).fetchone()
+        original = decode_close(connection, close_row)
+        root = json.loads(close_row["manifest"])
+        if original["adopted_results"] != manifest["adopted_results"]:
+            block = connection.execute(
+                "SELECT bucket,part,content FROM close_storage_block "
+                "WHERE period=? AND field='adopted_results'", (period,)
+            ).fetchone()
+            assert manifest["adopted_results"] == []
+            assert len(json.loads(block["content"])) == 1
+            directory = json.loads(connection.execute(
+                "SELECT content FROM close_storage_directory "
+                "WHERE period=? AND field='adopted_results' AND bucket=?",
+                (period, block["bucket"]),
+            ).fetchone()[0])
+            subroot = json.loads(connection.execute(
+                "SELECT content FROM close_storage_subroot "
+                "WHERE period=? AND family='accounting'", (period,)
+            ).fetchone()[0])
+    if original["adopted_results"] != manifest["adopted_results"]:
+        empty_digest = digest([])
         damage(
-            engine,
-            "period_close",
-            "UPDATE period_close SET manifest=?,digest=?",
-            (canonical(manifest), digest(manifest)),
+            engine, "close_storage_block",
+            "UPDATE close_storage_block SET content=?,digest=? "
+            "WHERE period=? AND field='adopted_results' AND bucket=? AND part=?",
+            (canonical([]), empty_digest, period, block["bucket"], block["part"]),
         )
+        directory[block["part"]][1:] = [empty_digest.hex(), 0]
+        directory_digest = digest(directory)
+        damage(
+            engine, "close_storage_directory",
+            "UPDATE close_storage_directory SET content=?,digest=? "
+            "WHERE period=? AND field='adopted_results' AND bucket=?",
+            (canonical(directory), directory_digest, period, block["bucket"]),
+        )
+        for descriptor in subroot["directories"]["adopted_results"]:
+            if descriptor[0] == block["bucket"]:
+                descriptor[1:] = [directory_digest.hex(), 0]
+        from ai_accounting.kernel.key_membership_filter import build_keys_filter
+
+        subroot["subject_filter"] = build_keys_filter(
+            item["subject_id"] for item in manifest["adopted_results"]
+        )
+        subroot_digest = digest(subroot)
+        damage(
+            engine, "close_storage_subroot",
+            "UPDATE close_storage_subroot SET content=?,digest=? "
+            "WHERE period=? AND family='accounting'",
+            (canonical(subroot), subroot_digest, period),
+        )
+        root["subroots"]["accounting"] = subroot_digest.hex()
+    for key in root["small"]:
+        if key in manifest:
+            root["small"][key] = manifest[key]
+    root["logical_digest"] = digest(manifest).hex()
+    root["preview_digest"] = reviewed_preview_digest(manifest)
+    damage(
+        engine, "period_close",
+        "UPDATE period_close SET manifest=?,digest=? WHERE period=?",
+        (canonical(root), digest(manifest), period),
+    )
+    damage(
+        engine, "close_storage_root",
+        "UPDATE close_storage_root SET storage_digest=? WHERE period=?",
+        (digest(root), period),
+    )
+    damage(
+        engine, "read_index_source",
+        "UPDATE read_index_source SET source_digest=? "
+        "WHERE source_kind='close' AND source_id=?",
+        (digest(manifest), str(period)),
+    )
 
 
 def test_independent_opening_and_balances_do_not_create_current_activity(tmp_path):
@@ -379,26 +548,16 @@ def test_zero_trial_row_is_compatible_but_duplicate_account_is_not(tmp_path):
     frozen_opening(engine)
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT * FROM period_close").fetchone()
-        import json
+        from ai_accounting.kernel.close_storage import decode_close
 
-        manifest = json.loads(row["manifest"])
+        manifest = decode_close(connection, row)
     manifest["trial_balance"].append({"account": "2202", "debit": 0, "credit": 0})
-    damage(
-        engine,
-        "period_close",
-        "UPDATE period_close SET manifest=?,digest=?",
-        (canonical(manifest), digest(manifest)),
-    )
-    assert verify(engine, include_indexes=False)["status"] == "verified"
+    reseal_close_for_semantic_test(engine, manifest)
+    assert verify(engine, include_indexes=False, include_projections=False)["status"] == "verified"
     manifest["trial_balance"].append({"account": "2202", "debit": 0, "credit": 0})
-    damage(
-        engine,
-        "period_close",
-        "UPDATE period_close SET manifest=?,digest=?",
-        (canonical(manifest), digest(manifest)),
-    )
+    reseal_close_for_semantic_test(engine, manifest)
     with pytest.raises(KernelError) as failure:
-        verify(engine, include_indexes=False)
+        verify(engine, include_indexes=False, include_projections=False)
     assert failure.value.details["reason"] == "duplicate_trial_account"
 
 
@@ -486,7 +645,7 @@ def test_new_close_rejects_damage_to_previous_manifest_even_when_digest_column_i
         pytest.raises(KernelError) as failure,
     ):
         verify_close_integrity(engine, connection, "2026-02")
-    assert failure.value.details["reason"] == "manifest_digest_mismatch"
+    assert failure.value.details["reason"] == "storage_root_digest_mismatch"
 
 
 def test_new_close_checks_precise_previous_voucher_amount_not_only_manifest_hash(engine):
@@ -500,3 +659,64 @@ def test_new_close_checks_precise_previous_voucher_amount_not_only_manifest_hash
     ):
         verify_close_integrity(engine, connection, "2026-02")
     assert failure.value.details["reason"] == "voucher_total_mismatch"
+
+
+def test_close_integrity_reuses_only_successfully_verified_settlement_sources(engine, monkeypatch):
+    save(engine)
+    publish(engine)
+    close(engine)
+    compared = []
+    original = settlement_projection.compare_settlement_projection
+
+    def counted(*args, **kwargs):
+        result = original(*args, **kwargs)
+        compared.append(result["changed"])
+        return result
+
+    monkeypatch.setattr(settlement_projection, "compare_settlement_projection", counted)
+    with engine.store.connection(read_only=True) as connection:
+        assert verify_close_integrity(engine, connection, "2026-02")["status"] == "verified"
+    assert compared == [False]
+
+    damage(
+        engine,
+        "settlement_projection_seal",
+        "UPDATE settlement_projection_seal SET digest=zeroblob(32)",
+    )
+    compared.clear()
+    with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
+        verify_close_integrity(engine, connection, "2026-02")
+    assert compared == [True]
+
+
+def test_verified_settlement_sources_cannot_cross_connections_or_end_a_snapshot(engine):
+    from ai_accounting.kernel.verified_source_lease import verified_source_lease
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    with (
+        engine.store.connection(read_only=True) as first,
+        engine.store.connection(read_only=True) as second,
+    ):
+        first.execute("BEGIN")
+        second.execute("BEGIN")
+        with verified_source_lease(first):
+            verified = settlement_projection.require_settlement_projection(
+                engine, first, _return_verified=True
+            )
+            with pytest.raises(ValueError, match="another snapshot"):
+                require_frozen_settlement_projection(
+                    engine, second, _verified_projection=verified
+                )
+            first.rollback()
+            first.execute("BEGIN")
+            with pytest.raises(ValueError, match="transaction has ended"):
+                require_frozen_settlement_projection(
+                    engine, first, _verified_projection=verified
+                )
+        with verified_source_lease(first):
+            with pytest.raises(ValueError, match="another verification scope"):
+                require_frozen_settlement_projection(
+                    engine, first, _verified_projection=verified
+                )

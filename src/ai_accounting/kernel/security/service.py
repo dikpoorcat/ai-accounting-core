@@ -157,8 +157,8 @@ class SecurityService:
     @contextmanager
     def _transaction(self):
         with (
-            self.authorization_gate,
             closing(connect(self.path, validator=self._check_catalog)) as connection,
+            self.authorization_gate,
         ):
             connection.execute("BEGIN IMMEDIATE")
             try:

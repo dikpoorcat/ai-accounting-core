@@ -8,11 +8,14 @@ from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 
 from ai_accounting.kernel.asset_batches import AssetBatches
-from ai_accounting.kernel.contracts import KernelError, NeedsInformation
+from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
+from ai_accounting.kernel.domains.banking import _previous_reconciliation_read
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
+from ai_accounting.kernel.types import YearMonth
 
 
 @pytest.fixture
@@ -378,6 +381,184 @@ def test_monthly_bank_reconciliation_is_continuous(book):
         )
     assert failure.value.issues[0]["field"] == "previous_reconciliation"
     assert len(engine.ledger("2026-09")) == 1
+
+
+def test_adjacent_read_matches_full_history_outcome_and_gap_error(book, monkeypatch):
+    from ai_accounting.kernel.domains import banking
+
+    engine, save, publish, _ = book
+    opening(save, publish)
+    for month in ("2026-09", "2026-10"):
+        statement_id = f"statement-{month}"
+        reconciliation_id = f"reconciliation-{month}"
+        statement(save, publish, [], subject=statement_id, month=month)
+        reconciliation(
+            save, publish, [], subject=reconciliation_id,
+            statement_id=statement_id, month=month,
+        )
+    statement(save, publish, [], subject="statement-november", month="2026-11")
+    save(
+        "bank_reconciliation", "reconciliation-november",
+        {
+            "period": "2026-11", "statement_id": "statement-november",
+            "bank_account_id": "bank-a", "matches": [],
+        },
+    )
+
+    def historical_read(account, period):
+        return Read("calculation", "bank_reconciliation", f"bank:{account}", period)
+
+    with monkeypatch.context() as previous_rule:
+        previous_rule.setattr(banking, "_previous_reconciliation_read", historical_read)
+        historical = engine.preview(["reconciliation-november"])
+    adjacent = engine.preview(["reconciliation-november"])
+    assert historical["results"][0]["result_digest"] == adjacent["results"][0]["result_digest"]
+    assert historical["results"][0]["values"] == adjacent["results"][0]["values"]
+
+    statement(save, publish, [], subject="statement-december", month="2026-12")
+    save(
+        "bank_reconciliation", "reconciliation-december",
+        {
+            "period": "2026-12", "statement_id": "statement-december",
+            "bank_account_id": "bank-a", "matches": [],
+        },
+    )
+    with monkeypatch.context() as previous_rule:
+        previous_rule.setattr(banking, "_previous_reconciliation_read", historical_read)
+        with pytest.raises(NeedsInformation) as historical_gap:
+            engine.preview(["reconciliation-december"])
+    with pytest.raises(NeedsInformation) as adjacent_gap:
+        engine.preview(["reconciliation-december"])
+    assert historical_gap.value.code == adjacent_gap.value.code == "needs_information"
+    assert historical_gap.value.issues[0]["field"] == adjacent_gap.value.issues[0]["field"] == (
+        "previous_reconciliation"
+    )
+
+
+def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
+    engine, save, publish, _ = book
+    opening(save, publish, bank="bank-a", month="2026-11")
+    opening(save, publish, bank="bank-b", month="2026-12")
+    for bank, months in (
+        ("bank-a", ("2026-11", "2026-12", "2027-01")),
+        ("bank-b", ("2026-12", "2027-01")),
+    ):
+        for month in months:
+            statement_id = f"statement-{bank}-{month}"
+            reconciliation_id = f"reconciliation-{bank}-{month}"
+            statement(
+                save, publish, [], subject=statement_id, bank=bank, month=month
+            )
+            reconciliation(
+                save, publish, [], subject=reconciliation_id,
+                statement_id=statement_id, bank=bank, month=month,
+            )
+    previous = _previous_reconciliation_read("bank-a", YearMonth("2027-01"))
+    assert previous == Read(
+        "calculation", "bank_reconciliation", "bank:bank-a:2026-12",
+        YearMonth("2027-01"),
+    )
+    with engine.store.connection(read_only=True) as connection:
+        current = connection.execute(
+            "SELECT calculation_id FROM calculation_current "
+            "WHERE subject_id='reconciliation-bank-a-2027-01'"
+        ).fetchone()[0]
+        predecessor = connection.execute(
+            "SELECT calculation_id FROM calculation_current "
+            "WHERE subject_id='reconciliation-bank-a-2026-12'"
+        ).fetchone()[0]
+        assert engine.store.select(connection, previous)[0].id == predecessor
+        scopes = list(connection.execute(
+            "SELECT source,kind,scope_key,before_period FROM dependency_scope "
+            "WHERE calculation_id=? AND source='calculation' "
+            "AND kind='bank_reconciliation'", (current,)
+        ))
+        assert [tuple(row)[1:] for row in scopes] == [
+            ("bank_reconciliation", "bank:bank-a:2026-12", YearMonth("2027-01").ordinal)
+        ]
+        assert connection.execute(
+            "SELECT 1 FROM dependency_calculation WHERE calculation_id=? AND upstream_id=?",
+            (current, predecessor),
+        ).fetchone()
+        connection.execute("BEGIN")
+        verify_integrity(engine, connection)
+    revised = save(
+        "bank_reconciliation", "reconciliation-bank-a-2026-12",
+        {
+            "period": "2026-12", "statement_id": "statement-bank-a-2026-12",
+            "bank_account_id": "bank-a", "matches": [],
+        },
+        revision=1,
+    )
+    assert "reconciliation-bank-a-2027-01" in revised["pending"]
+    publish("reconciliation-bank-a-2026-12")
+    publish("reconciliation-bank-a-2027-01")
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        verify_integrity(engine, connection)
+
+
+def test_first_possible_month_has_no_invalid_predecessor_scope(book):
+    assert _previous_reconciliation_read("bank-a", YearMonth("0001-01")) is None
+    assert _previous_reconciliation_read("bank-a", YearMonth("0001-02")) == Read(
+        "calculation", "bank_reconciliation", "bank:bank-a:0001-01", YearMonth("0001-02")
+    )
+    engine, save, publish, _ = book
+    opening(save, publish, month="0001-01")
+    statement(save, publish, [], month="0001-01")
+    reconciliation(save, publish, [], month="0001-01")
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        verify_integrity(engine, connection)
+
+
+def test_unpublished_adjacent_month_is_not_accepted_as_history(book):
+    _, save, publish, _ = book
+    opening(save, publish)
+    statement(save, publish, [], month="2026-09")
+    reconciliation(save, publish, [], month="2026-09", posted=False)
+    statement(
+        save, publish, [], subject="statement-october", month="2026-10"
+    )
+    with pytest.raises(NeedsInformation) as failure:
+        reconciliation(
+            save, publish, [], subject="reconciliation-october",
+            statement_id="statement-october", month="2026-10",
+        )
+    assert failure.value.issues[0]["field"] == "previous_reconciliation"
+
+
+def test_historical_reconciliation_change_invalidates_each_later_month(book):
+    engine, save, publish, _ = book
+    opening(save, publish, month="2026-09")
+    for month in ("2026-09", "2026-10", "2026-11"):
+        statement_id = f"statement-{month}"
+        reconciliation_id = f"reconciliation-{month}"
+        statement(save, publish, [], subject=statement_id, month=month)
+        reconciliation(
+            save, publish, [], subject=reconciliation_id,
+            statement_id=statement_id, month=month,
+        )
+    changed = save(
+        "bank_statement", "statement-2026-09",
+        {
+            "period": "2026-09", "bank_account_id": "bank-a",
+            "opening_fen": 0, "closing_fen": 0, "entries": [],
+        },
+        revision=1,
+    )
+    assert {
+        "statement-2026-09", "reconciliation-2026-09",
+        "reconciliation-2026-10", "reconciliation-2026-11",
+    } <= set(changed["pending"])
+    for subject in (
+        "statement-2026-09", "reconciliation-2026-09",
+        "reconciliation-2026-10", "reconciliation-2026-11",
+    ):
+        publish(subject)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        verify_integrity(engine, connection)
 
 
 def test_one_bank_batch_matches_multiple_actual_recipients(book):

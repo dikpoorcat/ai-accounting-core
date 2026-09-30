@@ -82,3 +82,27 @@ test("a prepared-to-closed detail response replaces the main binding and discard
     assert.deepEqual(continued.collections.evidence.items.map(item => item.key), ["closed-item", "closed-next"]);
   } finally { await server.close(); }
 });
+
+test("prefetch settles a failed summary immediately without an unhandled rejection", async () => {
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  globalThis.window = { location: { origin: "http://dashboard.invalid", search: "?company_id=company-a" }, dispatchEvent() {} };
+  globalThis.fetch = () => Promise.reject(new Error("review offline"));
+  const server = await createServer({
+    root: fileURLToPath(new URL("..", import.meta.url)), configFile: false,
+    optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
+  });
+  try {
+    const { prefetchCloseReview } = await server.ssrLoadModule("/src/api/closeReview.ts");
+    const prefetch = prefetchCloseReview("company-a", "2026-01", new AbortController().signal);
+    assert.deepEqual([prefetch.companyId, prefetch.period], ["company-a", "2026-01"]);
+    const result = await prefetch.result;
+    assert.equal(result.status, "rejected");
+    assert.match(result.reason.message, /review offline/);
+  } finally {
+    await server.close();
+    globalThis.fetch = previousFetch;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});

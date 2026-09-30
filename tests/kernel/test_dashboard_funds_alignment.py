@@ -14,6 +14,7 @@ from test_resident_service import resident as resident_fixture
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_funds import FundsRead
 from ai_accounting.kernel.entities import Entities
 
 bank_book = banking.book
@@ -22,6 +23,41 @@ platform_book = platforms.book
 opening_book = openings.book
 payroll_book = reserve_payroll.company
 resident = resident_fixture
+
+
+def test_brief_skips_absent_investment_details_but_checks_actual_sources(
+    investment_book, monkeypatch
+):
+    engine, save, publish = investment_book
+    original = FundsRead.investment_summary
+    calls = []
+
+    def counted(self):
+        calls.append(True)
+        return original(self)
+
+    monkeypatch.setattr(FundsRead, "investment_summary", counted)
+    dashboard = Dashboard(engine)
+    assert dashboard.brief("2026-01", preparation="deferred")["data"] is not None
+    assert calls == []
+
+    save("money_fund_subscription", "buy", investments.subscription())
+    publish("buy")
+    assert dashboard.brief("2026-01", preparation="deferred")["data"] is not None
+    assert calls == [True]
+    with engine.store.connection() as connection:
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_calculation_UPDATE")
+        changed = connection.execute(
+            "UPDATE calculation SET outcome=json_set(outcome,'$.values.fund_id',NULL) "
+            "WHERE id=(SELECT calculation_id FROM calculation_current WHERE subject_id='buy')"
+        )
+        assert changed.rowcount == 1
+        connection.execute(trigger)
+    with pytest.raises(KernelError):
+        dashboard.brief("2026-01", preparation="deferred")
 
 
 def _publish_filter_funding(engine, accounts, *, period="2026-09"):
@@ -188,8 +224,9 @@ def test_movement_filter_requires_matching_account_type_and_identifier(bank_book
         {"movement_account_type": "bank", "movement_account_id": ""},
         {"statement_account_id": ""},
     ):
-        with pytest.raises(ValueError):
+        with pytest.raises(KernelError) as error:
             dashboard.funds("2026-09", **filters)
+        assert error.value.code == "invalid_command"
 
 
 def test_funds_cursor_cannot_cross_filters_sections_or_periods(bank_book):
@@ -268,7 +305,8 @@ def test_http_fund_filters_and_cursors_are_company_scoped(resident):
         "&statement_account_id=",
         "&unknown_filter=bank-a",
     ):
-        assert http.request(query + extra, headers=headers)[0] == 400
+        status, _, _, invalid = http.request(query + extra, headers=headers)
+        assert status == 400, (extra, invalid)
 
 
 def test_external_funds_exclude_both_bank_transfer_sides(bank_book):

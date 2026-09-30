@@ -1,0 +1,43 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r24-release",
+  "book_report_status": "measuring",
+  "period": "2019-12",
+  "page_keys": [
+    "data",
+    "read_context",
+    "read_semantics",
+    "schema_version",
+    "selected_period",
+    "snapshot_version"
+  ],
+  "note": "Private actual asset-page selections; concurrent verifier, workload only.",
+  "calls": [
+    {
+      "pairs": 47,
+      "periods": 47,
+      "new_vm": 521100,
+      "old_vm": 331400,
+      "new_rows": 47,
+      "old_rows": 47,
+      "multiset_equal": true
+    },
+    {
+      "pairs": 47,
+      "periods": 47,
+      "new_vm": 521200,
+      "old_vm": 331400,
+      "new_rows": 47,
+      "old_rows": 47,
+      "multiset_equal": true
+    },
+    {
+      "pairs": 93,
+      "periods": 47,
+      "new_vm": 522400,
+      "old_vm": 655800,
+      "new_rows": 93,
+      "old_rows": 93,
+      "multiset_equal": true
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-independent-12",
+  "code_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r10-release",
+  "workspace": "D:\\GitHub\\ai-accounting-core",
+  "target": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-independent-48",
+  "archive": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-independent-48-prefix-r10\\91310000123456789I.finance-company.zip",
+  "months": 12,
+  "company": {
+    "id": "680c88a23ffc484d905583ba2962713a",
+    "taxpayer_id": "91310000123456789I",
+    "name": "阶段九合成独立业务企业",
+    "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-release-independent-48\\91310000123456789I\\company.sqlite",
+    "database_id": "9da703f8a5d04f9b802ba2cc5bb00de3"
+  },
+  "status": "verified_prefix_fork"
+}

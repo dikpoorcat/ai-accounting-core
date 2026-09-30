@@ -1,5 +1,5 @@
 import { requestDashboardContext } from "./client";
-import type { DashboardContextContract, DashboardContextResponse } from "./generated/dashboardResponses";
+import type { DashboardContextContract, DashboardContextResponse } from "./generated/dashboardContext";
 
 export type DashboardContext = DashboardContextResponse;
 export type DashboardPeriod = DashboardContextContract.DashboardPeriod;

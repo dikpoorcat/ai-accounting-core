@@ -523,10 +523,15 @@ def main():
                     with engine.store.connection(read_only=True) as connection:
                         connection.execute("BEGIN")
                         row = connection.execute(
-                            "SELECT manifest FROM period_close WHERE period=?",
+                            "SELECT * FROM period_close WHERE period=?",
                             (YearMonth(month).ordinal,),
                         ).fetchone()
-                        frozen = json.loads(row[0])
+                        if (source / "src/ai_accounting/kernel/close_storage.py").exists():
+                            from ai_accounting.kernel.close_storage import decode_close
+
+                            frozen = decode_close(connection, row)
+                        else:
+                            frozen = json.loads(row["manifest"])
                         built = build_owner_review(
                             connection,
                             engine,
@@ -549,12 +554,29 @@ def main():
                     for item in review["owner_review"]["collections"]
                 }
             with engine.store.connection(read_only=True) as connection:
-                manifests = [
-                    json.loads(row[0])
-                    for row in connection.execute(
-                        "SELECT manifest FROM period_close ORDER BY period"
+                close_rows = connection.execute(
+                    "SELECT * FROM period_close ORDER BY period"
+                ).fetchall()
+                if (source / "src/ai_accounting/kernel/close_storage.py").exists():
+                    from ai_accounting.kernel.close_storage import decode_close
+
+                    manifests = [decode_close(connection, row) for row in close_rows]
+                    stats["physical_close_content_bytes"] = sum(
+                        connection.execute(
+                            "SELECT coalesce(sum(length(CAST("
+                            + column
+                            + " AS BLOB))),0) FROM "
+                            + table
+                        ).fetchone()[0]
+                        for table, column in (
+                            ("period_close", "manifest"),
+                            ("close_storage_subroot", "content"),
+                            ("close_storage_directory", "content"),
+                            ("close_storage_block", "content"),
+                        )
                     )
-                ]
+                else:
+                    manifests = [json.loads(row["manifest"]) for row in close_rows]
                 stats["manifest_bytes"] = sum(
                     len(canonical(item).encode("utf-8")) for item in manifests
                 )

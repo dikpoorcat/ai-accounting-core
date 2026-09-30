@@ -1,0 +1,56 @@
+{
+  "status": "diagnostic_not_browser_acceptance",
+  "source": "fixed r33 read candidate; r32 independently verified same-contract synthetic books",
+  "files": {
+    "main12-work": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-main12-r33-ab.json",
+      "archive_file": "bank-material-worker-r33-main12-work.json.gz",
+      "raw_bytes": 663721,
+      "raw_sha256": "2e359370793ac47c4abb1eccbb6c1b523bedb6fd96371b299b257876e5034f6f",
+      "gzip_bytes": 88501,
+      "gzip_sha256": "d85235475d72db89394b6db732345799853ca3618a1bc1a4345ea54422fb71a8"
+    },
+    "main48-work": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-main48-r33-ab.json",
+      "archive_file": "bank-material-worker-r33-main48-work.json.gz",
+      "raw_bytes": 663994,
+      "raw_sha256": "5acca5fa7497d5a44a2867194006fdbebac35f952603b8e96acb10743c3efc3e",
+      "gzip_bytes": 88776,
+      "gzip_sha256": "342fe35b0df728e789a56e8add1093017dbd5209f00f25114d9d609b89852afc"
+    },
+    "deferred-control": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-main12-r33-deferred-ab.json",
+      "archive_file": "bank-material-worker-r33-deferred-control.json.gz",
+      "raw_bytes": 303415,
+      "raw_sha256": "8f72bca6f18bb69ab8d51a36307ba040922ad018f2ef6acd29eb572e5ecd5e90",
+      "gzip_bytes": 38924,
+      "gzip_sha256": "31878cfa8ff28fa2c3135732c19373015c24a820fa82d30ed3ad83d19be28503"
+    },
+    "closed-control": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-main12-r33-closed-ab.json",
+      "archive_file": "bank-material-worker-r33-closed-control.json.gz",
+      "raw_bytes": 388929,
+      "raw_sha256": "47ad06c019febd77f93a3e0d6594cb2689838c826b53a4c91d951d5e4a1f27ea",
+      "gzip_bytes": 50858,
+      "gzip_sha256": "f9dede6d8cd15ff7e03fc3598efebdf60fa901c643191d678a99453fe95b50cb"
+    },
+    "native-abba": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-native-r33-abba.json",
+      "archive_file": "bank-material-worker-r33-native-abba.json.gz",
+      "raw_bytes": 5649,
+      "raw_sha256": "677a658e0db48fc69abce1ec52eafc43fee6d00e55a378dfd2c3c028f04c550a",
+      "gzip_bytes": 965,
+      "gzip_sha256": "8c84ca8868d354260bc28995d7ab465858b0e29e5849cffe40bf271628b5ecfa"
+    },
+    "probe-source": {
+      "raw_workspace_file": ".tmp/stage9-bank-worker-ab-r33.py",
+      "archive_file": "bank-material-worker-r33-probe-source.py.gz",
+      "raw_bytes": 30777,
+      "raw_sha256": "42be52be914456c2c073feb8d8c07e94002ccacf9dc46fa5d167ccb72b1b64e3",
+      "gzip_bytes": 6695,
+      "gzip_sha256": "96f6a8ae503bfd36d45ee1d78c6e7675eb94eb4a347417366bbfb42b30124a1c"
+    }
+  },
+  "native_started_utc": "2026-09-27T23:51:10.781232+00:00",
+  "native_ended_utc": "2026-09-27T23:51:27.923789+00:00"
+}

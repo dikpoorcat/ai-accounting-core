@@ -25,6 +25,45 @@ from ai_accounting.kernel.versions import verify_schema
 TAXPAYER = "91310000123456789A"
 
 
+@pytest.mark.parametrize("read_only", [True, False])
+def test_validated_private_connection_opens_once_and_observes_committed_wal(
+    tmp_path, monkeypatch, read_only
+):
+    catalog = Catalog(tmp_path / "root")
+    company = catalog.create_company(TAXPAYER, "合成只读连接企业")
+    opened, validated = [], []
+    original = sqlite3.connect
+
+    def count_connect(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    def reject_permission_write(*_args, **_kwargs):
+        raise AssertionError("already private validation must not rewrite permissions")
+
+    def validate(connection):
+        validated.append(connection)
+        assert connection.in_transaction
+        assert connection.execute("SELECT id FROM company").fetchone()[0] == company["id"]
+
+    monkeypatch.setattr(sqlite3, "connect", count_connect)
+    monkeypatch.setattr(runtime, "ensure_private_file", reject_permission_write)
+    with closing(connect(catalog.path, read_only=read_only, validator=validate)) as connection:
+        assert opened == validated == [connection]
+        assert connection.execute("PRAGMA query_only").fetchone()[0] == int(read_only)
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        if read_only:
+            with pytest.raises(sqlite3.OperationalError):
+                connection.execute("DELETE FROM company")
+        else:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("UPDATE company SET name='合成未提交修改'")
+            connection.rollback()
+            assert connection.execute("SELECT name FROM company").fetchone()[0] == company["name"]
+    assert_private_file(catalog.path)
+
+
 def test_sidecar_prepare_retries_sqlite_last_connection_removal(tmp_path, monkeypatch):
     catalog = Catalog(tmp_path / "root")
     keeper = connect(catalog.path)
@@ -206,7 +245,7 @@ def test_wal_header_zero_is_recognized_by_transactional_sql(tmp_path):
             connect(path, read_only=True, validator=lambda c: verify_schema(c, bundle=bundle))
         ) as reader:
             assert reader.execute("PRAGMA application_id").fetchone()[0] == bundle.application_id
-            assert verify_schema(reader, bundle=bundle) == 0
+            assert verify_schema(reader, bundle=bundle) == bundle.current_versions["company"]
 
 
 @pytest.mark.parametrize("entry", ["stop", "ensure"])
@@ -272,7 +311,7 @@ def test_schema_verifier_keeps_existing_transaction(tmp_path):
     with store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("UPDATE state SET management=management+1")
-        assert verify_schema(connection, bundle=bundle) == 0
+        assert verify_schema(connection, bundle=bundle) == bundle.current_versions["company"]
         assert connection.in_transaction
         assert connection.execute("SELECT management FROM state").fetchone()[0] == 1
         connection.rollback()
@@ -345,7 +384,7 @@ def test_verifier_meta_structure_history_identity_share_one_wal_snapshot(tmp_pat
             return result
 
     with closing(sqlite3.connect(store.path, factory=Reader, isolation_level=None)) as reader:
-        assert verify_schema(reader, bundle=bundle) == 0
+        assert verify_schema(reader, bundle=bundle) == bundle.current_versions["company"]
         assert swapped and not reader.in_transaction
         with pytest.raises(KernelError) as error:
             verify_schema(reader, bundle=bundle)

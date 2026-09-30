@@ -17,23 +17,25 @@ const views = {
   Reports: { load: "preview", response: "report", error: "errorMessage" },
   Funds: { load: "loadFunds", response: "funds", error: "requestError" },
 };
-async function harness(name, refreshContext = async () => {}) {
+async function harness(name, refreshContext = async () => {}, initialContext = null, initialQuery = {}) {
   const key = `dashboardV2Harness${++sequence}`;
-  const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-01" }, hash: "" });
+  const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-01", ...initialQuery }, hash: "" });
   const calls = [], unmount = [], replaces = [];
-  globalThis[key] = { Vue, route, refreshContext, unmount, replaces, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  const dashboardContext = Vue.ref(initialContext);
+  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
   globalThis.document = { getElementById: () => null };
   const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const prefix = `
     const environment = globalThis.${key};
-    const { ref, computed, nextTick, watch } = environment.Vue;
+    const { ref, shallowRef, computed, nextTick, watch } = environment.Vue;
     const onMounted = () => {}; const onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route;
     const useRouter = () => ({ replace: async value => environment.replaces.push(value), push: async () => {} });
-    const useDashboardContext = () => ({ context: ref(null), load: environment.refreshContext, refresh: environment.refreshContext });
+    const useDashboardContext = () => ({ context: environment.dashboardContext, load: environment.refreshContext, refresh: environment.refreshContext });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
-    const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchDeferredBrief = environment.fetch, fetchDeferredQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
+    const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchCompleteBrief = environment.fetch, fetchDeferredBrief = environment.fetch, fetchDeferredQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
+    const prefetchCloseReview = (companyId, period) => ({ companyId, period, result: Promise.resolve({ status: "fulfilled", value: {} }) });
     const fetchPeriodPreparation = () => new Promise(() => {});
     const dashboardErrorMessage = error => error.message; const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = value => BigInt(value ?? 0), formatFen = String, formatPositiveFen = String;
@@ -41,7 +43,7 @@ async function harness(name, refreshContext = async () => {}) {
   const config = views[name];
   const suffix = `\nmounted = true; ${name === "Funds" ? 'selectedPeriod.value = "2026-01";' : ''} export { ${config.load} as load, ${config.response} as response, ${config.error} as error, loading, refresh };`;
   const { outputText } = ts.transpileModule(prefix + source + suffix, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
-  return { ...await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`), route, calls, unmount: () => unmount.forEach(callback => callback()), replaces };
+  return { ...await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`), route, calls, dashboardContext, unmount: () => unmount.forEach(callback => callback()), replaces };
 }
 function result(name, marker) {
   if (name === "Reports") return { marker, statements: [] };
@@ -99,12 +101,47 @@ test("Brief: a distant voucher deep link requests one exact projection without l
   const view = await harness("Brief");
   view.route.query.voucher = "10009";
   const pending = view.load("2026-01");
-  assert.equal(view.calls[0].args[4].voucher_number, 10009);
+  assert.equal(view.calls[0].args[3].voucher_number, 10009);
   view.calls[0].resolve({ ...result("Brief", "direct"), data: { workforce_cost: { has_activity: false }, vouchers: [], collections: {}, focused_voucher: { voucher_version_id: "exact" }, voucher_page: { has_more: true } } });
   await pending;
   assert.equal(view.calls.length, 1);
   assert.equal(view.response.value.data.focused_voucher.voucher_version_id, "exact");
   assert.deepEqual(view.response.value.data.vouchers, []);
+  view.unmount();
+});
+
+test("hot refresh starts context and scoped main request together, then commits after scope validation", async () => {
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", year: 2026, month: 1 }], quarters: [{ key: "2026-Q1" }] };
+  for (const name of Object.keys(views).filter((item) => item !== "Funds")) {
+    let releaseContext;
+    const view = await harness(name, () => new Promise(resolve => { releaseContext = resolve; }), current,
+      name === "Reports" ? { quarter: "2026-Q1" } : {});
+    const pending = view.refresh();
+    assert.equal(view.calls.length, 1, `${name}: main request starts before context completes`);
+    view.calls[0].resolve(result(name, "parallel"));
+    await Promise.resolve();
+    assert.equal(view.response.value, null, `${name}: main response stays hidden until context is checked`);
+    view.dashboardContext.value = structuredClone(current);
+    await Vue.nextTick();
+    assert.equal(view.calls.length, 1, `${name}: same-scope context replacement cannot duplicate the main request`);
+    releaseContext(current);
+    await pending;
+    assert.equal(view.response.value?.marker, "parallel", `${name}: validated response commits`);
+    view.unmount();
+  }
+});
+
+test("a failed context check cannot mark a concurrent Employees response complete", async () => {
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01" }], quarters: [] };
+  let rejectContext;
+  const view = await harness("Employees", () => new Promise((_resolve, reject) => { rejectContext = reject; }), current);
+  const pending = view.refresh();
+  view.calls[0].resolve(result("Employees", "must-stay-hidden"));
+  rejectContext(new Error("context failed"));
+  await pending;
+  assert.equal(view.response.value, null);
+  assert.equal(view.error.value, "context failed");
+  assert.equal(view.loading.value, false);
   view.unmount();
 });
 

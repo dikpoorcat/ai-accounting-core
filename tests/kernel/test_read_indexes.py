@@ -1,5 +1,6 @@
 """Reference indexes retain source ambiguity and bound cold candidate reads."""
 
+import json
 import sqlite3
 
 import pytest
@@ -13,18 +14,17 @@ from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.provenance import recorded_times
 from ai_accounting.kernel.read_indexes import (
-    CLOSE_REPORT_FACTS,
+    CLOSE_PROFILES,
     audit_rows,
     close_rows,
     job_rows,
     sync_audit,
-    sync_close,
     sync_job,
     verify_close_references,
     verify_read_indexes,
     verify_source,
 )
-from ai_accounting.kernel.types import YearMonth, canonical, digest
+from ai_accounting.kernel.types import YearMonth, canonical
 
 MONTH = YearMonth("2026-01").ordinal
 RECORDED = "2026-09-12T10:00:00.000Z"
@@ -230,10 +230,8 @@ def test_guards_local_hits_and_explicit_omission_detection(engine):
 
 
 def test_fixed_close_leaf_validation_does_not_return_full_manifest(engine):
-    from test_integrity_content import damage
-
-    saved = save(engine)
-    _, published = publish(engine)
+    save(engine)
+    publish(engine)
     profile = Display(engine).save_display_profile(
         {
             "kind": "business",
@@ -246,31 +244,82 @@ def test_fixed_close_leaf_validation_does_not_return_full_manifest(engine):
     )
     manifest = close(engine)
     assert manifest["management_snapshot"]["profiles"][0]["id"] == profile["id"]
-    manifest["readiness"] = {
-        "financial_reports": {
-            "facts": [saved["fact_id"]],
-            "calculations": [published["results"][0]["calculation_id"]],
-        }
-    }
-    damage(
-        engine,
-        "period_close",
-        "UPDATE period_close SET manifest=?,digest=?",
-        (canonical(manifest), digest(manifest)),
-    )
-    damage(engine, "close_reference", "DELETE FROM close_reference")
-    damage(engine, "read_index_source", "DELETE FROM read_index_source WHERE source_kind='close'")
-    with engine.store.connection() as connection:
-        connection.execute("BEGIN")
-        sync_close(connection, MONTH)
+    with engine.store.connection(read_only=True) as connection:
         refs = connection.execute(
-            "SELECT * FROM close_reference WHERE path=?", (CLOSE_REPORT_FACTS,)
+            "SELECT * FROM close_reference WHERE path=?", (CLOSE_PROFILES,)
         ).fetchall()
+        assert len(refs) == 1
         verify_close_references(connection, refs)
         damaged = dict(refs[0]) | {"reference_id": "wrong"}
         with pytest.raises(KernelError, match="精确引用目录"):
             verify_close_references(connection, [damaged])
-        connection.commit()
+
+
+def test_close_leaf_batch_parses_each_source_once_and_checks_manifest_bytes(engine, monkeypatch):
+    from test_integrity_content import damage
+
+    from ai_accounting.kernel import read_indexes
+
+    save(engine)
+    publish(engine)
+    logical = close(engine)
+    with engine.store.connection(read_only=True) as connection:
+        refs = connection.execute(
+            "SELECT * FROM close_reference WHERE close_period=?", (MONTH,)
+        ).fetchall()
+        assert len(refs) > 2
+        loads = json.loads
+        parsed = []
+
+        def counted(value, *args, **kwargs):
+            parsed.append(len(value))
+            return loads(value, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(read_indexes.json, "loads", counted)
+            verify_close_references(connection, refs)
+        assert parsed
+        assert max(parsed) < len(canonical(logical))
+
+        manifest = json.loads(
+            connection.execute(
+                "SELECT manifest FROM period_close WHERE period=?", (MONTH,)
+            ).fetchone()[0]
+        )
+    manifest["unrelated_damage"] = "source bytes changed"
+    damage(
+        engine,
+        "period_close",
+        "UPDATE period_close SET manifest=? WHERE period=?",
+        (canonical(manifest), MONTH),
+    )
+    with engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as failure:
+            verify_close_references(connection, refs)
+    assert failure.value.code == "content_integrity_failed"
+    assert failure.value.details["reason"] == "storage_root_digest_mismatch"
+
+
+@pytest.mark.parametrize("order", ["ASC", "DESC"])
+def test_streamed_close_membership_rejects_missing_boundary_reference(engine, order):
+    from test_integrity_content import damage
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    damage(
+        engine,
+        "close_reference",
+        "DELETE FROM close_reference WHERE rowid=("
+        "SELECT rowid FROM close_reference WHERE close_period=? "
+        f"ORDER BY path {order},position {order},reference_type {order} LIMIT 1)",
+        (MONTH,),
+    )
+    with engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as failure:
+            close_rows(connection, periods=[MONTH])
+    assert failure.value.code == "read_index_integrity_failed"
+    assert failure.value.details["reason"] == "reference_multiset_mismatch"
 
 
 def test_historical_account_lookup_uses_the_covering_account_index(engine):

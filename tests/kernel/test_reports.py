@@ -12,11 +12,59 @@ from material_fixture import supporting_text
 from openpyxl import load_workbook
 
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.dashboard import Dashboard, _position
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.reports import ReportClassification, Reports, _statements, run_report_jobs
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
+
+
+def test_open_publication_probe_checks_exact_months_and_scales_with_month_count():
+    from ai_accounting.kernel.reports import _has_open_publication
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(
+            "CREATE TABLE calculation_publication(posting_period INTEGER);"
+            "CREATE INDEX publication_posting ON calculation_publication(posting_period);"
+            "CREATE TABLE period_close(period INTEGER PRIMARY KEY);"
+        )
+        assert not _has_open_publication(connection, 10)
+        connection.executemany(
+            "INSERT INTO calculation_publication VALUES(?)", [(1,), (3,), (8,)]
+        )
+        connection.executemany("INSERT INTO period_close VALUES(?)", [(1,), (8,)])
+        assert not _has_open_publication(connection, 2)
+        assert _has_open_publication(connection, 3)
+        # Month 8 cannot pretend that month 3 has its own close.
+        assert _has_open_publication(connection, 8)
+        connection.execute("INSERT INTO period_close VALUES(3)")
+
+        def measured():
+            steps = 0
+
+            def tick():
+                nonlocal steps
+                steps += 1
+                return 0
+
+            connection.set_progress_handler(tick, 1)
+            try:
+                assert not _has_open_publication(connection, 8)
+            finally:
+                connection.set_progress_handler(None, 0)
+            return steps
+
+        before = measured()
+        connection.executemany(
+            "INSERT INTO calculation_publication VALUES(?)",
+            [(month,) for month in (1, 3, 8)] * 1000,
+        )
+        after = measured()
+        assert after < before + 100, (before, after)
+        connection.execute("INSERT INTO calculation_publication VALUES(10)")
+        assert not _has_open_publication(connection, 9)
+        assert _has_open_publication(connection, 10)
 
 
 @pytest.fixture
@@ -207,6 +255,179 @@ def scenario(book, classification=True, tax=True):
 def close_quarter(book):
     for month in ("2026-01", "2026-02", "2026-03"):
         book[3](month)
+
+
+@pytest.mark.parametrize("classification", [True, False])
+def test_open_cash_profit_and_party_report_matches_full_source_resolution(book, classification):
+    from ai_accounting.kernel.query_reads import QueryReads
+
+    engine = book[0]
+    report = scenario(book, classification=classification)
+    with QueryReads.snapshot(engine) as reads:
+        bounded = report._report(2026, 1, source="open", connection=reads.connection, reads=reads)
+    with QueryReads.snapshot(engine) as reads:
+        reads.report_line_relations_many = lambda requests: reads.relations_many(requests)
+        full = report._report(2026, 1, source="open", connection=reads.connection, reads=reads)
+    assert bounded == full
+    assert bounded["statements"]["cash_flow_statement"]["6"]["current_fen"] == 10000
+    assert bool(bounded["fact_issues"]) is not classification
+
+
+def test_readiness_issues_match_full_report_without_full_history_id_output(book):
+    from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.reports import check_report_readiness
+    from ai_accounting.kernel.types import YearMonth
+
+    engine = book[0]
+    report = scenario(book, classification=True)
+    book[3]("2026-01")
+    book[3]("2026-02")
+    period = YearMonth("2026-03")
+    with QueryReads.snapshot(engine) as reads:
+        full = report._report(
+            2026, 1, source="open", connection=reads.connection, reads=reads,
+            through_period=period,
+        )
+    with QueryReads.snapshot(engine) as reads:
+        issues_only = report._report(
+            2026, 1, source="open", connection=reads.connection, reads=reads,
+            through_period=period, _issues_only=True,
+        )
+        readiness = check_report_readiness(
+            engine.store, reads.connection, period, reads=reads,
+        )
+    assert issues_only["fact_issues"] == full["fact_issues"] == readiness
+    assert set(issues_only["report_fact_ids"]) < set(full["report_fact_ids"])
+
+
+def test_readiness_issue_selection_falls_back_to_full_refs_without_directory(book, monkeypatch):
+    import ai_accounting.kernel.report_classification_directory as directory
+    from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.reports import check_report_readiness
+    from ai_accounting.kernel.types import YearMonth
+
+    engine = book[0]
+    report = scenario(book)
+    book[3]("2026-01")
+    book[3]("2026-02")
+    monkeypatch.setattr(directory, "classification_directory_scope", lambda *_a, **_k: None)
+    period = YearMonth("2026-03")
+    with QueryReads.snapshot(engine) as reads:
+        full = report._report(
+            2026, 1, source="open", connection=reads.connection, reads=reads,
+            through_period=period,
+        )
+    with QueryReads.snapshot(engine) as reads:
+        narrow = check_report_readiness(engine.store, reads.connection, period, reads=reads)
+        assert ("closed_report_fact_sources", period.ordinal) in reads._report_snapshot_cache
+    assert narrow == full["fact_issues"]
+
+
+def test_open_report_reuses_only_successfully_selected_month_lines(book, monkeypatch):
+    import ai_accounting.kernel.report_projection as projection
+    from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.types import YearMonth
+
+    engine = book[0]
+    report = scenario(book)
+    with QueryReads.snapshot(engine) as reads:
+        reused = report._report(2026, 1, source="open", connection=reads.connection, reads=reads)
+        assert ("report_open_source_rows", YearMonth("2026-03").ordinal) in (
+            reads._report_snapshot_cache
+        )
+    authoritative_rows = projection._authoritative_rows
+
+    def without_absence(*args, **kwargs):
+        result = authoritative_rows(*args, **kwargs)
+        if kwargs.get("with_absence"):
+            return result[0], False
+        return result
+
+    monkeypatch.setattr(projection, "_authoritative_rows", without_absence)
+    with QueryReads.snapshot(engine) as reads:
+        selected = report._report(2026, 1, source="open", connection=reads.connection, reads=reads)
+        assert ("report_open_source_rows", YearMonth("2026-03").ordinal) not in (
+            reads._report_snapshot_cache
+        )
+    assert reused == selected
+
+
+def test_report_pending_check_keeps_period_scope_when_pending_drives_lookup(book):
+    engine = book[0]
+    report = scenario(book)
+    before = report.report(2026, 1)
+    with engine.store.connection() as connection:
+        subject, fact = connection.execute(
+            "SELECT f.subject_id,f.id FROM fact_current c JOIN fact_revision f "
+            "ON f.id=c.fact_id WHERE f.period<=? LIMIT 1",
+            ((2026 - 1) * 12 + 3 - 1,),
+        ).fetchone()
+        connection.execute("INSERT INTO pending VALUES(?,?)", (subject, fact))
+        connection.commit()
+    blocked = report.report(2026, 1)
+    assert any(item["field"] == "pending" for item in blocked["fact_issues"])
+    with engine.store.connection() as connection:
+        connection.execute("DELETE FROM pending WHERE subject_id=? AND cause_id=?", (subject, fact))
+        connection.commit()
+    restored = report.report(2026, 1)
+    assert restored["fact_issues"] == before["fact_issues"]
+
+
+def test_profit_only_classification_preserves_position_without_history_hydration(book):
+    engine, save, publish, _ = book
+    scenario(book, classification=False, tax=False)
+    dashboard = Dashboard(engine)
+    with dashboard._snapshot("2026-02") as snap:
+        before = _position(snap)
+    version = classify(engine, save, publish)
+    with engine.store.connection(read_only=True) as connection:
+        classification_id = connection.execute(
+            "SELECT c.fact_id FROM fact_current c JOIN fact_report_classification r "
+            "ON r.revision_id=c.fact_id WHERE r.voucher_version_id=?",
+            (version,),
+        ).fetchone()[0]
+    with dashboard._snapshot("2026-02") as snap:
+        original_fact = snap.fact
+
+        def checked_fact(ident):
+            assert ident != classification_id
+            return original_fact(ident)
+
+        snap.fact = checked_fact
+        snap.journal.select = lambda **_: pytest.fail(
+            "profit-only classification must not hydrate historical journal lines"
+        )
+        after = _position(snap)
+    assert after == before
+    assert after["assets_fen"] == 50000
+    assert after["liabilities_fen"] == 10000
+    assert after["issues"] == before["issues"]
+
+
+def test_duplicate_profit_classification_keeps_position_issue(book):
+    engine, save, publish, _ = book
+    scenario(book, classification=False, tax=False)
+    version = classify(engine, save, publish)
+    save(
+        "report_classification",
+        "class-duplicate",
+        {
+            "period": "2026-02",
+            "voucher_version_id": version,
+            "profit_details": [
+                {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
+            ],
+        },
+    )
+    with Dashboard(engine)._snapshot("2026-02") as snap:
+        position = _position(snap)
+    assert position["assets_fen"] == 50000
+    assert position["liabilities_fen"] == 10000
+    assert {
+        "field": "report_classification",
+        "message": "同一凭证版本存在多个分类来源",
+        "voucher_version_id": version,
+    } in position["issues"]
 
 
 def test_real_business_three_statements_and_template(book, tmp_path):
@@ -420,6 +641,12 @@ def test_closed_correction_uses_original_classification_in_next_quarter(book):
     assert profit["16"]["current_fen"] == profit["14"]["current_fen"] == 5000
     assert profit["16"]["year_to_date_fen"] == 15000
     assert report.preview_export(2026, 1)["digest"] == original["digest"]
+    from ai_accounting.kernel.report_flow import require_report_flow
+
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert require_report_flow(engine, connection)["rows"] == 6
+        connection.commit()
 
 
 def test_unconfigured_company_can_close_but_cannot_export(book):

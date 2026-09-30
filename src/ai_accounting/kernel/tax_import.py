@@ -122,26 +122,41 @@ def _content_error(message, **details):
     raise KernelError("content_integrity_failed", message, component="tax_import", **details)
 
 
-def _contribution_components(connection, store, calculation):
-    rule_versions = calculation.values.get("rule_versions")
-    if not isinstance(rule_versions, (tuple, list)) or not rule_versions:
-        _content_error(
-            "正式工资缺少可核对的社保政策版本",
-            calculation_id=calculation.id,
+def _contribution_sources(connection, store, calculations):
+    """Load exact policies and original outcomes once in the current snapshot."""
+    references = {}
+    for calculation in calculations:
+        rule_versions = calculation.values.get("rule_versions")
+        if not isinstance(rule_versions, (tuple, list)) or not rule_versions:
+            _content_error(
+                "正式工资缺少可核对的社保政策版本",
+                calculation_id=calculation.id,
+            )
+        policy_id = rule_versions[0]
+        if not isinstance(policy_id, str) or not policy_id:
+            _content_error(
+                "正式工资的社保政策版本无效",
+                calculation_id=calculation.id,
+            )
+        references[calculation.id] = Read("fact", "payroll_contribution_policy", "#" + policy_id)
+    selected = store.select_many(connection, sorted(set(references.values()), key=repr))
+    originals = {
+        row[0]: row[1]
+        for row in connection.execute(
+            "SELECT id,outcome FROM calculation WHERE id IN (SELECT value FROM json_each(?))",
+            (canonical(sorted(references)),),
         )
-    policy_id = rule_versions[0]
-    if not isinstance(policy_id, str) or not policy_id:
-        _content_error(
-            "正式工资的社保政策版本无效",
-            calculation_id=calculation.id,
-        )
-    policy = store.select(
-        connection,
-        Read("fact", "payroll_contribution_policy", "#" + policy_id),
-    )
-    raw = connection.execute(
-        "SELECT outcome FROM calculation WHERE id=?", (calculation.id,)
-    ).fetchone()
+    }
+    return {
+        ident: (read.key[1:], selected[read], originals.get(ident))
+        for ident, read in references.items()
+    }
+
+
+def _contribution_components(connection, store, calculation, *, _sources=None):
+    if _sources is None:
+        _sources = _contribution_sources(connection, store, (calculation,))
+    policy_id, policy, raw = _sources[calculation.id]
     if len(policy) != 1 or raw is None:
         _content_error(
             "正式工资引用的社保政策或计算原文不存在",
@@ -149,7 +164,7 @@ def _contribution_components(connection, store, calculation):
             policy_fact_id=policy_id,
         )
     try:
-        outcome = json.loads(raw[0])
+        outcome = json.loads(raw)
         explanation = outcome["explanation"]
         trace = [
             item["values"]
@@ -227,22 +242,34 @@ def _assessment_issue(code, category, field, message, **details):
     }
 
 
-def assess_tax_import_mapping(store, connection, period: YearMonth):
+def assess_tax_import_mapping(store, connection, period: YearMonth, *, reads=None):
     """Assess the current published wage population inside the caller's read snapshot."""
 
     month = YearMonth(str(period))
-    facts = [
-        item
+    selections = [
+        Read(source, kind, str(month))
+        for source in ("fact", "calculation")
         for kind in PAYROLL_KINDS
-        for item in store.select(connection, Read("fact", kind, str(month)))
-    ]
+    ] + [Read("fact", TaxImportMapping.kind, str(month))]
+    if reads is None:
+        selected = store.select_many(connection, selections)
+    else:
+        if (
+            reads.connection is not connection
+            or reads.store is not store
+            or not reads._snapshot_active
+        ):
+            raise ValueError("tax import reads belong to another active snapshot")
+        reads.prime_select(selections)
+        selected = {selection: reads.select(selection) for selection in selections}
+    facts = [item for kind in PAYROLL_KINDS for item in selected[Read("fact", kind, str(month))]]
     calculations = {
         item.subject_id: item
         for kind in PAYROLL_KINDS
-        for item in store.select(connection, Read("calculation", kind, str(month)))
+        for item in selected[Read("calculation", kind, str(month))]
     }
     pending = {row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")}
-    mappings = store.select(connection, Read("fact", TaxImportMapping.kind, str(month)))
+    mappings = selected[Read("fact", TaxImportMapping.kind, str(month))]
     mapping_ids = sorted(item.id for item in mappings)
     calculation_ids = sorted(item.id for item in calculations.values())
     issues = []
@@ -281,8 +308,13 @@ def assess_tax_import_mapping(store, connection, period: YearMonth):
         return {**result, "status": "not_applicable"}
     extracted = []
     nonzero_by_code = {}
+    contribution_sources = _contribution_sources(
+        connection, store, (calculation for _employee, calculation in applicable)
+    )
     for employee_id, calculation in applicable:
-        components = _contribution_components(connection, store, calculation)
+        components = _contribution_components(
+            connection, store, calculation, _sources=contribution_sources
+        )
         extracted.append((employee_id, calculation, components))
         for code, amount in components["social"].items():
             if amount:

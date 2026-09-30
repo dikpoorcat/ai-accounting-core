@@ -1,0 +1,26 @@
+{
+  "scope": "one last close only; read-only fixed source; not full verification",
+  "period": 24298,
+  "rss_before": 33452032,
+  "rss_after": 189304832,
+  "traced_current": null,
+  "traced_peak": null,
+  "tracemalloc_enabled": false,
+  "canonical_bytes": 41727549,
+  "compressed_bytes": 5635436,
+  "coverage_counts": {
+    "allocation_versions": 357,
+    "closed_through": null,
+    "coverage": 119119,
+    "coverage_digest": null,
+    "fact_ids": 119833,
+    "file_status": null,
+    "file_summaries": 357,
+    "group_versions": 0,
+    "inventory_versions": 714,
+    "period": null,
+    "resolution_versions": 119119,
+    "source_versions": 357,
+    "status": null
+  }
+}

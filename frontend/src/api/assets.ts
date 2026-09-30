@@ -1,7 +1,7 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
 import { requestGeneratedJson } from "./client";
-import type { DashboardAssetsContract, DashboardAssetsResponse } from "./generated/dashboardResponses";
-import { validateDashboardAssetsResponse } from "./generated/dashboardValidators.js";
+import type { DashboardAssetsContract, DashboardAssetsResponse } from "./generated/dashboardAssets";
+import { validateDashboardAssetsResponse } from "./generated/dashboardAssets.js";
 
 export type AssetsDashboardResponse = DashboardAssetsResponse;
 export type AssetsDashboardData = DashboardAssetsContract.AssetsData;

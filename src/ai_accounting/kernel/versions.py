@@ -220,7 +220,9 @@ def _assert_step_contract(connection, version, sha256, *, bundle, kind):
         raise KernelError("schema_fingerprint_mismatch", "迁移步骤的精确结构合同不匹配")
 
 
-def _execute_steps(connection, steps, *, bundle, kind, verify_source, finish_step, fault=None):
+def _execute_steps(
+    connection, steps, *, bundle, kind, verify_source, finish_step, verify_target=None, fault=None
+):
     """The same atomic executor serves packaged and isolated synthetic contracts."""
     if connection.in_transaction:
         raise KernelError("migration_transaction_active", "升级必须从无事务连接开始")
@@ -263,6 +265,8 @@ def _execute_steps(connection, steps, *, bundle, kind, verify_source, finish_ste
                 raise KernelError("migration_integrity_failed", "升级后引用校验失败")
             if fault:
                 fault("after_validate")
+        if verify_target is not None:
+            verify_target(connection)
         if fault:
             fault("before_commit")
         connection.commit()
@@ -307,7 +311,10 @@ def _migration_plan(bundle, kind, source, target):
     return tuple(steps)
 
 
-def upgrade(connection, *, bundle, kind="company", fault=None):
+def upgrade(
+    connection, *, bundle, kind="company", verify_source_content=None,
+    verify_target=None, fault=None
+):
     if connection.in_transaction:
         raise KernelError("migration_transaction_active", "升级必须从无事务连接开始")
     version = verify_schema(connection, bundle=bundle, kind=kind, allow_previous=True)
@@ -323,14 +330,18 @@ def upgrade(connection, *, bundle, kind="company", fault=None):
         record_version(connection, step.target_version, expected_fingerprint=step.target_sha256)
         verify_schema(connection, bundle=bundle, kind=kind, allow_previous=True)
 
+    def verify_source(conn):
+        verify_schema(conn, bundle=bundle, kind=kind, allow_previous=True)
+        if verify_source_content is not None:
+            verify_source_content(conn)
+
     return _execute_steps(
         connection,
         steps,
         bundle=bundle,
         kind=kind,
-        verify_source=lambda conn: verify_schema(
-            conn, bundle=bundle, kind=kind, allow_previous=True
-        ),
+        verify_source=verify_source,
         finish_step=finish,
+        verify_target=verify_target,
         fault=fault,
     )

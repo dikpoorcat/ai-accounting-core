@@ -7,6 +7,7 @@ are reported separately so a later review never rewrites the selected history.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from .contracts import KernelError, Read
@@ -20,6 +21,7 @@ from .query_semantics import (
     project_settlement_followup,
     resolve_calculation_relations,
 )
+from .stored_json import verify_outcome_bytes
 from .types import ActualDate, YearMonth, digest
 from .workflow import NON_ACCOUNTING_CALCULATIONS, Workflow, _basis_state
 
@@ -116,6 +118,36 @@ def _plain(value):
 
 def _missing_profile_value(field, value):
     return value is None or (field not in {"employment_start", "employment_end"} and value == "")
+
+
+def _selected_accounting_references(connection, frozen_vouchers):
+    """Seek exact hits for every stored type, including damaged type values."""
+    from .read_indexes import CLOSE_VOUCHERS
+
+    multiplicity = Counter((ident, period) for ident, period in frozen_vouchers)
+    if not multiplicity:
+        return []
+    # The lookup index starts with type. Enumerate its distinct prefixes with
+    # index seeks, rather than scanning every voucher in the selected months.
+    # Do not use the valid-type enum: a damaged type must reach leaf validation.
+    matches = connection.execute(
+        "WITH RECURSIVE types(value) AS ("
+        "SELECT min(reference_type) FROM close_reference "
+        "UNION ALL SELECT (SELECT min(reference_type) FROM close_reference "
+        "WHERE reference_type>types.value) FROM types WHERE types.value IS NOT NULL"
+        "), wanted(id,close_period) AS MATERIALIZED ("
+        "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?)"
+        ") SELECT r.* FROM types CROSS JOIN wanted "
+        "CROSS JOIN close_reference r INDEXED BY close_reference_lookup "
+        "ON r.reference_type=types.value AND r.reference_id=wanted.id "
+        "AND r.close_period=wanted.close_period WHERE r.path=?",
+        (json.dumps(list(multiplicity)), CLOSE_VOUCHERS),
+    ).fetchall()
+    return [
+        row
+        for row in matches
+        for _ in range(multiplicity[row["reference_id"], row["close_period"]])
+    ]
 
 
 class BusinessQueries:
@@ -243,14 +275,16 @@ class BusinessQueries:
             (json.dumps(_KINDS), subject_id),
         ):
             current_profiles[row["kind"]][subject_id] = Display._record(row)
-        closes = self._reads(connection).close_rows(periods=[YearMonth(period).ordinal])
+        closes = self._reads(connection).authoritative_close_rows(
+            periods=[YearMonth(period).ordinal]
+        )
         closed = bool(closes)
         frozen_profiles = {kind: {} for kind in _KINDS} if closed else current_profiles
         if closed:
             identifiers = [
                 item["id"]
-                for item in json.loads(closes[0]["manifest"])
-                .get("management_snapshot", {})
+                for item in self._reads(connection)
+                .close_section(closes[0], "management_snapshot")
                 .get("profiles", ())
             ]
             for row in connection.execute(
@@ -377,8 +411,8 @@ class BusinessQueries:
     ):
         """Select exact metadata first; payloads are loaded only by consumers.
 
-        A kind or subject restriction narrows candidate closes.  Each candidate
-        close still supplies its complete member graph for adoption proof.
+        A kind or subject restriction narrows candidate closes and their verified
+        accounting buckets. Unrelated historical material bodies are not read.
         """
         cutoff = YearMonth(period)
         reads = self._reads(connection)
@@ -410,24 +444,52 @@ class BusinessQueries:
                 )
             )
         if subjects == set():
-            manifests = []
+            selections = []
         else:
-            manifests = [
-                (row["period"], reads.close_manifest(row))
-                for row in reads.close_rows(
-                    subject_ids=subjects,
-                    through_period=cutoff.ordinal,
-                    periods=proof_periods,
+            # For a scoped selection, official publications already give the
+            # complete posting-period candidate set. Reading those closes by
+            # period avoids treating an omittable reverse-index row as proof
+            # that a published adoption does not exist.
+            selected_periods = proof_periods
+            if selected_periods is None:
+                selected_periods = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT period FROM period_close WHERE period<=? ORDER BY period",
+                        (cutoff.ordinal,),
+                    )
                 )
-            ]
+            close_rows = reads.authoritative_close_rows(
+                periods=selected_periods, through_period=cutoff.ordinal
+            )
+            selections = []
+            if subjects is not None:
+                selected_slices = reads.close_accounting_many(close_rows, subjects=subjects)
+            else:
+                selected_slices = (None for _ in close_rows)
+            for row, selected_close in zip(close_rows, selected_slices, strict=True):
+                if selected_close is not None:
+                    adopted, vouchers = selected_close.adopted_results, selected_close.vouchers
+                else:
+                    adopted = reads.close_section(row, "adopted_results")
+                    vouchers = reads.close_section(row, "vouchers")
+                selections.append((row["period"], adopted, vouchers))
         adopted_by_period = {
-            close_period: {item["calculation_id"]: item for item in manifest["adopted_results"]}
-            for close_period, manifest in manifests
+            close_period: {item["calculation_id"]: item for item in adopted}
+            for close_period, adopted, _ in selections
         }
         voucher_by_period = {
-            close_period: {item["id"]: item for item in manifest["vouchers"]}
-            for close_period, manifest in manifests
+            close_period: {item["id"]: item for item in vouchers}
+            for close_period, _, vouchers in selections
         }
+        authoritative_vouchers = None
+        if proof_periods is not None:
+            authoritative_vouchers = {}
+            for close_period, vouchers in voucher_by_period.items():
+                for ident in vouchers:
+                    authoritative_vouchers[ident] = min(
+                        close_period, authoritative_vouchers.get(ident, close_period)
+                    )
         events = []
         represented = set()
         # Even state-only reads require voucher root identity to avoid treating
@@ -437,6 +499,7 @@ class BusinessQueries:
             current_heads=current_heads,
             subject_ids=subjects,
             posting_period=posting_period,
+            authoritative_vouchers=authoritative_vouchers,
         )
         selected_rows = list(connection.execute(sql, parameters))
         frozen_vouchers = [
@@ -445,18 +508,27 @@ class BusinessQueries:
             if row["close_period"] is not None
         ]
         if frozen_vouchers:
-            from .read_indexes import CLOSE_VOUCHERS
-
-            references = connection.execute(
-                "SELECT r.* FROM json_each(?) ids JOIN close_reference r "
-                "ON r.reference_id=json_extract(ids.value,'$[0]') "
-                "AND r.close_period=json_extract(ids.value,'$[1]') "
-                "WHERE r.path=?",
-                (json.dumps(frozen_vouchers), CLOSE_VOUCHERS),
-            ).fetchall()
+            references = _selected_accounting_references(connection, frozen_vouchers)
             reads.verify_close_references(references)
         represented.update(row["basis_calculation_id"] for row in selected_rows)
+        state_adoptions = [
+            (close_period, adopted)
+            for close_period, adopted_rows, _ in selections
+            for adopted in adopted_rows
+            if adopted["role"] != "journal_basis"
+            and (subjects is None or adopted["subject_id"] in subjects)
+        ]
+        metadata = reads.metadata({adopted["calculation_id"] for _, adopted in state_adoptions})
         if include_vouchers:
+            reads.metadata(
+                {
+                    voucher_by_period[row["close_period"]][row["id"]]["adopted_calculation_id"]
+                    for row in selected_rows
+                    if row["close_period"] is not None
+                    and row["id"] in voucher_by_period[row["close_period"]]
+                },
+                state=False,
+            )
             lines = reads.voucher_lines(row["id"] for row in selected_rows) if include_lines else {}
             for row in selected_rows:
                 calculation_id = row["basis_calculation_id"]
@@ -529,49 +601,42 @@ class BusinessQueries:
                         **({"lines": lines[row["id"]]} if include_lines else {}),
                     }
                 )
-        metadata = {}
         closed_states = []
-        for close_period, manifest in manifests:
-            for adopted in manifest["adopted_results"]:
-                if adopted["role"] == "journal_basis":
-                    continue
-                if subjects is not None and adopted["subject_id"] not in subjects:
-                    continue
-                ident = adopted["calculation_id"]
-                calc = reads.metadata({ident})[ident]
-                metadata[ident] = calc
-                if kinds is not None and calc["kind"] not in kinds:
-                    continue
-                if any(
-                    (
-                        adopted["publication_id"] != calc["publication_id"],
-                        adopted["subject_id"] != calc["subject_id"],
-                        adopted["fact_id"] != calc["fact_id"],
-                        adopted["source_period"] != calc["period"],
-                        adopted["posting_period"] != calc["posting_period"],
-                        adopted["result_digest"] != calc["result_digest"],
+        for close_period, adopted in state_adoptions:
+            ident = adopted["calculation_id"]
+            calc = metadata[ident]
+            if kinds is not None and calc["kind"] not in kinds:
+                continue
+            if any(
+                (
+                    adopted["publication_id"] != calc["publication_id"],
+                    adopted["subject_id"] != calc["subject_id"],
+                    adopted["fact_id"] != calc["fact_id"],
+                    adopted["source_period"] != calc["period"],
+                    adopted["posting_period"] != calc["posting_period"],
+                    adopted["result_digest"] != calc["result_digest"],
+                )
+            ):
+                raise KernelError(
+                    "content_integrity_failed",
+                    "关账直接采用的计算身份不匹配",
+                    component="close",
+                    record_id=ident,
+                    reason="direct_adoption_mismatch",
+                )
+            if not calc["line_count"] and ident not in represented:
+                closed_states.append(
+                    self._state_metadata(
+                        calc,
+                        "close_manifest",
+                        {
+                            "basis": "direct_adoption",
+                            "close_period": str(YearMonth.from_ordinal(close_period)),
+                            "publication_id": adopted["publication_id"],
+                            "role": adopted["role"],
+                        },
                     )
-                ):
-                    raise KernelError(
-                        "content_integrity_failed",
-                        "关账直接采用的计算身份不匹配",
-                        component="close",
-                        record_id=ident,
-                        reason="direct_adoption_mismatch",
-                    )
-                if not calc["line_count"] and ident not in represented:
-                    closed_states.append(
-                        self._state_metadata(
-                            calc,
-                            "close_manifest",
-                            {
-                                "basis": "direct_adoption",
-                                "close_period": str(YearMonth.from_ordinal(close_period)),
-                                "publication_id": adopted["publication_id"],
-                                "role": adopted["role"],
-                            },
-                        )
-                    )
+                )
         query = (
             "SELECT c.id,c.subject_id FROM calculation_current a "
             "JOIN calculation c ON c.id=a.calculation_id "
@@ -598,7 +663,6 @@ class BusinessQueries:
                 )
         for state in closed_states:
             state_results[state["calculation_id"]] = state
-        unresolved_states = []
         events.sort(
             key=lambda item: (
                 item["posting_period"],
@@ -610,7 +674,6 @@ class BusinessQueries:
             state_results.values(),
             key=lambda item: (item["posting_period"], item["calculation_id"]),
         )
-        unresolved_states.sort(key=lambda item: (item["posting_period"], item["subject_id"]))
         period_events = [
             item for item in (*events, *states) if item["posting_period"] == str(cutoff)
         ]
@@ -622,15 +685,7 @@ class BusinessQueries:
             )
         )
         established = bool(events or states)
-        status = (
-            "partially_established"
-            if established and unresolved_states
-            else "established"
-            if established
-            else "unestablished"
-            if unresolved_states
-            else "not_established"
-        )
+        status = "established" if established else "not_established"
         return {
             "cutoff_period": str(cutoff),
             "period_events": period_events,
@@ -638,55 +693,48 @@ class BusinessQueries:
                 "status": status,
                 "voucher_events": events,
                 "state_results": states,
-                "unestablished_state_selections": unresolved_states,
+                "unestablished_state_selections": [],
             },
         }
 
     def _selected_asset_members(
-        self, connection, period, *, kinds=None, subjects=None, current_heads=False
+        self, connection, period, *, kinds=None, subjects=None, asset_ids=None, current_heads=False
     ):
         """Asset state is adopted by a selected owner, not independently posted.
 
         Keep these records outside voucher_events/state_results: their complete
         Outcomes are contributions already included in their owner's postings.
         """
-        member_kinds = {"asset_activation", "asset_consumption"}
-        kinds = member_kinds if kinds is None else member_kinds & set(kinds)
-        if not kinds or "asset_consumption_month" not in self.store.registry.models:
-            return []
-        subjects = {subjects} if isinstance(subjects, str) else subjects
-        query = (
-            "SELECT DISTINCT owner.subject_id FROM asset_batch_member m "
-            "JOIN calculation owner ON owner.id=m.owner_calculation_id "
-            "JOIN calculation member ON member.id=m.member_calculation_id "
-            "WHERE member.kind IN (SELECT value FROM json_each(?))"
-        )
-        parameters = [json.dumps(sorted(kinds))]
-        if subjects is not None:
-            query += " AND m.member_subject_id IN (SELECT value FROM json_each(?))"
-            parameters.append(json.dumps(sorted(subjects)))
-        owners = {row[0] for row in connection.execute(query, parameters)}
-        if not owners:
-            return []
-        selected = self._selected_accounting(
+        events = self._selected_asset_owner_events(
             connection,
-            owners,
             period,
+            kinds=kinds,
+            subjects=subjects,
+            asset_ids=asset_ids,
             current_heads=current_heads,
-            kinds={"asset_activation_batch", "asset_consumption_month"},
-            include_lines=False,
-        )["through_period"]
+        )
+        kinds = {"asset_activation", "asset_consumption"} if kinds is None else set(kinds)
+        subjects = {subjects} if isinstance(subjects, str) else subjects
+        asset_ids = {asset_ids} if isinstance(asset_ids, str) else asset_ids
         reads = self._reads(connection)
+        members_by_owner = reads.asset_members_many(
+            event["calculation_id"] for event in events
+        )
+        member_ids = {
+            member["member_calculation_id"]
+            for members in members_by_owner.values()
+            for member in members
+        }
+        metadata = reads.metadata(member_ids) if member_ids else {}
         result = []
-        for event in (*selected["voucher_events"], *selected["state_results"]):
+        for event in events:
             owner_id = event["calculation_id"]
-            members = reads.asset_members(owner_id)
-            metadata = reads.metadata(item["member_calculation_id"] for item in members)
+            members = members_by_owner[owner_id]
             for member in members:
                 calc = metadata[member["member_calculation_id"]]
                 if calc["kind"] not in kinds or (
                     subjects is not None and calc["subject_id"] not in subjects
-                ):
+                ) or (asset_ids is not None and member["asset_id"] not in asset_ids):
                     continue
                 result.append(
                     {
@@ -715,6 +763,181 @@ class BusinessQueries:
                         },
                     }
                 )
+        return sorted(
+            result,
+            key=lambda item: (
+                item["adoption_period"],
+                item["voucher_number"] or 0,
+                item["owner_calculation_id"],
+                item["asset_id"],
+            ),
+        )
+
+    def _selected_asset_owner_events(
+        self, connection, period, *, kinds=None, subjects=None, asset_ids=None,
+        current_heads=False, complete_owners=False,
+    ):
+        member_kinds = {"asset_activation", "asset_consumption"}
+        kinds = member_kinds if kinds is None else member_kinds & set(kinds)
+        if not kinds or "asset_consumption_month" not in self.store.registry.models:
+            return ()
+        subjects = {subjects} if isinstance(subjects, str) else subjects
+        asset_ids = {asset_ids} if isinstance(asset_ids, str) else asset_ids
+        if asset_ids is not None and not asset_ids:
+            return ()
+        if complete_owners:
+            query = (
+                "SELECT id FROM subject WHERE kind IN "
+                "('asset_activation_batch','asset_consumption_month')"
+            )
+            parameters = []
+        else:
+            query = (
+                "SELECT DISTINCT owner.subject_id FROM asset_batch_member m "
+                "JOIN calculation owner ON owner.id=m.owner_calculation_id "
+                "JOIN calculation member ON member.id=m.member_calculation_id "
+                "WHERE member.kind IN (SELECT value FROM json_each(?))"
+            )
+            parameters = [json.dumps(sorted(kinds))]
+            if subjects is not None:
+                query += " AND m.member_subject_id IN (SELECT value FROM json_each(?))"
+                parameters.append(json.dumps(sorted(subjects)))
+            if asset_ids is not None:
+                query += " AND m.asset_id IN (SELECT value FROM json_each(?))"
+                parameters.append(json.dumps(sorted(asset_ids)))
+        owners = {row[0] for row in connection.execute(query, parameters)}
+        if not owners:
+            return ()
+        selected = self._selected_accounting(
+            connection,
+            owners,
+            period,
+            current_heads=current_heads,
+            kinds={"asset_activation_batch", "asset_consumption_month"},
+            include_lines=False,
+        )["through_period"]
+        return (*selected["voucher_events"], *selected["state_results"])
+
+    def _selected_asset_member_heads(self, connection, period, *, asset_ids):
+        """Locate adopted card identities without decoding unused historic outcomes.
+
+        The selected owner publications are verified above. Complete membership
+        is still checked for owners whose member result actually reaches the page.
+        """
+        events = self._selected_asset_owner_events(
+            connection, period, asset_ids=asset_ids, complete_owners=True
+        )
+        if not events:
+            return []
+        owner_ids = {event["calculation_id"] for event in events}
+        owners = {
+            row["id"]: row
+            for row in connection.execute(
+                "SELECT id,kind,period,outcome,digest FROM calculation "
+                "WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(sorted(owner_ids)),),
+            )
+        }
+        members = {}
+        for row in connection.execute(
+            "SELECT m.*,c.kind,c.subject_id,c.fact_id,c.period,c.digest,c.id AS calc_id,"
+            "EXISTS(SELECT 1 FROM calculation_seal s WHERE s.calculation_id=c.id) AS sealed,"
+            "EXISTS(SELECT 1 FROM dependency_calculation d WHERE "
+            "d.calculation_id=m.owner_calculation_id AND d.upstream_id=c.id) AS dependent,"
+            "EXISTS(SELECT 1 FROM asset_batch_member other "
+            "JOIN calculation other_owner ON other_owner.id=other.owner_calculation_id "
+            "JOIN calculation owner ON owner.id=m.owner_calculation_id "
+            "WHERE other.member_calculation_id=m.member_calculation_id "
+            "AND other_owner.subject_id<>owner.subject_id) AS foreign_owned "
+            "FROM asset_batch_member m LEFT JOIN calculation c "
+            "ON c.id=m.member_calculation_id "
+            "WHERE m.owner_calculation_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY m.owner_calculation_id,m.position",
+            (json.dumps(sorted(owner_ids)),),
+        ):
+            owner_id = row["owner_calculation_id"]
+            if (
+                row["calc_id"] is None
+                or row["kind"] not in {"asset_activation", "asset_consumption"}
+                or row["subject_id"] != row["member_subject_id"]
+                or row["fact_id"] != row["member_fact_id"]
+                or row["digest"] != row["result_digest"]
+                or not row["sealed"]
+                or not row["dependent"]
+                or row["foreign_owned"]
+            ):
+                raise KernelError("asset_batch_identity", "资产汇总成员身份不匹配")
+            members.setdefault(owner_id, []).append(dict(row))
+        result = []
+        for event in events:
+            owner_id = event["calculation_id"]
+            owner = owners.get(owner_id)
+            expected_kind = (
+                "asset_activation"
+                if event["kind"] == "asset_activation_batch"
+                else "asset_consumption"
+            )
+            if owner is None or owner["kind"] not in {
+                "asset_activation_batch", "asset_consumption_month"
+            }:
+                raise KernelError("asset_batch_identity", "资产汇总计算不存在")
+            outcome = verify_outcome_bytes(owner["outcome"], owner["digest"], owner_id)
+            if (
+                digest(outcome) != owner["digest"]
+                or event["result_digest"] != owner["digest"].hex()
+            ):
+                raise KernelError("asset_batch_digest", "资产汇总结果摘要不匹配")
+            directory = []
+            position = 1
+            for member in members.get(owner_id, ()):
+                if (
+                    member["kind"] != expected_kind
+                    or member["period"] != owner["period"]
+                    or member["position"] != len(directory) + 1
+                    or member["line_start"] != (
+                        position if member["line_count"] else None
+                    )
+                ):
+                    raise KernelError("asset_batch_identity", "资产汇总成员身份不匹配")
+                directory.append(
+                    {
+                        "position": member["position"],
+                        "asset_id": member["asset_id"],
+                        "member_subject_id": member["member_subject_id"],
+                        "member_fact_id": member["member_fact_id"],
+                        "member_calculation_id": member["member_calculation_id"],
+                        "result_digest": member["result_digest"].hex(),
+                        "summary": json.loads(member["summary"]),
+                        "line_start": member["line_start"],
+                        "line_count": member["line_count"],
+                        "kind": expected_kind,
+                    }
+                )
+                position += member["line_count"]
+                if member["asset_id"] not in asset_ids:
+                    continue
+                result.append(
+                    {
+                        "calculation_id": member["member_calculation_id"],
+                        "kind": member["kind"],
+                        "calculation_period": str(YearMonth.from_ordinal(member["period"])),
+                        "adoption_period": event["posting_period"],
+                        "asset_id": member["asset_id"],
+                        "owner_calculation_id": owner_id,
+                        "voucher_version_id": event.get("voucher_version_id"),
+                        "voucher_number": event.get("voucher_number"),
+                        "direction": event.get("direction", 1),
+                    }
+                )
+            values = outcome["values"]
+            if (
+                type(values.get("member_count")) is not int
+                or values["member_count"] != len(directory)
+                or values.get("members") != directory
+                or values.get("membership_digest") != digest(directory).hex()
+                or position - 1 != len(outcome["lines"])
+            ):
+                raise KernelError("asset_batch_digest", "资产汇总完整成员清单不匹配")
         return sorted(
             result,
             key=lambda item: (
@@ -1293,9 +1516,7 @@ class BusinessQueries:
                             "completion_status": values.get("completion_status"),
                             "completion_date": values.get("completion_date"),
                             "source_facts": values.get("source_facts", []),
-                            "adopted_evidence_digests": values.get(
-                                "adopted_evidence_digests", []
-                            ),
+                            "adopted_evidence_digests": values.get("adopted_evidence_digests", []),
                             "previous_completion_fact_id": values.get(
                                 "previous_completion_fact_id"
                             ),
@@ -1386,18 +1607,18 @@ class BusinessQueries:
                 fact_ids.update(keys)
                 if row["kind"] == "tax_import":
                     calculation_ids.update(keys)
-        calculations = (
-            {
-                row["id"]: row
-                for row in connection.execute(
-                    "SELECT c.id,c.subject_id,c.outcome FROM json_each(?) ids "
-                    "JOIN calculation c ON c.id=ids.value",
-                    (json.dumps(sorted(calculation_ids)),),
-                )
-            }
-            if calculation_ids
-            else {}
-        )
+        calculations = {}
+        if calculation_ids:
+            for row in connection.execute(
+                "SELECT c.id,c.subject_id,c.outcome,c.digest FROM json_each(?) ids "
+                "JOIN calculation c ON c.id=ids.value",
+                (json.dumps(sorted(calculation_ids)),),
+            ):
+                calculations[row["id"]] = {
+                    "id": row["id"],
+                    "subject_id": row["subject_id"],
+                    "outcome": verify_outcome_bytes(row["outcome"], row["digest"], row["id"]),
+                }
         facts = (
             {
                 row["id"]: row
@@ -1492,10 +1713,8 @@ class BusinessQueries:
                                 }
                             )
                             continue
-                        obligations = (
-                            json.loads(calculation["outcome"])
-                            .get("values", {})
-                            .get("obligations", ())
+                        obligations = calculation["outcome"].get("values", {}).get(
+                            "obligations", ()
                         )
                         if not any(
                             isinstance(item, dict) and item.get("key") == source["obligation"]
@@ -1708,27 +1927,38 @@ class BusinessQueries:
         selected = self._selected_accounting(
             connection, subject_id, period, include_lines=not summary
         )
-        exact_close = self._reads(connection).close_rows(periods=[YearMonth(period).ordinal])
+        exact_close = self._reads(connection).authoritative_close_rows(
+            periods=[YearMonth(period).ordinal]
+        )
         later_close = connection.execute(
             "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
             (YearMonth(period).ordinal,),
         ).fetchone()
         if later_close is not None:
-            later_close = self._reads(connection).close_rows(periods=[later_close["period"]])[0]
+            later_close = self._reads(connection).authoritative_close_rows(
+                periods=[later_close["period"]]
+            )[0]
         if exact_close:
             close_row = exact_close[0]
-            close_manifest = self._reads(connection).close_manifest(close_row)
+            reads = self._reads(connection)
+            card_adoptions = reads.close_section(close_row, "asset_card_adoptions")
+            batch_adoptions = reads.close_section(close_row, "asset_batch_adoptions")
+            owner_ids = {item["acceptance_calculation_id"] for item in card_adoptions} | {
+                item["owner_calculation_id"] for item in batch_adoptions
+            }
+            owner_metadata = reads.metadata(owner_ids, state=False)
+            close_selection = reads.close_accounting(
+                close_row,
+                subjects={subject_id, *(item["subject_id"] for item in owner_metadata.values())},
+            )
+            adopted_results = close_selection.adopted_results
             closure = {
                 "state": "exact_close",
                 "close_period": period,
                 "digest": close_row["digest"].hex(),
             }
             frozen_entry = next(
-                (
-                    item
-                    for item in close_manifest["adopted_results"]
-                    if item["subject_id"] == subject_id
-                ),
+                (item for item in adopted_results if item["subject_id"] == subject_id),
                 None,
             )
             frozen_adoption = (
@@ -1749,20 +1979,18 @@ class BusinessQueries:
                 else None
             )
             card_metadata = self._reads(connection).metadata(
-                {item["calculation_id"] for item in close_manifest["asset_card_adoptions"]},
+                {item["calculation_id"] for item in card_adoptions},
                 state=False,
             )
             if frozen_adoption is None or any(
                 card_metadata[item["calculation_id"]]["subject_id"] == subject_id
-                for item in close_manifest["asset_card_adoptions"]
+                for item in card_adoptions
             ):
-                direct_by_calculation = {
-                    item["calculation_id"]: item for item in close_manifest["adopted_results"]
-                }
+                direct_by_calculation = {item["calculation_id"]: item for item in adopted_results}
                 card = next(
                     (
                         item
-                        for item in close_manifest["asset_card_adoptions"]
+                        for item in card_adoptions
                         if card_metadata[item["calculation_id"]]["subject_id"] == subject_id
                     ),
                     None,
@@ -1798,7 +2026,7 @@ class BusinessQueries:
                         },
                     }
                 else:
-                    for adoption in close_manifest["asset_batch_adoptions"]:
+                    for adoption in batch_adoptions:
                         owner = direct_by_calculation.get(adoption["owner_calculation_id"])
                         if owner is None:
                             continue
@@ -2248,16 +2476,45 @@ class BusinessQueries:
         if section not in {"events", "settlement_events", "source_history", "file_jobs"}:
             raise ValueError("不支持的业务明细集合")
         if section == "source_history":
-            query = "SELECT f.id,f.subject_id,f.revision FROM fact_revision f WHERE "
+            if type(limit) is not int or not 1 <= limit <= 500:
+                raise ValueError("每页数量必须为 1 至 500")
+            scope = " FROM fact_revision f WHERE "
             if subjects is None:
-                query += "f.period=?"
+                scope += "f.period=?"
                 parameters = [YearMonth(period).ordinal]
             else:
-                query += "f.subject_id IN (SELECT value FROM json_each(?))"
+                scope += "f.subject_id IN (SELECT value FROM json_each(?))"
                 parameters = [json.dumps(sorted(subjects))]
-            query += " ORDER BY f.subject_id,f.revision,f.id"
-            records = list(connection.execute(query, parameters))
-            keys, page = self._collection_page([row["id"] for row in records], after, limit)
+            total = connection.execute("SELECT count(*)" + scope, parameters).fetchone()[0]
+            cursor = None
+            if after is not None:
+                cursor = connection.execute(
+                    "SELECT f.subject_id,f.revision,f.id" + scope + " AND f.id=?",
+                    (*parameters, after),
+                ).fetchone()
+                if cursor is None:
+                    raise KernelError(
+                        "dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。"
+                    )
+            records = list(
+                connection.execute(
+                    "SELECT f.id" + scope
+                    + (
+                        " AND (f.subject_id,f.revision,f.id)>(?,?,?)" if cursor is not None else ""
+                    )
+                    + " ORDER BY f.subject_id,f.revision,f.id LIMIT ?",
+                    (*parameters, *(tuple(cursor) if cursor is not None else ()), limit + 1),
+                )
+            )
+            more = len(records) > limit
+            keys = [row["id"] for row in records[:limit]]
+            page = {
+                "total_count": total,
+                "filtered_count": total,
+                "returned_count": len(keys),
+                "has_more": more,
+                "next_cursor": keys[-1] if more else None,
+            }
             versions = reads.facts(keys)
             times = recorded_times(connection, (("fact", ident) for ident in keys))
             publications = {ident: [] for ident in keys}
@@ -2392,6 +2649,8 @@ class BusinessQueries:
             ]
             if not group or kind not in self.store.registry.models:
                 continue
+            reads.verify_sql_outcomes(item[1] for item in group)
+            reads.fact_versions({metadata[item[1]]["fact_id"] for item in group})
             query = (
                 "SELECT json_extract(e.value,'$[0]') AS event_id,t.item_no,"
                 "source.subject_id AS frozen_source_subject_id,"
@@ -2419,6 +2678,7 @@ class BusinessQueries:
             if item["kind"] == "settlement"
         ]
         if group and "settlement" in self.store.registry.models:
+            reads.fact_versions({metadata[item[1]]["fact_id"] for item in group})
             for row in connection.execute(
                 "SELECT json_extract(e.value,'$[0]') AS event_id,n.value AS item_no,"
                 "json_extract(CASE n.value WHEN 0 THEN f.first ELSE f.second END,"
@@ -2475,6 +2735,9 @@ class BusinessQueries:
         as_of: str | None = None,
         summary=False,
         _inspection_cache=None,
+        _allow_frozen_materials=False,
+        _checked_open=None,
+        _parallel_checks=None,
     ):
         """Compose readiness inside a caller-owned read snapshot."""
         from .tax_import import assess_tax_import_mapping
@@ -2482,43 +2745,67 @@ class BusinessQueries:
         period, as_of = str(YearMonth(period)), str(ActualDate(as_of or _today_china()))
         month = YearMonth(period).ordinal
         reads = self._reads(connection)
-        exact_rows = reads.close_rows(periods=[month])
+        exact_rows = (
+            reads.authoritative_close_rows(periods=[month])
+            if summary
+            else reads.close_rows(periods=[month])
+        )
         exact = exact_rows[0] if exact_rows else None
         later = connection.execute(
             "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
             (month,),
         ).fetchone()
         periods = Periods(self.engine)
+        if _checked_open is not None and (
+            exact is not None
+            or later is not None
+            or _checked_open["period"] != period
+            or _checked_open["order_failure"] is not None
+        ):
+            raise ValueError("prepared close readiness must belong to this open period")
         if exact:
-            manifest = reads.close_manifest(exact)
             required_frozen = (
                 "readiness",
                 "inventories",
                 "material_coverage",
                 "previous_close_digest",
             )
-            missing_frozen = [key for key in required_frozen if key not in manifest]
-            if missing_frozen:
-                raise KernelError(
-                    "content_integrity_failed",
-                    "冻结关账依据缺失",
-                    missing_fields=missing_frozen,
-                )
             closure = {"state": "exact_close", "digest": exact["digest"].hex()}
-            frozen = {
-                "status": "ready",
-                "source": "exact_period_manifest",
-                **{
-                    key: {"status": "recorded", "value": manifest[key]}
-                    for key in required_frozen
-                },
-            }
+            if summary:
+                # Page projection declares the verified storage commitments;
+                # the complete read entry below still returns exact contents.
+                header = reads.close_header(exact)
+                if not {"material", "management"} <= header.root["subroots"].keys():
+                    raise KernelError("content_integrity_failed", "冻结关账依据缺失")
+                frozen = {
+                    "status": "ready",
+                    "source": "exact_period_manifest",
+                    **{key: {"status": "recorded"} for key in required_frozen},
+                }
+            else:
+                manifest = reads.close_manifest(exact)
+                frozen = {
+                    "status": "ready",
+                    "source": "exact_period_manifest",
+                    **{
+                        key: {"status": "recorded", "value": manifest[key]}
+                        for key in required_frozen
+                    },
+                }
             readiness = None
             current = periods.collect_current_readiness(
-                connection, period, _inspection_cache=_inspection_cache
+                connection,
+                period,
+                _inspection_cache=_inspection_cache,
+                _allow_frozen_materials=_allow_frozen_materials,
+                _query_reads=reads,
             )
         elif later:
-            later = reads.close_rows(periods=[later["period"]])[0]
+            later = (
+                reads.authoritative_close_rows(periods=[later["period"]])[0]
+                if summary
+                else reads.close_rows(periods=[later["period"]])[0]
+            )
             closure = {
                 "state": "covered_by_later_close",
                 "sealing_boundary": str(YearMonth.from_ordinal(later["period"])),
@@ -2530,17 +2817,34 @@ class BusinessQueries:
             }
             readiness = None
             current = periods.collect_current_readiness(
-                connection, period, _inspection_cache=_inspection_cache
+                connection,
+                period,
+                _inspection_cache=_inspection_cache,
+                _allow_frozen_materials=_allow_frozen_materials,
+                _query_reads=reads,
             )
         else:
             closure = {"state": "open"}
-            readiness = periods.check_readiness(
-                connection, period, _inspection_cache=_inspection_cache
+            readiness = (
+                _checked_open
+                if _checked_open is not None
+                else periods.check_readiness(
+                    connection,
+                    period,
+                    _inspection_cache=_inspection_cache,
+                    _allow_frozen_materials=_allow_frozen_materials,
+                    _query_reads=reads,
+                    _parallel_checks=_parallel_checks,
+                )
             )
             frozen = None
             current = (
                 periods.collect_current_readiness(
-                    connection, period, _inspection_cache=_inspection_cache
+                    connection,
+                    period,
+                    _inspection_cache=_inspection_cache,
+                    _allow_frozen_materials=_allow_frozen_materials,
+                    _query_reads=reads,
                 )
                 if readiness.get("order_failure") is not None
                 else readiness
@@ -2566,7 +2870,11 @@ class BusinessQueries:
                 if readiness is not None
                 else (
                     periods.check_readiness(
-                        connection, period, _inspection_cache=_inspection_cache
+                        connection,
+                        period,
+                        _inspection_cache=_inspection_cache,
+                        _allow_frozen_materials=_allow_frozen_materials,
+                        _query_reads=reads,
                     )
                     if not exact
                     else None
@@ -2618,21 +2926,51 @@ class BusinessQueries:
                 "scope_period": period,
                 "scope_semantics": "obligation_interval_includes_selected_period",
             }
+        materials = current["materials"]
+        if summary:
+            from .materials import MaterialReadSummary
+
+            coverage = materials["coverage"]
+            # The page consumes the verified coverage identity and counts, not
+            # a second recursively copied payload of every historical row.
+            materials = {
+                "status": materials["status"],
+                "issues": materials["issues"],
+                "inventories": materials["inventories"],
+                "coverage": {
+                    "coverage_digest": (
+                        coverage.coverage_digest
+                        if isinstance(coverage, MaterialReadSummary)
+                        else coverage["coverage_digest"]
+                    )
+                },
+            }
+        if summary:
+            from .settlement_projection import settlement_followup_summary
+
+            settlements_followup = settlement_followup_summary(
+                connection, period, current=True, reads=self._reads(connection)
+            )
+        else:
+            settlements_followup = project_settlement_followup(
+                self.settlement_summary(connection, period, current=True)
+            )
         current_followups = {
             "knowledge": "current_knowledge",
             "affects_frozen_readiness": False,
-            "materials": _plain(current["materials"]),
+            "materials": _plain(materials),
             "accounting": _plain(current["accounting"]),
             "close_requirements": _plain(current["close_requirements"]),
-            "settlements": project_settlement_followup(
-                self.settlement_summary(connection, period, current=True)
-            ),
+            "settlements": settlements_followup,
             "external": external,
             "file_jobs": self._file_jobs(
                 connection, None, period, summary=summary, include_result=False
             ),
             "tax_import_mapping": assess_tax_import_mapping(
-                self.store, connection, YearMonth(period)
+                self.store,
+                connection,
+                YearMonth(period),
+                reads=reads if reads._snapshot_active else None,
             ),
         }
         result = {
@@ -2644,7 +2982,13 @@ class BusinessQueries:
             "as_of_semantics": "current_knowledge",
             "closure": closure,
             "frozen_readiness": frozen,
-            "readiness": _plain(readiness) if readiness is not None else None,
+            "readiness": (
+                _plain({key: readiness[key] for key in ("period", "order_failure", "issues")})
+                if summary and readiness is not None
+                else _plain(readiness)
+                if readiness is not None
+                else None
+            ),
             "current_followups": current_followups,
             "read_semantics": {
                 "knowledge": "current_knowledge",

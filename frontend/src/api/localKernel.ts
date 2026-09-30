@@ -1,5 +1,7 @@
-import type { BrowserJobsContract, BrowserSecurityStatusContract, BrowserSecurityStatusResponse, DashboardBriefContract } from "./generated/dashboardResponses";
-import { validateBrowserJobsResponse, validateBrowserSecurityStatusResponse } from "./generated/dashboardValidators.js";
+import type { BrowserJobsContract } from "./generated/browserJobs";
+import type { BrowserSecurityStatusContract, BrowserSecurityStatusResponse } from "./generated/browserSecurityStatus";
+import type { DashboardBriefContract } from "./generated/dashboardBrief";
+import { validateBrowserSecurityStatusResponse } from "./generated/browserSecurityStatus.js";
 
 export class LocalApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
@@ -231,6 +233,8 @@ export async function localSecurity(operation: "request" | "status" | "cancel" |
 
 async function fetchJobs(companyId: string, parameters: Record<string, string>, signal?: AbortSignal) {
   const query = new URLSearchParams({ company_id: companyId, ...parameters });
+  const { validateBrowserJobsResponse } = await import("./generated/browserJobs.js");
+  signal?.throwIfAborted();
   const result = await requestLocalJson(`/api/local/jobs?${query}`, { signal });
   if (!validateBrowserJobsResponse(result) || result.company_id !== companyId) {
     throw new LocalApiError(502, "LOCAL_JOBS_RESPONSE", "后台任务状态无法读取，请刷新后重试。");

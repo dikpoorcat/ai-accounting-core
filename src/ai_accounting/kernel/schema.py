@@ -10,8 +10,6 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 0
-
 COMMENTARY_BASIS_DDL = """
 CREATE TABLE period_commentary_basis(commentary_id TEXT PRIMARY KEY
  REFERENCES period_commentary_revision(id) DEFERRABLE INITIALLY DEFERRED,
@@ -39,16 +37,20 @@ CREATE TABLE evidence(digest BLOB PRIMARY KEY CHECK(length(digest)=32), content 
  media_type TEXT NOT NULL, name TEXT NOT NULL) STRICT;
 CREATE TABLE subject(id TEXT PRIMARY KEY, kind TEXT NOT NULL) STRICT;
 CREATE INDEX subject_kind ON subject(kind,id);
+CREATE INDEX subject_id_kind_cover ON subject(id,kind);
 CREATE TABLE fact_revision(id TEXT PRIMARY KEY REFERENCES fact_seal(fact_id)
  DEFERRABLE INITIALLY DEFERRED, subject_id TEXT NOT NULL REFERENCES subject,
  revision INTEGER NOT NULL CHECK(revision>0), period INTEGER NOT NULL CHECK(period BETWEEN 0
  AND 119987),
  digest BLOB NOT NULL CHECK(length(digest)=32), UNIQUE(subject_id,revision)) STRICT;
 CREATE INDEX fact_period ON fact_revision(period,subject_id,id);
+CREATE INDEX fact_digest ON fact_revision(digest,id);
+CREATE INDEX fact_id_subject_cover ON fact_revision(id,subject_id);
 CREATE TABLE fact_seal(fact_id TEXT PRIMARY KEY REFERENCES fact_revision) STRICT;
 CREATE TABLE fact_evidence(fact_id TEXT NOT NULL REFERENCES fact_revision,
  evidence_digest BLOB NOT NULL REFERENCES evidence(digest), PRIMARY
  KEY(fact_id,evidence_digest)) STRICT;
+CREATE INDEX fact_evidence_source ON fact_evidence(evidence_digest,fact_id);
 CREATE TABLE fact_current(subject_id TEXT PRIMARY KEY REFERENCES subject,
  fact_id TEXT NOT NULL UNIQUE REFERENCES fact_revision) STRICT;
 CREATE TABLE fact_scope(fact_id TEXT NOT NULL REFERENCES fact_revision, kind TEXT NOT NULL,
@@ -150,6 +152,8 @@ obligation_key TEXT,source_subject_id TEXT,
  CHECK(source_digest IS NULL OR length(source_digest)=32),
  CHECK(state<>'resolved' OR amount IS NOT NULL),PRIMARY KEY(publication_id,item_no)) STRICT;
 CREATE INDEX settlement_change_period ON settlement_change(posting_period,obligation_key);
+CREATE INDEX settlement_change_obligation_period ON settlement_change(obligation_key,\
+posting_period);
 CREATE INDEX settlement_change_source ON settlement_change(source_subject_id,posting_period);
 CREATE INDEX settlement_change_category ON settlement_change(category,\
 posting_period,obligation_key);
@@ -159,6 +163,8 @@ digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT;
 CREATE TABLE period_close(period INTEGER PRIMARY KEY CHECK(period BETWEEN 0 AND 119987),
  manifest TEXT NOT NULL CHECK(json_valid(manifest)),digest BLOB NOT NULL
  CHECK(length(digest)=32)) STRICT;
+CREATE TABLE material_close_rule(period INTEGER PRIMARY KEY REFERENCES period_close(period),
+ rule_digest BLOB NOT NULL CHECK(length(rule_digest)=32)) STRICT;
 CREATE TABLE monthly_account(period INTEGER NOT NULL, account TEXT NOT NULL,
  debit INTEGER NOT NULL CHECK(debit>=0),credit INTEGER NOT NULL CHECK(credit>=0),
  PRIMARY KEY(period,account)) STRICT;
@@ -258,6 +264,7 @@ IMMUTABLE = (
     "voucher_line",
     "voucher_version",
     "period_close",
+    "material_close_rule",
     "management_revision",
     "payee_revision",
     "material_revision",
@@ -367,6 +374,11 @@ def fact_ddl(registry: Registry) -> str:
         ]
         table = table_name(kind)
         statements.append(f"CREATE TABLE {table}({','.join(columns)}) STRICT;")
+        if kind == "report_classification" and "voucher_version_id" in model.model_fields:
+            statements.append(
+                "CREATE INDEX report_classification_voucher_revision "
+                "ON fact_report_classification(voucher_version_id,revision_id);"
+            )
         statements.append(immutable_sql(table))
         statements.append(sealed_child_sql(table, "revision_id", "fact_seal", "fact_id"))
         statements.append(
@@ -424,14 +436,27 @@ def _schema_for_models(models) -> str:
             "dependency_calculation",
         )
     )
+    from .change_journal import journal_ddl
+    from .close_storage import CLOSE_STORAGE_DDL
     from .discovery_indexes import DISCOVERY_INDEX_DDL
     from .display import DISPLAY_DDL
+    from .domains.banking import BANK_RECONCILIATION_READ_DDL
+    from .duplicate_freeze import DUPLICATE_FREEZE_DDL
     from .duplicates import DUPLICATE_ACTUAL_INDEX_DDL, DUPLICATE_DDL
     from .entities import ENTITY_DDL
     from .entity_references import ENTITY_REFERENCE_DDL
     from .identity_corrections import IDENTITY_CORRECTION_DDL
+    from .material_watch import MATERIAL_WATCH_DDL
+    from .materials import MATERIAL_READ_INDEX_DDL
+    from .period_balance_freeze import BALANCE_FREEZE_DDL
     from .read_indexes import READ_INDEX_DDL
+    from .report_classification_directory import REPORT_CLASSIFICATION_DIRECTORY_DDL
+    from .report_flow import REPORT_FLOW_DDL
+    from .report_open_contribution import REPORT_OPEN_CONTRIBUTION_DDL
+    from .report_projection import REPORT_SOURCE_DDL
+    from .report_semantics import REPORT_SEMANTICS_DDL
     from .security.schema import COMPANY_DDL
+    from .settlement_freeze import DDL as SETTLEMENT_FREEZE_DDL
     from .versions import HISTORY_DDL, META_DDL
 
     return (
@@ -456,6 +481,9 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + "\n".join(
             sql for kind, sql in DUPLICATE_ACTUAL_INDEX_DDL.items() if kind in registry.models
         )
+        + "\n".join(
+            sql for kind, sql in MATERIAL_READ_INDEX_DDL.items() if kind in registry.models
+        )
         + immutable_sql("entity")
         + immutable_sql("entity_profile_revision")
         + immutable_sql("entity_resolution")
@@ -464,7 +492,28 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + immutable_sql("period_commentary_revision")
         + immutable_sql("period_commentary_basis")
         + READ_INDEX_DDL
+        + CLOSE_STORAGE_DDL
+        + "\n".join(
+            immutable_sql(table)
+            for table in (
+                "close_storage_root",
+                "close_storage_subroot",
+                "close_storage_directory",
+                "close_storage_block",
+            )
+        )
+        + REPORT_SOURCE_DDL
+        + REPORT_SEMANTICS_DDL
+        + REPORT_FLOW_DDL
+        + REPORT_CLASSIFICATION_DIRECTORY_DDL
+        + REPORT_OPEN_CONTRIBUTION_DDL
+        + BALANCE_FREEZE_DDL
+        + (BANK_RECONCILIATION_READ_DDL if "bank_reconciliation" in registry.models else "")
+        + SETTLEMENT_FREEZE_DDL
         + ASSET_BATCH_DDL
+        + journal_ddl()
+        + DUPLICATE_FREEZE_DDL
+        + MATERIAL_WATCH_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
     )

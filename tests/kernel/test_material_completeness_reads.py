@@ -1,5 +1,7 @@
 """Material checks reuse authoritative current heads and do not trust scope indexes."""
 
+import json
+import sqlite3
 from collections import Counter
 
 import pytest
@@ -9,13 +11,107 @@ from test_materials import Company, codes
 
 from ai_accounting.kernel import materials
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import YearMonth
+from ai_accounting.kernel.types import YearMonth, canonical
+
+
+def test_material_amount_projection_preserves_exact_json_values():
+    # Only amount fields are consumed by material links. Keep bad amount types
+    # bad, and never round integers while narrowing the fetched JSON object.
+    values = {
+        "maximum_fen": 2**63 - 1,
+        "minimum_fen": -(2**63),
+        "overflow_fen": 2**70,
+        "float_fen": 0.1234567890123456,
+        "negative_zero_fen": -0.0,
+        "bool_fen": True,
+        "unknown_fen": None,
+        "text_fen": "未核定汉字",
+        "object_fen": {"amount": 2**70},
+        "array_fen": [1, False, None],
+        'quoted"_fen': 99,
+        "unused_details": [{"amount_fen": index} for index in range(100)],
+    }
+    with sqlite3.connect(":memory:") as connection:
+        statement = (
+            "WITH c(outcome) AS (VALUES(?)) SELECT "
+            + materials._MATERIAL_AMOUNT_VALUES_SQL
+            + " FROM c"
+        )
+        raw = connection.execute(statement, (canonical({"values": values}),)).fetchone()[0]
+        result = json.loads(raw)
+        expected = {key: value for key, value in values.items() if key.endswith("_fen")}
+        assert result == expected
+        assert {key: type(value) for key, value in result.items()} == {
+            key: type(value) for key, value in expected.items()
+        }
+        assert len(raw) < len(canonical(values)) // 2
+        # A corrupted values container retains the old decoder's input;
+        # the narrow read cannot turn it into an apparently valid empty object.
+        for invalid in (None, [], 17, "invalid"):
+            payload = canonical({"values": invalid})
+            previous = connection.execute(
+                "SELECT json_extract(?,'$.values')", (payload,)
+            ).fetchone()[0]
+            assert connection.execute(statement, (payload,)).fetchone()[0] == previous
+
+
+def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_rows():
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        "CREATE TABLE subject(id TEXT PRIMARY KEY,kind TEXT NOT NULL);"
+        "CREATE INDEX subject_kind ON subject(kind,id);"
+        "CREATE TABLE fact_current(subject_id TEXT PRIMARY KEY,fact_id TEXT UNIQUE);"
+        "CREATE TABLE fact_material_resolution_v2(revision_id TEXT PRIMARY KEY,source_id TEXT);"
+        "CREATE TABLE fact_material_resolution_v2_links(revision_id TEXT,fact_id TEXT);"
+        + materials.MATERIAL_READ_INDEX_DDL["material_resolution_v2"]
+    )
+    subjects = [(f"s-{number}", "material_resolution_v2") for number in range(12000)]
+    connection.executemany("INSERT INTO subject VALUES(?,?)", subjects)
+    connection.executemany(
+        "INSERT INTO fact_current VALUES(?,?)",
+        [(subject, f"f-{subject}") for subject, _ in subjects],
+    )
+    connection.executemany(
+        "INSERT INTO fact_material_resolution_v2 VALUES(?,?)",
+        [(f"f-s-{number}", f"source-{number//1000}") for number in range(12000)],
+    )
+    # The unknown source has no registry row, yet its current resolution must
+    # remain visible. Historical revisions and withdrawn heads must not leak in.
+    connection.execute("UPDATE fact_material_resolution_v2 SET source_id='missing-source' "
+                       "WHERE revision_id='f-s-11000'")
+    connection.execute("INSERT INTO fact_material_resolution_v2 VALUES('old','missing-source')")
+    connection.execute("DELETE FROM fact_current WHERE subject_id='s-11999'")
+    excluded = {f"source-{number}" for number in range(11)}
+    ticks = [0]
+
+    def counted():
+        ticks[0] += 1
+        return 0
+
+    connection.set_progress_handler(counted, 100)
+    expected = connection.execute(
+        "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
+        "JOIN fact_material_resolution_v2 t ON t.revision_id=c.fact_id "
+        "WHERE s.kind=? AND t.source_id NOT IN (SELECT value FROM json_each(?)) "
+        "ORDER BY c.subject_id",
+        ("material_resolution_v2", canonical(sorted(excluded))),
+    ).fetchall()
+    previous_work = ticks[0]
+    ticks[0] = 0
+    actual = materials._unfrozen_material_heads(connection, "material_resolution_v2", excluded)
+    connection.set_progress_handler(None, 0)
+    assert actual == expected
+    assert len(actual) == 999
+    assert ("f-s-11000",) in actual
+    assert ("old",) not in actual
+    assert ticks[0] < previous_work // 4
+    connection.close()
 
 
 class UncachedReads:
     """Independently read current heads without the production caches."""
 
-    def __init__(self, connection, registry):
+    def __init__(self, connection, registry, *, query_reads=None):
         self.connection, self.registry = connection, registry
 
     def fact(self, fact_id):
@@ -143,6 +239,59 @@ def test_missing_scope_rows_cannot_hide_current_source_or_stale_resolution(tmp_p
     assert resolution["fact_id"] in result["resolution_versions"]
 
 
+def test_shared_amount_basis_is_checked_once_per_exact_source_per_call(tmp_path, monkeypatch):
+    company = Company(tmp_path)
+    source, _ = company.source(b"name,amount,period\n" + b"part,1,2026-01\n" * 12)
+    link = company.expense("whole-expense", 1200) | {"amount_fen": 100}
+    for position in range(2, 14):
+        company.resolve(source, f"CSV!B{position}", [link])
+    calls = []
+    original = materials._amount_basis
+
+    def counted(fact, calculation, path):
+        calls.append((calculation.id, path))
+        return original(fact, calculation, path)
+
+    monkeypatch.setattr(materials, "_amount_basis", counted)
+    first = full_check(company, "2026-01")
+    assert first["status"] == "complete"
+    assert len(first["coverage"]) == 12
+    assert len(calls) == 1
+    assert full_check(company, "2026-01") == first
+    assert len(calls) == 2  # A separate read checks the source again.
+    company.expense("whole-expense", 1300, revision=1)
+    assert "material_result_stale" in codes(full_check(company, "2026-01"))
+
+
+def test_material_check_shares_fact_decoding_with_other_snapshot_consumers(tmp_path, monkeypatch):
+    from ai_accounting.kernel.query_reads import QueryReads
+
+    company = Company(tmp_path)
+    source, _ = company.source(b"name,amount,period\na,10,2026-01\n")
+    link = company.expense("expense", 1000)
+    company.resolve(source, "CSV!B2", [link])
+    expected = full_check(company, "2026-01")
+    loaded = Counter()
+    original = Store.facts
+
+    def counted(store, connection, identifiers):
+        identifiers = tuple(identifiers)
+        loaded.update(identifiers)
+        return original(store, connection, identifiers)
+
+    monkeypatch.setattr(Store, "facts", counted)
+    with QueryReads.snapshot(company.engine) as reads:
+        reads.fact_versions([source["fact_id"], link["fact_id"]])
+        actual = materials.check_completeness(
+            reads.connection, YearMonth("2026-01").ordinal, company.engine.store.registry,
+            _query_reads=reads,
+        )
+        assert actual == expected
+        assert set(loaded.values()) == {1}
+        assert reads.fact_version(link["fact_id"]).id == link["fact_id"]
+        assert set(loaded.values()) == {1}
+
+
 def test_batch_months_parse_each_cross_period_source_once(tmp_path, monkeypatch):
     company = Company(tmp_path)
     source, _ = company.source(b"name,amount,period\njan,10,2026-01\nfeb,20,2026-02\n")
@@ -246,3 +395,76 @@ def test_failed_batch_load_can_retry_without_poisoning_the_snapshot_cache(tmp_pa
         assert recovered[0].id == source["fact_id"]
         assert reads.facts(materials.MaterialSource.kind, "2026-01") == recovered
         assert len(calls) == 2
+
+
+def test_readiness_and_duplicate_checks_share_successful_original_parsing(tmp_path, monkeypatch):
+    from ai_accounting.kernel.periods import Periods
+
+    company = Company(tmp_path)
+    source, _ = company.source(b"name,amount,period\na,10,2026-01\n")
+    company.resolve(source, "CSV!B2", [company.expense("expense", 1000)])
+    inspect, calls = materials.inspect_bytes, []
+
+    def count(raw, specification):
+        calls.append(raw)
+        return inspect(raw, specification)
+
+    monkeypatch.setattr(materials, "inspect_bytes", count)
+    with company.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        result = Periods(company.engine).collect_current_readiness(connection, "2026-01")
+    assert result["materials"]["coverage"]["status"] == "complete"
+    assert len(calls) == 1
+
+
+def test_failed_original_inspection_is_not_reused(tmp_path, monkeypatch):
+    company = Company(tmp_path)
+    source, _ = company.source(b"name,amount,period\na,10,2026-01\n")
+    with company.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        version = company.engine.store.fact(connection, source["fact_id"])
+        cache = materials._CompletenessInspectionCache(connection)
+        inspect, calls = materials.inspect_bytes, []
+
+        def interrupted(raw, specification):
+            calls.append(raw)
+            if len(calls) == 1:
+                raise ValueError("synthetic interrupted inspection")
+            return inspect(raw, specification)
+
+        monkeypatch.setattr(materials, "inspect_bytes", interrupted)
+        arguments = (
+            connection, version.id, version.fact.evidence_digest,
+            version.fact.specification, b"name,amount,period\na,10,2026-01\n",
+        )
+        with pytest.raises(ValueError, match="synthetic interrupted"):
+            cache.inspect(*arguments)
+        assert cache.inspect(*arguments)["items"]
+        assert len(calls) == 2
+
+
+def test_completed_check_releases_loaded_sources_without_waiting_for_gc(tmp_path, monkeypatch):
+    import gc
+    import weakref
+
+    company = Company(tmp_path)
+    source, _ = company.source(b"name,amount,period\na,10,2026-01\n")
+    company.resolve(source, "CSV!B2", [company.expense("expense", 1000)])
+    instances = []
+    initialize = materials._CompletenessReads.__init__
+
+    def observed(reader, *args, **kwargs):
+        initialize(reader, *args, **kwargs)
+        instances.append(weakref.ref(reader))
+
+    monkeypatch.setattr(materials._CompletenessReads, "__init__", observed)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        result = full_check(company, "2026-01")
+        assert result["status"] == "complete"
+        assert result["coverage"][0]["complete"] is True
+        assert instances and all(reference() is None for reference in instances)
+    finally:
+        if was_enabled:
+            gc.enable()

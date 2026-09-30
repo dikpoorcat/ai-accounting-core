@@ -1,0 +1,91 @@
+{
+  "status": "failed_group_preserved",
+  "candidate_sha256": "ccc67f08c43e457311709a2ddda91e23695de06fa0bc6132fa7a4cb69ae42804",
+  "passed": 898,
+  "failed": 51,
+  "errors": 2,
+  "file_count": 74,
+  "source_unchanged": true,
+  "files": [
+    {
+      "source": ".tmp/stage9-group-r31/result.json",
+      "archive": "group-r31-result.json.gz",
+      "bytes": 4984,
+      "sha256": "88dea84b340e230fcce2fda916a9bdebd48216b474eec0a4db93e067da550eb2",
+      "gzip_bytes": 1145,
+      "gzip_sha256": "d5e006d0773a11ca29b45505c8a2b8455d69baf2652c7d63cd89ac0e97c78da2"
+    },
+    {
+      "source": ".tmp/stage9-group-r31/shard-1.log",
+      "archive": "group-r31-shard-1.log.gz",
+      "bytes": 94270,
+      "sha256": "50136aef7a4d8441ed3ea288a1375060874a6c111c063ceff50f93bf6f356a72",
+      "gzip_bytes": 13018,
+      "gzip_sha256": "02232317fbc4070b9c139ac8ec6bf65bf719c83054f3b866465b78d72abc20d0"
+    },
+    {
+      "source": ".tmp/stage9-group-r31/shard-2.log",
+      "archive": "group-r31-shard-2.log.gz",
+      "bytes": 77017,
+      "sha256": "f0c3153c7f477b6b8ee697c22848be8b6d989b3f0b1311a0bd8cd590f86ae91d",
+      "gzip_bytes": 6785,
+      "gzip_sha256": "ecf7aa6aa276273f6407a4cca9c3f4e98f259958a6ae43d5c7e849655bfaa8bd"
+    },
+    {
+      "source": ".tmp/stage9-group-r31/shard-1-junit.xml",
+      "archive": "group-r31-shard-1-junit.xml.gz",
+      "bytes": 158782,
+      "sha256": "9d801ea6bf2ebd6e5b5e3ee2f4a12cef186a94b314ae8f680e8fe049fb132a99",
+      "gzip_bytes": 22055,
+      "gzip_sha256": "cc974ff6298f3249a147f4e7ea47cb2a831b7499f7c93203f9d6f36b98684aea"
+    },
+    {
+      "source": ".tmp/stage9-group-r31/shard-2-junit.xml",
+      "archive": "group-r31-shard-2-junit.xml.gz",
+      "bytes": 145854,
+      "sha256": "44ec4e340d7c80241439354d95d02ca7d0a5d2124a0e51e04d8cf922e12d39f6",
+      "gzip_bytes": 18103,
+      "gzip_sha256": "47f9b63e3f238781f2c37a771c8a0b018abe1ea07237cd7a2b1fe4b296916614"
+    },
+    {
+      "source": ".tmp/stage9-release-main-12-verified-r31.json",
+      "archive": "stage9-release-main-12-verified-r31.json.gz",
+      "bytes": 8471,
+      "sha256": "398e5e48cd1764b392e6613c8fda000ee22d42fa6d107cbb2ee35fb636111900",
+      "gzip_bytes": 2492,
+      "gzip_sha256": "651a4a43992d13f2a2d1dbac8e9fd9b797beca8876ca63c98028701a0f913ee4"
+    },
+    {
+      "source": ".tmp/stage9-release-main-12-verified-r31.stderr.log",
+      "archive": "stage9-main12-r31-preview-error.log.gz",
+      "bytes": 2150,
+      "sha256": "8ad071b86dfeb43e0f0f1db1e0edb1883ee8b80f45f71ab42bba83943b6948fe",
+      "gzip_bytes": 560,
+      "gzip_sha256": "499b10601b00882bef8ca7e90041cba2d6fd8a6ba49b03f0169de9b03b8ca5f9"
+    },
+    {
+      "source": ".tmp/stage9-main12-r31-memory.json",
+      "archive": "stage9-main12-r31-memory.json.gz",
+      "bytes": 17135,
+      "sha256": "a6250b6c0cf0b3fdb799388fe9ae360c663b953681e7216e019cc4607b24a82c",
+      "gzip_bytes": 2755,
+      "gzip_sha256": "dda61f00932cb0015a53119f04a1f0f389ef41b41968beaa636fc0b5169e502f"
+    },
+    {
+      "source": ".tmp/stage9-g-repair-boundary.xml",
+      "archive": "stage9-g-repair-boundary.xml.gz",
+      "bytes": 741,
+      "sha256": "c3c91f37118608e8ef8f14cb5a6d66222eadca18a971a18d6fd41d69b9b6e469",
+      "gzip_bytes": 305,
+      "gzip_sha256": "0d7e044450c437b076f2b5811427119629a328763597ee0b3a630c76c1b72d80"
+    },
+    {
+      "source": ".tmp/stage9-g-json-decoding-work-r31.json",
+      "archive": "stage9-g-json-decoding-work-r31.json.gz",
+      "bytes": 818,
+      "sha256": "a6b19b6df1798a09bc4c2d79415a6f8290a262b7cb0087cdc82cdc9f3f358ed2",
+      "gzip_bytes": 304,
+      "gzip_sha256": "1cf952858f9a0751350a62180ece9226d3332b89cf982b3728358c4c02f2aede"
+    }
+  ]
+}

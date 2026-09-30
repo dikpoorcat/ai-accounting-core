@@ -1,0 +1,50 @@
+[
+  {
+    "source": ".tmp\\stage9-g-material-proof-base-prep-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-base-prep-r32.json.gz",
+    "source_bytes": 99743,
+    "source_sha256": "3f613d3b4e126246ca4df2bd027c490e51efe3f8f2838fd0d25d865410b6be93",
+    "archive_bytes": 20955,
+    "archive_sha256": "dd23a3fc8eaed076f7b770a37a0bb9deac5e269a3f5a51cea9827bd1c56c3184"
+  },
+  {
+    "source": ".tmp\\stage9-g-material-proof-reuse-prep-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-reuse-prep-r32.json.gz",
+    "source_bytes": 99805,
+    "source_sha256": "10f642651153cbfece55aa45873aab0f1ef32bcbd508957932bca26488d818a9",
+    "archive_bytes": 21002,
+    "archive_sha256": "bdb8975115108440f1e71223dfe4845786882ce6ef664c14b93062824e5df68a"
+  },
+  {
+    "source": ".tmp\\stage9-g-material-proof-base-brief-full-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-base-brief-full-r32.json.gz",
+    "source_bytes": 1944896,
+    "source_sha256": "e8631b3689322f2e188a3a4ac38078ec344d15bacd7b579a26cd11915f28ed2b",
+    "archive_bytes": 96659,
+    "archive_sha256": "cfd314de030e9d87cf089a1285e7fe035bc3e922eba9787c8fc52e1fd6ec0092"
+  },
+  {
+    "source": ".tmp\\stage9-g-material-proof-reuse-brief-full-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-reuse-brief-full-r32.json.gz",
+    "source_bytes": 1944929,
+    "source_sha256": "27107ea00f4b2b1a44b7e8e522fff25350848933a4431d9569d956e5dcffd100",
+    "archive_bytes": 96501,
+    "archive_sha256": "4c6d3d7566623578570d4ea7d9c6d370c4c4423835f5993a7eaad6f56f6a0e61"
+  },
+  {
+    "source": ".tmp\\stage9-g-material-proof-base-brief-complete-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-base-brief-complete-r32.json.gz",
+    "source_bytes": 1998016,
+    "source_sha256": "03f57bd48c8f8c5ed4ba1804edee8528389e707031ccd97a88af0184eac09a44",
+    "archive_bytes": 108676,
+    "archive_sha256": "3fc46177cdb6ceb977eb4af90a7566364cf4dcd92755025bc3f90e3e61b99c2b"
+  },
+  {
+    "source": ".tmp\\stage9-g-material-proof-reuse-brief-complete-r32.json",
+    "archive": "docs\\kernel-refactor-stages\\09-performance-results\\r32-material-proof-reuse-stage9-g-material-proof-reuse-brief-complete-r32.json.gz",
+    "source_bytes": 1998101,
+    "source_sha256": "cbaccea9d59ed2a4384dd84251e6d1faa751bf76371405de948c42ebcd457222",
+    "archive_bytes": 108689,
+    "archive_sha256": "c3652bcf408f100af6d724b8c778e8881077043e44916f784823fdfbee4b2cee"
+  }
+]

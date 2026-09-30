@@ -1,85 +1,11 @@
-# 组件式代收代付
+# 代收代付的类型化处理
 
-> **已退役实现**：本文正文使用已退役的 `finance_record_event` + `components` + `funds` 组件协议，
-> 旧命令名只作历史说明，不应再调用，示例请求形状也不被当前内核接受。
-> 当前做法：代收代付是 `pass_through` 类型化事实（`payer_id`、`beneficiary_id`、`amount_fen`、
-> `rights_and_obligation_confirmed`），用 `save_fact` 登记、`preview` 试算、`confirm` 发布；
-> 付款核销用 `settlement` 事实，读取事实用 `find_facts`，更正用 `amend_fact`。
-> 名称对应：`finance_record_event`→`save_fact`／`save_facts` + `preview` + `confirm`，
-> `finance_get_event`→`find_facts`／`trace`，`finance_amend_event`→`amend_fact`；
-> `finance_update_business_metadata` 的任意 `metadata` 字典在当前内核**没有对应入口**，
-> `management` 只接受说明、代发归集月份与代发类别。
+当前内核用 `pass_through` 事实记录有依据的代收债权和转付义务。事实明确付款方 `payer_id`、受益方 `beneficiary_id`、整数分金额 `amount_fen` 和权利义务确认；未确认义务不得推断成收入、预收或可支付余额。登记前查已有对象、事实与证据，字段精度和所需来源以 `finance_local_schema` 为准。
 
-运行协议 `business-components-v3`；当前公司库结构版本为 v13、目录库为 v3。
-代收与应收核销、预收和其他业务采用相同 `finance_record_event` 组件协议，银行或现金收付
-统一放在 `funds`。代收确认代收代付负债，不形成收入或预收款；不必先登记受益人或债权人。
+用 `save_fact` 登记业务事实，`preview` 核对计算、期间和依赖后再 `confirm` 正式发布。实际收款、向受益人支付及其核销按各自发生日期和来源另行登记，资金方向、账户、银行原行、金额及未结义务逐项核对。资料接收与处置、事实登记、正式发布、真实资金收付和外部办理是不同状态，不能由其中一项推定其他项已完成。
 
-## 一笔收款包含多个业务用途
+开放期事实错误通过类型化更正或符合依赖条件的删除入口处理；闭期不改原凭证，在开放月使用关联冲正和替代。缺少会改变会计处理的付款方、受益方、金额、期间或证据时返回 `needs_information`，不把未知余款默认归为预收或收入。完整命令和当前能力见[类型化业务事实](business-components.md)及运行时 Schema。
 
-以下金额均为整数分；示例编号须替换为当前公司真实编号。
+## 历史边界
 
-```json
-{
-  "org_id": "<公司UUID>",
-  "idempotency_key": "receipt-components-1",
-  "posting_date": "2026-08-09",
-  "description": "佣金回款及代收款",
-  "evidence_references": ["<业务证据UUID>"],
-  "components": [
-    {
-      "key": "commission",
-      "kind": "receivable_settlement",
-      "business_date": "2026-08-09",
-      "allocations": [{"open_item_id": "<原佣金应收UUID>", "amount_fen": 9657350}]
-    },
-    {
-      "key": "collection-1",
-      "kind": "pass_through",
-      "amount_fen": 2342650
-    }
-  ],
-  "funds": [{
-    "key": "bank-receipt",
-    "account_code": "100201",
-    "direction": "receipt",
-    "payment_date": "2026-08-09",
-    "amount_fen": 12000000,
-    "allocations": [
-      {"component_key": "commission", "amount_fen": 9657350},
-      {"component_key": "collection-1", "amount_fen": 2342650}
-    ],
-    "bank_transaction_references": [{"id": "<整笔120000元流水UUID>"}]
-  }]
-}
-```
-
-不同代收业务使用独立稳定组件键；明确预收款另有 `customer_advance` 组件。
-每个组件键唯一，资金分配总和必须精确等于真实收款。未说明的余款返回 `needs_information`。
-不能把未知余款默认成预收，也不能通过调整收入、税额或往来余额凑平。
-
-用途、受益人、经办人和管理日期可以放入 `metadata`，也可以关账后通过
-`finance_update_business_metadata` 后补。缺这些资料不追问、不阻断。
-只有明确“个人先行垫付并形成公司对个人的债务”时，才用个人垫付或债务转换业务，
-提供实际垫付人、债务确认日期或月份及依据；具体垫付日仅为可选管理资料。
-不能仅因管理信息里出现人名就推断发生债务转换。
-
-## 付款和债务转移
-
-直接支付使用 `payable_settlement` 组件，以 `allocations` 精确引用代收应付款。
-可用原入账幂等键 `source_event_key`、`source_component_key`、`source_open_item_key`
-精确引用，也可使用已有开放项UUID。普通核销允许多来源、多对象，与费用、其他应付结算
-共同分配到实际 `funds`；检查公司、来源类型和剩余余额，不要求重填来源对象。
-
-收款后员工或股东代付，使用 `debt_transfer` 提交实际 `payer`、债务确认日期或月份、证据及已偿债务
-`allocations`，由原债权人转为对代垫人的应付。归还时按新应付来源使用
-`payable_settlement`。明确同笔依赖可通过 `source_component_key` 表达，不能虚构现金流。
-
-## 修改、删除与冲正
-
-`finance_get_event` 读取当前完整事实及 `facts_hash`，`finance_amend_event` 提交完整
-`replacement`、预期哈希、新幂等键和原因。保留未改变组件的稳定键，整笔重算保留原凭证
-编号及审计历史，同时处理全部往来和银行匹配。已有后续依赖时先处理依赖，禁止级联删除。
-开放月删除付款会恢复核销余额和对应匹配；已关账通过关联冲正更正。
-
-相同幂等键和事实返回原结果，不同事实拒绝。任一组件缺事实、超额或失败时整笔回滚，
-不能留下部分正式凭证或部分匹配。代码重构不自动执行试用公司的业务更正。
+旧 `finance_record_event` 的 `components`／`funds` 请求、`finance_get_event`、`finance_amend_event` 和任意 `metadata` 写入接口均已退出运行层。旧公司 v13、目录 v3 和组件式请求示例只保留在 Git 历史，不是新系统的导入或运行来源。当前使用 `ai-accounting-kernel/2` 开发合同，正式首版仍待第 9 阶段冻结。

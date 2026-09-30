@@ -1,0 +1,227 @@
+{
+  "status": "verified",
+  "purpose": "cross-source full integrity cost diagnosis only; not same-build acceptance",
+  "builder_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r4",
+  "builder_source_sha256": "ddc7897412fb06ce20c99c17716ca329d3ca708207eef467d43e0dfc8f7003b1",
+  "reader_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r5",
+  "reader_source_sha256": "25794c129f2528302268b9192500b6195696aed21d01ae0076a7de1fc22d9cbf",
+  "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-main-12",
+  "company_database": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-main-12\\91310000123456789S\\company.sqlite",
+  "baseline_r4_report": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-main-12-verified-r1.json",
+  "baseline_r4_integrity_ms": 267260.6556999963,
+  "reader_patch": "in-memory bounded voucher_calculation/CROSS JOIN _publication_rows only",
+  "phase_timings_ms": {
+    "integrity._check_heads": [
+      67.911
+    ],
+    "change_journal.verify_journal": [
+      538.091
+    ],
+    "integrity._check_facts": [
+      1811.717,
+      0.081,
+      21.554,
+      0.031,
+      19.413,
+      0.037,
+      21.156,
+      0.035,
+      21.975,
+      0.036,
+      22.268,
+      0.033,
+      23.431,
+      0.039,
+      21.289,
+      0.037,
+      22.137,
+      0.032,
+      19.786,
+      0.035,
+      20.98,
+      0.036,
+      20.858
+    ],
+    "integrity._check_evidence": [
+      1.044,
+      0.001,
+      0.001,
+      0.116,
+      0.001,
+      0.049,
+      0.001,
+      0.078,
+      0.001,
+      0.075,
+      0.001,
+      0.107,
+      0.001,
+      0.072,
+      0.002,
+      0.077,
+      0.001,
+      0.081,
+      0.001,
+      0.043,
+      0.001,
+      0.072,
+      0.001,
+      0.077
+    ],
+    "integrity._check_sources": [
+      4644.699,
+      0.932,
+      0.49,
+      0.947,
+      0.924,
+      0.939,
+      0.794,
+      0.83,
+      1.018,
+      0.822,
+      0.955,
+      0.896
+    ],
+    "report_open_contribution.compare_open_contributions": [
+      2336.013
+    ],
+    "close_storage.decode_close": [
+      129.49,
+      144.195,
+      179.947,
+      212.604,
+      445.765,
+      270.483,
+      308.193,
+      375.345,
+      618.057,
+      443.708,
+      725.552,
+      114.591,
+      144.36,
+      171.156,
+      211.383,
+      259.709,
+      279.551,
+      344.097,
+      618.466,
+      413.282,
+      465.861,
+      782.063
+    ],
+    "integrity._check_snapshot_references": [
+      1.394,
+      1.964,
+      2.524,
+      3.476,
+      3.444,
+      5.777,
+      4.711,
+      9.563,
+      5.651,
+      5.91,
+      9.133
+    ],
+    "asset_card_adoption.prove_asset_card_adoptions": [
+      9.164,
+      8.523,
+      8.26,
+      8.242,
+      7.883,
+      8.061,
+      7.382,
+      7.721,
+      7.85,
+      7.812,
+      10.244
+    ],
+    "close_review.verify_owner_review_integrity": [
+      542.954,
+      510.368,
+      772.065,
+      578.871,
+      639.005,
+      622.032,
+      851.187,
+      667.723,
+      713.512,
+      755.15,
+      1044.109
+    ],
+    "integrity._check_closes": [
+      12338.308
+    ],
+    "integrity._check_job_sources": [
+      0.169
+    ],
+    "integrity._check_audit_sources": [
+      83.956
+    ],
+    "entities.verify_entities": [
+      1.377
+    ],
+    "identity_corrections.verify_identity_corrections": [
+      47.593
+    ],
+    "duplicate_freeze.verify_duplicate_checks": [
+      1103.487
+    ],
+    "duplicate_freeze.compare_duplicate_freeze": [
+      7948.953
+    ],
+    "material_watch.require_material_watch": [
+      4651.9
+    ],
+    "integrity.require_projections": [
+      968.088
+    ],
+    "settlement_projection.require_settlement_projection": [
+      2072.87
+    ],
+    "settlement_freeze.require_frozen_settlement_projection": [
+      774.869
+    ],
+    "report_projection.require_report_projection": [
+      7398.243
+    ],
+    "report_semantics.require_report_semantics": [
+      4521.998
+    ],
+    "report_flow.require_report_flow": [
+      612.397
+    ],
+    "report_classification_directory.require_classification_directory": [
+      557.042
+    ],
+    "period_balance_freeze.compare_balance_freeze": [
+      1456.915
+    ],
+    "entity_references.verify_entity_references": [
+      4534.222
+    ],
+    "discovery_indexes.verify_discovery_indexes": [
+      167.218
+    ],
+    "read_indexes.verify_read_indexes": [
+      4471.979
+    ]
+  },
+  "integrity": {
+    "status": "verified",
+    "coverage": {
+      "sources": "verified",
+      "historical_adoption": "verified",
+      "projections": "verified",
+      "read_indexes": "verified"
+    },
+    "limitations": [],
+    "counts": {
+      "facts": 30225,
+      "calculations": 12413,
+      "vouchers": 12309,
+      "closes": 11,
+      "evidence": 85
+    }
+  },
+  "integrity_ms": 66857.196
+}

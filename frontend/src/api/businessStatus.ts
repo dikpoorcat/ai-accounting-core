@@ -1,7 +1,6 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
-import { requestGeneratedJson } from "./client";
-import type { DashboardBusinessStatusContract, DashboardBusinessStatusResponse } from "./generated/dashboardResponses";
-import { validateDashboardBusinessStatusResponse } from "./generated/dashboardValidators.js";
+import { requestGeneratedJson, withCurrentCompany } from "./client";
+import type { DashboardBusinessStatusContract, DashboardBusinessStatusResponse } from "./generated/dashboardBusinessStatus";
 
 export type BusinessStatusData = DashboardBusinessStatusContract.BusinessStatusData;
 export type BusinessStatusResponse = DashboardBusinessStatusResponse;
@@ -24,9 +23,12 @@ function matchesRequest(url: URL, response: DashboardBusinessStatusResponse) {
     && (section === null || section in response.data.collections);
 }
 
-export function fetchBusinessStatus(period: string, subjectId: string, signal?: AbortSignal, options: BusinessStatusQuery = {}) {
+export async function fetchBusinessStatus(period: string, subjectId: string, signal?: AbortSignal, options: BusinessStatusQuery = {}) {
   const query = new URLSearchParams({ period, subject_id: subjectId });
   pageQuery(query, options);
   if (options.settlement_view) query.set("settlement_view", options.settlement_view);
-  return requestGeneratedJson(`/api/dashboard/business-status?${query}`, "/api/dashboard/business-status", validateDashboardBusinessStatusResponse, matchesRequest, { signal });
+  const target = withCurrentCompany(`/api/dashboard/business-status?${query}`);
+  const { validateDashboardBusinessStatusResponse } = await import("./generated/dashboardBusinessStatus.js");
+  signal?.throwIfAborted();
+  return requestGeneratedJson(target, "/api/dashboard/business-status", validateDashboardBusinessStatusResponse, matchesRequest, { signal });
 }

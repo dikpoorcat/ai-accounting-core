@@ -14,6 +14,7 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from close_storage_fixture import replace_stored_manifest, stored_manifest
 from pydantic import SecretStr
 
 from ai_accounting.kernel.backup import create_portable, restore_portable, verify_portable
@@ -21,7 +22,7 @@ from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.daemon import build_native_security_controller
 from ai_accounting.kernel.http import create_server
-from ai_accounting.kernel.integrity import verify_close_integrity, verify_integrity
+from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.jobs import JobRunner
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.read_state import advance_repair_revision
@@ -30,7 +31,6 @@ from ai_accounting.kernel.security import IdentityError, consume_close_approval
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
 from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
 from ai_accounting.kernel.service import LocalService
-from ai_accounting.kernel.types import canonical, digest
 
 PASSWORD = SecretStr("Synthetic-resident-owner-123")
 TAXPAYER = "91310000123456789A"
@@ -458,52 +458,32 @@ def test_same_account_capability_reaches_password_and_bound_approval_without_rea
     )
 
     with engine.store.connection(read_only=True) as connection:
-        original_manifest = json.loads(
-            connection.execute("SELECT manifest FROM period_close").fetchone()["manifest"]
-        )
+        original_manifest = stored_manifest(connection)
 
-    def replace_close_manifest(manifest):
-        with engine.store.connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            triggers = list(
-                connection.execute(
-                    "SELECT name,sql FROM sqlite_schema "
-                    "WHERE type='trigger' AND tbl_name IN ('period_close','read_index_source')"
-                )
-            )
-            for name, _ in triggers:
-                connection.execute(f'DROP TRIGGER "{name}"')
-            connection.execute(
-                "UPDATE period_close SET manifest=?,digest=?",
-                (canonical(manifest), digest(manifest)),
-            )
-            connection.execute(
-                "UPDATE read_index_source SET source_digest=? WHERE source_kind='close'",
-                (digest(manifest),),
-            )
-            for _, sql in triggers:
-                connection.execute(sql)
-            connection.commit()
-
-    forged = json.loads(canonical(original_manifest))
+    forged = json.loads(json.dumps(original_manifest))
     forged["approval"]["owner_id"] = "forged-owner"
-    replace_close_manifest(forged)
+    replace_stored_manifest(engine, forged)
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         with pytest.raises(KernelError) as failure:
             verify_integrity(engine, connection)
     assert failure.value.details["reason"] == "close_approval_mismatch"
 
-    missing = json.loads(canonical(original_manifest))
-    missing["approval"] = None
-    replace_close_manifest(missing)
-    with engine.store.connection(read_only=True) as connection:
-        connection.execute("BEGIN")
+    replace_stored_manifest(engine, original_manifest)
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO security_close_approval SELECT ?,catalog_instance_id,company_id,"
+            "database_id,period,preview_digest,accounting_epoch,material_epoch,"
+            "management_epoch,owner_id,session_id,credential_version,confirmed_at,"
+            "expires_at,consumed_at FROM security_close_approval WHERE id=?",
+            ("synthetic-orphaned-approval", approval_id),
+        )
         with pytest.raises(KernelError) as failure:
-            verify_close_integrity(engine, connection, "2026-09")
+            verify_integrity(engine, connection)
+        connection.rollback()
     assert failure.value.details["reason"] == "orphaned_close_approval"
 
-    replace_close_manifest(original_manifest)
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         triggers = list(

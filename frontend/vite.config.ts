@@ -15,7 +15,7 @@ interface LocalServiceMetadata {
 }
 
 function localServiceMetadata(): LocalServiceMetadata {
-  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-draft");
+  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-released");
   const statePath = resolve(dataRoot, ".service.json");
   let metadata: unknown;
   try {

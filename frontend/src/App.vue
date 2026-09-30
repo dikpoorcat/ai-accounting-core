@@ -1,17 +1,17 @@
 <!-- @format -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { DeepReadonly } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
 import OwnerSessionPanel from "./components/OwnerSessionPanel.vue";
-import BackgroundJobsPanel from "./components/BackgroundJobsPanel.vue";
 import DashboardMonthPicker from "./components/DashboardMonthPicker.vue";
 import { useDashboardContext } from "./composables/useDashboardContext";
 import type { DashboardContext } from "./api/context";
 
 type Theme = "light" | "dark";
+const BackgroundJobsPanel = defineAsyncComponent(() => import("./components/BackgroundJobsPanel.vue"));
 defineProps<{ launchError?: string }>();
 
 const appVersion = __APP_VERSION__;
@@ -71,6 +71,14 @@ const selectedPeriod = computed(() => {
   }
   return periods.value.at(-1)?.key ?? "";
 });
+const selectionSettled = ref(false);
+const routeMatchesContext = computed(() => {
+  if (!currentCompany.value || currentCompany.value.company_id !== route.query.company_id) return false;
+  if (route.query.period !== (selectedPeriod.value || undefined)) return false;
+  return route.name !== "reports" || !route.query.quarter
+    || context.value?.quarters.some(item => item.key === route.query.quarter) === true;
+});
+const routeSelectionReady = computed(() => selectionSettled.value && routeMatchesContext.value);
 
 async function applyContextSelection(loaded: DeepReadonly<DashboardContext>, valid: () => boolean) {
   if (!valid()) return;
@@ -98,6 +106,7 @@ async function loadCompanyContext() {
   const selection = JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]);
   const valid = () => mounted && contextGeneration === generation && authenticated.value && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
   cancelContext();
+  selectionSettled.value = false;
   contextError.value = "";
   if (!authenticated.value) { activeContextLoad = null; return; }
   activeContextLoad = generation;
@@ -113,6 +122,7 @@ async function loadCompanyContext() {
       return;
     }
     await applyContextSelection(loaded, valid);
+    if (activeContextLoad === generation && context.value?.current_company?.company_id === companyId && !contextError.value) selectionSettled.value = true;
   } catch (caught) {
     if (!valid()) return;
     if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -137,6 +147,22 @@ watch(
     if (period !== previousPeriod || quarter !== previousQuarter) {
       contextGeneration += 1;
       if (isAuthenticated && !context.value) void loadCompanyContext();
+      else if (isAuthenticated && context.value?.current_company?.company_id === companyId) {
+        if (routeMatchesContext.value) {
+          selectionSettled.value = true;
+          return;
+        }
+        const loaded = context.value;
+        const generation = contextGeneration;
+        const selection = JSON.stringify([companyId, period, quarter]);
+        const valid = () => mounted && authenticated.value && contextGeneration === generation && context.value === loaded
+          && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
+        void applyContextSelection(loaded, valid).then(() => {
+          if (mounted && authenticated.value && context.value === loaded && routeMatchesContext.value) selectionSettled.value = true;
+        }).catch(caught => {
+          if (valid()) contextError.value = caught instanceof Error ? caught.message : "公司期间读取失败，请重试。";
+        });
+      }
     }
   },
   { flush: "sync" },
@@ -378,7 +404,7 @@ async function selectPeriod(periodKey: string) {
       <div v-if="authenticated && contextError" class="panel" role="alert"><p>{{ contextError }}</p><button class="dashboard-action" @click="loadCompanyContext">重新读取</button></div>
       <p v-else-if="authenticated && contextLoading && !currentCompany" class="panel" role="status">正在读取所选公司的资料…</p>
       <p v-else-if="authenticated && context && !currentCompany" class="panel">还没有添加公司。添加公司后，可在这里查看财务情况。</p>
-      <template v-if="authenticated && currentCompany && context?.current_company?.company_id === route.query.company_id">
+      <template v-if="authenticated && currentCompany && routeSelectionReady">
         <BackgroundJobsPanel v-if="showJobs" :company-id="currentCompany.company_id" />
         <RouterView :key="currentCompany.company_id" />
       </template>

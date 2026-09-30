@@ -666,6 +666,19 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     assert feb["posting_period"] == "2026-02"
     jan = next(r for r in preview["results"] if r["subject_id"] == "jan-b")
     assert jan["values"]["actual_withholding"]["withheld_tax_fen"] == 12345
+    from ai_accounting.kernel.dashboard import Dashboard
+
+    employees = Dashboard(engine).employees("2026-02", preparation="deferred")["data"]
+    assert second in {
+        row["employee_id"] for row in employees["collections"]["employees"]["items"]
+    }
+    sources = Dashboard(engine).employees(
+        "2026-03" if closed else "2026-02",
+        employee_id=second,
+        section="payroll_sources",
+        preparation="deferred",
+    )["data"]["collections"]["payroll_sources"]["items"]
+    assert "jan-b" in {row["source_id"] for row in sources}
     if closed:
         from ai_accounting.kernel.periods import Periods
 
@@ -1040,6 +1053,14 @@ def test_asset_identity_differs_from_acquisition_and_reassigns_owned_members(ide
         )
         assert balances.get(f"asset:{assets[0]}:carrying", 0) == 0
         assert balances[f"asset:{assets[1]}:carrying"] == 8000
+    from unittest.mock import patch
+
+    from ai_accounting.kernel.dashboard import Dashboard
+
+    dashboard = Dashboard(engine)
+    with patch("ai_accounting.kernel.period_balances.balance_totals", return_value=[]):
+        complete = dashboard.assets("2026-02", preparation="deferred")["data"]
+    assert dashboard.assets("2026-02", preparation="deferred")["data"] == complete
 
 
 def test_frozen_asset_opening_binding_continues_and_can_be_reassigned_back(identity_engine):

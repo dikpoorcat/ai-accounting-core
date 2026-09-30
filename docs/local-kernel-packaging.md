@@ -24,7 +24,7 @@
 .\finance-local.ps1 --help
 ```
 
-也可使用 `finance-local.cmd`。两个包内启动器默认使用包内 `data/kernel-draft`；明确的 `--root` 优先，环境变量 `FINANCE_DATA_ROOT` 可指定同一资料根。包自带 Python、SQLite、Tcl/Tk、Argon2、PDF/Excel 读取及导出依赖、空白报表模板和发布页面，无需 PostgreSQL、Docker、Node.js 或旧虚拟环境。解释器启用隔离模式，模块路径限制在包内。
+也可使用 `finance-local.cmd`。两个包内启动器默认使用包内 `data/kernel-released`；明确的 `--root` 优先，环境变量 `FINANCE_DATA_ROOT` 可指定同一资料根。该路径不自动导入开发库或旧凭据，实际支持的合同以包内 manifest 为准。包自带 Python、SQLite、Tcl/Tk、Argon2、PDF/Excel 读取及导出依赖、空白报表模板和发布页面，无需 PostgreSQL、Docker、Node.js 或旧虚拟环境。解释器启用隔离模式，模块路径限制在包内。
 
 每个资料根目录使用唯一常驻服务。负责人只在原生安全窗口输入独立密码；Windows 凭据管理器保存会话。当前用户及 SYSTEM 以外的用户不能读取服务私有连接元数据；原生窗口的连接能力通过匿名标准输入管道传入，不放进命令行或环境变量。
 

@@ -1,7 +1,14 @@
 import pytest
 from test_duplicates import company as duplicate_company
-from test_duplicates import evidence, material_source, owner_review, write_fact
+from test_duplicates import (
+    evidence,
+    fill_missing_test_checks,
+    material_source,
+    owner_review,
+    write_fact,
+)
 
+import ai_accounting.kernel.duplicates as duplicate_module
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.duplicates import (
     DUPLICATE_CONTRACT_VERSION,
@@ -330,6 +337,53 @@ def test_cash_refund_and_platform_expense_match_only_their_real_channel(money_co
     }
 
 
+def test_close_readiness_money_preselection_matches_exhaustive_pairs(money_company, monkeypatch):
+    engine, party, accounts = money_company
+    proofs = [evidence(engine, f"money-preselect-{index}") for index in range(5)]
+    duplicates = DuplicateCandidates(engine.store)
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN")
+        write_fact(
+            engine.store, connection, "platform-payment",
+            payment(engine, account=accounts["platform"], channel="platform", party=party),
+            (proofs[0],),
+        )
+        write_fact(
+            engine.store, connection, "platform-reserve",
+            reserve(engine, account=accounts["platform"], channel="platform",
+                    movement_ids=("platform-row",)),
+            (proofs[1],),
+        )
+        write_fact(
+            engine.store, connection, "unbound-reserve",
+            reserve(engine, account=accounts["bank"], channel="bank"),
+            (proofs[2],),
+        )
+        for index in range(2):
+            write_fact(
+                engine.store, connection, f"bank-payment-{index}",
+                payment(engine, account=accounts["bank"], party=party, amount=1234),
+                (proofs[index + 3],),
+            )
+        fill_missing_test_checks(engine.store, connection)
+        optimized = duplicates.close_readiness(connection, "2026-01")
+        monkeypatch.setattr(
+            duplicate_module, "_strong_pair_fact_ids",
+            lambda _connection, rows, _locations, _registry, _period: {
+                row["id"] for row in rows
+            },
+        )
+        exhaustive = duplicates.close_readiness(connection, "2026-01")
+    assert optimized == exhaustive
+    pairs = {
+        frozenset((item["subject_id"], item["candidate_subject_id"]))
+        for item in optimized
+    }
+    assert frozenset(("platform-payment", "platform-reserve")) in pairs
+    assert frozenset(("bank-payment-0", "bank-payment-1")) in pairs
+    assert all("unbound-reserve" not in pair for pair in pairs)
+
+
 def test_payroll_whole_bank_exit_matches_reserve_by_exact_original(money_company):
     engine, party, accounts = money_company
     proof = evidence(engine, "payroll-bank-row")
@@ -598,6 +652,7 @@ def test_cross_type_review_controls_publish_and_close_recheck(money_company):
             ),
             (second_proof,),
         )
+        fill_missing_test_checks(engine.store, connection)
         issues = duplicates.close_readiness(connection, "2026-01")
         with pytest.raises(KernelError) as blocked:
             duplicates.require_publishable(connection, ("reserve",))

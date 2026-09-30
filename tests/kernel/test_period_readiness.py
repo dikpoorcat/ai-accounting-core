@@ -12,6 +12,35 @@ from ai_accounting.kernel.types import YearMonth, digest
 from ai_accounting.kernel.worklist import Worklist
 
 
+def test_close_summary_reuses_full_checks_only_inside_its_own_construction(tmp_path, monkeypatch):
+    from ai_accounting.kernel.close_review import build_owner_review
+
+    company = setup_company(tmp_path)
+    ready(company.engine, company.owner_confirmation, first="2026-01", last="2026-01")
+    original = Periods.collect_current_readiness
+    checks = []
+
+    def observed(self, connection, period, **kwargs):
+        checks.append((connection, period, kwargs.get("_allow_frozen_materials", False)))
+        return original(self, connection, period, **kwargs)
+
+    monkeypatch.setattr(Periods, "collect_current_readiness", observed)
+    periods = Periods(company.engine)
+    preview = periods.preview_close("2026-01", owner_confirmation=company.owner_confirmation)
+    assert [(period, fast) for _, period, fast in checks] == [("2026-01", False)]
+
+    # An independent construction still performs its own full check. The
+    # optimization must neither change frozen content nor cache across calls.
+    with company.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        rebuilt = build_owner_review(connection, company.engine, preview["manifest"])
+    assert rebuilt == preview["manifest"]["owner_review"]
+    assert [(period, fast) for _, period, fast in checks] == [
+        ("2026-01", False),
+        ("2026-01", False),
+    ]
+
+
 def test_missing_required_payroll_is_accounting_incomplete_once(tmp_path):
     company = setup_company(tmp_path)
     company.save(profile(), "active-employee")

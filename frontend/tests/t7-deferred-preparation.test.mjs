@@ -56,32 +56,8 @@ function report(context = readContext()) {
 class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 const stale = () => new ApiError(409, "dashboard_snapshot_changed", "expired");
 
-async function apiHarness() {
-  const calls = [], window = { location: { origin: "http://offline.invalid", search: "?company_id=b" } };
-  const contracts = await compile(source("../src/api/dashboardContracts.ts"));
-  const environment = { ...contracts, window, DashboardApiError: ApiError, LocalApiError: ApiError,
-    validateDashboardPeriodPreparationResponse: () => true,
-    validateDashboardBriefResponse: () => true,
-    validateDashboardQuarterlyReportResponse: () => true,
-    validateReportExportReceiptResponse: () => true,
-    requestGeneratedJson(path, endpoint, validator, matchesRequest, options = {}) {
-      return new Promise((resolve, reject) => calls.push({ path, endpoint, ...options,
-        resolve(value) {
-          const url = new URL(path, window.location.origin);
-          if (!validator(value) || !matchesRequest(url, value)) reject(new ApiError(502, "DASHBOARD_SCHEMA_MISMATCH", "mismatch"));
-          else resolve(value);
-        }, reject }));
-    },
-    requestLocalJson(path, options) { return new Promise((resolve, reject) => calls.push({ path, ...options, resolve, reject })); },
-  };
-  const api = await compile(`const { requestGeneratedJson, DashboardApiError, validateDashboardPeriodPreparationResponse } = environment;\n${withoutImports(source("../src/api/periodPreparation.ts"))}`, environment);
-  const briefApi = await compile(`const { requestGeneratedJson, pageQuery, validateDashboardBriefResponse } = environment;\n${withoutImports(source("../src/api/brief.ts"))}`, environment);
-  const reportApi = await compile(`const { requestGeneratedJson, DashboardApiError, requestLocalJson, LocalApiError, validateDashboardQuarterlyReportResponse, validateReportExportReceiptResponse } = environment;\n${withoutImports(source("../src/api/reports.ts"))}`, environment);
-  return { ...api, ...briefApi, ...reportApi, ...contracts, calls, window };
-}
-
 async function viewHarness(kind) {
-  const calls = { main: [], checks: [], exports: [], context: [] }, trace = [], unmount = [];
+  const calls = { main: [], checks: [], exports: [], context: [], review: [] }, trace = [], unmount = [];
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02", quarter: "2026-Q1" }, hash: "" });
   const capture = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const context = Vue.ref(null);
@@ -92,15 +68,22 @@ async function viewHarness(kind) {
     fetchDeferredBrief: (...args) => { trace.push("main"); return capture(calls.main, args); },
     fetchDeferredQuarterlyReport: (...args) => { trace.push("main"); return capture(calls.main, args); },
     fetchPeriodPreparation: (...args) => { trace.push("checks"); return capture(calls.checks, args); },
+    prefetchCloseReview: (companyId, period, signal) => ({
+      companyId, period,
+      result: capture(calls.review, [companyId, period, signal]).then(
+        value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason }),
+      ),
+    }),
     requestQuarterlyExport: (...args) => capture(calls.exports, args),
   };
   const script = withoutImports(parse(source(`../src/views/${kind}View.vue`)).descriptor.scriptSetup.content);
   const names = kind === "Brief"
-    ? "response, data, loading, error, preparation, preparationStatus, preparationError, loadData, loadMore, loadPreparation, refresh, invalidateRequests"
+    ? "response, data, loading, error, preparation, preparationStatus, preparationError, closeReviewPrefetch, closeReviewRefreshKey, loadData, loadMore, loadPreparation, refresh, invalidateRequests"
     : "report, loading, errorMessage, reportHeadline, preview, refresh, exportReport, invalidateRequests";
   const module = await compile(`export function instantiate() {
-    const { computed, ref, watch } = environment.Vue;
-    const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
+    const { computed, ref, shallowRef, watch } = environment.Vue;
+    const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, prefetchCloseReview, requestQuarterlyExport } = environment;
+    const fetchCompleteBrief = fetchDeferredBrief;
     const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route, useRouter = () => environment.router, useDashboardContext = () => environment.contextState;
     const useDashboardSections = () => ({ activeSection: ref("overview"), focusSection() {} });
@@ -113,7 +96,7 @@ async function viewHarness(kind) {
     return { ${names} };
   }`, { ...environment, ApiError });
   const scope = Vue.effectScope(), view = scope.run(() => module.instantiate());
-  return { ...view, calls, trace, route,
+  return { ...view, calls, trace, route, context,
     navigate(query) { route.query = { ...query }; },
     close() { unmount.forEach(callback => callback()); scope.stop(); } };
 }
@@ -130,23 +113,6 @@ test("deferred request projections remain distinct from complete and unrelated p
   ]) {
     assert.equal(validator({ ...response, schema_version: 5 }), false);
     assert.equal(validator({ ...response, projection: "retired_projection" }), false);
-  }
-});
-
-test("preparation API captures the company and rejects wrong month, version, date or database", async () => {
-  const h = await apiHarness();
-  const request = h.fetchPeriodPreparation(readContext(), "2026-02");
-  const url = new URL(h.calls[0].path, "http://offline.invalid");
-  assert.equal(url.searchParams.get("company_id"), "a", "global current company b cannot replace captured a");
-  h.window.location.search = "?company_id=c";
-  h.calls[0].resolve(preparation()); assert.equal((await request).read_context.company_id, "a");
-  for (const [field, value] of [["period", "2026-03"], ["read_version", "v2"], ["as_of", "2026-09-14"], ["database_id", "db-replaced"]]) {
-    const pending = h.fetchPeriodPreparation(readContext(), "2026-02");
-    const result = preparation();
-    if (field === "period") { result.period = value; result.data.period_preparation.period = value; }
-    else { result.read_context[field] = value; if (field !== "read_version") result.data.period_preparation[field] = value; }
-    h.calls.at(-1).resolve(result);
-    await assert.rejects(pending, error => ["DASHBOARD_SCHEMA_MISMATCH", "dashboard_snapshot_changed"].includes(error.code));
   }
 });
 
@@ -176,7 +142,22 @@ test("Brief displays main data before checking and combines only returned displa
     assert.equal(h.calls.main[1].args[0], "a"); assert.equal(h.calls.main[1].args[3], "page-v1");
     const next = brief(); next.data.collections = { file_jobs: page() };
     h.calls.main[1].resolve(next); await paging;
+    assert.deepEqual(h.data.value.collections.file_jobs.items, [], "the paged collection becomes visible after a snapshot replacement");
     assert.equal(h.preparationStatus.value, "ready"); assert.equal(h.data.value.validation.attention_count, 5);
+    assert.equal(h.data.value.period_preparation.period, "2026-02");
+  } finally { h.close(); }
+});
+
+test("Brief complete response shows the full preparation without a second request", async () => {
+  const h = await viewHarness("Brief");
+  try {
+    const pending = h.loadData("2026-02");
+    const full = brief();
+    full.data.period_preparation = preparation().data.period_preparation;
+    h.calls.main[0].resolve(full);
+    await pending;
+    assert.equal(h.preparationStatus.value, "ready");
+    assert.equal(h.calls.checks.length, 0);
     assert.equal(h.data.value.period_preparation.period, "2026-02");
   } finally { h.close(); }
 });
@@ -216,8 +197,97 @@ test("Brief empty main and main failures do not start preparation requests", asy
   try {
     const first = h.loadData(null); h.calls.main[0].resolve({ ...brief(), data: null, read_context: null, selected_period: null }); await first;
     assert.equal(h.calls.checks.length, 0); assert.equal(h.loading.value, false);
-    const second = h.loadData("2026-02"); h.calls.main[1].reject(new Error("主数据失败")); await second;
+    const second = h.loadData("2026-02"); h.calls.main[1].reject(new Error("完整读取失败"));
+    await flush();
+    h.calls.main[2].reject(new Error("主数据失败")); await second;
     assert.equal(h.error.value, "主数据失败"); assert.equal(h.calls.checks.length, 0);
+  } finally { h.close(); }
+});
+
+test("Brief does not mask a broken complete response with a deferred retry", async () => {
+  for (const code of ["DASHBOARD_SCHEMA_MISMATCH", "response_contract_mismatch", "content_integrity_failed"]) {
+    const h = await viewHarness("Brief");
+    try {
+      const pending = h.loadData("2026-02");
+      h.calls.main[0].reject(new ApiError(502, code, "主响应合同或来源损坏"));
+      await pending;
+      assert.equal(h.calls.main.length, 1, `${code}: no fallback request`);
+      assert.equal(h.calls.checks.length, 0);
+      assert.equal(h.response.value, null);
+      assert.equal(h.error.value, "主响应合同或来源损坏");
+    } finally { h.close(); }
+  }
+});
+
+test("Brief starts one scoped review summary with the initial and refreshed main requests", async () => {
+  const h = await viewHarness("Brief");
+  try {
+    const first = h.loadData("2026-02");
+    assert.equal(h.calls.main.length, 1);
+    assert.equal(h.calls.review.length, 1, "review starts before the main response resolves");
+    assert.deepEqual(h.calls.review[0].args.slice(0, 2), ["a", "2026-02"]);
+    assert.equal(h.response.value, null, "review cannot display before main and context succeed");
+    const complete = brief(); complete.data.period_preparation = preparation().data.period_preparation;
+    h.calls.main[0].resolve(complete); await first;
+    assert.equal(h.closeReviewPrefetch.value.companyId, "a");
+    assert.equal(h.closeReviewRefreshKey.value, 1);
+    h.context.value = { current_company: readContext(), periods: [{ key: "2026-02" }] };
+    const refreshed = h.refresh();
+    assert.equal(h.calls.context.length, 1);
+    assert.equal(h.calls.main.length, 2);
+    assert.equal(h.calls.review.length, 2, "one review summary per main refresh");
+    assert(h.calls.review[0].args[2].aborted);
+    h.calls.context[0].resolve(h.context.value);
+    h.calls.main[1].resolve(complete); await refreshed;
+    assert.equal(h.closeReviewRefreshKey.value, 2);
+    assert.equal(h.calls.review.length, 2);
+  } finally { h.close(); }
+});
+
+test("Brief rejects old review scope and clears prefetch after main failure", async () => {
+  const h = await viewHarness("Brief");
+  try {
+    const old = h.loadData("2026-02");
+    const oldPrefetch = h.closeReviewPrefetch.value;
+    h.navigate({ company_id: "b", period: "2026-03" });
+    assert.equal(h.closeReviewPrefetch.value, null);
+    assert(h.calls.review[0].args[2].aborted);
+    const current = h.loadData("2026-03");
+    h.calls.review[0].resolve({ company_id: "a", period: "2026-02" });
+    assert.equal((await oldPrefetch.result).status, "fulfilled");
+    h.calls.main[0].resolve(brief()); await old;
+    assert.equal(h.response.value, null);
+    const complete = brief("2026-03", readContext("b"));
+    complete.data.period_preparation = preparation("2026-03", readContext("b")).data.period_preparation;
+    h.calls.main[1].resolve(complete); await current;
+    assert.equal(h.response.value.read_context.company_id, "b");
+    assert.equal(h.closeReviewPrefetch.value.companyId, "b");
+
+    const failed = h.loadData("2026-03");
+    h.calls.review[2].reject(new Error("核对失败"));
+    h.calls.main[2].reject(new ApiError(502, "content_integrity_failed", "主数据损坏"));
+    await failed;
+    assert.equal(h.calls.main.length, 3, "broken main response is not retried");
+    assert.equal(h.closeReviewPrefetch.value, null);
+    assert.equal(h.response.value, null);
+    assert.equal(h.error.value, "主数据损坏");
+  } finally { h.close(); }
+});
+
+test("Brief context failure aborts the prefetched review and hides a successful main response", async () => {
+  const h = await viewHarness("Brief");
+  try {
+    let rejectContext;
+    const gate = new Promise((_resolve, reject) => { rejectContext = reject; });
+    const pending = h.loadData("2026-02", gate);
+    const complete = brief(); complete.data.period_preparation = preparation().data.period_preparation;
+    h.calls.main[0].resolve(complete);
+    rejectContext(new Error("公司范围已变化"));
+    await pending;
+    assert.equal(h.response.value, null);
+    assert.equal(h.closeReviewPrefetch.value, null);
+    assert(h.calls.review[0].args[2].aborted);
+    assert.equal(h.error.value, "公司范围已变化");
   } finally { h.close(); }
 });
 

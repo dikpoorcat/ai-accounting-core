@@ -1,9 +1,9 @@
 """Opening packages and every exact member are directly adopted at the first close."""
 
-import json
 from copy import deepcopy
 
 import pytest
+from close_storage_fixture import replace_stored_manifest, stored_manifest
 from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as _opening_book
 
@@ -11,7 +11,6 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.identity_corrections import IdentityCorrections
 from ai_accounting.kernel.integrity import _check_closes, _check_sources
-from ai_accounting.kernel.types import canonical, digest
 
 opening_book = _opening_book
 
@@ -37,7 +36,7 @@ def frozen_opening(opening_book):
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         source = deepcopy(_check_sources(engine, connection))
-        manifest = json.loads(connection.execute("SELECT manifest FROM period_close").fetchone()[0])
+        manifest = stored_manifest(connection)
         yield engine, connection, source, manifest
 
 
@@ -99,7 +98,7 @@ def test_incomplete_or_mismatched_frozen_package_is_error(frozen_opening, proble
 
 @pytest.mark.parametrize("same_amount", [False, True])
 def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, same_amount):
-    from test_integrity_content import damage, verify
+    from test_integrity_content import verify
 
     engine, _, publish, package, proof = opening_book
     members = [
@@ -158,7 +157,7 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
     _close_without_current_business(engine, "2026-01", proof)
     assert verify(engine)["status"] == "verified"
     with engine.store.connection(read_only=True) as connection:
-        manifest = json.loads(connection.execute("SELECT manifest FROM period_close").fetchone()[0])
+        manifest = stored_manifest(connection)
         assert manifest["opening_calculation_id"] != old["opening_package"]
         previous = connection.execute(
             "SELECT c.*,p.id publication_id FROM calculation c JOIN calculation_publication p "
@@ -175,12 +174,7 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
             result_digest=previous["digest"].hex(),
         )
         manifest["opening_calculation_id"] = previous["id"]
-    damage(
-        engine,
-        "period_close",
-        "UPDATE period_close SET manifest=?,digest=?",
-        (canonical(manifest), digest(manifest)),
-    )
+    replace_stored_manifest(engine, manifest)
     with pytest.raises(KernelError) as failure:
         verify(engine, include_indexes=False)
     assert failure.value.details["reason"] == "direct_adoption_set_mismatch"

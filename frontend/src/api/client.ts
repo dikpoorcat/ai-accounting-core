@@ -1,14 +1,6 @@
 import { LocalApiError, requestLocalJson } from "./localKernel";
-import type {
-  DashboardContextResponse,
-  DashboardFundsContract,
-  DashboardFundsResponse,
-} from "./generated/dashboardResponses";
-import {
-  validateDashboardContextResponse,
-  validateDashboardFundsResponse,
-} from "./generated/dashboardValidators.js";
-import { validDashboardCollections } from "./dashboardContracts";
+import type { DashboardContextResponse } from "./generated/dashboardContext";
+import { validateDashboardContextResponse } from "./generated/dashboardContext.js";
 
 export class DashboardApiError extends Error {
   readonly status: number;
@@ -43,39 +35,10 @@ function contextMatchesRequest(url: URL, response: DashboardContextResponse): bo
   return companyId === null || response.current_company?.company_id === companyId;
 }
 
-function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolean {
-  const companyId = url.searchParams.get("company_id");
-  const period = url.searchParams.get("period");
-  if (companyId !== null && response.read_context.company_id !== companyId) return false;
-  if (period !== null && response.selected_period?.key !== period) return false;
-  const expectedVersion = url.searchParams.get("expected_version");
-  if (expectedVersion !== null && response.snapshot_version !== expectedVersion) return false;
-  if (response.data === null) return url.searchParams.get("section") === null;
-
-  const data = response.data;
-  if (!validDashboardCollections(data)) return false;
-  const deferred = url.searchParams.get("preparation") === "deferred";
-  if (deferred ? data.period_preparation !== null : data.period_preparation === null) return false;
-  const requestedSection = url.searchParams.get("section") ?? "movements";
-  if (!(requestedSection in data.collections)) return false;
-
-  const { movements, statements } = data.collections;
-  const movementType = url.searchParams.get("movement_account_type");
-  const movementAccount = url.searchParams.get("movement_account_id");
-  const statementAccount = url.searchParams.get("statement_account_id");
-  return (!movementType || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === movementType))
-    && (!movementAccount || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_id === movementAccount))
-    && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
-}
-
 export function requestDashboardContext(options: { signal?: AbortSignal } = {}): Promise<DashboardContextResponse> {
   return requestGeneratedJson(
     "/api/dashboard/context", "/api/dashboard/context", validateDashboardContextResponse, contextMatchesRequest, options,
   );
-}
-
-export function requestDashboardFunds(path: string, options: { signal?: AbortSignal } = {}): Promise<DashboardFundsResponse> {
-  return requestGeneratedJson(path, "/api/dashboard/funds", validateDashboardFundsResponse, fundsMatchesRequest, options);
 }
 
 export function withCurrentCompany(path: string): string {

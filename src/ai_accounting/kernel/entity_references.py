@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_digest as digest
+from .content_history_context import source_json_loads
 from .contracts import KernelError
 from .entities import require_entity
-from .types import canonical, digest
 
 DECLARATIONS: dict[str, list[dict]] = {}
 
@@ -306,21 +308,40 @@ def _at(value, segments, path=()):
         yield from _at(value[segment], rest, (*path, segment))
 
 
-def declarations_for(kind):
-    return tuple(DECLARATIONS.get(kind, ()))
+def declarations_for(kind, *, registry=None):
+    declarations = getattr(registry, "reference_declarations", DECLARATIONS)
+    return tuple(declarations.get(kind, ()))
 
 
-def references_for(fact, subject_id):
+def references_for(fact, subject_id, *, registry=None):
     data = fact.model_dump(mode="json")
-    return references_from_data(fact.kind, data)
+    return references_from_data(fact.kind, data, registry=registry)
 
 
-def references_from_data(kind, data):
+def references_from_data(kind, data, *, registry=None):
+    if getattr(registry, "content_version", None) == 1:
+        from .content_v1_semantics import references_from_data as v1_references
+
+        return v1_references(kind, data, registry.reference_declarations)
     return [
         dict(declaration, path=path, entity_id=value)
-        for declaration in declarations_for(kind)
+        for declaration in declarations_for(kind, registry=registry)
         for path, value in _at(data, declaration["path"].split("."))
     ]
+
+
+def _entity_reference_fields(kind, data, *, registry=None):
+    """Yield only object roles without walking unrelated business-source paths."""
+    if getattr(registry, "content_version", None) == 1:
+        for item in references_from_data(kind, data, registry=registry):
+            if item["reference_type"] == "entity":
+                yield item["path"], item["entity_id"], item["role"]
+        return
+    for declaration in declarations_for(kind, registry=registry):
+        if declaration["reference_type"] != "entity":
+            continue
+        for path, value in _at(data, declaration["path"].split(".")):
+            yield path, value, declaration["role"]
 
 
 def validate_entity_references(connection, fact, subject_id):
@@ -373,21 +394,19 @@ def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=
                 component="fact",
                 record_id=row["id"],
             )
-        for reference in references_from_data(row["kind"], data[row["id"]]):
-            if reference["reference_type"] == "entity":
-                expected.append(
-                    (
-                        row["id"],
-                        reference["path"],
-                        reference["entity_id"],
-                        reference["role"],
-                        row["kind"],
-                        row["period"],
-                        row["digest"],
-                    )
-                )
+        for path, entity_id, role in _entity_reference_fields(
+            row["kind"], data[row["id"]], registry=registry
+        ):
+            expected.append(
+                (row["id"], path, entity_id, role, row["kind"], row["period"], row["digest"])
+            )
     if identity_match == "current":
-        expected = _current_bindings(connection, expected, registry=registry)
+        if getattr(registry, "content_version", None) == 1:
+            from .content_v1_semantics import v1_current_bindings
+
+            expected = v1_current_bindings(connection, expected, registry=registry)
+        else:
+            expected = _current_bindings(connection, expected, registry=registry)
     return expected
 
 
@@ -432,6 +451,8 @@ def _current_bindings(connection, rows, *, registry=None):
             changes.append((record["sequence"], matches[0]))
             if record["replacement_subject_id"] and record["replacement_subject_id"] not in visited:
                 pending.add(record["replacement_subject_id"])
+    if not changes:
+        return rows
     output = list(rows)
     owners = {(row[0], row[1]): [subjects[row[0]]] for row in rows}
     restored_ids = [change["after_fact_id"] for _, change in changes if change.get("reinstated")]
@@ -450,16 +471,22 @@ def _current_bindings(connection, rows, *, registry=None):
             "AND c.fact_id=i.after_fact_id",
             (canonical(sorted(opening_after_ids)),),
         ):
-            outcome = json.loads(saved["outcome"])
+            try:
+                outcome = source_json_loads(saved["outcome"])
+            except ValueError as exc:
+                raise KernelError(
+                    "content_integrity_failed", "期初纠错采用结果 JSON 解释不唯一"
+                ) from exc
             if digest(outcome) != saved["digest"] or saved["fact_id"] in opening_after:
                 raise KernelError(
                     "identity_correction_corrupt", "期初纠错的精确采用结果不唯一或已损坏"
                 )
             values = outcome["values"]
             opening_after[saved["fact_id"]] = {
-                ref["path"]: ref["entity_id"]
-                for ref in references_from_data(values["source_kind"], values["basis_data"])
-                if ref["reference_type"] == "entity"
+                path: entity_id
+                for path, entity_id, _ in _entity_reference_fields(
+                    values["source_kind"], values["basis_data"], registry=registry
+                )
             }
         if opening_after.keys() != opening_after_ids:
             raise KernelError("identity_correction_corrupt", "期初纠错缺少精确采用结果")

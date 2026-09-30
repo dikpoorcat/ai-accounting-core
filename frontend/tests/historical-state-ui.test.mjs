@@ -19,7 +19,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
       const match = /\/src\/views\/(Brief|Funds|Employees|Assets|Reports)View\.vue$/.exec(id.replaceAll("\\", "/"));
       if (!match) return;
       const key = match[1].toLowerCase(), refName = key === "funds" ? "funds" : key === "reports" ? "report" : "response";
-      code = code.replace(new RegExp(`const ${refName} = ref<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(globalThis.historicalUi.${key}${key === "funds" ? ".data" : ""})`);
+      code = code.replace(new RegExp(`const ${refName} = (?:ref|shallowRef)<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(globalThis.historicalUi.${key}${key === "funds" ? ".data" : ""})`);
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-11")').replaceAll("{ immediate: true }", "{ immediate: false }");
       return code;

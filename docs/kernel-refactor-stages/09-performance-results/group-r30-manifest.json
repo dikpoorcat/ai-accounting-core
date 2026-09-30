@@ -1,0 +1,103 @@
+{
+  "source_sha256": "bbb18c584ee827224daade05fbb138d688b4249d35b850d3d02171dcff84da2b",
+  "group_status": "511 passed, 1 failed; original failure preserved",
+  "followup": "Two test-only corrections passed; production source unchanged.",
+  "files": [
+    {
+      "source": ".tmp\\stage9-group-r30\\result.json",
+      "archive": "group-r30-result.json.gz",
+      "source_bytes": 3605,
+      "sha256": "ba8448543c4fb8b48d60e3fd36edac3d09220c2a4bdc8e09c561bcb7247d7211"
+    },
+    {
+      "source": ".tmp\\stage9-group-r30\\shard-1.log",
+      "archive": "group-r30-shard-1.log.gz",
+      "source_bytes": 1716,
+      "sha256": "71c42ce2603bdb34bb10d7ee2f419eeaae25911da3c579b24bfef3a7ff61e472"
+    },
+    {
+      "source": ".tmp\\stage9-group-r30\\shard-2.log",
+      "archive": "group-r30-shard-2.log.gz",
+      "source_bytes": 4376,
+      "sha256": "711117384e3e33ffb1169e2b51cc1e5f657a13bbf7024415bdc57989583e9dd5"
+    },
+    {
+      "source": ".tmp\\stage9-r30-snapshot-fix-result.json",
+      "archive": "group-r30-snapshot-fix.json.gz",
+      "source_bytes": 148,
+      "sha256": "3e42a5f804c1ea79e2e892d1466695ae982261350e00796b4fda7ad00563cb87"
+    },
+    {
+      "source": ".tmp\\stage9-r30-snapshot-fix.log",
+      "archive": "group-r30-snapshot-fix.log.gz",
+      "source_bytes": 100,
+      "sha256": "3dc3880bc5bd941f5a8264aeccc5c2c7062c40a23099710103d9a79a48b87aac"
+    },
+    {
+      "source": ".tmp\\stage9-r30-backup-repair.json",
+      "archive": "group-r30-backup-repair.json.gz",
+      "source_bytes": 1053,
+      "sha256": "04ff748d1bad625fd248c0ae67c7afcf2554efd235553f4418fcdb5391215d00"
+    },
+    {
+      "source": ".tmp\\stage9-r30-backup-repair.log",
+      "archive": "group-r30-backup-repair.log.gz",
+      "source_bytes": 880,
+      "sha256": "0f316c40d3c5e640aac63ccf266ced1192e9bc8b91425dcbc4e0bf1d5dff78bf"
+    },
+    {
+      "source": ".tmp\\stage9-r30-asset-scope-result.json",
+      "archive": "group-r30-asset-scope.json.gz",
+      "source_bytes": 194,
+      "sha256": "ea99b7b0663496851ea467e41ecbb45abf5eabd23eb07df4e4462eac30eb9cc0"
+    },
+    {
+      "source": ".tmp\\stage9-r30-asset-scope.log",
+      "archive": "group-r30-asset-scope.log.gz",
+      "source_bytes": 100,
+      "sha256": "77f96f23dfb0762bd878af4211104e90b75b5a5ca5396e29c2fc82bcef0c3573"
+    },
+    {
+      "source": ".tmp\\stage9-r30-static-check.json",
+      "archive": "group-r30-static.json.gz",
+      "source_bytes": 2140,
+      "sha256": "ef6c0107822100ec035c902f02cd02bd60f5568b2cf5e8cfbd084ac1f0b43423"
+    },
+    {
+      "source": ".tmp\\stage9-r30-static-check.log",
+      "archive": "group-r30-static.log.gz",
+      "source_bytes": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "source": ".tmp\\stage9-release-main-12-verified-r30.json",
+      "archive": "stage9-release-main-12-verified-r30.json.gz",
+      "source_bytes": 9669,
+      "sha256": "556e8459285713cfd38608815879f07276ea4436c6730b62cf4d0656b654eb2c"
+    },
+    {
+      "source": ".tmp\\stage9-release-main-12-switch-verified-r30.json",
+      "archive": "stage9-release-main-12-switch-verified-r30.json.gz",
+      "source_bytes": 3892,
+      "sha256": "f8ed5d6b443b6ab90b04d4c2d4eed0e49720a8d3e09fa9dbc688f9171796e31c"
+    },
+    {
+      "source": ".tmp\\stage9-main12-r30-memory.json",
+      "archive": "stage9-main12-r30-memory.json.gz",
+      "source_bytes": 12302,
+      "sha256": "0beff9602f40c5d37f67aef6f597dd455447dbe887fcd04a6c7f9329dc201d3a"
+    },
+    {
+      "source": ".tmp\\stage9-release-main-48-verified-r30.json",
+      "archive": "stage9-release-main-48-verified-r30.json.gz",
+      "source_bytes": 28076,
+      "sha256": "eb8f876481eb4f62bcddd8c8f7c2ee6175b35c973f4b0ffcad99652785d12c46"
+    },
+    {
+      "source": ".tmp\\stage9-main48-r30-memory.json",
+      "archive": "stage9-main48-r30-memory.json.gz",
+      "source_bytes": 138346,
+      "sha256": "c54f935f0086db10526ae3f71549d06f182d69f22079005c60e43211da7672a1"
+    }
+  ]
+}

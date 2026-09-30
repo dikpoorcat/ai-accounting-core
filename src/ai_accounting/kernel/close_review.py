@@ -325,8 +325,7 @@ def _adopted_policy(fact, *, hashed: str):
     )
 
 
-def _adopted_payroll_confirmation(row, fact_rows):
-    confirmation = json.loads(row["outcome"]).get("values", {}).get("payroll_confirmation")
+def _adopted_payroll_confirmation(row, fact_rows, confirmation):
     if row["kind"] not in PAYROLL_RESULT_KINDS or confirmation is None:
         _fail("payroll_confirmation_source_missing")
     confirmation_ids = _confirmation_fact_ids(confirmation)
@@ -352,24 +351,49 @@ def _adopted_payroll_confirmation(row, fact_rows):
     )
 
 
-def business_adopted_basis(connection, engine, calculation_ids):
+def business_adopted_basis(connection, engine, calculation_ids, *, reads=None):
     """Return exact immutable policy, payroll-confirmation and evidence references.
 
     This is deliberately rooted in the named calculation versions.  It never
     consults a current policy/profile head and never infers policy identity from
     a kind suffix.
     """
+    if reads is not None and (
+        not isinstance(reads, QueryReads)
+        or reads.engine is not engine
+        or reads.connection is not connection
+        or not reads._snapshot_active
+        or not connection.in_transaction
+    ):
+        raise ValueError("adopted basis reads must belong to this engine and read snapshot")
     calculations = _direct_calculation_ids(calculation_ids)
     if not calculations:
         return {"policies": [], "payroll_confirmations": [], "evidence": []}
+    outcome_sql = (
+        "outcome"
+        if reads is None
+        else "CASE WHEN kind IN ("
+        + ",".join("?" for _ in PAYROLL_RESULT_KINDS)
+        + ") THEN outcome ELSE NULL END outcome"
+    )
+    parameters = (
+        (canonical(calculations),)
+        if reads is None
+        else (*sorted(PAYROLL_RESULT_KINDS), canonical(calculations))
+    )
     rows = {
         row["id"]: dict(row)
         for row in connection.execute(
-            "SELECT id,fact_id,kind,outcome,digest FROM calculation WHERE id IN "
-            "(SELECT value FROM json_each(?)) ORDER BY id",
-            (canonical(calculations),),
+            f"SELECT id,fact_id,kind,{outcome_sql},digest FROM calculation WHERE id IN "
+            "(SELECT value FROM json_each(?)) ORDER BY id", parameters,
         )
     }
+    if reads is not None:
+        reads.verify_selected_content(rows)
+    else:
+        from .integrity import verify_sources
+
+        verify_sources(engine, connection, calculation_ids=rows)
     fact_ids = {row["fact_id"] for row in rows.values()}
     fact_ids.update(
         row[0]
@@ -379,7 +403,7 @@ def business_adopted_basis(connection, engine, calculation_ids):
             (canonical(calculations),),
         )
     )
-    facts = QueryReads(engine, connection).facts(fact_ids)
+    facts = (reads or QueryReads(engine, connection)).facts(fact_ids)
     fact_rows = {
         row["id"]: dict(row)
         for row in connection.execute(
@@ -395,7 +419,11 @@ def business_adopted_basis(connection, engine, calculation_ids):
     ]
     payroll_confirmations = []
     for _ident, row in sorted(rows.items()):
-        confirmation = json.loads(row["outcome"]).get("values", {}).get("payroll_confirmation")
+        if reads is not None and row["kind"] not in PAYROLL_RESULT_KINDS:
+            continue
+        from .stored_json import load_outcome
+
+        confirmation = load_outcome(row["outcome"]).get("values", {}).get("payroll_confirmation")
         if row["kind"] in PAYROLL_RESULT_KINDS and confirmation is not None:
             confirmation_ids = _confirmation_fact_ids(confirmation)
             payroll_confirmations.append(
@@ -406,6 +434,7 @@ def business_adopted_basis(connection, engine, calculation_ids):
                         for fact_id in confirmation_ids
                         if fact_id in fact_rows
                     },
+                    confirmation,
                 )
             )
     evidence_ids = sorted({proof for fact in facts.values() for proof in fact["evidence"]})
@@ -468,7 +497,10 @@ def _basis_inventory(connection, manifest):
     for ident, row in raw.items():
         if row["kind"] not in PAYROLL_RESULT_KINDS:
             continue
-        confirmation = json.loads(row["outcome"]).get("values", {}).get("payroll_confirmation")
+        from .stored_json import verify_outcome_bytes
+
+        outcome = verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+        confirmation = outcome.get("values", {}).get("payroll_confirmation")
         if confirmation is not None:
             payroll.append(ident)
     evidence = {manifest["owner_confirmation"]}
@@ -528,8 +560,8 @@ def _confirmation_fact_ids(confirmation):
     return list(dict.fromkeys(identifiers))
 
 
-def _voucher_cards(connection, manifest, keys):
-    selected = {item["id"]: item for item in manifest["vouchers"] if item["id"] in set(keys)}
+def _voucher_cards(connection, vouchers, keys):
+    selected = {item["id"]: item for item in vouchers if item["id"] in set(keys)}
     cards = {}
     if selected:
         rows = {
@@ -607,7 +639,7 @@ def _voucher_cards(connection, manifest, keys):
     return [cards[key] for key in keys]
 
 
-def _adopted_cards(connection, manifest, keys):
+def _adopted_cards(connection, adopted_results, asset_cards, asset_batches, keys):
     selected = set(keys)
     rows = {
         row["id"]: dict(row)
@@ -619,12 +651,12 @@ def _adopted_cards(connection, manifest, keys):
         )
     }
     cards = {}
-    declared = {item["calculation_id"]: item for item in manifest["adopted_results"]}
+    declared = {item["calculation_id"]: item for item in adopted_results}
     asset_roles = {}
-    for item in manifest["asset_card_adoptions"]:
+    for item in asset_cards:
         asset_roles[item["calculation_id"]] = "asset_card_basis"
         asset_roles[item["acceptance_calculation_id"]] = "asset_acceptance_basis"
-    for item in manifest["asset_batch_adoptions"]:
+    for item in asset_batches:
         asset_roles[item["owner_calculation_id"]] = "asset_batch_owner"
     for ident, row in rows.items():
         item = declared.get(ident)
@@ -634,7 +666,7 @@ def _adopted_cards(connection, manifest, keys):
             else next(
                 (
                     value[field]
-                    for value in manifest["asset_card_adoptions"]
+                    for value in asset_cards
                     for key, field in (
                         ("calculation_id", "result_digest"),
                         ("acceptance_calculation_id", "acceptance_result_digest"),
@@ -714,7 +746,10 @@ def _payroll_cards(connection, keys):
         "WHERE c.id IN (SELECT value FROM json_each(?))",
         (canonical(keys),),
     ):
-        confirmation = json.loads(row["outcome"]).get("values", {}).get("payroll_confirmation")
+        from .stored_json import verify_outcome_bytes
+
+        outcome = verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+        confirmation = outcome.get("values", {}).get("payroll_confirmation")
         if row["kind"] not in PAYROLL_RESULT_KINDS or confirmation is None:
             _fail("payroll_confirmation_source_missing")
         confirmation_ids = _confirmation_fact_ids(confirmation)
@@ -728,7 +763,7 @@ def _payroll_cards(connection, keys):
         }
         if set(fact_rows) != set(confirmation_ids):
             _fail("payroll_confirmation_fact_missing")
-        adopted = _adopted_payroll_confirmation(row, fact_rows)
+        adopted = _adopted_payroll_confirmation(row, fact_rows, confirmation)
         mode = confirmation.get("mode")
         mode_label = {
             "monthly_plan": "负责人确认的本月工资方案",
@@ -792,9 +827,46 @@ def _evidence_cards(connection, keys):
 
 def _render_keys(connection, engine, manifest, section, keys):
     if section == "vouchers":
-        return _voucher_cards(connection, manifest, keys)
+        return _voucher_cards(connection, manifest["vouchers"], keys)
     if section == "adopted_bases":
-        return _adopted_cards(connection, manifest, keys)
+        return _adopted_cards(
+            connection,
+            manifest["adopted_results"],
+            manifest["asset_card_adoptions"],
+            manifest["asset_batch_adoptions"],
+            keys,
+        )
+    if section == "policies":
+        return _policy_cards(connection, engine, keys)
+    if section == "payroll_confirmations":
+        return _payroll_cards(connection, keys)
+    if section == "evidence":
+        return _evidence_cards(connection, keys)
+    raise ValueError("unsupported close review section")
+
+
+def _render_frozen_keys(connection, engine, header, section, keys):
+    """Verify and render only the named frozen detail block's authoritative roots."""
+    from .close_storage import read_accounting, read_section
+
+    if section in {"vouchers", "adopted_bases"}:
+        query = (
+            "SELECT c.subject_id FROM json_each(?) ids JOIN voucher_version v ON v.id=ids.value "
+            "JOIN calculation c ON c.id=v.calculation_id"
+            if section == "vouchers"
+            else "SELECT c.subject_id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value"
+        )
+        subjects = {row[0] for row in connection.execute(query, (canonical(keys),))}
+        selected = read_accounting(connection, header, subjects)
+        if section == "vouchers":
+            return _voucher_cards(connection, selected.vouchers, keys)
+        return _adopted_cards(
+            connection,
+            selected.adopted_results,
+            read_section(connection, header, "asset_card_adoptions"),
+            read_section(connection, header, "asset_batch_adoptions"),
+            keys,
+        )
     if section == "policies":
         return _policy_cards(connection, engine, keys)
     if section == "payroll_confirmations":
@@ -832,7 +904,13 @@ def _directory(section, cards):
 
 
 def build_owner_review(
-    connection, engine, manifest, *, _frozen_followups=None, _frozen_position=None
+    connection,
+    engine,
+    manifest,
+    *,
+    _frozen_followups=None,
+    _frozen_position=None,
+    _checked_open=None,
 ):
     """Build the complete immutable v1 owner review inside the caller transaction."""
     working = {**manifest, "_engine": engine}
@@ -1058,7 +1136,7 @@ def build_owner_review(
         from .business_queries import BusinessQueries
 
         prepared = BusinessQueries(engine)._period_readiness(
-            connection, manifest["period"], summary=True
+            connection, manifest["period"], summary=True, _checked_open=_checked_open
         )
         followups = prepared["current_followups"]
         close_issues = sum(
@@ -1078,7 +1156,8 @@ def build_owner_review(
         )
         review_counts = followups["external"].get("basis_review_status_counts", {})
         external_followups += sum(
-            count for state, count in review_counts.items()
+            count
+            for state, count in review_counts.items()
             if state not in {"reviewed", "not_applicable"}
         )
         file_followups = sum(
@@ -1234,11 +1313,12 @@ def read_collection(
     limit=50,
     *,
     _validated_review=None,
+    _render_cards=None,
 ):
     if section not in _SECTION_LABELS:
-        raise ValueError("不支持的关账核对明细")
+        raise KernelError("invalid_command", "不支持的关账核对明细")
     if type(limit) is not int or not 1 <= limit <= DETAIL_BLOCK_SIZE:
-        raise ValueError(f"每页数量必须为 1 至 {DETAIL_BLOCK_SIZE}")
+        raise KernelError("invalid_command", f"每页数量必须为 1 至 {DETAIL_BLOCK_SIZE}")
     review = (
         _validated_review
         if _validated_review is not None
@@ -1266,7 +1346,11 @@ def read_collection(
     block = directory["blocks"][block_index]
     if not 0 <= offset < block["count"]:
         raise KernelError("dashboard_snapshot_changed", "关账核对分页位置已失效")
-    cards = _render_keys(connection, engine, manifest, section, block["keys"])
+    cards = (
+        _render_cards(section, block["keys"])
+        if _render_cards is not None
+        else _render_keys(connection, engine, manifest, section, block["keys"])
+    )
     if len(cards) != block["count"] or digest(cards).hex() != block["digest"]:
         _fail("detail_block_digest_mismatch")
     items = cards[offset : offset + limit]
@@ -1325,19 +1409,20 @@ class CloseReview:
         cursor: str | None = None,
         limit: int = 50,
     ) -> dict:
-        month = YearMonth(period).ordinal
+        try:
+            month = YearMonth(period).ordinal
+        except ValueError as exc:
+            raise KernelError("invalid_command", "会计月份格式不正确") from exc
         with self.engine.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             exact = connection.execute(
-                "SELECT manifest,digest FROM period_close WHERE period=?", (month,)
+                "SELECT period,manifest,digest FROM period_close WHERE period=?", (month,)
             ).fetchone()
             if exact is not None:
-                from .close_contract import require_close_contract
+                from .close_storage import read_section, verified_header
 
-                manifest = require_close_contract(json.loads(exact["manifest"]))
-                if digest(manifest) != exact["digest"]:
-                    _fail("manifest_digest_mismatch")
-                reviewed = reviewed_preview_digest(manifest)
+                header = verified_header(connection, exact)
+                reviewed = header.root["preview_digest"]
                 if preview_digest is not None and preview_digest != reviewed:
                     return self._response(
                         period=period,
@@ -1347,17 +1432,24 @@ class CloseReview:
                         reason="preview_replaced",
                     )
                 binding = exact["digest"].hex()
-                review = manifest["owner_review"]
+                review = require_owner_review(read_section(connection, header, "owner_review"))
                 collection = (
                     read_collection(
                         connection,
                         self.engine,
-                        manifest,
+                        None,
                         binding,
                         section,
                         cursor,
                         limit,
                         _validated_review=review,
+                        _render_cards=lambda section, keys: _render_frozen_keys(
+                            connection,
+                            self.engine,
+                            header,
+                            section,
+                            keys,
+                        ),
                     )
                     if section is not None
                     else None

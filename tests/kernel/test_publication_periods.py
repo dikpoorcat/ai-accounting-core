@@ -104,6 +104,30 @@ def amounts(company, month, *, movement=False):
         }
 
 
+def test_category_group_reads_only_its_contributions(company, monkeypatch):
+    from ai_accounting.kernel import period_balances
+
+    save(company, 10000)
+    publish(company, "category-scope")
+    inspected = []
+    original = period_balances._selected_seals
+
+    def observe(connection, where, parameters):
+        seals = original(connection, where, parameters)
+        inspected.extend(row[1] for row in seals)
+        return seals
+
+    monkeypatch.setattr(period_balances, "_selected_seals", observe)
+    with company[0].store.connection(read_only=True) as connection:
+        month = YearMonth("2026-01").ordinal
+        assert balance_totals(connection, month, ("bank", "cash", "platform")) == []
+        assert inspected == []
+        assert balance_totals(connection, month, ("test_position", "bank")) == [
+            {"category": "test_position", "key": "bank-a", "amount": 10000}
+        ]
+        assert inspected == ["test_position"]
+
+
 def test_fixed_baseline_repeated_correction_zero_and_key_change(company):
     save(company, 10000)
     publish(company, "initial")

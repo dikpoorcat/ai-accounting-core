@@ -3,11 +3,14 @@
 import pytest
 from test_payroll_corrections import Company
 
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.cash import CashFunding, CashPayment
 from ai_accounting.kernel.domains.labor_assets import AssetAdvance, LaborProjectCost
 from ai_accounting.kernel.domains.transactions import Allocation, Settlement
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.query_semantics import project_settlement_followup
+from ai_accounting.kernel.settlement_projection import settlement_followup_summary
 from ai_accounting.kernel.types import YearMonth
 
 
@@ -110,6 +113,16 @@ def test_later_remaining_payment_preserves_prior_offset_and_closed_snapshot(tmp_
         )
     if closed:
         assert Periods(company.engine).closed_report("2026-01") == frozen
+    with company.engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        queries = BusinessQueries(company.engine)
+        for period in ("2026-01", "2026-02"):
+            for current in (False, True):
+                assert settlement_followup_summary(
+                    connection, period, current=current
+                ) == project_settlement_followup(
+                    queries.settlement_summary(connection, period, current=current)
+                )
 
 
 def test_same_month_excess_still_invalidates_and_rejects_publication(tmp_path):
@@ -126,3 +139,51 @@ def test_same_month_excess_still_invalidates_and_rejects_publication(tmp_path):
     assert error.value.code == "overallocated_obligation"
     assert company.count("calculation") == count
     assert company.current("application", "settlement").id == original.id
+
+
+def test_current_settlement_rejects_missing_later_payment_projection(tmp_path):
+    company = setup(tmp_path)
+    company.save(
+        cash_payment("2026-02", 800000, allocation("labor_project_cost", "cost", "net", 800000)),
+        "balance-paid",
+    )
+    company.publish("balance-paid")
+    with company.engine.store.connection(read_only=True) as connection:
+        before = BusinessQueries(company.engine).settlement_summary(
+            connection, "2026-01", current=True
+        )
+    assert any(item["remaining_fen"] == 0 for item in before["obligations"])
+    with company.engine.store.connection() as connection:
+        connection.execute(
+            "DELETE FROM settlement_change WHERE posting_period=?",
+            (YearMonth("2026-02").ordinal,),
+        )
+    with company.engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError) as damaged:
+            BusinessQueries(company.engine).settlement_summary(
+                connection, "2026-01", current=True
+            )
+    assert damaged.value.code == "content_integrity_failed"
+
+
+def test_current_settlement_checks_later_nonmatching_publication(tmp_path):
+    company = setup(tmp_path)
+    company.save(
+        CashFunding(
+            period=YearMonth("2026-02"), actual_date="2026-02-01",
+            owner_id="owner", cash_account_id="cash", funding_kind="capital", amount_fen=100,
+        ),
+        "future-capital",
+    )
+    company.publish("future-capital")
+    with company.engine.store.connection() as connection:
+        connection.execute("DROP TRIGGER immutable_calculation_publication_UPDATE")
+        connection.execute(
+            "UPDATE calculation_publication SET mode='open_replace' "
+            "WHERE subject_id='future-capital'"
+        )
+        with pytest.raises(KernelError) as damaged:
+            BusinessQueries(company.engine).settlement_summary(
+                connection, "2026-01", current=True
+            )
+    assert damaged.value.code == "content_integrity_failed"

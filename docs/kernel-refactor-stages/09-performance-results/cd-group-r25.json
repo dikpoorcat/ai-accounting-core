@@ -1,0 +1,65 @@
+{
+  "status": "failed",
+  "started_unix": 1790526917.8690355,
+  "repository_source_sha256": "9b74587d76918aa574918bde64b6695868a870db280c47b9339886a5fdbdbc9f",
+  "candidate_sha256": "046e301bffee8f074c34e9d5cc7f4d5709f2c3bc784bcf784755317e8ee20e07",
+  "file_count": 38,
+  "shards": [
+    {
+      "index": 1,
+      "pid": 75500,
+      "files": [
+        "tests\\kernel\\test_close_reference_selection_work.py",
+        "tests\\kernel\\test_current_adoption_damage.py",
+        "tests\\kernel\\test_dashboard_workforce_assets.py",
+        "tests\\kernel\\test_discovery.py",
+        "tests\\kernel\\test_employee_role_identity_scope.py",
+        "tests\\kernel\\test_foundation_backup.py",
+        "tests\\kernel\\test_identity_corrections.py",
+        "tests\\kernel\\test_integrity_content.py",
+        "tests\\kernel\\test_offline_upgrade_history_preservation.py",
+        "tests\\kernel\\test_report_classification_directory.py",
+        "tests\\kernel\\test_report_classification_v1.py",
+        "tests\\kernel\\test_report_flow_integrity.py",
+        "tests\\kernel\\test_reports.py",
+        "tests\\kernel\\test_reports_bounded_reads.py",
+        "tests\\kernel\\test_response_contracts.py",
+        "tests\\kernel\\test_single_month_close.py",
+        "tests\\kernel\\test_stage9_backup_upgrade_history.py",
+        "tests\\kernel\\test_stage9_registered_verifier.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-cd-group-r25\\shard-1.log",
+      "exit_code": 1
+    },
+    {
+      "index": 2,
+      "pid": 77864,
+      "files": [
+        "tests\\kernel\\test_asset_batch_reads.py",
+        "tests\\kernel\\test_brief_adopted_basis_reads.py",
+        "tests\\kernel\\test_close_accounting_filter.py",
+        "tests\\kernel\\test_close_direct_contract.py",
+        "tests\\kernel\\test_close_management_sections.py",
+        "tests\\kernel\\test_dashboard_bounded_reads.py",
+        "tests\\kernel\\test_dashboard_funds_alignment.py",
+        "tests\\kernel\\test_dashboard_metadata.py",
+        "tests\\kernel\\test_dashboard_projection.py",
+        "tests\\kernel\\test_dashboard_transport.py",
+        "tests\\kernel\\test_integrity_asset_card_close.py",
+        "tests\\kernel\\test_local_service.py",
+        "tests\\kernel\\test_maintenance.py",
+        "tests\\kernel\\test_offline_upgrade.py",
+        "tests\\kernel\\test_opening_adoption.py",
+        "tests\\kernel\\test_read_indexes.py",
+        "tests\\kernel\\test_review_no_impact.py",
+        "tests\\kernel\\test_runtime_backup.py",
+        "tests\\kernel\\test_v1_verified_close_prefix.py",
+        "tests\\kernel\\test_verified_source_lease.py"
+      ],
+      "log": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-cd-group-r25\\shard-2.log",
+      "exit_code": 1
+    }
+  ],
+  "elapsed_seconds": 430.116179227829,
+  "source_unchanged": true
+}

@@ -105,7 +105,8 @@ def test_snapshot_lifetime_clears_all_memos_and_closes_read_only_connection(engi
             )
             reads.verify_close_references([voucher_reference(reads.connection)])
             assert reads._verified_close_references
-            assert reads._metadata and reads._lines and reads._close_manifests
+            assert reads._metadata and reads._lines and reads._close_headers
+            assert reads._verified_close_storage_parts
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 reads.connection.execute("DELETE FROM calculation_current")
             if fail:
@@ -118,6 +119,93 @@ def test_snapshot_lifetime_clears_all_memos_and_closes_read_only_connection(engi
             assert not value
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         escaped.connection.execute("SELECT 1")
+
+
+def test_close_rows_reuses_only_successfully_verified_manifest_in_snapshot(engine, monkeypatch):
+    from ai_accounting.kernel import close_storage
+    from ai_accounting.kernel.types import YearMonth
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    month = YearMonth("2026-01").ordinal
+    original = close_storage.decode_close
+    checked = []
+
+    def counted(connection, row, **options):
+        checked.append(str(YearMonth.from_ordinal(row["period"])))
+        return original(connection, row, **options)
+
+    monkeypatch.setattr(close_storage, "decode_close", counted)
+    with QueryReads.snapshot(engine) as reads:
+        row = reads.close_rows(periods=[month])[0]
+        assert checked == ["2026-01"]
+        manifest = reads.close_manifest(row)
+        assert manifest is reads._close_manifests[month]
+        assert reads.close_manifest(reads.close_rows(periods=[month])[0]) is manifest
+        assert checked == ["2026-01"]
+    assert reads._close_manifests == {}
+
+
+def test_ordinary_close_reads_do_not_reuse_manifest_across_transactions(engine, monkeypatch):
+    from ai_accounting.kernel import close_storage
+    from ai_accounting.kernel.types import YearMonth
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    month = YearMonth("2026-01").ordinal
+    original = close_storage.decode_close
+    checked = []
+
+    def counted(connection, row, **options):
+        checked.append(str(YearMonth.from_ordinal(row["period"])))
+        return original(connection, row, **options)
+
+    monkeypatch.setattr(close_storage, "decode_close", counted)
+    with engine.store.connection(read_only=True) as connection:
+        reads = QueryReads(engine, connection)
+        for _ in range(2):
+            connection.execute("BEGIN")
+            row = reads.close_rows(periods=[month])[0]
+            reads.close_manifest(row)
+            assert not reads._closes and not reads._close_manifests
+            connection.rollback()
+    assert checked == ["2026-01"] * 4
+
+
+def test_different_reference_leaves_reuse_only_verified_source_in_same_snapshot(engine):
+    from ai_accounting.kernel.types import YearMonth
+
+    save(engine)
+    publish(engine)
+    close(engine)
+    with QueryReads.snapshot(engine) as reads:
+        references = [
+            dict(row)
+            for row in reads.connection.execute(
+                "SELECT * FROM close_reference WHERE path IN (?,?)",
+                (indexes.CLOSE_CALCULATIONS, indexes.CLOSE_VOUCHERS),
+            )
+        ]
+        assert len(references) >= 2
+        reads.authoritative_close_rows(periods=[YearMonth("2026-01").ordinal])
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
+        try:
+            for reference in references:
+                reads.verify_close_references([reference])
+            broken = references[-1] | {"reference_id": "different-immutable-source"}
+            for _ in range(2):
+                with pytest.raises(KernelError) as error:
+                    reads.verify_close_references([broken])
+                assert error.value.details["reason"] == "storage_reference_source_missing"
+        finally:
+            reads.connection.set_trace_callback(None)
+        assert any("close_storage_block" in sql for sql in statements)
+        assert not any(
+            "FROM period_close" in sql or "FROM read_index_source" in sql for sql in statements
+        )
 
 
 def test_snapshot_rejects_transaction_replacement_and_savepoints(engine):
@@ -142,10 +230,10 @@ def test_ordinary_reads_never_memoize_semantics_or_references_across_transaction
     checks = []
     original = indexes.verify_close_references
 
-    def counted(connection, references):
+    def counted(connection, references, **options):
         references = list(references)
         checks.append(references)
-        return original(connection, references)
+        return original(connection, references, **options)
 
     monkeypatch.setattr(indexes, "verify_close_references", counted)
     with engine.store.connection(read_only=True) as connection:
@@ -212,10 +300,10 @@ def test_reference_memo_requires_each_exact_field_and_does_not_cache_failures(en
     checks = []
     original = indexes.verify_close_references
 
-    def counted(connection, references):
+    def counted(connection, references, **options):
         references = list(references)
         checks.append(references)
-        return original(connection, references)
+        return original(connection, references, **options)
 
     monkeypatch.setattr(indexes, "verify_close_references", counted)
     with QueryReads.snapshot(engine) as reads:
@@ -225,25 +313,27 @@ def test_reference_memo_requires_each_exact_field_and_does_not_cache_failures(en
         checked_count = len(checks)
         reads.verify_close_references([good])
         assert len(checks) == checked_count
-        for field, bad_value in (
-            ("close_period", good["close_period"] + 1),
-            ("path", indexes.CLOSE_CALCULATIONS),
-            ("position", "999"),
-            ("reference_type", "fact"),
-            ("reference_id", "missing-voucher"),
-            ("related_id", None),
+        for field, bad_value, expected_code in (
+            ("close_period", good["close_period"] + 1, "read_index_integrity_failed"),
+            ("path", indexes.CLOSE_CALCULATIONS, "read_index_integrity_failed"),
+            ("position", "999", "content_integrity_failed"),
+            ("reference_type", "fact", "read_index_integrity_failed"),
+            ("reference_id", "missing-voucher", "content_integrity_failed"),
+            ("related_id", None, "read_index_integrity_failed"),
         ):
             bad = good | {field: bad_value}
             for _ in range(2):
-                with pytest.raises(KernelError, match="精确引用目录"):
+                with pytest.raises(KernelError) as failure:
                     reads.verify_close_references([good, bad])
+                assert failure.value.code == expected_code
                 assert checks[-1] == [bad]
             checked_count = len(checks)
             reads.verify_close_references([good])
             assert len(checks) == checked_count
         numeric_position = good | {"position": int(good["position"])}
-        with pytest.raises(KernelError, match="精确引用目录"):
+        with pytest.raises(KernelError) as failure:
             reads.verify_close_references([numeric_position, good | {"reference_id": "missing"}])
+        assert failure.value.code == "content_integrity_failed"
         # Even the successful prefix must be checked again after a mixed batch fails.
         reads.verify_close_references([numeric_position])
         assert checks[-1] == [numeric_position]

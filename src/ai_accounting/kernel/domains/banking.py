@@ -8,6 +8,12 @@ from ..contracts import Fact, KernelError, NeedsInformation, Outcome, Read
 from ..types import ActualDate, Fen, YearMonth, sum_fen
 from .transactions import Identifier
 
+# Exact reconciliation lookup; the row ordinal remains the immutable child key.
+BANK_RECONCILIATION_READ_DDL = """
+CREATE INDEX bank_reconciliation_reference ON fact_bank_reconciliation_matches(
+ revision_id,reference,source_kind,source_id);
+"""
+
 CashKind = Literal[
     "payment",
     "funding",
@@ -250,6 +256,16 @@ class Match(BaseModel):
     )
 
 
+def _previous_reconciliation_read(bank_account_id: str, period: YearMonth) -> Read | None:
+    if period.ordinal == 0:
+        return None
+    previous = YearMonth.from_ordinal(period.ordinal - 1)
+    return Read(
+        "calculation", "bank_reconciliation",
+        f"bank:{bank_account_id}:{previous}", period,
+    )
+
+
 class BankReconciliation(Fact):
     kind: ClassVar[str] = "bank_reconciliation"
     material_category: ClassVar[str] = "bank"
@@ -270,6 +286,7 @@ class BankReconciliation(Fact):
         from ..identity_corrections import opening_binding_reads
 
         key = f"bank:{self.bank_account_id}"
+        previous = _previous_reconciliation_read(self.bank_account_id, self.period)
         return (
             Read("fact", "bank_statement", "@" + self.statement_id),
             Read("calculation", "bank_statement", "@" + self.statement_id),
@@ -277,7 +294,7 @@ class BankReconciliation(Fact):
             Read("calculation", "bank_opening", key),
             Read("calculation", "opening_bank", key),
             *opening_binding_reads(key),
-            Read("calculation", self.kind, key, self.period),
+            *((previous,) if previous is not None else ()),
             *cash_reads(f"{key}:{self.period}"),
             *(
                 Read("fact", kind, "@" + source_id)
@@ -310,9 +327,8 @@ def calculate_reconciliation(version, context):
     openings = declared_openings or continuations
     if len(openings) != 1 or openings[0]["period"] > fact.period:
         raise NeedsInformation("bank_opening", "需要明确账面起点；银行流水期初不能自动代替账面期初")
-    previous = context.select(
-        Read("calculation", fact.kind, f"bank:{fact.bank_account_id}", fact.period)
-    )
+    previous_read = _previous_reconciliation_read(fact.bank_account_id, fact.period)
+    previous = context.select(previous_read) if previous_read is not None else ()
     prior = max(previous, key=lambda item: item.period, default=None)
     if prior:
         if prior.period.ordinal + 1 != fact.period.ordinal:

@@ -4,8 +4,10 @@ from urllib.parse import quote
 
 import test_resident_service as resident_cases
 from entity_fixture import seed_entities
+from pydantic import TypeAdapter
 from test_resident_service import PASSWORD, cookie_header
 
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.http import wire_money
 
 resident = resident_cases.resident
@@ -23,6 +25,109 @@ def authenticated(resident):
     token = service.security.login("owner", PASSWORD).session_token
     cookies, _ = http.surface(token)
     return {"Cookie": cookie_header(cookies), "Origin": http.origin}, token
+
+
+def test_dashboard_internal_validation_failure_is_http_500_but_bad_query_is_400(
+    resident, monkeypatch
+):
+    service, _, _, http, _ = resident
+    headers, _ = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "损坏内容状态码测试企业")["id"]
+
+    def corrupt_brief(*_args, **_kwargs):
+        TypeAdapter(int).validate_python("corrupt stored amount")
+
+    monkeypatch.setattr(Dashboard, "brief", corrupt_brief)
+    path = f"/api/dashboard/brief?company_id={company}&period=2026-09"
+    status, _, _, internal = http.request(path, headers=headers)
+    assert status == 500
+    assert internal["status"] == "rejected" and internal["code"] == "internal_error"
+
+    status, _, _, invalid = http.request(path + "&limit=invalid", headers=headers)
+    assert status == 400
+    assert invalid["status"] == "rejected" and invalid["code"] == "invalid_command"
+
+
+def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
+    service, _, _, http, _ = resident
+    headers, _ = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "读参数状态码测试企业")["id"]
+    for route, query in (
+        ("brief", "period=bad"),
+        ("brief", "section=invalid"),
+        ("brief", "cursor=unbound"),
+        ("brief", "limit=501"),
+        ("brief", "voucher_number=0"),
+        ("brief", "voucher_number=1&voucher_version_id=other"),
+        ("funds", "movement_account_type=bank"),
+        ("funds", "movement_account_type=invalid&movement_account_id=account"),
+        ("funds", "statement_account_id="),
+        ("employees", "section=settlement_events"),
+        ("employees", "employee_filter=invalid"),
+        ("assets", "section=source_history"),
+        ("assets", "asset_filter=invalid"),
+        ("business-status", "period=2026-09&subject_id=subject&section=invalid"),
+        ("quarterly-report", "year=0&quarter=1"),
+        ("quarterly-report", "year=2026&quarter=5"),
+        ("close-review", "period=bad"),
+    ):
+        status, _, _, result = http.request(
+            f"/api/dashboard/{route}?company_id={company}&{query}", headers=headers
+        )
+        assert status == 400, (route, query, result)
+        assert result["status"] == "rejected" and result["code"] == "invalid_command"
+
+
+    for route, query in (
+        ("overview", "period=bad"),
+        ("ledger", "period=bad"),
+        ("ledger", "period=2026-09&limit=501"),
+        ("trace", ""),
+        ("closed_report", "period=bad"),
+        ("jobs", "status=invalid"),
+        ("jobs", "limit=101"),
+        ("jobs", "job_id="),
+    ):
+        status, _, _, result = http.request(
+            f"/api/local/{route}?company_id={company}&{query}", headers=headers
+        )
+        assert status == 400, (route, query, result)
+        assert result["status"] == "rejected" and result["code"] == "invalid_command"
+
+
+def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
+    service, _, _, http, _ = resident
+    headers, _ = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "跨月简报合同测试企业")["id"]
+    engine = service.engine(company)
+    seed_entities(engine, [("supplier", "organization", None)])
+    proof = engine.register_evidence(
+        b"synthetic earlier-month proof", "text/plain", "fixture", request_id="proof"
+    )["digest"]
+    for period in ("2026-01", "2026-03"):
+        engine.save_fact(
+            "expense", f"expense-{period}",
+            {
+                "period": period,
+                "amount_fen": 10000,
+                "counterparty_id": "supplier",
+                "expense_class": "administration",
+                "creditor_kind": "supplier",
+            },
+            evidence=(proof,), expected_revision=0, request_id=f"save-{period}",
+        )
+
+    status, _, _, context = http.request(
+        f"/api/dashboard/context?company_id={company}", headers=headers
+    )
+    assert status == 200 and context["default_period"] == "2026-03"
+    status, _, _, brief = http.request(
+        f"/api/dashboard/brief?company_id={company}&period=2026-03", headers=headers
+    )
+    assert status == 200, brief
+    issues = brief["data"]["validation"]["issues"]
+    assert {"field": "close_order", "code": "earlier_period_open",
+            "message": "须先处理并关闭前面有业务的月份", "period": "2026-01"} in issues
 
 
 def test_restored_routes_and_empty_authenticated_catalog(resident):

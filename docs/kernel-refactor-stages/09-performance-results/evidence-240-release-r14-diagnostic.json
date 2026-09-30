@@ -1,0 +1,264 @@
+{
+  "status": "complete",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r14-release",
+  "source_inventory": {
+    "status": "verified",
+    "sha256": "56eaabcd8e2d38ce2b04d077afb7d8355d8906c5cf0bd5f9f8a4b8942eeabee8",
+    "file_count": 499
+  },
+  "measurement_harness": {
+    "path": "D:\\GitHub\\ai-accounting-core\\scripts\\benchmark_stage9_evidence.py",
+    "sha256": "283fc5913792d99eec765c2169a20b4ab2d0a0ee35b057fb327c4bcc3bb87521",
+    "separate_from_fixed_source": true
+  },
+  "workspace": "D:\\GitHub\\ai-accounting-core",
+  "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-evidence-r14-240-mixed-root",
+  "database": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-evidence-r14-240-mixed-root\\91310000123456789S\\company.sqlite",
+  "size_mib_requested": 240,
+  "chunk_mib": 20,
+  "profile": "mixed",
+  "seed": 9,
+  "python": "3.12.13",
+  "sqlite": "3.53.1",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "format": {
+    "family": "ai-accounting-kernel/2",
+    "kind": "catalog",
+    "status": "released",
+    "version": 1,
+    "fingerprint": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+  },
+  "company_format": {
+    "family": "ai-accounting-kernel/2",
+    "kind": "company",
+    "status": "released",
+    "version": 1,
+    "fingerprint": "c16b169268f62d31e58d74596af1bc80658488364830ffd615497cac220f5ec7"
+  },
+  "company": {
+    "id": "6352fb4388b6427f8c4f931bb937ab9c",
+    "taxpayer_id": "91310000123456789S",
+    "name": "阶段九合成规模企业",
+    "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-evidence-r14-240-mixed-root\\91310000123456789S\\company.sqlite",
+    "database_id": "cc95fd64a6db42639953b74d85354da3"
+  },
+  "phases": {
+    "populate": {
+      "seconds": 19.92382869985886,
+      "rss_before_bytes": 180740096,
+      "sampled_peak_rss_bytes": 265420800,
+      "sampled_peak_brief_worker_rss_by_pid_bytes": {},
+      "sampled_peak_parent_plus_brief_workers_rss_bytes": 265420800
+    },
+    "verify": {
+      "seconds": 0.9666548001114279,
+      "rss_before_bytes": 206540800,
+      "sampled_peak_rss_bytes": 272728064,
+      "sampled_peak_brief_worker_rss_by_pid_bytes": {
+        "70420": 164499456,
+        "81860": 164888576,
+        "38240": 165380096
+      },
+      "sampled_peak_parent_plus_brief_workers_rss_bytes": 767471616
+    },
+    "backup": {
+      "seconds": 11.464659600052983,
+      "rss_before_bytes": 211972096,
+      "sampled_peak_rss_bytes": 276803584,
+      "sampled_peak_brief_worker_rss_by_pid_bytes": {
+        "70420": 164532224,
+        "81860": 164958208,
+        "38240": 165654528
+      },
+      "sampled_peak_parent_plus_brief_workers_rss_bytes": 771948544
+    },
+    "restore": {
+      "seconds": 2.290776199894026,
+      "rss_before_bytes": 214261760,
+      "sampled_peak_rss_bytes": 276819968,
+      "sampled_peak_brief_worker_rss_by_pid_bytes": {
+        "70420": 164548608,
+        "81860": 164958208,
+        "38240": 165670912
+      },
+      "sampled_peak_parent_plus_brief_workers_rss_bytes": 771997696
+    },
+    "restored_verify": {
+      "seconds": 0.9165566998999566,
+      "rss_before_bytes": 214425600,
+      "sampled_peak_rss_bytes": 277024768,
+      "sampled_peak_brief_worker_rss_by_pid_bytes": {
+        "70420": 164548608,
+        "81860": 164958208,
+        "38240": 165675008
+      },
+      "sampled_peak_parent_plus_brief_workers_rss_bytes": 772206592
+    }
+  },
+  "foreground": {
+    "scope": {
+      "entry": "browser_brief_refresh",
+      "limit": 100,
+      "preparation": "complete",
+      "includes_http": true,
+      "includes_browser_rendering": true,
+      "purpose": "evidence_operations_default_brief_browser_contention"
+    },
+    "parallel_brief_enabled": true,
+    "browser_harness": {
+      "path": "D:\\GitHub\\ai-accounting-core\\frontend\\tests\\browser-stage9-hot-refresh.cjs",
+      "sha256": "e2570fdc78b5d76c56d411cb904556c49a5fa4e1fdfcf2ade3942836df41a63e",
+      "separate_from_fixed_source": true
+    },
+    "idle": {
+      "samples": 10,
+      "milliseconds": [
+        202.30000019073486,
+        181.79999995231628,
+        205,
+        224.29999995231628,
+        183.60000014305115,
+        184,
+        183.40000009536743,
+        201.89999985694885,
+        205.40000009536743,
+        205.90000009536743
+      ],
+      "median_ms": 202.10000002384186,
+      "p95_ms": 224.29999995231628,
+      "max_ms": 224.29999995231628
+    },
+    "verify": {
+      "samples": 2,
+      "milliseconds": [
+        202.40000009536743,
+        225.90000009536743
+      ],
+      "median_ms": 214.15000009536743,
+      "p95_ms": 225.90000009536743,
+      "max_ms": 225.90000009536743
+    },
+    "backup": {
+      "samples": 31,
+      "milliseconds": [
+        309,
+        205,
+        204.60000014305115,
+        224.60000014305115,
+        221.5,
+        223.09999990463257,
+        204.79999995231628,
+        227,
+        248,
+        204.79999995231628,
+        227,
+        267.39999985694885,
+        225.70000004768372,
+        224.5,
+        226.5,
+        244.70000004768372,
+        205.59999990463257,
+        205.70000004768372,
+        205,
+        204.29999995231628,
+        204,
+        262.7000000476837,
+        226.60000014305115,
+        225.39999985694885,
+        311.2000000476837,
+        310.2999999523163,
+        203.5,
+        285.7999999523163,
+        261.89999985694885,
+        246.39999985694885,
+        326.2999999523163
+      ],
+      "median_ms": 225.70000004768372,
+      "p95_ms": 311.2000000476837,
+      "max_ms": 326.2999999523163
+    },
+    "restore": {
+      "samples": 6,
+      "milliseconds": [
+        348.10000014305115,
+        371.89999985694885,
+        329,
+        182.20000004768372,
+        226.70000004768372,
+        227.70000004768372
+      ],
+      "median_ms": 278.35000002384186,
+      "p95_ms": 371.89999985694885,
+      "max_ms": 371.89999985694885
+    },
+    "restored_verify": {
+      "samples": 2,
+      "milliseconds": [
+        321.7000000476837,
+        247.40000009536743
+      ],
+      "median_ms": 284.5500000715256,
+      "p95_ms": 321.7000000476837,
+      "max_ms": 321.7000000476837
+    },
+    "errors": []
+  },
+  "memory_scope": {
+    "processes": "benchmark_parent_and_three_known_brief_worker_pids",
+    "sampling_interval_ms": 10,
+    "total_peak": "maximum_of_parent_plus_workers_at_each_sample_not_sum_of_independent_peaks",
+    "browser_process_included": false
+  },
+  "static_runtime_prepared_before_business_root": true,
+  "evidence": {
+    "files": 12,
+    "counts": {
+      "compressible": 6,
+      "incompressible": 6
+    },
+    "bytes_by_profile": {
+      "compressible": 125829120,
+      "incompressible": 125829120
+    },
+    "registered_bytes": 251658240,
+    "count": 12,
+    "distinct_digests": 12,
+    "content_bytes": 251658240
+  },
+  "database_bytes": 256151552,
+  "database_wal_bytes": 266197352,
+  "brief_worker_pids": [
+    70420,
+    81860,
+    38240
+  ],
+  "verification": {
+    "evidence_count": 20
+  },
+  "backup": {
+    "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-evidence-r14-240-mixed-root\\backups\\91310000123456789S.finance-company.zip",
+    "zip_bytes": 126949768,
+    "database_bytes": 256151552,
+    "database_sha256": "fbe487998419574a30f34c4de55be721b031927124c00806840129b7c666924e",
+    "database_format": {
+      "family": "ai-accounting-kernel/2",
+      "fingerprint": "c16b169268f62d31e58d74596af1bc80658488364830ffd615497cac220f5ec7",
+      "kind": "company",
+      "status": "released",
+      "version": 1
+    }
+  },
+  "restore": {
+    "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-evidence-r14-240-mixed-root\\restored.sqlite",
+    "database_bytes": 256151552,
+    "evidence_count": 20,
+    "synthetic_evidence": {
+      "count": 12,
+      "distinct_digests": 12,
+      "content_bytes": 251658240
+    }
+  },
+  "sampled_peak_rss_bytes": 277024768,
+  "sampled_peak_parent_plus_brief_workers_rss_bytes": 772206592,
+  "memory_errors": []
+}

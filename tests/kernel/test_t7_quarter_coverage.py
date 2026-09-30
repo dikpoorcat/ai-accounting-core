@@ -6,15 +6,40 @@ from test_reports import close_quarter, scenario
 
 from ai_accounting.kernel.close_contract import CLOSE_FORMAT, CLOSE_FORMAT_VERSION
 from ai_accounting.kernel.close_review import build_owner_review
-from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.close_storage import write_close
+from ai_accounting.kernel.materials import check_completeness
+from ai_accounting.kernel.period_balance_freeze import (
+    persist_balance_freeze,
+    prepare_balance_freeze,
+)
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close
+from ai_accounting.kernel.report_classification_directory import (
+    DERIVED_ROOT_NAME as REPORT_CLASSIFICATION_ROOT,
+)
+from ai_accounting.kernel.report_classification_directory import (
+    persist_classification_directory,
+    prepare_classification_directory,
+)
+from ai_accounting.kernel.report_flow import persist_report_flow, prepare_report_flow
+from ai_accounting.kernel.report_projection import (
+    persist_report_projection,
+    prepare_report_projection,
+)
+from ai_accounting.kernel.report_semantics import (
+    persist_report_semantics,
+    prepare_report_semantics,
+)
 from ai_accounting.kernel.reports import (
     Reports,
     _applicable_profile,
     _closed_period_issues,
     _periods,
     _report_references,
+)
+from ai_accounting.kernel.settlement_freeze import (
+    persist_freeze_projection,
+    prepare_freeze_projection,
 )
 from ai_accounting.kernel.types import YearMonth, canonical, digest
 
@@ -88,7 +113,9 @@ def insert_closes(engine, rows):
                     "entity_profiles": [],
                     "employee_entities": [],
                 },
-                "material_coverage": {"fact_ids": []},
+                "material_coverage": check_completeness(
+                    connection, YearMonth(period).ordinal, engine.store.registry
+                ),
                 "trial_balance": [],
                 "report_classification": {},
                 "read_version": {
@@ -101,16 +128,40 @@ def insert_closes(engine, rows):
             }
             manifest["owner_review"] = build_owner_review(connection, engine, manifest)
             month = YearMonth(period).ordinal
-            connection.execute(
-                "INSERT INTO period_close VALUES(?,?,?)",
-                (month, canonical(manifest), digest(manifest)),
+            checksum = digest(manifest)
+            settlement = prepare_freeze_projection(connection, month, checksum, 0)
+            report = prepare_report_projection(engine, connection, month, manifest, checksum)
+            semantics = prepare_report_semantics(engine, connection, month, report.rows, checksum)
+            flow = prepare_report_flow(engine, connection, month, report, semantics)
+            classifications = prepare_classification_directory(
+                connection, month, checksum, manifest, flow.content
             )
+            balances = prepare_balance_freeze(connection, month, checksum, 0)
+            write_close(
+                connection,
+                month,
+                manifest,
+                projection_roots={
+                    "settlement": settlement.root_digest,
+                    "report": report.root_digest,
+                    "report_semantics": semantics.root_digest,
+                    "report_flow": flow.root_digest,
+                    REPORT_CLASSIFICATION_ROOT: classifications.root_digest,
+                    "period_balance": balances.root_digest,
+                },
+            )
+            persist_freeze_projection(connection, settlement)
             sync_close(connection, month)
+            persist_report_projection(connection, report)
+            persist_report_semantics(connection, semantics)
+            persist_report_flow(connection, flow)
+            persist_classification_directory(connection, classifications)
+            persist_balance_freeze(connection, balances)
             previous = (month, digest(manifest))
         connection.commit()
 
 
-def test_batch_coverage_matches_original_contract_and_verifies_references_once(book, monkeypatch):
+def test_batch_coverage_matches_original_contract_and_reads_authenticated_closes(book, monkeypatch):
     reports = scenario(book)
     close_quarter(book)
     quarters = [(2026, 2), (2025, 4), (2026, 1)]
@@ -118,22 +169,23 @@ def test_batch_coverage_matches_original_contract_and_verifies_references_once(b
         connection.execute("BEGIN")
         expected = {key: legacy_coverage(reports, connection, *key) for key in quarters}
     verified = []
-    original = QueryReads.verify_close_references
+    original = QueryReads.close_readiness_check
 
-    def verify(reads, references):
-        verified.append(len(references))
-        return original(reads, references)
+    def verify(reads, row, name):
+        if name == "financial_reports":
+            verified.append(row["period"])
+        return original(reads, row, name)
 
     def no_statements(*args, **kwargs):
         raise AssertionError("quarter coverage must not build financial statements")
 
-    monkeypatch.setattr(QueryReads, "verify_close_references", verify)
+    monkeypatch.setattr(QueryReads, "close_readiness_check", verify)
     monkeypatch.setattr(reports, "_report", no_statements)
     actual = reports.closed_period_coverages(quarters)
     assert actual == expected
     assert actual[2026, 1]["complete"] is True
     assert actual[2026, 2]["complete"] is False
-    assert len(verified) == 1 and verified[0] > 0
+    assert verified == [YearMonth(month).ordinal for month in ("2026-01", "2026-02", "2026-03")]
     assert reports.closed_period_coverage(2026, 1) == expected[2026, 1]
 
 
@@ -199,10 +251,11 @@ def test_coverage_reuses_callers_snapshot_and_new_request_sees_later_sources(boo
     assert fresh[2026, 2] != before[2026, 2]
 
 
-def test_batch_still_checks_nonprofile_reference_leaves(book):
+def test_batch_uses_authenticated_fact_ids_when_reverse_directory_is_damaged(book):
     engine = book[0]
     fact = save_profile(book, "first", "2026-01", "2026-01")
     insert_closes(engine, [("2026-03", [fact, "non-profile-reference"])])
+    before = Reports(engine).closed_period_coverages([(2026, 1), (2026, 2)])
     with engine.store.connection() as connection:
         trigger = connection.execute(
             "SELECT sql FROM sqlite_schema WHERE name='immutable_close_reference_UPDATE'"
@@ -214,5 +267,76 @@ def test_batch_still_checks_nonprofile_reference_leaves(book):
         )
         connection.execute(trigger)
         connection.commit()
-    with pytest.raises(KernelError, match="精确引用目录"):
-        Reports(engine).closed_period_coverages([(2026, 1), (2026, 2)])
+    after = Reports(engine).closed_period_coverages([(2026, 1), (2026, 2)])
+    assert after == before
+
+
+def test_coverage_locates_profile_before_irrelevant_frozen_references(book):
+    engine = book[0]
+    profile_id = save_profile(book, "first", "2026-01", "2026-01")
+    with engine.store.connection(read_only=True) as connection:
+        proof = connection.execute("SELECT digest FROM evidence LIMIT 1").fetchone()[0].hex()
+    saved = engine.save_facts(
+        [
+            {
+                "kind": "report_income_tax_confirmation",
+                "subject_id": f"unrelated-tax-{index}",
+                "data": {
+                    "period": "2026-03",
+                    "treatment": "zero",
+                    "cumulative_assessed_fen": 0,
+                    "explanation": f"Synthetic unrelated source {index}",
+                },
+                "evidence": [proof],
+                "expected_revision": 0,
+            }
+            for index in range(1000)
+        ],
+        request_id="coverage-unrelated-tax-batch",
+    )
+    unrelated = [row["fact_id"] for row in saved["results"]]
+    amended = book[1](
+        "report_income_tax_confirmation",
+        "unrelated-tax-0",
+        {
+            "period": "2026-03",
+            "treatment": "zero",
+            "cumulative_assessed_fen": 0,
+            "explanation": "Synthetic revised unrelated source",
+        },
+        revision=1,
+    )["fact_id"]
+    unrelated[0] = amended
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM fact_revision f "
+            "JOIN subject s ON s.id=f.subject_id "
+            "JOIN fact_report_income_tax_confirmation t ON t.revision_id=f.id "
+            "WHERE f.id IN (SELECT value FROM json_each(?)) "
+            "AND s.kind='report_income_tax_confirmation'",
+            (canonical(unrelated),),
+        ).fetchone()[0] == 1000
+    insert_closes(engine, [("2026-03", [profile_id, *unrelated])])
+    reports = Reports(engine)
+
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        expected = legacy_coverage(reports, connection, 2026, 1)
+    with QueryReads.snapshot(engine) as reads:
+        steps = 0
+
+        def tick():
+            nonlocal steps
+            steps += 100
+            return 0
+
+        reads.connection.set_progress_handler(tick, 100)
+        try:
+            actual = reports.closed_period_coverages(
+                [(2026, 1)], connection=reads.connection, reads=reads
+            )[2026, 1]
+        finally:
+            reads.connection.set_progress_handler(None, 0)
+    assert actual == expected
+    assert actual["bookkeeping_start"] == "2026-01"
+    assert steps < 10_000, steps

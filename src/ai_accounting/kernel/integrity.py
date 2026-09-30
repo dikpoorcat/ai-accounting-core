@@ -7,15 +7,19 @@ Missing historical adoption evidence is corruption under the single close contra
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import asdict
 
-from .contracts import KernelError, Read
+from .content_history_context import month_type, read_type, source_json_loads
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_checked as checked
+from .content_history_context import source_digest as digest
+from .content_history_context import source_sum_fen as sum_fen
+from .contracts import KernelError
 from .projections import require_projections
 from .schema import sequence_model, table_name
-from .types import YearMonth, canonical, checked, digest, sum_fen
+from .storage import _snapshot_fact_hashes, _snapshot_fact_raws
 
 
 def _invalid(component, ident, reason):
@@ -30,7 +34,7 @@ def _invalid(component, ident, reason):
 
 def _object(raw, component, ident):
     try:
-        value = json.loads(raw)
+        value = source_json_loads(raw)
     except (ValueError, TypeError):
         _invalid(component, ident, "invalid_json")
     if not isinstance(value, dict):
@@ -152,25 +156,16 @@ def _check_facts(engine, connection, identifiers):
             (canonical(sorted({row["subject_id"] for row in rows})),),
         )
     }
-    raw_facts = engine.store.fact_data_many(connection, [row["id"] for row in rows])
+    fact_ids = [row["id"] for row in rows]
+    raw_hashes = _snapshot_fact_hashes(engine.store, connection, fact_ids)
+    raw_facts = _snapshot_fact_raws(engine.store, connection, fact_ids)
+    missing_raw = [ident for ident in fact_ids if ident not in raw_facts]
+    if missing_raw:
+        raw_facts.update(engine.store.fact_data_many(connection, missing_raw))
     kinds = defaultdict(set)
     for row in rows:
         kinds[subject_kinds.get(row["subject_id"])].add(row["id"])
-    for kind, fact_ids in kinds.items():
-        if kind not in engine.store.registry.models:
-            _invalid("fact", "*", "unknown_fact_kind")
-        for name, field in engine.store.registry.models[kind].model_fields.items():
-            if sequence_model(field.annotation) is None:
-                continue
-            next_numbers = defaultdict(int)
-            for child in connection.execute(
-                f"SELECT c.revision_id,c.item_no FROM {table_name(kind)}_{name} c "
-                "JOIN json_each(?) ids ON ids.value=c.revision_id ORDER BY c.revision_id,c.item_no",
-                (canonical(sorted(fact_ids)),),
-            ):
-                if child["item_no"] != next_numbers[child["revision_id"]]:
-                    _invalid("fact", child["revision_id"], "fact_child_order_mismatch")
-                next_numbers[child["revision_id"]] += 1
+    verify_fact_child_order(engine, connection, kinds)
     facts = {}
     for row in rows:
         ident = row["id"]
@@ -178,9 +173,9 @@ def _check_facts(engine, connection, identifiers):
         if kind not in engine.store.registry.models:
             _invalid("fact", ident, "unknown_fact_kind")
         raw = raw_facts[ident]
-        if digest(raw) != row["digest"]:
+        if raw_hashes.get(ident) != row["digest"] and digest(raw) != row["digest"]:
             _invalid("fact", ident, "fact_digest_mismatch")
-        if raw.get("period") != str(YearMonth.from_ordinal(row["period"])):
+        if raw.get("period") != str(month_type().from_ordinal(row["period"])):
             _invalid("fact", ident, "fact_period_mismatch")
         facts[ident] = {**dict(row), "kind": kind, "data": raw}
     payload = canonical(sorted(facts))
@@ -204,6 +199,32 @@ def _check_facts(engine, connection, identifiers):
     for fact in facts.values():
         fact.setdefault("evidence", [])
     return facts, evidence_ids
+
+
+def verify_fact_child_order(engine, connection, kinds):
+    """Check the stored sequence positions for these exact fact versions."""
+    for kind, fact_ids in kinds.items():
+        if kind not in engine.store.registry.models:
+            _invalid("fact", "*", "unknown_fact_kind")
+        model = engine.store.registry.models[kind]
+        for name, field in model.model_fields.items():
+            historical_fields = getattr(model, "_v1_fields", None)
+            is_sequence = (
+                historical_fields[name]["kind"] == "sequence"
+                if historical_fields is not None
+                else sequence_model(field.annotation) is not None
+            )
+            if not is_sequence:
+                continue
+            next_numbers = defaultdict(int)
+            for child in connection.execute(
+                f"SELECT c.revision_id,c.item_no FROM {table_name(kind)}_{name} c "
+                "JOIN json_each(?) ids ON ids.value=c.revision_id ORDER BY c.revision_id,c.item_no",
+                (canonical(sorted(fact_ids)),),
+            ):
+                if child["item_no"] != next_numbers[child["revision_id"]]:
+                    _invalid("fact", child["revision_id"], "fact_child_order_mismatch")
+                next_numbers[child["revision_id"]] += 1
 
 
 def _check_evidence(connection, evidence_ids, *, verified=None):
@@ -245,13 +266,13 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
     stored_reads = defaultdict(list)
     for row in _rows(connection, "dependency_scope", "calculation_id", identifiers):
         stored_reads[row["calculation_id"]].append(
-            Read(
+            read_type()(
                 row["source"],
                 row["kind"],
                 row["scope_key"],
                 None
                 if row["before_period"] == 119988
-                else YearMonth.from_ordinal(row["before_period"]),
+                else month_type().from_ordinal(row["before_period"]),
             )
         )
     fact_ids = {row["fact_id"] for row in calculations.values()}
@@ -282,9 +303,9 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
         )
         if row["calculation_id"] is not None
     }
-    from .publication import verify_publication_chain
+    from .content_history_context import publication_reader
 
-    verify_publication_chain(
+    publication_reader().verify_publication_chain(
         connection, subject_ids={row["subject_id"] for row in calculations.values()}
     )
     tables = {
@@ -323,12 +344,13 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             "reads": [asdict(read) for read in sorted(stored_reads[ident], key=repr)],
             "program": row["program_version"],
         }
-        valid_keys = {
-            "c_" + digest({**payload, "versions": sorted(candidate)}).hex()
-            for candidate in (versions, versions | {row["fact_id"]})
-        }
-        if ident not in valid_keys:
-            _invalid("calculation", ident, "calculation_input_digest_mismatch")
+        first_key = "c_" + digest({**payload, "versions": sorted(versions)}).hex()
+        if ident != first_key:
+            second_key = "c_" + digest(
+                {**payload, "versions": sorted(versions | {row["fact_id"]})}
+            ).hex()
+            if ident != second_key:
+                _invalid("calculation", ident, "calculation_input_digest_mismatch")
     # Iterative graph traversal also handles long legitimate cumulative chains.
     completed, active = set(), set()
     for ident in calculations:
@@ -453,10 +475,10 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             _invalid("publication", ident, "no_impact_accounting_mismatch")
     for ident, calculation in calculations.items():
         if calculation["kind"] in {"asset_activation_batch", "asset_consumption_month"}:
-            from .asset_batches import frozen_members
+            from .content_history_context import asset_membership_reader
 
             try:
-                frozen_members(connection, ident)
+                asset_membership_reader().frozen_members(connection, ident)
             except KernelError:
                 _invalid("calculation", ident, "asset_membership_mismatch")
     return {
@@ -508,26 +530,28 @@ def _opening_basis(source, manifest, period):
     if row is None or not row["decoded"].get("opening"):
         _invalid("close", period, "opening_adoption_mismatch")
     if row["kind"] == "opening_package":
-        from .opening_adoption import _DETAIL_KINDS, _detail_shape, _package_contract
+        from .content_history_context import opening_adoption_reader
+
+        opening = opening_adoption_reader()
 
         package = {
             **row,
-            "period": str(YearMonth.from_ordinal(row["period"])),
+            "period": str(month_type().from_ordinal(row["period"])),
             "outcome": row["decoded"],
             "fact_data": source["facts"][row["fact_id"]]["data"],
         }
         facts = {
-            key: {**value, "period": str(YearMonth.from_ordinal(value["period"]))}
+            key: {**value, "period": str(month_type().from_ordinal(value["period"]))}
             for key, value in source["facts"].items()
         }
-        contract = _package_contract(package, facts, source["dependency_facts"][ident])
+        contract = opening._package_contract(package, facts, source["dependency_facts"][ident])
         if contract is None:
             _invalid("close", period, "opening_package_content_mismatch")
         declarations, _ = contract
         adopted_details = {
             item["subject_id"]: source["calculations"][item["calculation_id"]]
             for item in manifest["adopted_results"]
-            if source["calculations"][item["calculation_id"]]["kind"] in _DETAIL_KINDS
+            if source["calculations"][item["calculation_id"]]["kind"] in opening._DETAIL_KINDS
         }
         if set(adopted_details) != set(declarations):
             _invalid("close", period, "opening_member_adoption_mismatch")
@@ -536,7 +560,7 @@ def _opening_basis(source, manifest, period):
             if (
                 detail["fact_id"] != member["fact_id"]
                 or detail["kind"] != member["kind"]
-                or not _detail_shape(detail["decoded"])
+                or not opening._detail_shape(detail["decoded"])
                 or detail["decoded"]["values"] != member["values"]
                 or source["dependencies"][detail["id"]] != {ident}
             ):
@@ -564,8 +588,8 @@ class _FrozenAdoptionReads:
             result[ident] = {
                 **row,
                 "outcome": row["decoded"],
-                "period": str(YearMonth.from_ordinal(row["period"])),
-                "posting_period": str(YearMonth.from_ordinal(publication["posting_period"]))
+                "period": str(month_type().from_ordinal(row["period"])),
+                "posting_period": str(month_type().from_ordinal(publication["posting_period"]))
                 if publication
                 else None,
                 "result_digest": row["digest"].hex(),
@@ -738,9 +762,20 @@ def _check_close_approval(row, manifest, period):
 
 
 def _check_closes(
-    engine, connection, source, *, through_period=None, verify_financial_position=True
+    engine,
+    connection,
+    source,
+    *,
+    through_period=None,
+    verify_financial_position=True,
+    require_index_marker=True,
+    predecoded_closes=None,
+    _return_closes=False,
 ):
-    from .close_contract import direct_calculation_ids, require_close_contract
+    from .content_history_context import close_contract, close_reader
+
+    decode_close = close_reader().decode_close
+    direct_calculation_ids = close_contract().direct_calculation_ids
 
     previous_digest, previous_trial, previous_period = None, None, None
     previous_sequence = 0
@@ -751,20 +786,52 @@ def _check_closes(
     used_approval_ids = set()
     parameters = (through_period,) if through_period is not None else ()
     restriction = " WHERE period<=?" if through_period is not None else ""
+    material_rules = dict(
+        connection.execute(
+            "SELECT period,rule_digest FROM material_close_rule" + restriction, parameters
+        )
+    )
+    from .verified_close_archive import pack_verified_close, unpack_verified_close
+
     closes = []
-    for row in connection.execute(
-        "SELECT * FROM period_close" + restriction + " ORDER BY period", parameters
-    ):
+    approval_ids = []
+    coverage_inventory_inputs = []
+    inventory_ids = set()
+    owner_evidence = []
+    boundaries = []
+    close_rows = (
+        connection.execute(
+            "SELECT * FROM period_close" + restriction + " ORDER BY period", parameters
+        )
+        if predecoded_closes is None
+        else (row for row, _ in predecoded_closes)
+    )
+    for index, row in enumerate(close_rows):
         period = row["period"]
-        if hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]:
-            _invalid("close", period, "manifest_digest_mismatch")
-        manifest = require_close_contract(_object(row["manifest"], "close", period))
-        closes.append((row, manifest))
-    approval_ids = [
-        manifest["approval"]["approval_id"]
-        for _, manifest in closes
-        if manifest["approval"] is not None
-    ]
+        rule = material_rules.get(period)
+        if not isinstance(rule, bytes) or len(rule) != 32:
+            _invalid("close", period, "material_rule_identity_missing")
+        saved = (
+            decode_close(connection, row, require_marker=require_index_marker)
+            if predecoded_closes is None
+            else predecoded_closes[index][1]
+        )
+        manifest = unpack_verified_close(saved) if isinstance(saved, bytes) else saved
+        closes.append((row, saved if isinstance(saved, bytes) else pack_verified_close(manifest)))
+        if manifest["approval"] is not None:
+            approval_ids.append(manifest["approval"]["approval_id"])
+        coverage_inventory_inputs.append(
+            (period, manifest["material_coverage"].get("inventory_versions"))
+        )
+        inventory_ids.update(manifest["inventories"].values())
+        owner_evidence.append(manifest["owner_confirmation"])
+        boundaries.append([period, manifest["publication_sequence"]])
+        del manifest, saved
+    if predecoded_closes is not None and (
+        len(closes) != len(material_rules)
+        or {row["period"] for row, _ in closes} != material_rules.keys()
+    ):
+        _invalid("close", "*", "predecoded_close_set_mismatch")
     approval_rows = (
         {
             row["id"]: row
@@ -778,10 +845,9 @@ def _check_closes(
         else {}
     )
     coverage_inventory_references = []
-    for row, manifest in closes:
-        references = manifest["material_coverage"].get("inventory_versions")
+    for period, references in coverage_inventory_inputs:
         if not isinstance(references, list):
-            _invalid("close", row["period"], "material_inventory_references_missing")
+            _invalid("close", period, "material_inventory_references_missing")
         for reference in references:
             if (
                 not isinstance(reference, dict)
@@ -791,11 +857,12 @@ def _check_closes(
                 or not isinstance(reference["category"], str)
                 or not isinstance(reference["content_digest"], str)
             ):
-                _invalid("close", row["period"], "material_inventory_reference_invalid")
-            coverage_inventory_references.append((row["period"], reference))
-    inventory_ids = {
-        ident for _, manifest in closes for ident in manifest["inventories"].values()
-    } | {reference["inventory_id"] for _, reference in coverage_inventory_references}
+                _invalid("close", period, "material_inventory_reference_invalid")
+            coverage_inventory_references.append((period, reference))
+    inventory_ids.update(
+        reference["inventory_id"] for _, reference in coverage_inventory_references
+    )
+    del coverage_inventory_inputs
     inventories = {
         item["id"]: item for item in _rows(connection, "material_revision", "id", inventory_ids)
     }
@@ -808,24 +875,23 @@ def _check_closes(
             (canonical(sorted(inventory_ids)),),
         ):
             inventory_items[item["inventory_id"]].append(item["evidence_digest"].hex())
-    from .materials import _inventory_reference
+    from .content_history_context import inventory_reference
 
     for period, reference in coverage_inventory_references:
         inventory = inventories.get(reference["inventory_id"])
         if (
             inventory is None
-            or _inventory_reference(inventory, inventory_items[reference["inventory_id"]])
+            or inventory_reference()(inventory, inventory_items[reference["inventory_id"]])
             != reference
         ):
             _invalid("close", period, "material_inventory_reference_mismatch")
-    evidence_ids = {bytes.fromhex(manifest["owner_confirmation"]) for _, manifest in closes} | {
+    evidence_ids = {bytes.fromhex(value) for value in owner_evidence} | {
         bytes(item["evidence_digest"]) for item in inventories.values()
     }
+    del owner_evidence
     _check_evidence(connection, evidence_ids - source["verified_evidence"])
     expected_adoptions_by_period, current_vouchers_by_period = defaultdict(set), defaultdict(set)
-    boundaries = canonical(
-        [[row["period"], manifest["publication_sequence"]] for row, manifest in closes]
-    )
+    boundaries = canonical(boundaries)
     for item in connection.execute(
         "SELECT json_extract(b.value,'$[0]'),p.calculation_id FROM json_each(?) b "
         "JOIN calculation_publication p ON p.posting_period=json_extract(b.value,'$[0]') "
@@ -843,12 +909,14 @@ def _check_closes(
         (boundaries,),
     ):
         current_vouchers_by_period[item[0]].add(item[1])
-    for row, manifest in closes:
+    verified_position_prefix = []
+    for row, packed in closes:
+        manifest = unpack_verified_close(packed)
         period = row["period"]
         if (
             (manifest["period"], manifest["company_id"], manifest["database_id"])
             != (
-                str(YearMonth.from_ordinal(period)),
+                str(month_type().from_ordinal(period)),
                 engine.store.company_id,
                 engine.store.database_id,
             )
@@ -881,7 +949,7 @@ def _check_closes(
                 calculation["subject_id"],
                 calculation["fact_id"],
                 calculation["digest"].hex(),
-                str(YearMonth.from_ordinal(calculation["period"])),
+                str(month_type().from_ordinal(calculation["period"])),
                 publication["posting_period"],
             ) != (
                 declaration["publication_id"],
@@ -974,9 +1042,9 @@ def _check_closes(
                     or not set(references[field]) <= source[field].keys()
                 ):
                     _invalid("close", period, "readiness_source_missing")
-        from .periods import MATERIAL_CATEGORIES
+        from .content_history_context import material_categories
 
-        if set(manifest["inventories"]) != set(MATERIAL_CATEGORIES):
+        if set(manifest["inventories"]) != set(material_categories()):
             _invalid("close", period, "material_inventory_set_mismatch")
         for category, inventory_id in manifest["inventories"].items():
             inventory = inventories.get(inventory_id)
@@ -998,11 +1066,11 @@ def _check_closes(
             or not set(coverage["fact_ids"]) <= source["facts"].keys()
         ):
             _invalid("close", period, "material_coverage_mismatch")
-        from .asset_card_adoption import prove_asset_card_adoptions
+        from .content_history_context import asset_card_reader
 
         reads = _FrozenAdoptionReads(source)
         try:
-            prove_asset_card_adoptions(
+            asset_card_reader().prove_asset_card_adoptions(
                 reads,
                 close_period=period,
                 manifest=manifest,
@@ -1034,20 +1102,51 @@ def _check_closes(
             baseline = previous_trial
         if _merge(baseline, _totals(voucher_lines, "close", period)) != trial:
             _invalid("close", period, "trial_balance_source_mismatch")
-        from .close_review import verify_owner_review_integrity
+        from .content_history_context import owner_review_reader
 
-        verify_owner_review_integrity(
-            connection,
-            engine,
-            manifest,
-            verify_financial_position=verify_financial_position,
-        )
+        owner_reader = owner_review_reader()
+        from . import close_review_integrity_v1
+
+        if (
+            owner_reader is close_review_integrity_v1
+            and verify_financial_position
+            and connection.in_transaction
+        ):
+            from .position_v1 import _verified_close_prefix
+            from .verified_source_lease import verified_source_lease
+
+            # This prefix comes only from closes whose source, adoption, trial,
+            # and storage proofs have passed above in this read transaction.
+            verified_position_prefix.append((row, manifest))
+            with verified_source_lease(connection):
+                owner_reader.verify_owner_review_integrity(
+                    connection,
+                    engine,
+                    manifest,
+                    verify_financial_position=True,
+                    _verified_closes=_verified_close_prefix(connection, verified_position_prefix),
+                )
+            verified_position_prefix[-1] = (
+                row,
+                {
+                    "opening_calculation_id": manifest["opening_calculation_id"],
+                    "vouchers": manifest["vouchers"],
+                },
+            )
+        else:
+            owner_reader.verify_owner_review_integrity(
+                connection,
+                engine,
+                manifest,
+                verify_financial_position=verify_financial_position,
+            )
         previous_digest, previous_trial, previous_period = (
             row["digest"].hex(),
             trial,
             manifest["period"],
         )
         count += 1
+        del manifest, coverage, saved_coverage
     approval_parameters = (through_period,) if through_period is not None else ()
     approval_restriction = " AND period<=?" if through_period is not None else ""
     consumed_approval_ids = {
@@ -1060,6 +1159,12 @@ def _check_closes(
     }
     if consumed_approval_ids != used_approval_ids:
         _invalid("close", "*", "orphaned_close_approval")
+    if _return_closes:
+        if not connection.in_transaction:
+            _invalid("close", "*", "decoded_close_reuse_requires_transaction")
+        from .verified_close_archive import VerifiedCloseArchive
+
+        return count, [], VerifiedCloseArchive(connection, closes)
     return count, []
 
 
@@ -1078,6 +1183,25 @@ def _check_heads(connection):
 
 def verify_integrity(engine, connection, *, include_projections=True, include_indexes=True):
     """Check all preserved versions in the caller's snapshot, including old ones."""
+    if include_projections and connection.in_transaction:
+        from .verified_source_lease import verified_source_lease
+
+        with verified_source_lease(connection):
+            return _verify_integrity_snapshot(
+                engine,
+                connection,
+                include_projections=include_projections,
+                include_indexes=include_indexes,
+            )
+    return _verify_integrity_snapshot(
+        engine,
+        connection,
+        include_projections=include_projections,
+        include_indexes=include_indexes,
+    )
+
+
+def _verify_integrity_snapshot(engine, connection, *, include_projections, include_indexes):
     try:
         ignored_tables = set()
         if not include_indexes:
@@ -1102,7 +1226,32 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
                     "period_balance",
                     "settlement_change",
                     "settlement_projection_seal",
+                    "settlement_freeze_root",
+                    "settlement_freeze_block",
+                    "settlement_freeze_ref",
+                    "settlement_state_revision",
                     "period_balance_seal",
+                    "period_balance_freeze_root",
+                    "period_balance_freeze_bucket",
+                    "period_balance_freeze_row",
+                    "report_line_source",
+                    "report_line_source_seal",
+                    "duplicate_freeze_root",
+                    "duplicate_freeze_directory",
+                    "duplicate_freeze_bucket",
+                    "material_watch_root",
+                    "material_watch_directory",
+                    "material_watch_bucket",
+                    "report_party_delta",
+                    "report_party_month_seal",
+                    "report_party_checkpoint",
+                    "report_party_checkpoint_seal",
+                    "report_semantic_line",
+                    "report_semantic_seal",
+                    "report_period_flow",
+                    "report_classification_directory",
+                    "report_classification_node",
+                    "report_open_contribution",
                 )
             )
         checks = [row[0] for row in connection.execute("PRAGMA integrity_check")]
@@ -1117,33 +1266,119 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
         ):
             _invalid("sqlite", "*", "foreign_key_check_failed")
         _check_heads(connection)
+        from .content_history_context import duplicate_reader, journal_reader, material_watch_reader
+
+        journal_reader().verify_journal(connection)
         source = _check_sources(engine, connection)
-        close_count, limitations = _check_closes(
+        from .content_history_context import report_open_contribution_reader
+
+        report_open_contribution_reader().compare_open_contributions(
+            engine, connection, check_bodies=include_projections, verified_source=source
+        )
+        close_result = _check_closes(
             engine,
             connection,
             source,
             verify_financial_position=include_projections and include_indexes,
+            require_index_marker=include_indexes,
+            _return_closes=include_projections and connection.in_transaction,
         )
+        close_count, limitations = close_result[:2]
+        decoded_closes = close_result[2] if len(close_result) == 3 else None
         _check_job_sources(engine, connection, source)
         _check_audit_sources(connection)
-        from .duplicates import verify_duplicate_checks
         from .entities import verify_entities
         from .identity_corrections import verify_identity_corrections
 
         verify_entities(connection)
         verify_identity_corrections(engine, connection)
-        verify_duplicate_checks(connection)
+        duplicate_reader().verify_duplicate_checks(connection)
         if include_projections:
-            from .settlement_projection import require_settlement_projection
+            duplicate_reader().compare_duplicate_freeze(connection, engine)
+            material_watch_reader().require_material_watch(
+                engine, connection, _verified_closes=decoded_closes
+            )
+            from .content_history_context import (
+                balance_freeze_reader,
+                report_classification_directory_reader,
+                report_flow_reader,
+                report_reader,
+                report_semantics_reader,
+                settlement_projection_reader,
+                settlement_reader,
+            )
 
             require_projections(connection, verified_calculations=source["calculations"])
-            require_settlement_projection(
-                engine, connection, verified_calculations=source["calculations"]
-            )
+            if connection.in_transaction:
+                from contextlib import nullcontext
+
+                from .verified_source_lease import (
+                    verified_calculation_source,
+                    verified_source_lease,
+                )
+
+                lease_scope = (
+                    nullcontext()
+                    if decoded_closes is not None
+                    else verified_source_lease(connection)
+                )
+                with lease_scope:
+                    settlement = settlement_projection_reader().require_settlement_projection(
+                        engine,
+                        connection,
+                        verified_calculations=source["calculations"],
+                        _return_verified=True,
+                    )
+                    settlement_reader().require_frozen_settlement_projection(
+                        engine,
+                        connection,
+                        verified_calculations=source["calculations"],
+                        _verified_projection=settlement,
+                    )
+                    reports = report_reader().require_report_projection(
+                        engine,
+                        connection,
+                        _verified_closes=decoded_closes,
+                        _return_verified=True,
+                    )
+                    semantics = report_semantics_reader().require_report_semantics(
+                        engine,
+                        connection,
+                        _verified_closes=decoded_closes,
+                        _verified_source=verified_calculation_source(connection, source),
+                        _return_verified=True,
+                    )
+                    flow_result = report_flow_reader().require_report_flow(
+                        engine,
+                        connection,
+                        _verified_closes=decoded_closes,
+                        _verified_reports=reports,
+                        _verified_semantics=semantics,
+                    )
+                    report_classification_directory_reader().require_classification_directory(
+                        engine,
+                        connection,
+                        _verified_closes=decoded_closes,
+                        _expected_flows=flow_result["expected_rows"],
+                    )
+            else:
+                settlement_projection_reader().require_settlement_projection(
+                    engine, connection, verified_calculations=source["calculations"]
+                )
+                settlement_reader().require_frozen_settlement_projection(
+                    engine, connection, verified_calculations=source["calculations"]
+                )
+                report_reader().require_report_projection(engine, connection)
+                report_semantics_reader().require_report_semantics(engine, connection)
+                flow_result = report_flow_reader().require_report_flow(engine, connection)
+                report_classification_directory_reader().require_classification_directory(
+                    engine, connection, _expected_flows=flow_result["expected_rows"]
+                )
+            balance_freeze_reader().compare_balance_freeze(connection)
         if include_indexes:
             from .discovery_indexes import verify_discovery_indexes
             from .entity_references import verify_entity_references
-            from .read_indexes import verify_read_indexes
+            from .read_indexes import _verified_closes_for_indexes, verify_read_indexes
 
             verify_entity_references(connection, registry=engine.store.registry)
             verify_discovery_indexes(connection)
@@ -1151,7 +1386,15 @@ def verify_integrity(engine, connection, *, include_projections=True, include_in
             if connection.execute(
                 "SELECT 1 FROM sqlite_schema WHERE name='read_index_source'"
             ).fetchone():
-                verify_read_indexes(connection)
+                if decoded_closes is None:
+                    verify_read_indexes(connection)
+                else:
+                    verify_read_indexes(
+                        connection,
+                        _verified_closes=_verified_closes_for_indexes(
+                            connection, decoded_closes
+                        ),
+                    )
         return {
             "status": "verified",
             "coverage": {
@@ -1202,20 +1445,33 @@ def verify_publication(engine, connection, calculation_ids):
         ) from exc
 
 
-def verify_sources(engine, connection, *, calculation_ids=(), fact_ids=()):
-    """Validate saved inputs before a transaction publishes their replacement."""
-    result = verify_publication(engine, connection, calculation_ids)
+def verify_sources(engine, connection, *, calculation_ids=(), fact_ids=(), _return_facts=False):
+    """Validate saved inputs; optionally return this call's checked fact rows."""
     try:
-        facts, evidence = _check_facts(engine, connection, set(fact_ids))
-        _check_evidence(connection, evidence)
-        return {**result, "facts": len(facts)}
+        requested_facts = set(fact_ids)
+        # One verification owns the union of dependency facts and explicitly
+        # requested facts. Its evidence union is read once as well. No proof
+        # survives this call or bypasses either side of a publication write.
+        source = _check_sources(
+            engine, connection, calculation_ids, extra_fact_ids=requested_facts
+        )
+        if not requested_facts <= source["facts"].keys():
+            _invalid("fact", "*", "referenced_fact_missing")
+        if _return_facts:
+            return {ident: source["facts"][ident] for ident in sorted(requested_facts)}
+        return {
+            "status": "verified",
+            "calculations": len(source["calculations"]),
+            "vouchers": len(source["vouchers"]),
+            "facts": len(requested_facts),
+        }
     except KernelError:
         raise
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, sqlite3.Error) as exc:
         raise KernelError(
             "content_integrity_failed",
-            "本次事实来源核验失败",
-            component="fact",
+            "本次来源核验失败",
+            component="source",
             record_id="*",
             reason="invalid_stored_content",
         ) from exc
@@ -1262,7 +1518,28 @@ def verify_prepared_sources(engine, connection, prepared, *, new_fact_ids=()):
 
 def verify_close_integrity(engine, connection, period):
     """A new close cannot waive the independent all-account projection check."""
-    month = YearMonth(period).ordinal if isinstance(period, str) else period
+    if connection.in_transaction:
+        return _verify_close_integrity_snapshot(engine, connection, period)
+    connection.execute("BEGIN")
+    try:
+        return _verify_close_integrity_snapshot(engine, connection, period)
+    finally:
+        connection.rollback()
+
+
+def _verify_close_integrity_snapshot(engine, connection, period):
+    """Reuse verified close bodies only inside this one SQLite read snapshot."""
+    from .verified_source_lease import verified_source_lease
+
+    with verified_source_lease(connection):
+        return _verify_close_integrity_leased(engine, connection, period)
+
+
+def _verify_close_integrity_leased(engine, connection, period):
+    from .content_history_context import duplicate_reader, journal_reader, material_watch_reader
+
+    journal_reader().verify_journal(connection)
+    month = month_type()(period).ordinal if isinstance(period, str) else period
     # Closed voucher heads are immutable; this proves the cumulative amounts
     # without substituting today's facts or calculators for historical results.
     ids = {
@@ -1277,14 +1554,22 @@ def verify_close_integrity(engine, connection, period):
     from .read_indexes import _close_references
 
     fact_ids, evidence_ids = set(), set()
-    for row in connection.execute("SELECT * FROM period_close WHERE period<=?", (month,)):
-        if hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]:
-            _invalid("close", row["period"], "manifest_digest_mismatch")
-        manifest = _object(row["manifest"], "close", row["period"])
-        from .close_contract import direct_calculation_ids
+    from .verified_close_archive import pack_verified_close
 
-        ids.update(direct_calculation_ids(manifest))
-        for _, _, kind, ident, _ in _close_references(row):
+    packed_closes = []
+    for row in connection.execute(
+        "SELECT * FROM period_close WHERE period<=? ORDER BY period", (month,)
+    ):
+        from .content_history_context import close_reader
+
+        decode_close = close_reader().decode_close
+
+        manifest = decode_close(connection, row)
+        packed_closes.append((row, pack_verified_close(manifest)))
+        from .content_history_context import close_contract
+
+        ids.update(close_contract().direct_calculation_ids(manifest))
+        for _, _, kind, ident, _ in _close_references(row, manifest=manifest):
             if kind == "fact":
                 fact_ids.add(ident)
             elif kind == "calculation":
@@ -1295,6 +1580,7 @@ def verify_close_integrity(engine, connection, period):
                 evidence_ids.add(bytes.fromhex(proof))
             except (TypeError, ValueError):
                 _invalid("close", row["period"], "invalid_owner_evidence")
+        del manifest
     try:
         source = _check_sources(engine, connection, ids, extra_fact_ids=fact_ids)
         _check_evidence(
@@ -1302,7 +1588,14 @@ def verify_close_integrity(engine, connection, period):
             evidence_ids - source["verified_evidence"],
             verified=source["verified_evidence"],
         )
-        _, limitations = _check_closes(engine, connection, source, through_period=month)
+        _, limitations, verified_closes = _check_closes(
+            engine,
+            connection,
+            source,
+            through_period=month,
+            predecoded_closes=packed_closes,
+            _return_closes=True,
+        )
     except KernelError:
         raise
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, sqlite3.Error) as exc:
@@ -1313,10 +1606,73 @@ def verify_close_integrity(engine, connection, period):
             record_id=str(period),
             reason="invalid_stored_content",
         ) from exc
-    require_projections(
-        connection, through_period=month, verified_calculations=source["calculations"]
-    )
-    from .settlement_projection import require_settlement_projection
+    from contextlib import nullcontext
 
-    require_settlement_projection(engine, connection, verified_calculations=source["calculations"])
+    from .verified_source_lease import verified_calculation_source
+
+    with nullcontext():
+        require_projections(
+            connection, through_period=month, verified_calculations=source["calculations"]
+        )
+        from .content_history_context import settlement_projection_reader
+
+        verified_settlement = settlement_projection_reader().require_settlement_projection(
+            engine,
+            connection,
+            verified_calculations=source["calculations"],
+            _return_verified=True,
+        )
+        from .content_history_context import settlement_reader
+
+        settlement_reader().require_frozen_settlement_projection(
+            engine,
+            connection,
+            verified_calculations=source["calculations"],
+            _verified_projection=verified_settlement,
+        )
+        from .content_history_context import report_reader
+
+        verified_reports = report_reader().require_report_projection(
+            engine,
+            connection,
+            through_period=month,
+            _verified_closes=verified_closes,
+            _return_verified=True,
+        )
+        from .content_history_context import (
+            balance_freeze_reader,
+            report_flow_reader,
+            report_semantics_reader,
+        )
+
+        verified_semantics = report_semantics_reader().require_report_semantics(
+            engine,
+            connection,
+            through_period=month,
+            _verified_closes=verified_closes,
+            _verified_source=verified_calculation_source(connection, source),
+            _return_verified=True,
+        )
+        flow_result = report_flow_reader().require_report_flow(
+            engine,
+            connection,
+            through_period=month,
+            _verified_closes=verified_closes,
+            _verified_reports=verified_reports,
+            _verified_semantics=verified_semantics,
+        )
+        from .content_history_context import report_classification_directory_reader
+
+        report_classification_directory_reader().require_classification_directory(
+            engine,
+            connection,
+            through_period=month,
+            _verified_closes=verified_closes,
+            _expected_flows=flow_result["expected_rows"],
+        )
+    balance_freeze_reader().compare_balance_freeze(connection)
+    duplicate_reader().compare_duplicate_freeze(connection, engine)
+    material_watch_reader().require_material_watch(
+        engine, connection, through_period=month, _verified_closes=verified_closes
+    )
     return {"status": "verified", "limitations": limitations}

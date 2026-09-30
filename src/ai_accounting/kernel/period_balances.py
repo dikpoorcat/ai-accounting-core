@@ -1,10 +1,12 @@
 """Repairable, posting-month balance contributions derived from publication chains."""
 
+import hashlib
 import json
 
+from .content_history_context import source_canonical as canonical
+from .content_history_context import source_checked as checked
+from .content_history_context import source_digest as digest
 from .contracts import KernelError
-from .publication import active_tranches, verify_publication_chain, verify_record
-from .types import canonical, checked, digest
 
 COLUMNS = (
     "publication_id",
@@ -36,7 +38,9 @@ def _wire(row):
 
 def expected_period_balances(connection, subject_ids=None, *, verified_calculations=None):
     """Derive rows, optionally reusing source checks from this same transaction."""
-    segments = active_tranches(connection, subject_ids)
+    from .content_history_context import publication_reader
+
+    segments = publication_reader().active_tranches(connection, subject_ids)
     ids = {
         r[key] for r in segments for key in ("calculation_id", "baseline_calculation_id") if r[key]
     }
@@ -99,6 +103,33 @@ def expected_seals(rows):
     ]
 
 
+def _selected_seals(connection, where, parameters):
+    """Hash the same sorted projection rows without materializing Python rows.
+
+    The immutable column contract is text, integer and nullable SHA-256 bytes.
+    SQLite encodes that wire array; full rebuild/verification independently uses
+    ``expected_seals``. Every selected contribution still enters the checksum.
+    """
+    fields = [
+        f"CASE WHEN b.{name} IS NOT NULL THEN lower(hex(b.{name})) END"
+        if name in {"source_digest", "baseline_digest"}
+        else f"b.{name}"
+        for name in COLUMNS
+    ]
+    return [
+        (row[0], row[1], row[2], hashlib.sha256(row[3].encode("utf-8")).digest())
+        for row in connection.execute(
+            "SELECT b.posting_period,b.category,count(*),json_group_array(json_array("
+            + ",".join(fields)
+            + ") ORDER BY b.publication_id,b.category,b.balance_key,b.component) "
+            "FROM period_balance b WHERE "
+            + where
+            + " GROUP BY b.posting_period,b.category ORDER BY 1,2",
+            parameters,
+        )
+    ]
+
+
 def _period_seals(connection, category_seals, periods=None, *, verified_publications=None):
     """Bind every category seal, including an empty period, to its publications."""
     if verified_publications is None:
@@ -110,8 +141,10 @@ def _period_seals(connection, category_seals, periods=None, *, verified_publicat
         publications = list(
             connection.execute(query + " ORDER BY posting_period,sequence", parameters)
         )
+        from .content_history_context import publication_reader
+
         for row in publications:
-            verify_record(row)
+            publication_reader().verify_record(row)
     else:
         publications = sorted(
             verified_publications, key=lambda row: (row["posting_period"], row["sequence"])
@@ -163,7 +196,9 @@ def compare_period_balances(connection, *, verified_calculations=None):
 
 
 def require_period_balances(connection, *, verified_calculations=None):
-    verify_publication_chain(connection)
+    from .content_history_context import publication_reader
+
+    publication_reader().verify_publication_chain(connection)
     compared = compare_period_balances(connection, verified_calculations=verified_calculations)
     if compared["changed"]:
         _error("projection_mismatch")
@@ -283,20 +318,13 @@ def verify_selected_balances(
     ):
         _error("period_coverage")
     clauses, params = ["b." + scope], list(scope_params)
-    if category is not None:
+    if isinstance(category, tuple):
+        clauses.append("b.category IN (SELECT value FROM json_each(?))")
+        params.append(canonical(category))
+    elif category is not None:
         clauses.append("b.category=?")
         params.append(category)
     where = " AND ".join(clauses)
-    rows = [
-        tuple(r)
-        for r in connection.execute(
-            "SELECT "
-            + ",".join("b." + col for col in COLUMNS)
-            + " FROM period_balance b WHERE "
-            + where,
-            params,
-        )
-    ]
     seals = [
         tuple(r)
         for r in connection.execute(
@@ -305,7 +333,7 @@ def verify_selected_balances(
             params,
         )
     ]
-    if seals != expected_seals(rows):
+    if seals != _selected_seals(connection, where, params):
         _error("content_checksum")
     bad = connection.execute(
         "SELECT 1 FROM period_balance b LEFT JOIN calculation_publication p "
@@ -324,15 +352,88 @@ def verify_selected_balances(
 
 
 def _totals(connection, period, category, keys, movement, reads):
+    close = connection.execute(
+        "SELECT * FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
+        (period,),
+    ).fetchone()
+    if close is not None:
+        from .content_history_context import close_reader
+        from .period_balance_freeze import read_frozen_balances
+
+        header = reads.close_header(close) if reads is not None else close_reader().verified_header(
+            connection, close
+        )
+        if movement and close["period"] == period:
+            return [
+                {"category": row["category"], "key": row["key"], "amount": row["activity"]}
+                for row in read_frozen_balances(connection, header, category, keys)
+                if row["activity_present"]
+            ]
+        tail_periods = {
+            row[0]
+            for row in connection.execute(
+                "SELECT posting_period FROM calculation_publication "
+                "WHERE posting_period>? AND posting_period<=? "
+                "UNION SELECT posting_period FROM period_balance "
+                "WHERE posting_period>? AND posting_period<=? "
+                "UNION SELECT posting_period FROM period_balance_seal "
+                "WHERE posting_period>? AND posting_period<=?",
+                (close["period"], period) * 3,
+            )
+        }
+        if tail_periods:
+            if reads is not None and reads.connection is connection:
+                reads.verify_balance_periods(period, category, tail_periods)
+            else:
+                verify_selected_balances(
+                    connection, period, category, periods=tail_periods, reads=reads
+                )
+        if movement:
+            return _sum_projection_rows(
+                connection, "posting_period=? AND component='activity'", [period], category, keys
+            )
+        base = {
+            (row["category"], row["key"]): row["ending"]
+            for row in read_frozen_balances(connection, header, category, keys)
+            if row["ending_present"]
+        }
+        for row in _sum_projection_rows(
+            connection, "posting_period>? AND posting_period<=?",
+            [close["period"], period], category, keys,
+            periods=tail_periods if keys is None else None,
+        ):
+            key = row["category"], row["key"]
+            base[key] = checked(base.get(key, 0) + row["amount"])
+        return [
+            {"category": cat, "key": key, "amount": amount}
+            for (cat, key), amount in sorted(base.items())
+        ]
     if reads is None:
         verify_selected_balances(connection, period, category)
     else:
         reads.verify_balance_scope(period, category)
-    where = ["posting_period=?" if movement else "posting_period<=?"]
-    params = [period]
-    if movement:
-        where.append("component='activity'")
-    if category is not None:
+    scope = "posting_period=? AND component='activity'" if movement else "posting_period<=?"
+    return _sum_projection_rows(connection, scope, [period], category, keys)
+
+
+def _sum_projection_rows(connection, scope, parameters, category, keys, *, periods=None):
+    if periods is not None:
+        if not periods:
+            return []
+        # The verified tail set includes every period with a projection row.
+        # Its exact equality lets the existing (period, category) index seek
+        # both columns instead of scanning every older row of this category.
+        where = ["posting_period IN (SELECT value FROM json_each(?))"]
+        params = [canonical(sorted(periods))]
+        index = " INDEXED BY period_balance_period"
+    else:
+        where = [scope]
+        params = list(parameters)
+        index = ""
+    if isinstance(category, tuple):
+        where.append("category IN (SELECT value FROM json_each(?))")
+        params.append(canonical(category))
+    elif category is not None:
         where.append("category=?")
         params.append(category)
     if keys is not None:
@@ -341,7 +442,7 @@ def _totals(connection, period, category, keys, movement, reads):
     return [
         {"category": row[0], "key": row[1], "amount": checked(row[2])}
         for row in connection.execute(
-            "SELECT category,balance_key,sum(amount) FROM period_balance WHERE "
+            "SELECT category,balance_key,sum(amount) FROM period_balance" + index + " WHERE "
             + " AND ".join(where)
             + " GROUP BY category,balance_key ORDER BY category,balance_key",
             params,

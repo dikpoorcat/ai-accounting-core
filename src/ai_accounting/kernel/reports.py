@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ai_accounting.financial_statement_template import (
     ACCOUNTING_RULE_EFFECTIVE_FROM,
@@ -42,6 +42,12 @@ from .dashboard_reads import posted_account_totals
 from .query_semantics import (
     classify_financial_position,
     report_party_splits,
+)
+from .report_semantics import (
+    expand_line_fields,
+    immutable_line_fields,
+    read_report_semantics,
+    report_source_fact,
 )
 from .types import Fen, NonNegativeFen, PositiveFen, YearMonth, canonical, digest, sum_fen
 
@@ -229,16 +235,47 @@ def register(registry):
     registry.register_snapshot_readiness("financial_reports", check_report_readiness)
 
 
-def check_report_readiness(store, connection, period):
+def check_report_readiness(store, connection, period, *, reads=None):
     """Query adapter uses the caller's one read-only snapshot; calculators stay pure."""
-    profiles = tuple(
-        row
-        for read in required_reads(period)
-        if read.kind in PROFILE_KINDS
-        for row in store.select(connection, read)
-    )
+    if reads is not None and (reads.store is not store or reads.connection is not connection):
+        raise ValueError("report readiness reads belong to another snapshot")
+    try:
+        profiles = tuple(
+            row
+            for read in required_reads(period)
+            if read.kind in PROFILE_KINDS
+            for row in (store.select(connection, read) if reads is None else reads.select(read))
+        )
+    except ValidationError as exc:
+        raise KernelError("content_integrity_failed", "报表档案事实正文损坏") from exc
     if not profiles:
+        # Close still adopts the other required report facts when no profile has
+        # been filed. Their typed bodies are consumed by the frozen reference
+        # selection, so the early readiness return must not skip source proof.
+        try:
+            selected_ids = {
+                row.id
+                for read in required_reads(period)
+                if read.kind not in PROFILE_KINDS
+                for row in (store.select(connection, read) if reads is None else reads.select(read))
+            }
+        except ValidationError as exc:
+            raise KernelError("content_integrity_failed", "报表依据事实正文损坏") from exc
+        if selected_ids:
+            if reads is None:
+                from .integrity import verify_sources
+
+                verify_sources(SimpleNamespace(store=store), connection, fact_ids=selected_ids)
+            else:
+                _verify_report_fact_sources(connection, reads, selected_ids)
         return []
+    profile_ids = {row.id for row in profiles}
+    if reads is None:
+        from .integrity import verify_sources
+
+        verify_sources(SimpleNamespace(store=store), connection, fact_ids=profile_ids)
+    else:
+        _verify_report_fact_sources(connection, reads, profile_ids)
     adapter = Reports(SimpleNamespace(store=store))
     result = adapter._report(
         int(period[:4]),
@@ -246,6 +283,8 @@ def check_report_readiness(store, connection, period):
         source="open",
         connection=connection,
         through_period=period,
+        reads=reads,
+        _issues_only=True,
     )
     problems = result["fact_issues"]
     if any(item["field"] == "report_carry_forward" for item in problems):
@@ -310,24 +349,71 @@ def _periods(year, quarter):
     return start, end, YearMonth(f"{year:04d}-01")
 
 
-def _closed_report_reference_rows(connection, end, reads=None):
-    from .read_indexes import CLOSE_REPORT_FACTS, verify_close_references
+def _closed_report_fact_sources(connection, end, reads=None, *, closes=None, retain_ids=None):
+    """Discover frozen report IDs in authenticated close readiness sections.
 
-    selected = connection.execute(
-        "SELECT * FROM close_reference WHERE reference_type='fact' AND path=? AND close_period<=?",
-        (CLOSE_REPORT_FACTS, end.ordinal),
-    ).fetchall()
-    if reads is None:
-        verify_close_references(connection, selected)
-    else:
-        reads.verify_close_references(selected)
-    return selected
+    The reverse close_reference directory is repairable; it is not the source
+    of the report's complete historical fact-ID set. Consumers still validate
+    the content and digest of the particular facts they use.
+    """
+
+    from .content_history_context import close_reader
+
+    selected = (
+        closes
+        if closes is not None
+        else connection.execute(
+            "SELECT * FROM period_close WHERE period<=? ORDER BY period", (end.ordinal,)
+        ).fetchall()
+    )
+    sources = []
+    for close in selected:
+        if reads is None:
+            reader = close_reader()
+            header = reader.verified_header(connection, close, require_marker=True)
+            financial = reader.read_readiness_check(connection, header, "financial_reports")
+        else:
+            financial = reads.close_readiness_check(close, "financial_reports")
+        fact_ids = financial.get("facts", []) if isinstance(financial, dict) else None
+        if not isinstance(fact_ids, list) or any(
+            type(ident) is not str or not ident for ident in fact_ids
+        ):
+            raise KernelError("content_integrity_failed", "冻结报表准备来源格式不一致")
+        sources.extend(
+            {"close_period": close["period"], "reference_id": ident}
+            for ident in fact_ids
+            if retain_ids is None or ident in retain_ids
+        )
+    return sources
 
 
-def _report_references(connection, end, source, reads=None):
-    selected = _closed_report_reference_rows(connection, end, reads)
+def _report_references(connection, end, source, reads=None, *, closed_rows=None, open_kinds=None):
+    selected = (
+        closed_rows
+        if closed_rows is not None
+        else _closed_report_fact_sources(connection, end, reads)
+    )
     references = {row["reference_id"] for row in selected}
     if source == "open":
+        from .query_reads import OPEN_FACT_PERIODS_CTE
+
+        kinds = set(REPORT_KINDS if open_kinds is None else open_kinds)
+        # Classification heads grow with each business and month. Locate their
+        # exact open periods first; rare profile/tax kinds keep their kind seek.
+        if "report_classification" in kinds:
+            references.update(
+                row[0]
+                for row in connection.execute(
+                    OPEN_FACT_PERIODS_CTE
+                    + "SELECT f.id FROM open_periods p "
+                    "CROSS JOIN fact_revision f INDEXED BY fact_period ON f.period=p.period "
+                    "CROSS JOIN fact_current a ON a.fact_id=f.id "
+                    "CROSS JOIN subject s ON s.id=f.subject_id "
+                    "WHERE s.kind='report_classification'",
+                    (end.ordinal, end.ordinal),
+                )
+            )
+            kinds.remove("report_classification")
         references.update(
             row[0]
             for row in connection.execute(
@@ -335,10 +421,31 @@ def _report_references(connection, end, source, reads=None):
                 "JOIN subject s ON s.id=f.subject_id "
                 "WHERE s.kind IN (SELECT value FROM json_each(?)) AND f.period<=? "
                 "AND NOT EXISTS(SELECT 1 FROM period_close p WHERE p.period=f.period)",
-                (canonical(sorted(REPORT_KINDS)), end.ordinal),
+                (
+                    canonical(sorted(kinds)),
+                    end.ordinal,
+                ),
             )
         )
     return references
+
+
+def _report_tax_and_carry_refs(connection, references, year_start, end, book_start, *, omit_carry):
+    """Select rare authoritative metadata, then require exact adopted membership."""
+    return {
+        row["id"]
+        for row in connection.execute(
+            "SELECT f.id,s.kind,f.period FROM subject s CROSS JOIN fact_revision f "
+            "ON f.subject_id=s.id "
+            "WHERE s.kind='report_income_tax_confirmation' "
+            "AND f.period>=? AND f.period<=? UNION ALL "
+            "SELECT f.id,s.kind,f.period FROM subject s CROSS JOIN fact_revision f "
+            "ON f.subject_id=s.id "
+            "WHERE s.kind='report_carry_forward' AND f.period=?",
+            (year_start, end, book_start),
+        )
+        if row["id"] in references and (not omit_carry or row["kind"] != ReportCarryForward.kind)
+    }
 
 
 def _applicable_profile(facts, end):
@@ -375,13 +482,110 @@ def _report_vouchers(cutoff, source, **scope):
     return sql, parameters
 
 
-def _report_classifications(connection, reads, references, source_vouchers, end, source, problems):
-    """Validate all applicable references; decode only classifications used by rows."""
+def _unfrozen_voucher_ids(connection, year_start, end, frozen_flows, *, historical_accounts=None):
+    """Seek actual unfrozen months; preserve the separate pre-year account lane."""
+    months = [month for month in range(year_start, end + 1) if month not in frozen_flows]
+    sql = (
+        "SELECT v.id FROM json_each(?) months "
+        "CROSS JOIN voucher_version v INDEXED BY voucher_period "
+        "WHERE v.period=months.value"
+    )
+    parameters = [canonical(months)]
+    if historical_accounts is not None:
+        sql += (
+            " UNION SELECT l.version_id FROM voucher_line l "
+            "INDEXED BY voucher_line_account "
+            "JOIN voucher_version v ON v.id=l.version_id "
+            "WHERE l.account IN (SELECT value FROM json_each(?)) AND v.period<?"
+        )
+        parameters.extend((canonical(sorted(historical_accounts)), year_start))
+    return {row[0] for row in connection.execute(sql, parameters)}
+
+
+def _has_open_publication(connection, cutoff):
+    # Seek from one actual posting month to the next. A later close does not
+    # stand in for an exact close here; retain the original per-month test.
+    return bool(connection.execute(
+        "WITH RECURSIVE months(period) AS ("
+        "SELECT min(posting_period) FROM calculation_publication WHERE posting_period<=? "
+        "UNION ALL SELECT (SELECT min(posting_period) FROM calculation_publication "
+        "WHERE posting_period>m.period AND posting_period<=?) FROM months m "
+        "WHERE m.period IS NOT NULL) SELECT 1 FROM months m WHERE m.period IS NOT NULL "
+        "AND NOT EXISTS(SELECT 1 FROM period_close c WHERE c.period=m.period) LIMIT 1",
+        (cutoff, cutoff),
+    ).fetchone())
+
+
+def _frozen_unused_classification_ids(connection, reads, pending, source_vouchers, end):
+    """Locate exact old, unused facts already accepted by a frozen report flow."""
+    if (
+        not reads._snapshot_active
+        or reads.connection is not connection
+        or source_vouchers is None
+    ):
+        return set()
+    cache = reads._report_snapshot_cache
+    year_start = YearMonth(str(end)[:4] + "-01").ordinal
+    candidates = {
+        row["revision_id"]: row
+        for voucher, row in pending.items()
+        if voucher not in source_vouchers
+        and row["fact_period"] is not None
+        and row["fact_period"] < year_start
+        and row["fact_digest"] is not None
+    }
+    if not candidates:
+        return set()
+    closed_sources = cache.get(("closed_report_fact_sources", end.ordinal))
+    if closed_sources is None:
+        closed_sources = _closed_report_fact_sources(connection, end, reads)
+        cache[("closed_report_fact_sources", end.ordinal)] = closed_sources
+    first_close = {}
+    for item in closed_sources:
+        ident = item["reference_id"]
+        if ident in candidates:
+            first_close[ident] = min(
+                item["close_period"], first_close.get(ident, item["close_period"])
+            )
+    by_close = defaultdict(set)
+    for ident, period in first_close.items():
+        by_close[period].add(ident)
+    from .report_flow import read_report_flow
+
+    covered = set()
+    for period, identifiers in sorted(by_close.items()):
+        flow = read_report_flow(connection, period, reads=reads)
+        if flow is None or flow["issues"]:
+            continue
+        refs = dict(flow["classification_refs"])
+        for ident in identifiers:
+            stored = refs.get(ident)
+            if stored is None:
+                continue
+            if stored != candidates[ident]["fact_digest"].hex():
+                raise KernelError(
+                    "content_integrity_failed",
+                    "冻结报表分类来源摘要不一致",
+                    component="report_classification",
+                    record_id=ident,
+                    reason="fact_digest_mismatch",
+                )
+            covered.add(ident)
+    return covered
+
+
+def _validated_report_classification_headers(
+    connection, reads, references, end, source, problems, *, source_vouchers=None
+):
+    """Validate selected headers and every normalized child against exact lines."""
+    before = len(problems)
     headers, conflicts = {}, set()
     for row in connection.execute(
-        "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period "
+        "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period,"
+        "f.period AS fact_period,f.digest AS fact_digest "
         "FROM json_each(?) ids CROSS JOIN fact_report_classification c ON c.revision_id=ids.value "
-        "LEFT JOIN voucher_version v ON v.id=c.voucher_version_id",
+        "LEFT JOIN voucher_version v ON v.id=c.voucher_version_id "
+        "LEFT JOIN fact_revision f ON f.id=c.revision_id",
         (canonical(sorted(references)),),
     ):
         key = row["voucher_version_id"]
@@ -400,13 +604,33 @@ def _report_classifications(connection, reads, references, source_vouchers, end,
     if not headers:
         return {}
 
-    candidates = set(headers)
+    cache = (
+        reads._report_snapshot_cache
+        if reads._snapshot_active and reads.connection is connection
+        else None
+    )
+    cache_key = ("report_classification_validated_references", end.ordinal, source)
+    verified = cache.get(cache_key, frozenset()) if cache is not None else frozenset()
+    # Always detect conflicts in the complete requested set above. Only the
+    # independent line/source checks of an exact revision can be reused.
+    pending = {
+        key: row for key, row in headers.items() if row["revision_id"] not in verified
+    }
+    covered = _frozen_unused_classification_ids(
+        connection, reads, pending, source_vouchers, end
+    )
+    pending = {
+        key: row for key, row in pending.items() if row["revision_id"] not in covered
+    }
+    if not pending:
+        return headers
+    candidates = set(pending)
     candidates.update(
         row[0]
         for row in connection.execute(
             "SELECT v.id FROM json_each(?) ids CROSS JOIN voucher_version v "
             "INDEXED BY voucher_version_reverses ON v.reverses_id=ids.value",
-            (canonical(sorted(headers)),),
+            (canonical(sorted(pending)),),
         )
     )
     sql, parameters = _report_vouchers(end.ordinal, source, voucher_ids=candidates)
@@ -424,7 +648,7 @@ def _report_classifications(connection, reads, references, source_vouchers, end,
     reads.verify_close_references(selected_references)
 
     detail_ids = []
-    for key, row in headers.items():
+    for key, row in pending.items():
         if key not in selected_periods:
             if row["voucher_period"] != row["period"]:
                 problems.append(
@@ -475,7 +699,169 @@ def _report_classifications(connection, reads, references, source_vouchers, end,
                         voucher_version_id=row["voucher_version_id"],
                     )
                 )
+    if cache is not None and len(problems) == before:
+        cache[cache_key] = verified | {row["revision_id"] for row in pending.values()}
+    return headers
+
+
+def _rooted_classification_headers(connection, reads, source_vouchers, end, source, problems):
+    """Use the frozen complete voucher-key set and inspect only live/unsafe rows."""
+    from .query_reads import OPEN_FACT_PERIODS_CTE
+    from .report_classification_directory import classification_directory_scope
+
+    open_rows = ()
+    if source == "open":
+        open_rows = tuple(connection.execute(
+            OPEN_FACT_PERIODS_CTE
+            + "SELECT f.id,f.digest,c.voucher_version_id FROM open_periods p "
+            "CROSS JOIN fact_revision f INDEXED BY fact_period ON f.period=p.period "
+            "JOIN fact_current a ON a.fact_id=f.id "
+            "JOIN subject s ON s.id=f.subject_id AND s.kind='report_classification' "
+            "JOIN fact_report_classification c ON c.revision_id=f.id",
+            (end.ordinal, end.ordinal),
+        ))
+    keys = set(source_vouchers) | {row["voucher_version_id"] for row in open_rows}
+    rooted = classification_directory_scope(connection, end.ordinal, keys, reads=reads)
+    if rooted is None:
+        return None
+    expected_old = {}
+    validation_ids = {row["id"] for row in open_rows}
+    conflict_keys = set(rooted["conflicts"])
+    open_by_key = defaultdict(list)
+    for row in open_rows:
+        open_by_key[row["voucher_version_id"]].append(row["id"])
+    for key in keys:
+        frozen = rooted["membership"].get(key, ())
+        for ident, digest_hex, _first_close, _safe in frozen:
+            if key in source_vouchers:
+                expected_old[ident] = key, digest_hex
+                validation_ids.add(ident)
+        if len(frozen) + len(open_by_key[key]) > 1:
+            conflict_keys.add(key)
+    for key, ident, digest_hex, _first_close, _safe in rooted["unsafe"]:
+        expected_old[ident] = key, digest_hex
+        validation_ids.add(ident)
+    local_problems = []
+    headers = _validated_report_classification_headers(
+        connection,
+        reads,
+        validation_ids,
+        end,
+        source,
+        local_problems,
+        source_vouchers=source_vouchers,
+    )
+    actual = {row["revision_id"]: row for row in headers.values()}
+    for ident, (key, digest_hex) in expected_old.items():
+        if key in conflict_keys:
+            continue
+        row = actual.get(ident)
+        if row is None or row["voucher_version_id"] != key or row["fact_digest"] is None:
+            raise KernelError("content_integrity_failed", "冻结报表分类身份不一致")
+        if row["fact_digest"].hex() != digest_hex:
+            raise KernelError("content_integrity_failed", "冻结报表分类来源摘要不一致")
+    duplicate_events = []
+    for key in conflict_keys:
+        frozen = rooted["membership"].get(key)
+        if frozen is None:
+            frozen = rooted["conflict_membership"].get(key, ())
+        identifiers = sorted({entry[0] for entry in frozen} | set(open_by_key[key]))
+        if len(identifiers) < 2:
+            raise KernelError("content_integrity_failed", "冻结报表分类冲突目录不一致")
+        duplicate_events.extend((ident, key) for ident in identifiers[1:])
+    for _ident, key in sorted(duplicate_events):
+        problems.append(
+            issue("report_classification", "同一凭证版本存在多个分类来源", voucher_version_id=key)
+        )
+    problems.extend(
+        item
+        for item in local_problems
+        if item["field"] != "report_classification"
+        or item.get("voucher_version_id") not in conflict_keys
+    )
+    for key in conflict_keys:
+        headers.pop(key, None)
+    return headers
+
+
+def _verify_report_fact_sources(connection, reads, identifiers):
+    """Verify only report facts actually read, reusing successful snapshot proofs."""
+
+    identifiers = set(identifiers)
+    if not identifiers:
+        return
+    cache = (
+        reads._report_snapshot_cache
+        if reads._snapshot_active and reads.connection is connection and connection.in_transaction
+        else None
+    )
+    verified = (
+        cache.setdefault("verified_report_fact_sources", set())
+        if cache is not None
+        else set()
+    )
+    missing = identifiers - verified
+    if missing:
+        from .integrity import verify_sources
+
+        verify_sources(reads.engine, connection, fact_ids=missing)
+        if cache is not None:
+            verified.update(missing)
+
+
+def _report_classifications(
+    connection,
+    reads,
+    references,
+    source_vouchers,
+    end,
+    source,
+    problems,
+    *,
+    rooted=False,
+    fallback_references=None,
+):
+    """Validate all applicable references; decode only classifications used by rows."""
+
+    cache = (
+        reads._report_snapshot_cache
+        if reads._snapshot_active and reads.connection is connection
+        else None
+    )
+    key = (
+        "report_classification_headers",
+        end.ordinal,
+        source,
+        "rooted" if rooted else frozenset(references),
+        frozenset(source_vouchers),
+    )
+    if cache is not None and key in cache:
+        headers = cache[key]
+    else:
+        before = len(problems)
+        headers = (
+            _rooted_classification_headers(
+                connection, reads, source_vouchers, end, source, problems
+            )
+            if rooted
+            else None
+        )
+        if headers is None:
+            if fallback_references is not None:
+                references = fallback_references()
+            headers = _validated_report_classification_headers(
+                connection,
+                reads,
+                references,
+                end,
+                source,
+                problems,
+                source_vouchers=source_vouchers,
+            )
+        if cache is not None and len(problems) == before:
+            cache[key] = headers
     identifiers = {row["revision_id"] for key, row in headers.items() if key in source_vouchers}
+    _verify_report_fact_sources(connection, reads, identifiers)
     return {
         version.fact.voucher_version_id: version.fact
         for version in reads.fact_versions(identifiers).values()
@@ -521,6 +907,11 @@ class Reports:
     def __init__(self, engine):
         self.engine, self.store = engine, engine.store
 
+    def _cache(self, reads, connection):
+        if reads._snapshot_active and reads.connection is connection:
+            return reads._report_snapshot_cache
+        return None
+
     def report(
         self,
         year: int,
@@ -554,19 +945,25 @@ class Reports:
         )
         with manager as reads:
             selected = connection if connection is not None else reads.connection
-            references = _closed_report_reference_rows(selected, latest_end, reads)
+            # Locate the rare profile revisions before scanning authenticated
+            # readiness lists.  Every close section is still read and checked;
+            # only its profile IDs need a first-adoption date for this view.
+            profile_rows = list(selected.execute(
+                "SELECT f.id,f.period FROM subject s CROSS JOIN fact_revision f "
+                "ON f.subject_id=s.id WHERE s.kind IN (?,?) AND f.period<=?",
+                (*PROFILE_KINDS, latest_end.ordinal),
+            ))
+            references = _closed_report_fact_sources(
+                selected, latest_end, reads,
+                retain_ids={row["id"] for row in profile_rows},
+            )
             first_close = {}
             for row in references:
                 ident, month = row["reference_id"], row["close_period"]
                 first_close[ident] = min(month, first_close.get(ident, month))
             candidates = sorted(
                 (max(row["period"], first_close[row["id"]]), row["period"], row["id"])
-                for row in selected.execute(
-                    "SELECT f.id,f.period FROM json_each(?) ids "
-                    "JOIN fact_revision f ON f.id=ids.value JOIN subject s ON s.id=f.subject_id "
-                    "WHERE s.kind IN (?,?) AND f.period<=?",
-                    (canonical(sorted(first_close)), *PROFILE_KINDS, latest_end.ordinal),
-                )
+                for row in profile_rows if row["id"] in first_close
             )
             # A later close can first introduce an older fact. Its fact period
             # alone must not make that source visible in an earlier quarter.
@@ -581,9 +978,11 @@ class Reports:
                         active_ids.add(ident)
                     position += 1
                 selected_profiles[key] = set(active_ids)
-            profiles = reads.fact_versions(
-                {ident for identifiers in selected_profiles.values() for ident in identifiers}
-            )
+            profile_ids = {
+                ident for identifiers in selected_profiles.values() for ident in identifiers
+            }
+            _verify_report_fact_sources(selected, reads, profile_ids)
+            profiles = reads.fact_versions(profile_ids)
             periods = {
                 row[0]
                 for row in selected.execute(
@@ -605,16 +1004,22 @@ class Reports:
             return results
 
     def _report_profiles(self, connection, references, end, reads):
-        identifiers = {
-            row[0]
+        # The already authenticated references decide adoption.  Read the rare
+        # profile metadata first, then intersect with that exact set, so a full
+        # report does not feed every historical reference through SQLite JSON.
+        candidates = [
+            (row["id"], row["period"])
             for row in connection.execute(
-                "WITH profiles AS (SELECT f.id,f.period FROM json_each(?) j "
-                "JOIN fact_revision f ON f.id=j.value JOIN subject s ON s.id=f.subject_id "
-                "WHERE s.kind IN (?,?) AND f.period<=?) "
-                "SELECT id FROM profiles WHERE period=(SELECT max(period) FROM profiles)",
-                (canonical(sorted(references)), *PROFILE_KINDS, end.ordinal),
+                "SELECT f.id,f.period FROM subject s "
+                "CROSS JOIN fact_revision f ON f.subject_id=s.id "
+                "WHERE s.kind IN (?,?) AND f.period<=?",
+                (*PROFILE_KINDS, end.ordinal),
             )
-        }
+            if row["id"] in references
+        ]
+        latest = max((period for _, period in candidates), default=None)
+        identifiers = {ident for ident, period in candidates if period == latest}
+        _verify_report_fact_sources(connection, reads, identifiers)
         return list(reads.fact_versions(identifiers).values())
 
     def _report(
@@ -627,6 +1032,7 @@ class Reports:
         through_period=None,
         carry_forward_fact_id=None,
         reads=None,
+        _issues_only=False,
     ):
         start, end, year_start = _periods(year, quarter)
         if through_period is not None:
@@ -646,17 +1052,82 @@ class Reports:
             from .query_reads import QueryReads
 
             reads = reads or QueryReads(self.engine, connection)
+            cache = self._cache(reads, connection)
             epochs = self.store.epochs(connection)
             identity = dict(connection.execute("SELECT * FROM identity WHERE id=1").fetchone())
-            close_rows = connection.execute(
-                "SELECT period,digest FROM period_close WHERE period<=? ORDER BY period",
-                (end.ordinal,),
-            ).fetchall()
+            close_key = ("closes", end.ordinal)
+            if cache is not None and close_key in cache:
+                close_rows = cache[close_key]
+            else:
+                close_rows = connection.execute(
+                    "SELECT * FROM period_close WHERE period<=? ORDER BY period",
+                    (end.ordinal,),
+                ).fetchall()
+                if cache is not None:
+                    cache[close_key] = close_rows
             closes = {r["period"] for r in close_rows}
             problems = []
-            references = _report_references(connection, end, source, reads)
+            reference_key = ("closed_report_fact_sources", end.ordinal)
+            full_reference_rows = cache.get(reference_key) if cache is not None else None
+
+            def complete_references():
+                nonlocal full_reference_rows
+                if full_reference_rows is None:
+                    full_reference_rows = _closed_report_fact_sources(
+                        connection, end, reads, closes=close_rows
+                    )
+                    if cache is not None:
+                        cache[reference_key] = full_reference_rows
+                return _report_references(
+                    connection, end, source, reads, closed_rows=full_reference_rows
+                )
+
+            if _issues_only:
+                narrow_kinds = (*PROFILE_KINDS, ReportCarryForward.kind,
+                                ReportIncomeTaxConfirmation.kind)
+                candidate_ids = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT f.id FROM subject s CROSS JOIN fact_revision f "
+                        "ON f.subject_id=s.id WHERE s.kind IN (SELECT value FROM json_each(?)) "
+                        "AND f.period<=? AND (s.kind<>? OR f.period>=?)",
+                        (canonical(narrow_kinds), end.ordinal,
+                         ReportIncomeTaxConfirmation.kind, year_start.ordinal),
+                    )
+                }
+                closed_reference_rows = (
+                    [row for row in full_reference_rows
+                     if row["reference_id"] in candidate_ids]
+                    if full_reference_rows is not None
+                    else _closed_report_fact_sources(
+                        connection, end, reads, closes=close_rows,
+                        retain_ids=candidate_ids,
+                    )
+                )
+            else:
+                closed_reference_rows = (
+                    full_reference_rows
+                    if full_reference_rows is not None
+                    else _closed_report_fact_sources(connection, end, reads, closes=close_rows)
+                )
+                if cache is not None:
+                    cache[reference_key] = closed_reference_rows
+            references = _report_references(
+                connection, end, source, reads, closed_rows=closed_reference_rows,
+                open_kinds=narrow_kinds if _issues_only else None,
+            )
             facts = self._report_profiles(connection, references, end, reads)
             if carry_forward_fact_id is not None:
+                present = connection.execute(
+                    "SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                    "WHERE f.id=? AND s.kind=?",
+                    (carry_forward_fact_id, ReportCarryForward.kind),
+                ).fetchone()
+                if present is None:
+                    raise KernelError(
+                        "invalid_report_reference", "需要本公司不可变的接续报表依据版本"
+                    )
+                _verify_report_fact_sources(connection, reads, {carry_forward_fact_id})
                 explicit = self.store.select(
                     connection, Read("fact", ReportCarryForward.kind, "#" + carry_forward_fact_id)
                 )
@@ -675,22 +1146,15 @@ class Reports:
                     issue("report_profile", "需要唯一的报表口径及明确的新设或接续建账依据")
                 )
             book_start = profile.fact.bookkeeping_start if profile else year_start
-            needed_references = {
-                row["id"]
-                for row in connection.execute(
-                    "SELECT f.id,s.kind,f.period FROM json_each(?) j "
-                    "JOIN fact_revision f ON f.id=j.value JOIN subject s ON s.id=f.subject_id "
-                    "WHERE (s.kind='report_income_tax_confirmation' AND f.period>=? "
-                    "AND f.period<=?) OR (s.kind='report_carry_forward' AND f.period=?)",
-                    (
-                        canonical(sorted(references)),
-                        year_start.ordinal,
-                        end.ordinal,
-                        book_start.ordinal,
-                    ),
-                )
-                if carry_forward_fact_id is None or row["kind"] != ReportCarryForward.kind
-            }
+            needed_references = _report_tax_and_carry_refs(
+                connection,
+                references,
+                year_start.ordinal,
+                end.ordinal,
+                book_start.ordinal,
+                omit_carry=carry_forward_fact_id is not None,
+            )
+            _verify_report_fact_sources(connection, reads, needed_references)
             facts.extend(reads.fact_versions(sorted(needed_references)).values())
             if book_start > end:
                 problems.append(issue("bookkeeping_start", "报表期间早于明确建账月"))
@@ -698,30 +1162,95 @@ class Reports:
                 problems.extend(_closed_period_issues(closes, book_start, year_start, end))
             unknown_accounts = set(
                 _account_totals(connection, end.ordinal, source, (), reads=reads)
-            ) - (
-                _POSITION_ACCOUNTS
-            )
+            ) - (_POSITION_ACCOUNTS)
+            from .report_projection import party_balance_rows
+
+            party_balances = None
+            if not unknown_accounts:
+
+                def cached_party_balance(cutoff):
+                    effective = source
+                    if cache is not None and source == "open":
+                        open_key = ("has_open_publication", cutoff)
+                        if open_key not in cache:
+                            cache[open_key] = _has_open_publication(connection, cutoff)
+                        if not cache[open_key]:
+                            effective = "closed"
+                    key = ("party_balance", cutoff, effective)
+                    if cache is not None and key in cache:
+                        return cache[key]
+                    result = party_balance_rows(
+                        self.engine, connection, cutoff, source=effective, reads=reads
+                    )
+                    if cache is not None and result is not None:
+                        cache[key] = result
+                    return result
+
+                start_parties = cached_party_balance(year_start.ordinal - 1)
+                end_parties = cached_party_balance(end.ordinal)
+                if start_parties is not None and end_parties is not None:
+                    party_balances = {
+                        year_start.ordinal - 1: start_parties,
+                        end.ordinal: end_parties,
+                    }
+            from .report_flow import read_report_flow
+
+            frozen_flows = {}
+            if party_balances is not None and not unknown_accounts:
+                for month in sorted(closes):
+                    if year_start.ordinal <= month <= end.ordinal:
+                        flow = read_report_flow(connection, month, reads=reads)
+                        # A changed classification selection, or an issue-bearing
+                        # month, retains the exact historical row/issue path.
+                        if flow is not None and not flow["issues"]:
+                            frozen_flows[month] = flow
             historical_accounts = set(RECLASS) | unknown_accounts
-            candidates = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM voucher_version WHERE period>=? AND period<=? "
-                    "UNION SELECT l.version_id FROM voucher_line l INDEXED BY voucher_line_account "
-                    "JOIN voucher_version v ON v.id=l.version_id "
-                    "WHERE l.account IN (SELECT value FROM json_each(?)) AND v.period<?",
-                    (
-                        year_start.ordinal,
-                        end.ordinal,
-                        canonical(sorted(historical_accounts)),
-                        year_start.ordinal,
-                    ),
-                )
-            }
+            candidates = _unfrozen_voucher_ids(
+                connection,
+                year_start.ordinal,
+                end.ordinal,
+                frozen_flows,
+                historical_accounts=historical_accounts if party_balances is None else None,
+            )
+            # The open party balance has already selected every authoritative
+            # line of this exact month in this snapshot. Its cache entry is
+            # written only after proving that no voucher in the month has a
+            # close reference through this same cutoff. Keep all other months
+            # on the normal selector, including any frozen or mixed scope.
+            reused_open_rows = (
+                cache.get(("report_open_source_rows", end.ordinal))
+                if cache is not None
+                and source == "open"
+                and party_balances is not None
+                and end.ordinal not in closes
+                and end.ordinal not in frozen_flows
+                else None
+            )
+            if reused_open_rows is not None:
+                selected_open_ids = {row[2] for row in reused_open_rows}
+                if any(row[0] != "open" or row[1] != end.ordinal for row in reused_open_rows) or (
+                    not selected_open_ids.issubset(candidates)
+                ):
+                    reused_open_rows = None
+                else:
+                    candidates.difference_update(
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT id FROM voucher_version WHERE period=?", (end.ordinal,)
+                        )
+                    )
             selected_sql, selected_params = _report_vouchers(
                 end.ordinal, source, voucher_ids=candidates
             )
             # Direct balances use synchronous totals. Exact parties and this
             # posting year's flows retain their immutable classification sources.
+            row_filter = (
+                "v.period>=? AND l.account IN (SELECT value FROM json_each(?))"
+                if party_balances is not None
+                else "(v.period>=? AND l.account IN (SELECT value FROM json_each(?))) OR "
+                "l.account IN (SELECT value FROM json_each(?)) OR "
+                "l.account NOT IN (SELECT value FROM json_each(?))"
+            )
             sql = (
                 "WITH selected AS ("
                 + selected_sql
@@ -731,19 +1260,39 @@ class Reports:
                   l.line_no,l.account,l.debit,l.credit,l.cashflow,c.kind,c.fact_id,
                   c.period calculation_period,c.subject_id calculation_subject_id
                 FROM selected v JOIN voucher_line l ON l.version_id=v.id
-                JOIN calculation c ON c.id=v.basis_calculation_id WHERE
-                  (v.period>=? AND l.account IN (SELECT value FROM json_each(?))) OR
-                  l.account IN (SELECT value FROM json_each(?)) OR
-                  l.account NOT IN (SELECT value FROM json_each(?))"""
+                JOIN calculation c ON c.id=v.basis_calculation_id WHERE """
+                + row_filter
             )
             params = [
                 *selected_params,
                 year_start.ordinal,
                 canonical(sorted(CASH_ACCOUNTS | set(PROFIT_ACCOUNTS))),
-                canonical(sorted(RECLASS)),
-                canonical(sorted(_POSITION_ACCOUNTS)),
             ]
+            if party_balances is None:
+                params.extend((canonical(sorted(RECLASS)), canonical(sorted(_POSITION_ACCOUNTS))))
             rows = [dict(r) for r in connection.execute(sql, params)]
+            if reused_open_rows is not None:
+                for item in reused_open_rows:
+                    if item[8] not in CASH_ACCOUNTS | set(PROFIT_ACCOUNTS):
+                        continue
+                    rows.append(
+                        {
+                            "version_id": item[2],
+                            "period": item[1],
+                            "calculation_id": item[5],
+                            "reverses_id": item[7],
+                            "close_period": None,
+                            "line_no": item[3],
+                            "account": item[8],
+                            "debit": item[9],
+                            "credit": item[10],
+                            "cashflow": item[11],
+                            "kind": item[12],
+                            "fact_id": item[13],
+                            "calculation_period": item[14],
+                            "calculation_subject_id": item[15],
+                        }
+                    )
             selected_references = connection.execute(
                 "SELECT r.* FROM close_reference r WHERE r.reference_type='voucher' "
                 "AND r.reference_id IN (SELECT value FROM json_each(?)) "
@@ -761,23 +1310,155 @@ class Reports:
                     issue("bookkeeping_start", "已存在建账月之前的账；不能声明该月为新设企业零期初")
                 )
             source_vouchers = {row["reverses_id"] or row["version_id"] for row in rows}
+            classification_refs = references
+            def fallback_classification_references():
+                all_references = complete_references() if _issues_only else references
+                if not frozen_flows:
+                    return all_references
+                return {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT f.id FROM json_each(?) ids "
+                        "CROSS JOIN fact_revision f ON f.id=ids.value "
+                        "CROSS JOIN subject s ON s.id=f.subject_id "
+                        "CROSS JOIN fact_report_classification c ON c.revision_id=f.id "
+                        "WHERE s.kind='report_classification' "
+                        "AND (f.period NOT IN (SELECT value FROM json_each(?)) "
+                        "OR c.voucher_version_id IN (SELECT value FROM json_each(?)))",
+                        (
+                            canonical(sorted(all_references)),
+                            canonical(sorted(frozen_flows)),
+                            canonical(sorted(source_vouchers)),
+                        ),
+                    )
+                }
             classifications = _report_classifications(
-                connection, reads, references, source_vouchers, end, source, problems
+                connection,
+                reads,
+                classification_refs,
+                source_vouchers,
+                end,
+                source,
+                problems,
+                rooted=True,
+                fallback_references=fallback_classification_references,
             )
-            calculations, actual_facts, relation_records = {}, {}, {}
+            semantic_months = {
+                month
+                for month in closes
+                if year_start.ordinal <= month <= end.ordinal and month not in frozen_flows
+            }
+            frozen_semantics = {}
+            for month in sorted(semantic_months):
+                key = ("report_semantics", month)
+                if cache is not None and key in cache:
+                    frozen_semantics[month] = cache[key]
+                else:
+                    semantic, sources = read_report_semantics(
+                        connection, month, include_sources=True, reads=reads
+                    )
+                    frozen_semantics[month] = (
+                        semantic,
+                        {(item[2], item[3]): item for item in sources},
+                    )
+                    if cache is not None:
+                        cache[key] = frozen_semantics[month]
+            visible_semantic_keys = {month: set() for month in semantic_months}
+            for row in rows:
+                if row["period"] in visible_semantic_keys and row["account"] in CASH_ACCOUNTS | set(
+                    PROFIT_ACCOUNTS
+                ):
+                    visible_semantic_keys[row["period"]].add((row["version_id"], row["line_no"]))
+            if any(
+                visible_semantic_keys[month] != set(frozen_semantics[month][0])
+                for month in semantic_months
+            ):
+                raise KernelError("content_integrity_failed", "报表语义缺少已冻结凭证行")
+            full_rows = [
+                row
+                for row in rows
+                if row["period"] not in frozen_semantics
+                or row["account"] not in CASH_ACCOUNTS | set(PROFIT_ACCOUNTS)
+            ]
+            calculations, actual_facts = {}, {}
             originals = {
                 ident: row["calculation_id"]
                 for ident, row in reads.vouchers(
-                    {row["reverses_id"] for row in rows if row["reverses_id"]}
+                    {row["reverses_id"] for row in full_rows if row["reverses_id"]}
                 ).items()
             }
-            reads.prime_calculations(
-                {row["calculation_id"] for row in rows} | set(originals.values())
+            bounded_relations = source == "open" and reads._snapshot_active
+            source_ids = {
+                originals.get(row["reverses_id"], row["calculation_id"]) for row in full_rows
+            }
+            projected_lines = {}
+            projected_relations = {}
+            if bounded_relations and source_ids:
+                from .report_open_contribution import (
+                    read_open_contributions,
+                    selected_open_line,
+                )
+
+                contributions = read_open_contributions(
+                    self.engine, connection, source_ids, reads=reads
+                )
+                grouped = defaultdict(list)
+                for row in full_rows:
+                    grouped[originals.get(row["reverses_id"], row["calculation_id"])].append(
+                        row
+                    )
+                for source_id, source_rows in grouped.items():
+                    content = contributions.get(source_id)
+                    matched = (
+                        [selected_open_line(content, row) for row in source_rows]
+                        if content is not None
+                        else []
+                    )
+                    if matched and all(item is not None for item in matched):
+                        projected_relations[source_id] = matched[0][1]
+                        projected_lines.update(
+                            (
+                                (row["version_id"], row["line_no"]),
+                                item[0],
+                            )
+                            for row, item in zip(source_rows, matched, strict=True)
+                        )
+            fallback_rows = [
+                row for row in full_rows
+                if (row["version_id"], row["line_no"]) not in projected_lines
+            ]
+            calculation_ids = {row["calculation_id"] for row in fallback_rows} | {
+                originals[row["reverses_id"]]
+                for row in fallback_rows
+                if row["reverses_id"]
+            }
+            primed_calculations = reads.prime_calculations(
+                calculation_ids, ancestors=not bounded_relations
             )
+            if bounded_relations:
+                # Cash and profit lines use their own result and the explicitly
+                # linked funds source. Only reclassified balances can need the
+                # resolver's fallback ancestor party candidates.
+                party_rows = {
+                    ident: [] for ident in source_ids if ident not in projected_relations
+                }
+                for row in fallback_rows:
+                    if row["account"] in RECLASS:
+                        ident = originals.get(row["reverses_id"], row["calculation_id"])
+                        party_rows[ident].append(row)
+                relation_records = (
+                    reads.report_line_relations_many(party_rows) if party_rows else {}
+                )
+                relation_records.update(projected_relations)
+            else:
+                relation_records = reads.relations_many(source_ids)
+            reported_relations = set()
 
             def calculation(ident):
                 if ident not in calculations:
-                    record = reads.calculation(ident)
+                    record = primed_calculations.get(ident)
+                    if record is None:
+                        record = reads.calculation(ident)
                     calculations[ident] = record | {
                         "decoded": record["outcome"],
                         "period": YearMonth(record["period"]).ordinal,
@@ -786,23 +1467,74 @@ class Reports:
 
             def source_fact(ident):
                 if ident not in actual_facts:
-                    record = calculation(ident)
-                    values = dict(record["decoded"]["values"])
-                    if record["kind"] in {"funding", "cash_funding", "platform_funding"}:
-                        values["funding_kind"] = record["fact_data"]["funding_kind"]
-                    elif record["kind"] == "income_tax_assessment":
-                        values["tax_year"] = record["fact_data"]["year"]
-                    actual_facts[ident] = SimpleNamespace(**values)
+                    actual_facts[ident] = report_source_fact(calculation(ident))
                 return actual_facts[ident]
 
             def relations(ident):
                 if ident not in relation_records:
                     relation_records[ident] = reads.relations(ident)
+                if ident not in reported_relations:
                     problems.extend(relation_records[ident]["issues"])
+                    reported_relations.add(ident)
                 return relation_records[ident]
 
             for row in rows:
                 row["amount"] = row["debit"] - row["credit"]
+                frozen = frozen_semantics.get(row["period"])
+                if frozen is not None and row["account"] in CASH_ACCOUNTS | set(PROFIT_ACCOUNTS):
+                    selected_key = row["version_id"], row["line_no"]
+                    compact = frozen[0].get(selected_key)
+                    source_row = frozen[1].get(selected_key)
+                    if (
+                        compact is None
+                        or source_row is None
+                        or (
+                            row["period"],
+                            row["version_id"],
+                            row["line_no"],
+                            row["calculation_id"],
+                            row["reverses_id"],
+                            row["account"],
+                            row["debit"],
+                            row["credit"],
+                            row["cashflow"],
+                            row["kind"],
+                            row["fact_id"],
+                            row["calculation_period"],
+                            row["calculation_subject_id"],
+                            compact["source_result_digest"],
+                        )
+                        != (
+                            source_row[1],
+                            source_row[2],
+                            source_row[3],
+                            source_row[5],
+                            source_row[7],
+                            source_row[8],
+                            source_row[9],
+                            source_row[10],
+                            source_row[11],
+                            source_row[12],
+                            source_row[13],
+                            source_row[14],
+                            source_row[15],
+                            source_row[16].hex(),
+                        )
+                        or compact["source_calculation_id"] != row["calculation_id"]
+                        or compact["source_fact_id"] != row["fact_id"]
+                    ):
+                        raise KernelError(
+                            "content_integrity_failed", "报表语义与已选凭证来源不一致"
+                        )
+                    row.update(expand_line_fields(compact))
+                    source_id = compact["source_calculation_id"]
+                    if source_id not in reported_relations:
+                        problems.extend(compact["relation_issues"])
+                        reported_relations.add(source_id)
+                    row["classification"] = classifications.get(
+                        row["reverses_id"] or row["version_id"]
+                    )
+                    continue
                 source_id = row["calculation_id"]
                 if row["reverses_id"]:
                     if row["reverses_id"] not in originals:
@@ -811,30 +1543,26 @@ class Reports:
                             (row["reverses_id"],),
                         ).fetchone()[0]
                     source_id = originals[row["reverses_id"]]
-                row["values"] = calculation(source_id)["decoded"]["values"]
-                row["kind"] = calculation(source_id)["kind"]
-                row["fact"] = source_fact(source_id)
+                projected = projected_lines.get((row["version_id"], row["line_no"]))
+                if projected is not None:
+                    row.update(expand_line_fields(projected))
+                    if source_id not in reported_relations:
+                        problems.extend(relation_records[source_id]["issues"])
+                        reported_relations.add(source_id)
+                else:
+                    row.update(
+                        immutable_line_fields(
+                            row,
+                            source_id,
+                            calculation=calculation,
+                            source_fact=source_fact,
+                            relations=relations,
+                        )
+                    )
                 key = row["reverses_id"] or row["version_id"]
                 row["classification"] = classifications.get(key)
-                row["cash_source"] = row["fact"]
-                resolution = relations(source_id)
-                related = [
-                    relation
-                    for relation in resolution["line_relations"]
-                    if relation["line_no"] == row["line_no"] and relation["state"] == "resolved"
-                ]
-                funds = next(
-                    (relation for relation in related if relation["role"] == "funds"), None
-                )
-                if funds is not None:
-                    row["cash_source"] = source_fact(funds["source_calculation_id"])
-                    row["cash_obligation"] = next(
-                        item
-                        for item in resolution["obligations"]
-                        if item["source_calculation_id"] == funds["source_calculation_id"]
-                        and item["key"] == funds["obligation_key"]
-                    )
                 if row["account"] in RECLASS:
+                    resolution = relation_records[source_id]
                     explicit = (
                         [
                             x.counterparty_id
@@ -910,6 +1638,8 @@ class Reports:
                 end.ordinal,
                 problems,
                 account_balances=totals,
+                party_balances=party_balances,
+                frozen_flows=frozen_flows,
             )
             carry = None
             if (
@@ -957,6 +1687,11 @@ class Reports:
                     and year_start.ordinal <= r["period"] <= month.ordinal
                     and getattr(r["fact"], "tax_year", year) == year
                 )
+                assessed += sum(
+                    flow["assessed"].get(str(year), 0)
+                    for selected_month, flow in frozen_flows.items()
+                    if selected_month <= month.ordinal
+                )
                 if carry is not None:
                     assessed = sum_fen(
                         (
@@ -1002,9 +1737,9 @@ class Reports:
                         )
             if source == "open":
                 pending = connection.execute(
-                    "SELECT p.subject_id FROM pending p JOIN fact_current a ON "
-                    "a.subject_id=p.subject_id JOIN fact_revision f ON f.id=a.fact_id "
-                    "WHERE f.period<=? LIMIT 1",
+                    "SELECT p.subject_id FROM pending p CROSS JOIN fact_current a "
+                    "CROSS JOIN fact_revision f WHERE a.subject_id=p.subject_id "
+                    "AND f.id=a.fact_id AND f.period<=? LIMIT 1",
                     (end.ordinal,),
                 ).fetchone()
                 if pending:
@@ -1181,6 +1916,14 @@ class Reports:
     def browser_report_details(self, plan, closed, *, connection=None, reads=None):
         """Describe the sources actually used without changing the frozen report plan."""
         external_connection = connection is not None
+        if reads is not None and (
+            not external_connection
+            or reads.store is not self.store
+            or reads.connection is not connection
+            or not reads._snapshot_active
+            or not connection.in_transaction
+        ):
+            raise ValueError("browser report reads belong to another snapshot")
         manager = (
             nullcontext(connection)
             if external_connection
@@ -1192,14 +1935,17 @@ class Reports:
             from .query_reads import QueryReads
 
             reads = reads or QueryReads(self.engine, connection)
-            fact_counts = dict(
-                connection.execute(
-                    "SELECT s.kind,count(*) FROM json_each(?) ids "
-                    "JOIN fact_revision f ON f.id=ids.value JOIN subject s ON s.id=f.subject_id "
-                    "GROUP BY s.kind",
-                    (canonical(plan["report_fact_ids"]),),
-                )
-            )
+            # These are the only two source counts used by this projection.
+            # Keep authoritative subject kinds and exact plan membership, but
+            # avoid grouping every historical source into unused categories.
+            classification_count, tax_confirmation_count = connection.execute(
+                "SELECT count(*) FILTER (WHERE s.kind=?),"
+                "count(*) FILTER (WHERE s.kind=?) FROM json_each(?) ids "
+                "JOIN fact_revision f INDEXED BY fact_id_subject_cover ON f.id=ids.value "
+                "JOIN subject s INDEXED BY subject_id_kind_cover ON s.id=f.subject_id",
+                (ReportClassification.kind, ReportIncomeTaxConfirmation.kind,
+                 canonical(plan["report_fact_ids"])),
+            ).fetchone()
             source = plan.get("opening_source")
             choices = []
             if source:
@@ -1210,6 +1956,7 @@ class Reports:
                     (YearMonth(source["period"]).ordinal,),
                 )
                 identifiers = [row[0] for row in rows]
+                _verify_report_fact_sources(connection, reads, identifiers)
                 versions = reads.fact_versions(identifiers)
                 for ident in identifiers:
                     fact = versions[ident]
@@ -1250,8 +1997,8 @@ class Reports:
                 issues.append(item)
         return {
             "carry_forward_options": choices,
-            "classification_count": fact_counts.get(ReportClassification.kind, 0),
-            "income_tax_confirmation_count": fact_counts.get(ReportIncomeTaxConfirmation.kind, 0),
+            "classification_count": classification_count,
+            "income_tax_confirmation_count": tax_confirmation_count,
             "issues": issues,
             "close_state": "open"
             if any(item["field"] in {"period", "closed_periods"} for item in closed["fact_issues"])
@@ -1260,6 +2007,116 @@ class Reports:
 
     def browser_job_results(self, jobs):
         """Expose a download only after the same checks used for file delivery."""
+        jobs = list(jobs)
+        report_jobs = {job["id"] for job in jobs if job["kind"] == "report_export"}
+        plans, sources, invalid = {}, {}, set()
+        if report_jobs:
+            from .query_reads import QueryReads
+
+            # One authenticated read view for every title in this response. File
+            # delivery is checked separately against its own current artifact.
+            with QueryReads.snapshot(self.engine) as reads:
+                connection = reads.connection
+                rows = {
+                    row["id"]: row["payload"]
+                    for row in connection.execute(
+                        "SELECT id,payload FROM jobs WHERE id IN "
+                        "(SELECT value FROM json_each(?))",
+                        (canonical(sorted(report_jobs)),),
+                    )
+                }
+                requested_ids = set()
+                for job_id in report_jobs:
+                    try:
+                        payload = json.loads(rows[job_id])
+                        plan = payload["plan"]
+                        identifiers = plan["report_fact_ids"]
+                        period = plan["period"]
+                        if (
+                            not isinstance(identifiers, list)
+                            or any(type(ident) is not str or not ident for ident in identifiers)
+                            or len(set(identifiers)) != len(identifiers)
+                            or not isinstance(period, dict)
+                            or type(period.get("year")) is not int
+                            or not 1 <= period["year"] <= 9999
+                            or type(period.get("quarter")) is not int
+                            or period["quarter"] not in range(1, 5)
+                            or plan.get("company_id") != self.store.company_id
+                            or plan.get("database_id") != self.store.database_id
+                            or plan.get("digest")
+                            != digest(
+                                {
+                                    key: value
+                                    for key, value in plan.items()
+                                    if key not in {"digest", "epochs"}
+                                }
+                            ).hex()
+                        ):
+                            raise ValueError("report plan identity or source set differs")
+                        planned = set(identifiers)
+                        plans[job_id] = payload, plan, planned
+                        requested_ids.update(planned)
+                    except (ValueError, TypeError, KeyError):
+                        invalid.add(job_id)
+                # A job title needs exact plan membership, not every non-carry
+                # typed body. Complete content verification checks those bodies.
+                existing = (
+                    {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT f.id FROM json_each(?) ids "
+                            "JOIN fact_revision f ON f.id=ids.value "
+                            "JOIN subject s ON s.id=f.subject_id",
+                            (canonical(sorted(requested_ids)),),
+                        )
+                    }
+                    if requested_ids
+                    else set()
+                )
+                carry_kinds = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT f.id FROM subject s CROSS JOIN fact_revision f "
+                        "ON f.subject_id=s.id WHERE s.kind=?",
+                        (ReportCarryForward.kind,),
+                    )
+                    if row[0] in requested_ids
+                }
+                carry_typed = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT revision_id FROM fact_report_carry_forward"
+                    )
+                    if row[0] in requested_ids
+                }
+                for job_id, (_, plan, planned) in plans.items():
+                    if not planned <= existing:
+                        invalid.add(job_id)
+                        continue
+                    # Either independent header can reveal a planned carry.
+                    # A changed subject kind must not hide its existing typed
+                    # body, and a forged kind must not invent one.
+                    matched = sorted(planned & (carry_kinds | carry_typed))
+                    try:
+                        if any(
+                            ident not in carry_kinds or ident not in carry_typed
+                            for ident in matched
+                        ):
+                            raise ValueError("report carry kind and typed body differ")
+                        _verify_report_fact_sources(connection, reads, matched)
+                        if any(
+                            version.fact.kind != ReportCarryForward.kind
+                            for version in reads.fact_versions(matched).values()
+                        ):
+                            raise ValueError("report carry source kind differs")
+                    except (KernelError, ValidationError, ValueError, TypeError, KeyError):
+                        invalid.add(job_id)
+                        continue
+                    sources[job_id] = {
+                        "year": plan["period"]["year"],
+                        "quarter": plan["period"]["quarter"],
+                        "carry_forward_fact_id": matched[0] if len(matched) == 1 else None,
+                    }
         result = []
         for job in jobs:
             item = {
@@ -1272,32 +2129,16 @@ class Reports:
                 "delivery_message": job.get("error_message") if job["status"] == "failed" else None,
             }
             if job["kind"] == "report_export":
-                try:
-                    with self.store.connection(read_only=True) as connection:
-                        row = connection.execute(
-                            "SELECT payload FROM jobs WHERE id=?", (job["id"],)
-                        ).fetchone()
-                        payload = json.loads(row[0])
-                        plan = payload["plan"]
-                        carries = [
-                            ident
-                            for ident in plan["report_fact_ids"]
-                            if self.store.fact(connection, ident).fact.kind
-                            == ReportCarryForward.kind
-                        ]
-                    item["report_source"] = {
-                        "year": plan["period"]["year"],
-                        "quarter": plan["period"]["quarter"],
-                        "carry_forward_fact_id": carries[0] if len(carries) == 1 else None,
-                    }
-                except (ValueError, TypeError, KeyError):
+                if job["id"] in invalid:
                     item.update(
                         delivery_status="invalid",
                         delivery_message="任务来源信息无法验证，请重新生成报表。",
                     )
                     result.append(item)
                     continue
+                item["report_source"] = sources[job["id"]]
             if job["kind"] == "report_export" and job["status"] == "succeeded":
+                payload = plans[job["id"]][0]
                 directory = payload.get("output_directory")
                 browser_root = (self.store.path.parent / "exports" / "browser-reports").resolve()
                 if isinstance(directory, str) and not Path(directory).resolve().is_relative_to(
@@ -1571,18 +2412,212 @@ def _apply_carry_forward(statements, fact, opening_rows, quarter_start, book_sta
                 )
 
 
-def _statements(rows, start, year_start, end, problems, *, account_balances=None):
+def _profit_rows(rows, begin, end, problems):
+    result = {line: 0 for line in PROFIT_NAMES}
+    for row in rows:
+        if not begin <= row["period"] <= end or row["account"] not in PROFIT_ACCOUNTS:
+            continue
+        main, sign = PROFIT_ACCOUNTS[row["account"]]
+        result[main] += row["amount"] * sign
+        account, kind, fact = row["account"], row["kind"], row["fact"]
+        automatic = account == "5603" and (
+            kind in {"loan_interest", "bank_income"}
+            or (kind == "expense" and getattr(fact, "expense_class", None) == "bank_fee")
+        )
+        if account == "560301" or (
+            account == "5603"
+            and (kind == "loan_interest" or getattr(fact, "income_kind", None) == "bank_interest")
+        ):
+            result[19] += row["amount"]
+        if account == "6301" and (
+            kind == "tax_assessment" or getattr(fact, "income_kind", None) == "government_grant"
+        ):
+            result[23] -= row["amount"]
+        details = (
+            [x for x in row["classification"].profit_details if x.line_no == row["line_no"]]
+            if row["classification"]
+            else []
+        )
+        if account == "5403":
+            direction = -1 if row["reverses_id"] else 1
+            automatic_tax = (
+                kind == "tax_assessment"
+                and row["amount"] * direction > 0
+                and abs(row["amount"]) == row["values"].get("surtax_fen")
+            )
+            if automatic_tax:
+                result[6] += direction * row["values"]["urban_tax_fen"]
+                result[10] += direction * (
+                    row["values"]["education_tax_fen"] + row["values"]["local_education_tax_fen"]
+                )
+                if details:
+                    problems.append(
+                        issue(
+                            "report_classification.profit_details",
+                            "已由计税依据确定附加税明细，不应重复分类",
+                        )
+                    )
+            elif sum(x.amount_fen for x in details) == abs(row["amount"]) and all(
+                x.detail_code.startswith("tax_") for x in details
+            ):
+                for item in details:
+                    result[6 if item.detail_code == "tax_urban" else 10] += item.amount_fen * (
+                        1 if row["amount"] > 0 else -1
+                    )
+            else:
+                problems.append(
+                    issue(
+                        "report_classification.profit_details",
+                        "附加税退抵差额需有依据的城市维护税及教育附加明细",
+                        voucher_version_id=row["reverses_id"] or row["version_id"],
+                        line_no=row["line_no"],
+                    )
+                )
+            continue
+        if account in {"5601", "5602", "5603"} and not automatic:
+            family = {"5601": "sales_", "5602": "management_", "5603": "finance_"}[account]
+            if sum(x.amount_fen for x in details) != abs(row["amount"]) or any(
+                not x.detail_code.startswith(family) for x in details
+            ):
+                problems.append(
+                    issue(
+                        "report_classification.profit_details",
+                        "费用明细分类需完整覆盖原凭证金额",
+                        voucher_version_id=row["reverses_id"] or row["version_id"],
+                        line_no=row["line_no"],
+                    )
+                )
+            else:
+                for item in details:
+                    if item.detail_code in DETAIL_LINES:
+                        result[DETAIL_LINES[item.detail_code]] += item.amount_fen * (
+                            1 if row["amount"] > 0 else -1
+                        )
+        elif details:
+            problems.append(
+                issue(
+                    "report_classification.profit_details",
+                    "该行已有确定性分类或不属于可分类的费用",
+                    voucher_version_id=row["version_id"],
+                    line_no=row["line_no"],
+                )
+            )
+    result[21] = (
+        result[1] - result[2] - result[3] - result[11] - result[14] - result[18] + result[20]
+    )
+    result[30] = result[21] + result[22] - result[24]
+    result[32] = result[30] - result[31]
+    return result
+
+
+def _cash_rows(rows, begin, end, problems, *, account_balances=None):
+    result = {line: 0 for line in CASH_FLOW_NAMES}
+    transfers = defaultdict(int)
+    for row in rows:
+        if (
+            row.get("opening")
+            or not begin <= row["period"] <= end
+            or row["account"] not in CASH_ACCOUNTS
+        ):
+            continue
+        fact, tag = row["cash_source"], row["cashflow"]
+        detail = (
+            [x for x in row["classification"].cash_details if x.line_no == row["line_no"]]
+            if row["classification"]
+            else []
+        )
+        category = CASH_CATEGORIES.get(tag)
+        if tag == "financing_receipts":
+            category = 15 if getattr(fact, "funding_kind", None) == "capital" else 14
+        elif tag == "operating_payments":
+            expense_class = getattr(fact, "expense_class", None)
+            category = (
+                3
+                if expense_class == "service"
+                else (6 if expense_class in {"administration", "sales", "bank_fee"} else None)
+            )
+        elif tag == "payroll":
+            category = 5 if row.get("cash_obligation", {}).get("account") == "222103" else 4
+        if (
+            row["kind"] in {"funds_transfer", "cash_bank_transfer", "bank_platform_transfer"}
+            and tag != "managed_reserve_outflow"
+        ):
+            transfers[row["version_id"]] += row["amount"]
+            continue
+        if detail:
+            if sum(item.amount_fen for item in detail) != abs(row["amount"]) or (
+                category is not None and any(item.category != category for item in detail)
+            ):
+                problems.append(
+                    issue(
+                        "report_classification.cash_details",
+                        "现金分类须完整覆盖金额并与明确业务来源一致",
+                        voucher_version_id=row["version_id"],
+                        line_no=row["line_no"],
+                    )
+                )
+                continue
+            for item in detail:
+                result[item.category] += item.amount_fen * (
+                    (1 if row["amount"] > 0 else -1) * (1 if item.category in INFLOW_ROWS else -1)
+                )
+            continue
+        if category is None:
+            problems.append(
+                issue(
+                    "report_classification.cash_details",
+                    "非零现金流缺少确定分类",
+                    voucher_version_id=row["reverses_id"] or row["version_id"],
+                    line_no=row["line_no"],
+                )
+            )
+            continue
+        result[category] += row["amount"] * (1 if category in INFLOW_ROWS else -1)
+    if any(transfers.values()):
+        problems.append(issue("cash_transfer", "内部资金划转未完整抵销"))
+    result[7] = result[1] + result[2] - result[3] - result[4] - result[5] - result[6]
+    result[13] = result[8] + result[9] + result[10] - result[11] - result[12]
+    result[19] = result[14] + result[15] - result[16] - result[17] - result[18]
+    result[20] = result[7] + result[13] + result[19]
+    if account_balances is None:
+        result[21] = sum_fen(
+            r["amount"] for r in rows if r["account"] in CASH_ACCOUNTS and r["period"] < begin
+        )
+    else:
+        totals = account_balances[begin - 1]
+        result[21] = (
+            None if totals is None else sum_fen(totals.get(account, 0) for account in CASH_ACCOUNTS)
+        )
+    result[22] = None if result[21] is None else result[21] + result[20]
+    return result
+
+
+def _statements(
+    rows,
+    start,
+    year_start,
+    end,
+    problems,
+    *,
+    account_balances=None,
+    party_balances=None,
+    frozen_flows=None,
+):
     def balance(as_of):
         if account_balances is not None:
             totals = account_balances[as_of]
             if totals is None:
                 return {line: None for line in range(1, 54)}
-            selected = [
-                row
-                for row in rows
-                if row["period"] <= as_of
-                and (row["account"] in RECLASS or row["account"] not in _POSITION_ACCOUNTS)
-            ]
+            selected = (
+                list(party_balances[as_of])
+                if party_balances is not None
+                else [
+                    row
+                    for row in rows
+                    if row["period"] <= as_of
+                    and (row["account"] in RECLASS or row["account"] not in _POSITION_ACCOUNTS)
+                ]
+            )
             selected.extend(
                 {"account": account, "amount": amount}
                 for account, amount in sorted(totals.items())
@@ -1594,193 +2629,24 @@ def _statements(rows, start, year_start, end, problems, *, account_balances=None
         problems.extend(position["issues"])
         return position["lines"]
 
-    def profit(begin):
-        result = {line: 0 for line in PROFIT_NAMES}
-        for row in rows:
-            if not begin <= row["period"] <= end or row["account"] not in PROFIT_ACCOUNTS:
-                continue
-            main, sign = PROFIT_ACCOUNTS[row["account"]]
-            result[main] += row["amount"] * sign
-            account, kind, fact = row["account"], row["kind"], row["fact"]
-            automatic = account == "5603" and (
-                kind in {"loan_interest", "bank_income"}
-                or (kind == "expense" and getattr(fact, "expense_class", None) == "bank_fee")
-            )
-            if account == "560301" or (
-                account == "5603"
-                and (
-                    kind == "loan_interest" or getattr(fact, "income_kind", None) == "bank_interest"
-                )
-            ):
-                result[19] += row["amount"]
-            if account == "6301" and (
-                kind == "tax_assessment" or getattr(fact, "income_kind", None) == "government_grant"
-            ):
-                result[23] -= row["amount"]
-            details = (
-                [x for x in row["classification"].profit_details if x.line_no == row["line_no"]]
-                if row["classification"]
-                else []
-            )
-            if account == "5403":
-                direction = -1 if row["reverses_id"] else 1
-                automatic_tax = (
-                    kind == "tax_assessment"
-                    and row["amount"] * direction > 0
-                    and abs(row["amount"]) == row["values"].get("surtax_fen")
-                )
-                if automatic_tax:
-                    result[6] += direction * row["values"]["urban_tax_fen"]
-                    result[10] += direction * (
-                        row["values"]["education_tax_fen"]
-                        + row["values"]["local_education_tax_fen"]
-                    )
-                    if details:
-                        problems.append(
-                            issue(
-                                "report_classification.profit_details",
-                                "已由计税依据确定附加税明细，不应重复分类",
-                            )
-                        )
-                elif sum(x.amount_fen for x in details) == abs(row["amount"]) and all(
-                    x.detail_code.startswith("tax_") for x in details
-                ):
-                    for item in details:
-                        result[6 if item.detail_code == "tax_urban" else 10] += item.amount_fen * (
-                            1 if row["amount"] > 0 else -1
-                        )
-                else:
-                    problems.append(
-                        issue(
-                            "report_classification.profit_details",
-                            "附加税退抵差额需有依据的城市维护税及教育附加明细",
-                            voucher_version_id=row["reverses_id"] or row["version_id"],
-                            line_no=row["line_no"],
-                        )
-                    )
-                continue
-            if account in {"5601", "5602", "5603"} and not automatic:
-                family = {"5601": "sales_", "5602": "management_", "5603": "finance_"}[account]
-                if sum(x.amount_fen for x in details) != abs(row["amount"]) or any(
-                    not x.detail_code.startswith(family) for x in details
-                ):
-                    problems.append(
-                        issue(
-                            "report_classification.profit_details",
-                            "费用明细分类需完整覆盖原凭证金额",
-                            voucher_version_id=row["reverses_id"] or row["version_id"],
-                            line_no=row["line_no"],
-                        )
-                    )
-                else:
-                    for item in details:
-                        if item.detail_code in DETAIL_LINES:
-                            result[DETAIL_LINES[item.detail_code]] += item.amount_fen * (
-                                1 if row["amount"] > 0 else -1
-                            )
-            elif details:
-                problems.append(
-                    issue(
-                        "report_classification.profit_details",
-                        "该行已有确定性分类或不属于可分类的费用",
-                        voucher_version_id=row["version_id"],
-                        line_no=row["line_no"],
-                    )
-                )
-        result[21] = (
-            result[1] - result[2] - result[3] - result[11] - result[14] - result[18] + result[20]
-        )
-        result[30] = result[21] + result[22] - result[24]
-        result[32] = result[30] - result[31]
-        return result
-
-    def cash(begin):
-        result = {line: 0 for line in CASH_FLOW_NAMES}
-        transfers = defaultdict(int)
-        for row in rows:
-            if (
-                row.get("opening")
-                or not begin <= row["period"] <= end
-                or row["account"] not in CASH_ACCOUNTS
-            ):
-                continue
-            fact, tag = row["cash_source"], row["cashflow"]
-            detail = (
-                [x for x in row["classification"].cash_details if x.line_no == row["line_no"]]
-                if row["classification"]
-                else []
-            )
-            category = CASH_CATEGORIES.get(tag)
-            if tag == "financing_receipts":
-                category = 15 if getattr(fact, "funding_kind", None) == "capital" else 14
-            elif tag == "operating_payments":
-                expense_class = getattr(fact, "expense_class", None)
-                category = (
-                    3
-                    if expense_class == "service"
-                    else (6 if expense_class in {"administration", "sales", "bank_fee"} else None)
-                )
-            elif tag == "payroll":
-                category = 5 if row.get("cash_obligation", {}).get("account") == "222103" else 4
-            if (
-                row["kind"] in {"funds_transfer", "cash_bank_transfer", "bank_platform_transfer"}
-                and tag != "managed_reserve_outflow"
-            ):
-                transfers[row["version_id"]] += row["amount"]
-                continue
-            if detail:
-                if sum(item.amount_fen for item in detail) != abs(row["amount"]) or (
-                    category is not None and any(item.category != category for item in detail)
-                ):
-                    problems.append(
-                        issue(
-                            "report_classification.cash_details",
-                            "现金分类须完整覆盖金额并与明确业务来源一致",
-                            voucher_version_id=row["version_id"],
-                            line_no=row["line_no"],
-                        )
-                    )
-                    continue
-                for item in detail:
-                    result[item.category] += item.amount_fen * (
-                        (1 if row["amount"] > 0 else -1)
-                        * (1 if item.category in INFLOW_ROWS else -1)
-                    )
-                continue
-            if category is None:
-                problems.append(
-                    issue(
-                        "report_classification.cash_details",
-                        "非零现金流缺少确定分类",
-                        voucher_version_id=row["reverses_id"] or row["version_id"],
-                        line_no=row["line_no"],
-                    )
-                )
-                continue
-            result[category] += row["amount"] * (1 if category in INFLOW_ROWS else -1)
-        if any(transfers.values()):
-            problems.append(issue("cash_transfer", "内部资金划转未完整抵销"))
-        result[7] = result[1] + result[2] - result[3] - result[4] - result[5] - result[6]
-        result[13] = result[8] + result[9] + result[10] - result[11] - result[12]
-        result[19] = result[14] + result[15] - result[16] - result[17] - result[18]
-        result[20] = result[7] + result[13] + result[19]
-        if account_balances is None:
-            result[21] = sum_fen(
-                r["amount"] for r in rows if r["account"] in CASH_ACCOUNTS and r["period"] < begin
-            )
-        else:
-            totals = account_balances[begin - 1]
-            result[21] = (
-                None
-                if totals is None
-                else sum_fen(totals.get(account, 0) for account in CASH_ACCOUNTS)
-            )
-        result[22] = None if result[21] is None else result[21] + result[20]
-        return result
-
     balance_begin, balance_end = balance(year_start - 1), balance(end)
-    current_profit, ytd_profit = profit(start), profit(year_start)
-    current_cash, ytd_cash = cash(start), cash(year_start)
+    current_profit = _profit_rows(rows, start, end, problems)
+    ytd_profit = _profit_rows(rows, year_start, end, problems)
+    current_cash = _cash_rows(rows, start, end, problems, account_balances=account_balances)
+    ytd_cash = _cash_rows(rows, year_start, end, problems, account_balances=account_balances)
+    for month, flow in (frozen_flows or {}).items():
+        if not year_start <= month <= end:
+            continue
+        for line, value in flow["profit"].items():
+            ytd_profit[int(line)] += value
+            if month >= start:
+                current_profit[int(line)] += value
+        for line, value in flow["cash"].items():
+            ytd_cash[int(line)] += value
+            if month >= start:
+                current_cash[int(line)] += value
+    for cash in (current_cash, ytd_cash):
+        cash[22] = None if cash[21] is None else cash[21] + cash[20]
     return {
         "balance_sheet": {
             str(k): {"name": v, "ending_fen": balance_end[k], "beginning_fen": balance_begin[k]}

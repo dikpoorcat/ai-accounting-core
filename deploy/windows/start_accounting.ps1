@@ -16,9 +16,9 @@ if (-not $DataRoot) {
     $DataRoot = if ($env:FINANCE_DATA_ROOT) {
         $env:FINANCE_DATA_ROOT
     } elseif ($PackageRoot) {
-        Join-Path $PackageRoot 'data/kernel-draft'
+        Join-Path $PackageRoot 'data/kernel-released'
     } else {
-        Join-Path $repositoryRoot 'data/kernel-draft'
+        Join-Path $repositoryRoot 'data/kernel-released'
     }
 }
 $accountingRoot = [System.IO.Path]::GetFullPath($DataRoot)

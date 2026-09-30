@@ -170,12 +170,20 @@ def test_sql_whitespace_is_part_of_contract_and_visible_in_diff(tmp_path):
         load(tmp_path)
 
 
-def test_only_draft_contracts_are_packaged():
+def test_production_bundle_selects_its_declared_active_contracts():
     bundle = production_bundle()
-    assert bundle.status == "draft"
     for kind in ("company", "catalog"):
-        assert set(bundle.contracts[kind]) == {0}
-        assert bundle.current(kind)["status"] == "draft"
+        current = bundle.current(kind)
+        assert current["status"] == bundle.status
+        assert current["version"] == bundle.current_versions[kind]
+        assert current["family"] == bundle.family
+        assert current["application_id"] == bundle.application_id
+        if bundle.status == "draft":
+            assert bundle.current_versions[kind] == 0
+            assert set(bundle.contracts[kind]) == {0}
+        else:
+            assert bundle.current_versions[kind] >= 1
+            assert bundle.contracts[kind][1]["status"] == "released"
 
 
 def test_released_v2_cannot_use_full_snapshot(tmp_path):

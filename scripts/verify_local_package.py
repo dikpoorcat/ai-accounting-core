@@ -20,12 +20,178 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlencode
 
 _SERVICES = {}
 _RUNNERS = {}
 _PRIVATE_NATIVE = {}
+
+
+def _catalog_upgrade_state(root):
+    """Capture the isolated daemon's committed directory data and version."""
+    uri = (root / "catalog.sqlite").as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as connection:
+        connection.execute("BEGIN")
+        try:
+            tables = [
+                row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"
+                )
+            ]
+            rows = tuple(
+                (name, tuple(connection.execute(
+                    'SELECT * FROM "' + name.replace('"', '""') + '"'
+                )))
+                for name in tables
+            )
+            return (
+                connection.execute("PRAGMA application_id").fetchone()[0],
+                connection.execute("PRAGMA user_version").fetchone()[0],
+                connection.execute("PRAGMA schema_version").fetchone()[0],
+                rows,
+            )
+        finally:
+            connection.rollback()
+
+
+def _process_alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
+    kernel.GetExitCodeProcess.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel.CloseHandle.restype = ctypes.c_int
+    handle = kernel.OpenProcess(0x1000, 0, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        status = ctypes.c_uint32()
+        return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(status))) and status.value == 259
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def verify_daemon_upgrade_rejection(package, root, metadata):
+    """Use the package CLI against its already running, isolated daemon."""
+    from ai_accounting.kernel.daemon import _check_health, _metadata_for_root, _request
+
+    assert metadata["pid"] != os.getpid() and _process_alive(metadata["pid"])
+    _check_health(metadata, _request(metadata, "/api/health", timeout=3))
+    before = _catalog_upgrade_state(root)
+    result = subprocess.run(
+        [str(package / "finance-local.cmd"), "--root", str(root), "upgrade"],
+        cwd=package,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    rejected = json.loads(result.stdout)
+    assert result.returncode == 1 and rejected["status"] == "rejected", rejected
+    assert rejected["code"] == "service_active", rejected
+    current = _metadata_for_root(root)
+    assert current == metadata, "Upgrade changed or replaced the active daemon"
+    _check_health(current, _request(current, "/api/health", timeout=3))
+    assert _process_alive(current["pid"]), "Upgrade stopped the active daemon process"
+    assert _catalog_upgrade_state(root) == before, "Rejected upgrade changed directory data"
+    return {"daemon_held_root_lock_rejected": rejected["code"],
+            "daemon_alive_same_pid": current["pid"] == metadata["pid"],
+            "catalog_data_and_version_unchanged": True}
+
+
+def _recorded_brief_worker(*args):
+    """Package-verifier-only wrapper; the production worker still does the read."""
+    from ai_accounting.kernel.brief_parallel import _worker_read
+
+    return {**_worker_read(*args), "test_worker_pid": os.getpid()}
+
+
+def verify_parallel_brief(app, call, company_id, period, output):
+    """Require the actual service brief to accept all three spawned proofs."""
+    from ai_accounting.kernel.brief_parallel import _BriefParallelAttempt, _worker_read
+
+    coordinator = app.brief_parallel
+    if coordinator is None or coordinator.pool is None:
+        raise AssertionError("Packaged parallel brief pool was not started")
+    submitted, accepted = {}, []
+    original_submit = coordinator.pool.apply_async
+    original_finish = _BriefParallelAttempt.finish
+
+    def recorded_submit(function, args):
+        assert function is _worker_read and args[0] not in submitted
+        job = original_submit(_recorded_brief_worker, args)
+        submitted[args[0]] = job
+        return job
+
+    def recorded_finish(attempt):
+        result = original_finish(attempt)
+        accepted.append((attempt.started, attempt.finished))
+        return result
+
+    coordinator.pool.apply_async = recorded_submit
+    _BriefParallelAttempt.finish = recorded_finish
+    try:
+        response = call("dashboard_brief", {"company_id": company_id, "period": period})
+    finally:
+        coordinator.pool.apply_async = original_submit
+        _BriefParallelAttempt.finish = original_finish
+    assert accepted == [(True, True)], "Packaged brief silently fell back to serial"
+    assert set(submitted) == {"materials", "duplicates", "reports"}
+    worker_pids = {}
+    for kind, job in submitted.items():
+        packet = job.get(timeout=15)
+        assert packet["ok"] and packet["test_worker_pid"] > 0
+        worker_pids[kind] = packet["test_worker_pid"]
+    # A Pool may schedule two quick tasks on one process while another worker
+    # is idle. Prove that all three real processes exist and every accepted
+    # task ran in that pool; task-to-process allocation is not a product rule.
+    pool_workers = tuple(coordinator.pool._pool)
+    pool_worker_pids = sorted(process.pid for process in pool_workers)
+    assert len(pool_worker_pids) == len(set(pool_worker_pids)) == 3
+    assert all(process.is_alive() for process in pool_workers)
+    assert set(worker_pids.values()) <= set(pool_worker_pids)
+    assert os.getpid() not in pool_worker_pids
+    assert response["schema_version"] == 7
+    with output.open("x", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "company_id": company_id,
+                "period": period,
+                "parallel_finish": accepted[0][1],
+                "worker_pids": worker_pids,
+                "pool_worker_pids": pool_worker_pids,
+                "response_schema_version": response["schema_version"],
+            },
+            stream,
+            ensure_ascii=False,
+            indent=2,
+        )
+        stream.write("\n")
+    return response
+
+
+def expected_contract_names(bundle):
+    names = []
+    for kind in ("company", "catalog"):
+        for version, item in sorted(bundle.contracts[kind].items()):
+            if bundle.status == "released" and item["status"] != "released":
+                continue
+            if bundle.status == "draft" and version != bundle.current_versions[kind]:
+                continue
+            filename = "draft.json" if item["status"] == "draft" else f"v{version}.json"
+            names.append(f"{kind}/{filename}")
+    if bundle.status == "released":
+        names.append("content-v1.json")
+    return tuple(sorted(names))
 
 
 def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup, validation):
@@ -808,7 +974,7 @@ def verify_stage8_job_recovery(call, validation, company_id):
     assert Path(retried["result"]["path"]).is_file()
 
 
-def start_resident(root, *, native_smoke=False):
+def start_resident(root, *, native_smoke=False, parallel_brief=False):
     """Exercise the exact daemon components using exclusively synthetic owners."""
     from pydantic import SecretStr
 
@@ -824,7 +990,9 @@ def start_resident(root, *, native_smoke=False):
     from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
     from ai_accounting.kernel.service import LocalService
 
-    app = LocalService(root)
+    app = LocalService(
+        root, enable_read_pool=parallel_brief, enable_parallel_brief=parallel_brief
+    )
     password = SecretStr("Synthetic-package-owner-only-2026")
     app.security.provision("package-test-owner", password)
     server, capability = create_server(app, port=0)
@@ -923,10 +1091,15 @@ def stop_residents():
             if token is not None:
                 app.security.logout(token)
         finally:
-            app.security_controller.store.delete_session_token()
-            server.shutdown()
-            thread.join(timeout=5)
-            server.server_close()
+            try:
+                app.security_controller.store.delete_session_token()
+                server.shutdown()
+                thread.join(timeout=5)
+            finally:
+                try:
+                    server.server_close()
+                finally:
+                    app.close()
     _SERVICES.clear()
     _PRIVATE_NATIVE.clear()
 
@@ -948,6 +1121,7 @@ def main():
             assert hashlib.file_digest(stream, "sha256").hexdigest() == expected["sha256"], relative
 
     import argon2  # noqa: F401
+    import jsonschema  # noqa: F401 - released v1 content validator runtime dependency
     import pypdf  # noqa: F401
     import xlrd  # noqa: F401
     import xlwt  # noqa: F401
@@ -955,8 +1129,13 @@ def main():
     from ai_accounting.financial_statement_template import _template_bytes
     from ai_accounting.kernel.build import calculator_build_id
     from ai_accounting.kernel.mcp import serve  # noqa: F401 - validate optional entry dependencies
+    from ai_accounting.kernel.schema_bundle import production_bundle
 
     assert calculator_build_id() == manifest["runtime"]["build_id"]
+    bundle = production_bundle()
+    assert manifest["runtime"]["database_formats"] == {
+        kind: bundle.database_format(kind) for kind in ("catalog", "company")
+    }
     required_modules = (
         "business_queries",
         "query_reads",
@@ -969,15 +1148,33 @@ def main():
         assert Path(module.__file__).resolve().is_relative_to(package)
         assert "kernel/" + name + ".py" in manifest["application_modules"]
     contracts = package / "app/ai_accounting/kernel/schema_contracts"
-    assert sorted(path.relative_to(contracts).as_posix() for path in contracts.rglob("*.json")) == [
-        "catalog/draft.json",
-        "company/draft.json",
-    ]
+    actual_contracts = tuple(
+        sorted(path.relative_to(contracts).as_posix() for path in contracts.rglob("*.json"))
+    )
+    assert actual_contracts == expected_contract_names(bundle)
+    if bundle.status == "released":
+        from ai_accounting.kernel.content_v1 import v1_registry
+
+        content = json.loads((contracts / "content-v1.json").read_text("utf-8"))
+        assert content["status"] == "released" and content["version"] == 1
+        v1_registry()  # fixed descriptor, source rules, and its own digest
     assert not (package / "app/ai_accounting/kernel/migrations").exists()
     assert not (package / "app/ai_accounting/kernel/security/batches.py").exists()
-    for contract_file in contracts.rglob("*.json"):
-        objects = json.loads(contract_file.read_text("utf-8"))["objects"]
-        assert "security_close_batch" not in json.dumps(objects)
+    for kind in ("company", "catalog"):
+        for version, item in bundle.contracts[kind].items():
+            filename = "draft.json" if item["status"] == "draft" else f"v{version}.json"
+            name = f"{kind}/{filename}"
+            if name not in actual_contracts:
+                continue
+            saved = json.loads((contracts / name).read_text("utf-8"))
+            assert all(saved[key] == item[key] for key in (
+                "family", "kind", "status", "version", "application_id", "sha256"
+            ))
+            # load_contracts has already checked an incremental v2+ parent
+            # chain and expanded it to these authoritative SQL objects.
+            if "objects" in saved:
+                assert saved["objects"] == item["objects"]
+            assert "security_close_batch" not in json.dumps(item["objects"])
     assert sqlite3.sqlite_version == manifest["runtime"]["sqlite"] == "3.53.1"
     assert sys.version.split()[0] == manifest["runtime"]["python"] == "3.12.13"
     template_bytes = len(_template_bytes())
@@ -986,7 +1183,7 @@ def main():
     inputs = validation / "inputs"
     inputs.mkdir()
     data_root = validation / "companies"
-    start_resident(data_root, native_smoke=True)
+    start_resident(data_root, native_smoke=True, parallel_brief=True)
     calls = 0
 
     def call(command, payload, *, root=data_root):
@@ -1279,6 +1476,10 @@ def main():
     readiness_request = {**overview_request, "as_of": "2026-09-30"}
     business = business_contract(call("business_status", business_request))
     readiness = readiness_contract(call("period_readiness", readiness_request))
+    parallel_brief = verify_parallel_brief(
+        _SERVICES[data_root][0], call, company_id, "2026-09", validation / "parallel-brief.json"
+    )
+    assert parallel_brief["data"]["voucher_count"] == 1
     database_formats = assert_current_formats(_SERVICES[data_root][0], company_id)
     assert manifest["runtime"]["database_formats"] == database_formats
     queued = call(
@@ -1656,7 +1857,8 @@ def main():
     default_environment = {
         key: value for key, value in os.environ.items() if key != "FINANCE_DATA_ROOT"
     }
-    default_root = package / "data/kernel-draft"
+    default_root = package / "data/kernel-released"
+    daemon_upgrade_smoke = None
     try:
         result = subprocess.run(
             [str(package / "finance-local.cmd"), "call", "schema"],
@@ -1689,6 +1891,10 @@ def main():
         default_metadata = json.loads(result.stdout)
         assert default_metadata["protocol"] == 2
         assert default_metadata["database_format"] == database_formats["catalog"]
+        if bundle.status == "released":
+            daemon_upgrade_smoke = verify_daemon_upgrade_rejection(
+                package, default_root, default_metadata
+            )
     finally:
         subprocess.run(
             [str(package / "finance-local.cmd"), "stop"],
@@ -1879,7 +2085,44 @@ def main():
         and not Path(module.__file__).resolve().is_relative_to(package)
     }
     assert not outside, outside
+    upgrade_smoke = None
+    if bundle.status == "released":
+        from ai_accounting.kernel.runtime import private_file_lock
+
+        def packaged_upgrade():
+            result = subprocess.run(
+                [str(package / "finance-local.cmd"), "--root", str(data_root), "upgrade"],
+                cwd=package,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            return result.returncode, json.loads(result.stdout)
+
+        # This harness starts service components directly, not through daemon.run.
+        # Hold its root lock here to exercise the packaged CLI's lock rejection.
+        with private_file_lock(data_root / ".resident.lock") as acquired:
+            assert acquired and data_root in _SERVICES
+            returncode, rejected = packaged_upgrade()
+            assert returncode == 1 and rejected["status"] == "rejected", rejected
+            assert rejected["code"] == "service_active", rejected
     stop_residents()
+    if bundle.status == "released":
+        first_code, first = packaged_upgrade()
+        second_code, second = packaged_upgrade()
+        assert first_code == second_code == 0, (first, second)
+        assert first == second and first["status"] == "upgraded"
+        assert first["catalog"] == "verified_skip"
+        assert len(first["companies"]) == 4
+        assert all(item["status"] == "verified_skip" for item in first["companies"])
+        assert first["database_format"] == database_formats
+        upgrade_smoke = {
+            **daemon_upgrade_smoke,
+            "harness_held_root_lock_rejected": rejected["code"],
+            "same_version_first": first["catalog"],
+            "same_version_repeat": second["catalog"],
+            "verified_companies": len(first["companies"]),
+        }
     print(
         json.dumps(
             {
@@ -1897,6 +2140,7 @@ def main():
                 "debit_fen": 123456,
                 "credit_fen": 123456,
                 "backup_verified_and_restored": True,
+                "packaged_offline_upgrade": upgrade_smoke,
                 "background_backup_without_manual_run": True,
                 "native_approved_close_backup_restored_and_frozen": True,
                 "closed_period_correction_uses_posting_period": True,
@@ -1913,7 +2157,7 @@ def main():
                 "dashboard_current_schemas_and_collections": True,
                 "dashboard_integer_cent_strings": True,
                 "relative_cmd_and_powershell_launchers": True,
-                "launchers_default_to_packaged_draft_root": True,
+                "launchers_default_to_packaged_root": True,
                 "stdio_mcp_handshake_and_query": True,
                 "native_pythonw_window_and_private_transport": True,
                 "tk_form_synthetic_login": True,

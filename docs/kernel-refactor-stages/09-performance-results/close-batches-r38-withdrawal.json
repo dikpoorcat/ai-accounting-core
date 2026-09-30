@@ -1,0 +1,40 @@
+{
+  "status": "withdrawn",
+  "reason": "withdrawn_after_no_native_page_latency_gain",
+  "source_before": "f1929db15dd92e0dfa6317569277f6e374a38f0c8eeafce1fcccaa44e29f8a60",
+  "source_restored": "eee15731556fd7087541bf867eef166aa1006c59d5b3ad65e86a0313d40cb996",
+  "archive_sha256": "bf79afb5c01828485e400d05651b27a249cd539ee81dc478a4c03a43199cd177",
+  "files": [
+    {
+      "path": "src/ai_accounting/kernel/close_storage.py",
+      "action": "restore_exact_r37",
+      "sha256": "5056f9b314a0330fb0192ffeaf15607c910e3db899643d82486c0289210ee22e"
+    },
+    {
+      "path": "src/ai_accounting/kernel/query_reads.py",
+      "action": "restore_exact_r37",
+      "sha256": "7b32ea9191389e539b208c66db336927ef41adacb48cd833a409a1e1530d35c5"
+    },
+    {
+      "path": "src/ai_accounting/kernel/reports.py",
+      "action": "restore_exact_r37",
+      "sha256": "ec8730223d4d6d823988a675fed79d08a7ddb6c2e318bb675d5ef098469b85ff"
+    },
+    {
+      "path": "tests/kernel/test_close_management_sections.py",
+      "action": "restore_exact_r37",
+      "sha256": "5ebe5fb66aa0d8964d80bdc18552ee7d394efffde2b48a447b7feb5f9671668d"
+    },
+    {
+      "path": "tests/kernel/test_close_storage_batch_io.py",
+      "action": "remove_r38_only_test_archived_in_diff"
+    },
+    {
+      "path": "tests/kernel/test_t7_quarter_coverage.py",
+      "action": "restore_exact_r37",
+      "sha256": "0989af6d182facd5503866ae83534376b86bc43595b10b815c9d74c48a8d007f"
+    }
+  ],
+  "repository_inventory_matches_r37": true,
+  "repository_source_sha256": "6146a0208d29430a9a65a125e7505296559f1ea7dbebe61821f412956256243b"
+}

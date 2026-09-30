@@ -2,18 +2,71 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
-from typing import get_origin
+from contextvars import ContextVar
+from functools import cache
+from typing import get_args, get_origin
 
 from pydantic import BaseModel
+from pydantic_core import from_json, to_json
 
 from .contracts import Calculation, FactVersion, KernelError, Read
 from .dependencies import NO_PERIOD_LIMIT, scope_keys, validate_read
 from .runtime import connect, initialize_file, require_local_database
 from .schema import base_type, initialize, sequence_model, table_name
+from .stored_json import DuplicateStoredKey, loads_unique
 from .types import YearMonth, canonical
 from .versions import verify_schema
+
+# Only QueryReads.snapshot binds this pointer. The raw values themselves live
+# on that read transaction's QueryReads and are discarded when it exits.
+_active_fact_reads: ContextVar[object | None] = ContextVar("active_fact_reads", default=None)
+
+
+def _snapshot_fact_raws(store, connection, identifiers):
+    """Decode exact pre-validation JSON, never a normalized model dump or proof."""
+    reads = _active_fact_reads.get()
+    if (
+        reads is None
+        or not reads._snapshot_active
+        or reads.store is not store
+        or reads.connection is not connection
+        or not connection.in_transaction
+    ):
+        return {}
+    return {
+        ident: from_json(reads._raw_fact_data[ident])
+        for ident in identifiers
+        if ident in reads._raw_fact_data
+    }
+
+
+def _snapshot_fact_hashes(store, connection, identifiers):
+    """Hash exact read bytes; callers still check identity, order and seals.
+
+    Equality is a fast path only for a stored canonical representation. A
+    different encoding must fall back to hashing the decoded original value.
+    """
+    raw = _snapshot_fact_raw_sink(store, connection)
+    return (
+        {ident: hashlib.sha256(raw[ident]).digest() for ident in identifiers if ident in raw}
+        if raw is not None else {}
+    )
+
+
+def _snapshot_fact_raw_sink(store, connection):
+    reads = _active_fact_reads.get()
+    if (
+        reads is not None
+        and reads._snapshot_active
+        and reads.store is store
+        and reads.connection is connection
+        and connection.in_transaction
+    ):
+        return reads._raw_fact_data
+    return None
 
 
 def composite(annotation):
@@ -23,43 +76,181 @@ def composite(annotation):
     )
 
 
-def encode_fields(model, data):
-    result = {}
+@cache
+def _field_codecs(model):
+    """Compile immutable model metadata, never business values or read results."""
+    fields = []
     for name, info in model.model_fields.items():
         if sequence_model(info.annotation):
             continue
+        typ = base_type(info.annotation)
+        codec = (
+            "month"
+            if typ is YearMonth
+            else "bool"
+            if typ is bool
+            else ("json" if composite(info.annotation) else "scalar")
+        )
+        fields.append((name, codec))
+    return tuple(fields)
+
+
+def encode_fields(model, data):
+    result = {}
+    for name, codec in _field_codecs(model):
         value = data[name]
         if value is not None:
-            if base_type(info.annotation) is YearMonth:
+            if codec == "month":
                 value = YearMonth(value).ordinal
-            elif base_type(info.annotation) is bool:
+            elif codec == "bool":
                 value = int(value)
-            elif composite(info.annotation):
+            elif codec == "json":
                 value = canonical(value)
         result[name] = value
     return result
 
 
 def decode_fields(model, data):
-    for name, info in model.model_fields.items():
-        if sequence_model(info.annotation):
-            continue
+    if hasattr(model, "_v1_fields"):
+        from .content_v1 import decode_v1_fields
+
+        return decode_v1_fields(model, data)
+    for name, codec in _field_codecs(model):
         if data[name] is not None:
-            if base_type(info.annotation) is YearMonth:
+            if codec == "month":
                 data[name] = str(YearMonth.from_ordinal(data[name]))
-            elif base_type(info.annotation) is bool:
+            elif codec == "bool":
                 data[name] = bool(data[name])
-            elif composite(info.annotation):
-                data[name] = json.loads(data[name])
+            elif codec == "json":
+                try:
+                    data[name] = loads_unique(data[name])
+                except DuplicateStoredKey as exc:
+                    raise KernelError(
+                        "content_integrity_failed", "已保存的事实 JSON 有重复字段"
+                    ) from exc
     return data
 
 
+def _stored_sequence(model, name, info):
+    fields = getattr(model, "_v1_fields", None)
+    if fields is not None:
+        return (
+            get_args(base_type(info.annotation))[0]
+            if fields[name]["kind"] == "sequence" else None
+        )
+    return sequence_model(info.annotation)
+
+
+def _validation_json(data):
+    """Validation needs JSON mode, not sorted keys; persisted digests stay canonical."""
+    encoded = to_json(data)
+    if b"NaN" in encoded or b"Infinity" in encoded:
+        # Retain canonical()'s rejection of non-finite stored values. Text with
+        # these words is legal and simply takes the slower serialization path.
+        return canonical(data)
+    return encoded
+
+
+@cache
+def _scalar_fact_json_sql(model, kind):
+    """Build a C-side JSON read for facts whose stored fields need no JSON parsing.
+
+    Composite fields retain the Python decoder, which rejects non-finite and
+    non-standard embedded JSON before validation. This cache contains SQL
+    metadata only, never fact values or read results.
+    """
+    if hasattr(model, "_v1_fields"):
+        return None
+    sequences = []
+    for name, info in model.model_fields.items():
+        item = _stored_sequence(model, name, info)
+        if item is not None:
+            sequences.append((name, item))
+    if any(codec == "json" for _, codec in _field_codecs(model)) or any(
+        codec == "json" for _, item in sequences for _, codec in _field_codecs(item)
+    ):
+        return None
+
+    def value_sql(alias, name, codec):
+        column = f'{alias}."{name}"'
+        if codec == "month":
+            return (
+                f"CASE WHEN {column} IS NULL THEN NULL ELSE "
+                f"CASE WHEN typeof({column})='integer' AND "
+                f"{column} BETWEEN 0 AND 119987 THEN "
+                f"printf('%04d-%02d', {column}/12+1, {column}%12+1) "
+                "ELSE 0 END END"
+            )
+        if codec == "bool":
+            return (
+                f"CASE WHEN {column} IS NULL THEN NULL ELSE "
+                f"json(CASE WHEN (typeof({column}) IN ('text','blob') "
+                f"AND length({column})>0) OR "
+                f"(typeof({column}) NOT IN ('text','blob') AND {column}!=0) "
+                "THEN 'true' ELSE 'false' END) END"
+            )
+        return column
+
+    def object_sql(alias, item_model, children=None):
+        fields = []
+        values = {
+            name: value_sql(alias, name, codec) for name, codec in _field_codecs(item_model)
+        }
+        values.update(children or {})
+        for name, value in sorted(values.items()):
+            fields.extend((f"'{name}'", value))
+        return "json_object(" + ",".join(fields) + ")"
+
+    arrays = {}
+    for name, item in sequences:
+        child = object_sql("c", item)
+        child_table = f"{table_name(kind)}_{name}"
+        children = (
+            f"SELECT json_group_array({child} ORDER BY c.item_no) "
+            f"FROM {child_table} c WHERE c.revision_id=f.revision_id"
+        )
+        arrays[name] = f"json(COALESCE(({children}), '[]'))"
+    document = object_sql("f", model, arrays)
+    return (
+        f"SELECT f.revision_id,{document} FROM json_each(?) ids "
+        f"CROSS JOIN {table_name(kind)} f ON f.revision_id=ids.value"
+    )
+
+
+def _scalar_fact_hashes(store, connection, kinds):
+    """Hash the existing C-side JSON encoding for selected scalar facts.
+
+    This is only an equality fast path. A missing row, unsupported field codec,
+    or nonmatching hash must still use the original decoded-value check.
+    Historical v1 reads retain their independent content rules.
+    """
+    if getattr(store.registry, "content_version", None) == 1:
+        return {}
+    result = {}
+    for kind, identifiers in kinds.items():
+        if not identifiers:
+            continue
+        model = store.registry.models.get(kind)
+        if model is None:
+            continue
+        sql = _scalar_fact_json_sql(model, kind)
+        if sql is None:
+            continue
+        for ident, raw in connection.execute(sql, (canonical(sorted(identifiers)),)):
+            result[ident] = hashlib.sha256(raw.encode("utf-8")).digest()
+    return result
+
+
 class Store:
-    def __init__(self, path, bundle, company_id: str, database_id: str):
+    def __init__(
+        self, path, bundle, company_id: str, database_id: str,
+        *, taxpayer_id: str | None = None, read_pool=None,
+    ):
         self.path = require_local_database(path)
         self.bundle = bundle
         self.registry = bundle.registry
         self.company_id, self.database_id = company_id, database_id
+        self.taxpayer_id, self.read_pool = taxpayer_id, read_pool
 
     @staticmethod
     def evidence_metadata(connection, digests):
@@ -98,22 +289,30 @@ class Store:
         )
         return cls(path, bundle, company_id, database_id)
 
+    def validate_connection(self, connection):
+        verify_schema(connection, bundle=self.bundle)
+        identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
+        if (
+            not identity
+            or identity["company_id"] != self.company_id
+            or identity["database_id"] != self.database_id
+            or (
+                self.taxpayer_id is not None
+                and identity["taxpayer_id"] != self.taxpayer_id
+            )
+        ):
+            raise KernelError("company_mismatch", "database does not match bound company")
+
     @contextmanager
     def connection(self, *, read_only=False):
         if not self.path.is_file():
             raise KernelError("company_missing", "company database is missing")
+        if read_only and self.read_pool is not None:
+            with self.read_pool.borrow(self) as connection:
+                yield connection
+            return
 
-        def validate(connection):
-            verify_schema(connection, bundle=self.bundle)
-            identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
-            if (
-                not identity
-                or identity["company_id"] != self.company_id
-                or identity["database_id"] != self.database_id
-            ):
-                raise KernelError("company_mismatch", "database does not match bound company")
-
-        connection = connect(self.path, read_only=read_only, validator=validate)
+        connection = connect(self.path, read_only=read_only, validator=self.validate_connection)
         try:
             yield connection
         finally:
@@ -143,7 +342,7 @@ class Store:
             row["id"],
             row["subject_id"],
             row["revision"],
-            model.model_validate_json(canonical(data)),
+            model.model_validate_json(_validation_json(data)),
             evidence,
         )
 
@@ -160,6 +359,10 @@ class Store:
 
     def fact_data_many(self, connection, fact_ids) -> dict[str, dict]:
         """Batch raw fact decoding without applying current model validation or defaults."""
+        if getattr(self.registry, "content_version", None) == 1:
+            from .content_v1 import load_v1_fact_data_many
+
+            return load_v1_fact_data_many(connection, self.registry, fact_ids)
         identifiers = sorted(set(fact_ids))
         if not identifiers:
             return {}
@@ -188,7 +391,7 @@ class Store:
                 ident = values.pop("revision_id")
                 result[ident] = decode_fields(model, values)
             for name, info in model.model_fields.items():
-                item = sequence_model(info.annotation)
+                item = _stored_sequence(model, name, info)
                 if item is None:
                     continue
                 for ident in revision_ids:
@@ -216,7 +419,7 @@ class Store:
         del data["revision_id"]
         decode_fields(model, data)
         for name, info in model.model_fields.items():
-            item = sequence_model(info.annotation)
+            item = _stored_sequence(model, name, info)
             if item is not None:
                 rows = connection.execute(
                     f"SELECT * FROM {table_name(kind)}_{name} WHERE revision_id=? ORDER BY item_no",
@@ -229,6 +432,10 @@ class Store:
 
     def facts(self, connection, fact_ids) -> dict[str, FactVersion]:
         """Load exact revisions in batches, including each kind's typed child tables."""
+        if getattr(self.registry, "content_version", None) == 1:
+            from .content_v1 import load_v1_fact_versions
+
+            return load_v1_fact_versions(connection, self.registry, fact_ids)
         identifiers = sorted(set(fact_ids))
         if not identifiers:
             return {}
@@ -252,9 +459,29 @@ class Store:
         for row in rows:
             by_kind.setdefault(row["kind"], []).append(row)
         result = {}
+        raw_sink = _snapshot_fact_raw_sink(self, connection)
+        raw_values = {} if raw_sink is not None else None
         for kind, revisions in by_kind.items():
             model = self.registry.models[kind]
             keys = canonical([row["id"] for row in revisions])
+            scalar_sql = _scalar_fact_json_sql(model, kind)
+            if scalar_sql is not None:
+                raw_by_id = {
+                    row[0]: row[1].encode("utf-8")
+                    for row in connection.execute(scalar_sql, (keys,))
+                }
+                for row in revisions:
+                    raw_json = raw_by_id[row["id"]]
+                    result[row["id"]] = FactVersion(
+                        row["id"],
+                        row["subject_id"],
+                        row["revision"],
+                        model.model_validate_json(raw_json),
+                        tuple(evidence[row["id"]]),
+                    )
+                    if raw_values is not None:
+                        raw_values[row["id"]] = raw_json
+                continue
             data = {}
             for row in connection.execute(
                 f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)} f "
@@ -265,7 +492,7 @@ class Store:
                 ident = values.pop("revision_id")
                 data[ident] = decode_fields(model, values)
             for name, info in model.model_fields.items():
-                item = sequence_model(info.annotation)
+                item = _stored_sequence(model, name, info)
                 if item is None:
                     continue
                 for values in data.values():
@@ -279,13 +506,19 @@ class Store:
                         decode_fields(item, {key: row[key] for key in item.model_fields})
                     )
             for row in revisions:
+                raw_json = _validation_json(data[row["id"]])
                 result[row["id"]] = FactVersion(
                     row["id"],
                     row["subject_id"],
                     row["revision"],
-                    model.model_validate_json(canonical(data[row["id"]])),
+                    model.model_validate_json(raw_json),
                     tuple(evidence[row["id"]]),
                 )
+                if raw_values is not None:
+                    raw_values[row["id"]] = raw_json
+        # A failed batch must not leave partly decoded values in the snapshot.
+        if raw_sink is not None:
+            raw_sink.update(raw_values)
         return result
 
     def current_fact(self, connection, subject_id):
@@ -352,12 +585,18 @@ class Store:
 
     @staticmethod
     def calculation(row):
+        try:
+            values = loads_unique(row["outcome"])["values"]
+        except DuplicateStoredKey as exc:
+            raise KernelError(
+                "content_integrity_failed", "已保存的核算结果 JSON 有重复字段"
+            ) from exc
         return Calculation(
             row["id"],
             row["subject_id"],
             row["kind"],
             YearMonth.from_ordinal(row["period"]),
-            json.loads(row["outcome"])["values"],
+            values,
             row["fact_id"],
             row["digest"].hex(),
         )
@@ -385,42 +624,55 @@ class Store:
                 for index, read in enumerate(group)
             ]
             query = (
-                "WITH requests AS (SELECT json_extract(value,'$[0]') AS slot,"
+                "WITH requests AS MATERIALIZED (SELECT json_extract(value,'$[0]') AS slot,"
                 "json_extract(value,'$[1]') AS kind,json_extract(value,'$[2]') AS key,"
                 "json_extract(value,'$[3]') AS cutoff FROM json_each(?)), ids AS ("
             )
             if source == "fact":
                 query += (
-                    "SELECT q.slot,f.id FROM requests q JOIN fact_revision f "
-                    "ON f.id=substr(q.key,2) JOIN subject s ON s.id=f.subject_id "
-                    "JOIN fact_seal z ON z.fact_id=f.id WHERE substr(q.key,1,1)='#' "
+                    "SELECT q.slot,f.id FROM requests q CROSS JOIN fact_revision f "
+                    "ON f.id=substr(q.key,2) CROSS JOIN subject s ON s.id=f.subject_id "
+                    "CROSS JOIN fact_seal z ON z.fact_id=f.id WHERE substr(q.key,1,1)='#' "
                     "AND (q.kind='*' OR q.kind=s.kind) AND f.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,f.id FROM requests q JOIN subject s ON s.kind=q.kind "
-                    "JOIN fact_current a ON a.subject_id=s.id JOIN fact_revision f "
+                    "SELECT q.slot,f.id FROM requests q CROSS JOIN subject s ON s.kind=q.kind "
+                    "CROSS JOIN fact_current a ON a.subject_id=s.id CROSS JOIN fact_revision f "
                     "ON f.id=a.fact_id WHERE q.key='*' AND f.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,f.id FROM requests q JOIN fact_scope x ON x.scope_key=q.key "
-                    "JOIN fact_current a ON a.fact_id=x.fact_id "
-                    "JOIN fact_revision f ON f.id=a.fact_id "
+                    "SELECT q.slot,f.id FROM requests q CROSS JOIN fact_scope x "
+                    "ON x.kind=q.kind AND x.scope_key=q.key "
+                    "CROSS JOIN fact_current a ON a.fact_id=x.fact_id "
+                    "CROSS JOIN fact_revision f ON f.id=a.fact_id "
                     "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' "
-                    "AND (q.kind='*' OR q.kind=x.kind) AND f.period<q.cutoff) "
+                    "AND q.kind<>'*' AND f.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,f.id FROM requests q CROSS JOIN fact_scope x "
+                    "ON x.scope_key=q.key CROSS JOIN fact_current a ON a.fact_id=x.fact_id "
+                    "CROSS JOIN fact_revision f ON f.id=a.fact_id "
+                    "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' "
+                    "AND q.kind='*' AND f.period<q.cutoff) "
                     "SELECT ids.slot,f.id,f.subject_id FROM ids "
-                    "JOIN fact_revision f ON f.id=ids.id ORDER BY ids.slot,f.subject_id"
+                    "CROSS JOIN fact_revision f ON f.id=ids.id ORDER BY ids.slot,f.subject_id"
                 )
             else:
                 query += (
-                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.id=substr(q.key,2) "
-                    "JOIN calculation_seal z ON z.calculation_id=c.id WHERE substr(q.key,1,1)='#' "
+                    "SELECT q.slot,c.id FROM requests q CROSS JOIN calculation c "
+                    "ON c.id=substr(q.key,2) CROSS JOIN calculation_seal z "
+                    "ON z.calculation_id=c.id WHERE substr(q.key,1,1)='#' "
                     "AND (q.kind='*' OR q.kind=c.kind) AND c.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.kind=q.kind "
-                    "JOIN calculation_current a ON a.calculation_id=c.id "
+                    "SELECT q.slot,c.id FROM requests q CROSS JOIN calculation c ON c.kind=q.kind "
+                    "CROSS JOIN calculation_current a ON a.calculation_id=c.id "
                     "WHERE q.key='*' AND c.period<q.cutoff UNION ALL "
                     "SELECT q.slot,c.id FROM requests q "
-                    "JOIN calculation_scope x ON x.scope_key=q.key "
-                    "JOIN calculation_current a ON a.calculation_id=x.calculation_id "
-                    "JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
-                    "AND substr(q.key,1,1)<>'#' AND (q.kind='*' OR q.kind=x.kind) "
+                    "CROSS JOIN calculation_scope x ON x.kind=q.kind AND x.scope_key=q.key "
+                    "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
+                    "CROSS JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
+                    "AND substr(q.key,1,1)<>'#' AND q.kind<>'*' "
+                    "AND c.period<q.cutoff UNION ALL SELECT q.slot,c.id FROM requests q "
+                    "CROSS JOIN calculation_scope x ON x.scope_key=q.key "
+                    "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
+                    "CROSS JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
+                    "AND substr(q.key,1,1)<>'#' AND q.kind='*' "
                     "AND c.period<q.cutoff) SELECT ids.slot,c.* FROM ids "
-                    "JOIN calculation c ON c.id=ids.id ORDER BY ids.slot,c.period,c.subject_id"
+                    "CROSS JOIN calculation c ON c.id=ids.id "
+                    "ORDER BY ids.slot,c.period,c.subject_id"
                 )
             rows = list(connection.execute(query, (canonical(specifications),)))
             superseded = {

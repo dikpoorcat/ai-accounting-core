@@ -10,7 +10,7 @@
 
 ```powershell
 .\scripts\kernel-runtime.ps1
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft call schema
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-released call schema
 ```
 
 脚本使用仓库内 uv 0.12.3 创建独立虚拟环境，固定 CPython 3.12.13，安装锁文件中的依赖。
@@ -34,7 +34,7 @@
 ```
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft call create_company --input .\create-company.json
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-released call create_company --input .\create-company.json
 ```
 
 返回的 `id` 是后续命令的 `company_id`。每次调用都从目录重新绑定公司和数据库实例身份。
@@ -49,7 +49,7 @@
 
 ```powershell
 npm --prefix frontend run build:release
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft serve
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-released serve
 ```
 
 通过启动器打开本机页面。服务只监听 `127.0.0.1`，校验本地调用身份、负责人会话及 Host / Origin。
@@ -59,7 +59,7 @@ npm --prefix frontend run build:release
 STDIO MCP 使用同一服务：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft mcp
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-released mcp
 ```
 
 此入口公开 `finance_local_schema`、`finance_local_command` 和 `finance_local_security`，

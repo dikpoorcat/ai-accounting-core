@@ -7,8 +7,10 @@ import pytest
 from entity_fixture import seed_registration_entities
 from payroll_plan_fixture import confirm_wage_inputs
 from test_banking import consume_assets
+from test_integrity_content import damage
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
@@ -449,7 +451,7 @@ def test_zero_opening_remains_a_frozen_boundary_after_close(book):
     assert error.value.code == "closed_opening_immutable"
 
 
-def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(book):
+def _midyear_report_supplement_scenario(book):
     engine, save, _, package, proof = book
     package(
         [
@@ -533,6 +535,24 @@ def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(b
             tuple(row) for row in connection.execute("SELECT * FROM period_close ORDER BY period")
         ] == frozen
         assert engine.store.epochs(connection)["accounting"] == epochs["accounting"]
+    return saved["fact_id"]
+
+
+def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(book):
+    fact_id = _midyear_report_supplement_scenario(book)
+    engine = book[0]
+    report = Reports(engine)
+    damage(
+        engine,
+        "fact_report_carry_forward",
+        "UPDATE fact_report_carry_forward SET opening_package_id='damaged' "
+        "WHERE revision_id=?",
+        (fact_id,),
+    )
+    with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
+        report.preview_export(2026, 3, carry_forward_fact_id=fact_id)
+    with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
+        Dashboard(engine).quarterly_report(2026, 3, preparation="deferred")
 
 
 def test_opening_bank_reconciles_first_real_statement(book):

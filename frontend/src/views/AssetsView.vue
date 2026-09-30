@@ -149,7 +149,7 @@ async function synchronizePeriod(force = false) {
   }
 }
 
-async function loadAssets(period: string) {
+async function loadAssets(period: string, contextGate?: Promise<void>) {
   const generation = ++requestGeneration, selection = selectionKey();
   activeController?.abort();
   clearPageRequests();
@@ -160,10 +160,11 @@ async function loadAssets(period: string) {
   errorMessage.value = "";
   loading.value = true;
   try {
-    const result = await fetchAssetsDashboard(period, controller.signal, {
+    const request = fetchAssetsDashboard(period, controller.signal, {
       asset_filter: filter.value,
       asset_id: focusedAssetId.value || undefined,
     });
+    const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; }
     await nextTick();
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
@@ -196,8 +197,18 @@ async function refresh() {
   invalidateRequests();
   const generation = requestGeneration, selection = selectionKey();
   try {
-    await refreshContext();
-    if (isCurrent(generation, selection)) await synchronizePeriod(true);
+    const period = routePeriod(), company = route.query.company_id;
+    if (typeof company === "string" && period && context.value?.current_company?.company_id === company
+      && context.value.periods.some((item) => item.key === period)) {
+      const contextGate = refreshContext().then((fresh) => {
+        if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === period))
+          throw new Error("当前公司或期间已变化，请重新选择。");
+      });
+      await loadAssets(period, contextGate);
+    } else {
+      await refreshContext();
+      if (isCurrent(generation, selection)) await synchronizePeriod(true);
+    }
   } catch (error: unknown) {
     if (isCurrent(generation, selection)) errorMessage.value = dashboardErrorMessage(error);
   }
@@ -395,7 +406,10 @@ watch(
 );
 watch(
   () => [context.value?.current_company?.company_id, route.query.period, filter.value, focusedAssetId.value] as const,
-  ([orgId], [previousOrgId]) => {
+  ([orgId, period, selectedFilter, assetId], previous) => {
+    if (previous && orgId === previous[0] && period === previous[1]
+      && selectedFilter === previous[2] && assetId === previous[3]) return;
+    const previousOrgId = previous?.[0];
     if (mounted && orgId && orgId === route.query.company_id) void synchronizePeriod(orgId !== previousOrgId);
   },
 );

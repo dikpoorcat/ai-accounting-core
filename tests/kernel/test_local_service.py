@@ -8,12 +8,69 @@ from functools import partial
 
 import pytest
 from entity_fixture import seed_fact_entities, seed_registration_entities
+from payroll_plan_fixture import confirm_wage_inputs
+from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 
 from ai_accounting.kernel.backup import create_portable
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.http import create_server
 from ai_accounting.kernel.security.primitives import IdentityError
 from ai_accounting.kernel.service import LocalService
+
+
+def test_employee_native_and_http_responses_keep_verified_wage_identity(service):
+    app, company = service
+    engine = app.engine(company)
+    proof = engine.register_evidence(
+        b"synthetic payroll response", "text/plain", "proof", request_id="wage-proof"
+    )["digest"]
+    sources = (
+        ("contributions", contribution_policy()),
+        ("income-tax", income_tax_policy()),
+        ("profile", profile(employee_id="employee")),
+        ("tax-opening", opening(employee_id="employee")),
+        ("wage", payroll(employee_id="employee", profile_id="profile")),
+    )
+    for subject, fact in sources:
+        data = fact.model_dump(mode="json")
+        seed_registration_entities(engine, fact.kind, data)
+        engine.save_fact(
+            fact.kind, subject, data, evidence=(proof,), expected_revision=0,
+            request_id="save-" + subject,
+        )
+    confirm_wage_inputs(engine, "wage", evidence=(proof,), request_id="confirm-wage")
+    preview = engine.preview(["wage"])
+    engine.confirm(
+        ["wage"], preview_digest=preview["digest"], epochs=preview["epochs"],
+        request_id="publish-wage",
+    )
+    payload = {"company_id": company, "period": "2026-01", "preparation": "deferred"}
+    native = app.dispatch("dashboard_employees", payload)
+    from ai_accounting.kernel.response_contracts import RESPONSE_ADAPTERS
+
+    expected_http = RESPONSE_ADAPTERS["dashboard_employees"].dump_python(native, mode="json")
+    server, _ = create_server(app, token="employee-response-test")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request(
+            "GET",
+            f"/api/dashboard/employees?company_id={company}&period=2026-01&preparation=deferred",
+            headers={"Authorization": "Bearer " + app._test_session_token},
+        )
+        response = connection.getresponse()
+        body = response.read()
+        connection.close()
+        assert response.status == 200
+        assert json.loads(body) == expected_http
+        assert native["data"]["collections"]["employees"]["items"][0][
+            "employee_id"
+        ] == "employee"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
 def test_calculation_does_not_block_reads_and_revocation_wins_before_commit(service):

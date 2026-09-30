@@ -269,7 +269,7 @@ async function revealBankDetails() {
   document.getElementById("fund-detail-tab-bank")?.focus({ preventScroll: true });
 }
 
-async function loadFunds(periodKey: string) {
+async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   const generation = ++requestGeneration;
   cancelPages();
   activeRequest?.abort();
@@ -285,7 +285,8 @@ async function loadFunds(periodKey: string) {
   loading.value = true;
   requestError.value = "";
   try {
-    const response = await fetchFundsDashboard(periodKey, controller.signal, filters);
+    const request = fetchFundsDashboard(periodKey, controller.signal, filters);
+    const response = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     const data = response.data;
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     funds.value = data;
@@ -376,8 +377,18 @@ async function refresh() {
   const selection = selectionKey();
   const period = selectedPeriod.value;
   try {
-    await refreshContext();
-    if (isCurrent(generation, selection) && period) await loadFunds(period);
+    const company = route.query.company_id, requested = routePeriod();
+    if (typeof company === "string" && requested && requested === period
+      && context.value?.current_company?.company_id === company && context.value.periods.some((item) => item.key === requested)) {
+      const contextGate = refreshContext().then((fresh) => {
+        if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === requested))
+          throw new Error("当前公司或期间已变化，请重新选择。");
+      });
+      await loadFunds(requested, contextGate);
+    } else {
+      await refreshContext();
+      if (isCurrent(generation, selection) && period && !activeRequest) await loadFunds(period);
+    }
   } catch (caught) {
     if (isCurrent(generation, selection)) {
       requestError.value = dashboardErrorMessage(caught);
@@ -634,7 +645,7 @@ watch(
       return;
     }
     const account = routeAccount(), bankAccount = queryText("statement_account_id");
-    if (companyChanged || selectedPeriod.value !== target || !funds.value) {
+    if (companyChanged || selectedPeriod.value !== target || (!funds.value && !activeRequest)) {
       funds.value = null;
       snapshotVersion.value = "";
       selectedAccount.value = account;

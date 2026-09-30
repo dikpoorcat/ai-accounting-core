@@ -211,7 +211,14 @@ class Exports:
                     canonical(requested or []),
                 ),
             ).fetchall()
-            outcomes = {row["id"]: json.loads(row["outcome"]) for row in calculations}
+            from .integrity import verify_sources
+            from .stored_json import load_outcome
+
+            verify_sources(
+                self.engine, connection,
+                calculation_ids={row["id"] for row in calculations},
+            )
+            outcomes = {row["id"]: load_outcome(row["outcome"]) for row in calculations}
             selected_obligations = {
                 row["id"]: _export_obligations(row["kind"], outcomes[row["id"]]["values"])
                 for row in calculations

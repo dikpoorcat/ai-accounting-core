@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -122,27 +122,63 @@ def load_bundle(
 
 def verify_current_company(connection, bundle):
     """Content contract for the current company shape, explicitly registered by version."""
+    return verify_company_with_registry(connection, bundle, bundle.registry)
+
+
+def verify_company_with_registry(connection, bundle, registry):
+    """Use the declared historical registry for decoding and reference checks."""
     from .engine import Engine
     from .integrity import verify_integrity
     from .storage import Store
 
     identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
     path = connection.execute("PRAGMA database_list").fetchone()[2]
-    store = Store(path, bundle, identity["company_id"], identity["database_id"])
+    store = Store(
+        path,
+        replace(bundle, registry=registry),
+        identity["company_id"],
+        identity["database_id"],
+    )
     return verify_integrity(Engine(store), connection)
+
+
+def _require_released_company_verifiers(bundle):
+    if bundle.status != "released":
+        return bundle
+    released = {
+        version
+        for version, contract in bundle.contracts["company"].items()
+        if contract["status"] == "released"
+    }
+    missing = sorted(released - bundle.company_verifiers.keys())
+    if missing:
+        raise ValueError(f"released company content verifiers are missing: {missing}")
+    return bundle
 
 
 @lru_cache(maxsize=1)
 def production_bundle():
     """The only production factory; callers cannot substitute a registry or directory."""
+    from .content_v1 import v1_registry, verify_v1_company
     from .service import default_registry
 
-    return load_bundle(
-        default_registry(),
-        Path(__file__).with_name("schema_contracts"),
-        family=FAMILY,
-        application_id=APPLICATION_ID,
-        status=STATUS,
-        current_versions={"company": VERSION, "catalog": VERSION},
-        company_verifiers={VERSION: verify_current_company},
+    if STATUS == "released":
+        v1_registry()
+
+    verifiers = (
+        {0: verify_current_company}
+        if STATUS == "draft"
+        else {1: verify_v1_company, **({VERSION: verify_current_company} if VERSION > 1 else {})}
+    )
+
+    return _require_released_company_verifiers(
+        load_bundle(
+            default_registry(),
+            Path(__file__).with_name("schema_contracts"),
+            family=FAMILY,
+            application_id=APPLICATION_ID,
+            status=STATUS,
+            current_versions={"company": VERSION, "catalog": VERSION},
+            company_verifiers=verifiers,
+        )
     )

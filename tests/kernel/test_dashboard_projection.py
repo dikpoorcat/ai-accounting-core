@@ -1,7 +1,7 @@
 """Old dashboard contracts over synthetic typed SQLite business, without the retired ORM."""
 
-import json
 from typing import ClassVar
+from unittest.mock import patch
 
 import pytest
 from entity_fixture import save_entity_display_profile, seed_registration_entities
@@ -23,7 +23,7 @@ from test_reports import cit
 from test_reports import profile as report_profile
 
 from ai_accounting.kernel.asset_batches import AssetBatches
-from ai_accounting.kernel.contracts import Fact, Line, Outcome, Registry
+from ai_accounting.kernel.contracts import Fact, KernelError, Line, Outcome, Registry
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.assets import AssetAcquisition, AssetActivation
 from ai_accounting.kernel.engine import Engine
@@ -31,9 +31,34 @@ from ai_accounting.kernel.http import wire_money
 from ai_accounting.kernel.reports import Reports
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import PositiveFen
+from ai_accounting.kernel.types import PositiveFen, YearMonth
 
 bank_book, opening_book, report_book, engine = _bank_book, _opening_book, _report_book, _engine
+
+
+def _assert_asset_member_summary_parity(engine, period):
+    dashboard = Dashboard(engine)
+    with patch("ai_accounting.kernel.period_balances.balance_totals", return_value=[]):
+        complete = dashboard.assets(period, preparation="deferred")["data"]
+    bounded = dashboard.assets(period, preparation="deferred")["data"]
+    assert bounded == complete
+
+
+def _assert_brief_asset_summary_parity(engine, period):
+    dashboard = Dashboard(engine)
+    complete = dashboard.assets(period, preparation="deferred")["data"]
+    brief = dashboard.brief(period, preparation="deferred")["data"]["long_term_assets"]
+    assert brief == {
+        "net_fen": complete["ledger_net_fen"],
+        "fixed_net_fen": complete["fixed_asset_net_fen"],
+        "intangible_net_fen": complete["intangible_asset_net_fen"],
+        "fixed_active_count": complete["fixed"]["active_count"],
+        "intangible_active_count": complete["intangible"]["active_count"],
+        "pending_count": complete["pending_fixed_count"] + complete["pending_intangible_count"],
+        "project_cost_fen": complete["project_cost_fen"],
+    }
+
+
 payroll_company = _payroll_company
 
 
@@ -199,8 +224,10 @@ def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
         for v in february["collections"]["vouchers"]["items"]
     ) == [100, 125]
     with engine.store.connection(read_only=True) as connection:
+        from ai_accounting.kernel.close_storage import decode_close
+
         assert (
-            json.loads(connection.execute("SELECT manifest FROM period_close").fetchone()[0])
+            decode_close(connection, connection.execute("SELECT * FROM period_close").fetchone())
             == closed
         )
 
@@ -485,6 +512,45 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
     assert february["month_activated_count"] == 0
     assert february["month_cost_adjustment_fen"] == 12000
     assert february["fixed"]["month_cost_adjustment_fen"] == 12000
+    _assert_asset_member_summary_parity(company.engine, "2026-01")
+    _assert_asset_member_summary_parity(company.engine, "2026-02")
+    _assert_brief_asset_summary_parity(company.engine, "2026-01")
+    _assert_brief_asset_summary_parity(company.engine, "2026-02")
+    # A frozen balance root covers the old amount. The old projection row is
+    # not a certified source for deciding whether cost minus carrying is charge.
+    with company.engine.store.connection() as connection:
+        changed = connection.execute(
+            "UPDATE period_balance SET amount=amount+1 "
+            "WHERE posting_period=? AND balance_key=?",
+            (YearMonth("2026-01").ordinal, "asset:computer:carrying"),
+        )
+        assert changed.rowcount == 1
+    from ai_accounting.kernel.dashboard import _Snapshot
+
+    original_member_events = _Snapshot.asset_member_events
+
+    def checked_member_events(snapshot, *args, **kwargs):
+        assert "asset_ids" not in kwargs, "old balance row selected the full member walk"
+        return original_member_events(snapshot, *args, **kwargs)
+
+    with patch.object(_Snapshot, "asset_member_events", checked_member_events):
+        assert dashboard.assets("2026-02")["data"] == february
+    with company.engine.store.connection() as connection:
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_calculation_UPDATE")
+        changed = connection.execute(
+            "UPDATE calculation SET outcome=json_set(outcome,'$.balances[0].amount',0) "
+            "WHERE id=(SELECT id FROM calculation WHERE kind='asset' AND period=? "
+            "ORDER BY rowid LIMIT 1)",
+            (YearMonth("2026-01").ordinal,),
+        )
+        assert changed.rowcount == 1
+        connection.execute(trigger)
+    with pytest.raises(KernelError) as failure:
+        dashboard.assets("2026-02")
+    assert failure.value.code == "content_integrity_failed"
 
 
 def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
@@ -568,6 +634,10 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     computer = next(item for item in disposed_assets if item["asset_id"] == "computer")
     assert computer["disposal"]["loss_fen"] == 110000
     assert computer["book_value_fen"] == 0
+    _assert_asset_member_summary_parity(book, "2026-02")
+    _assert_asset_member_summary_parity(book, "2026-03")
+    _assert_brief_asset_summary_parity(book, "2026-02")
+    _assert_brief_asset_summary_parity(book, "2026-03")
 
 
 def test_opening_cards_and_bank_balances_are_not_current_movements(opening_book):
@@ -586,6 +656,8 @@ def test_opening_cards_and_bank_balances_are_not_current_movements(opening_book)
         "collections"
     ]["assets"]["items"]
     assert asset_items[0]["acquisition_date"] is None
+    _assert_asset_member_summary_parity(book, "2026-01")
+    _assert_brief_asset_summary_parity(book, "2026-01")
 
 
 def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book):
@@ -663,8 +735,9 @@ def test_empty_catalog_company_and_money_precision(bank_book, tmp_path):
     response = wire_money(dashboard.funds("2026-09"))
     assert response["data"]["total_fen"] == str(huge)
     assert dashboard.context()["current_company"]["company_id"] == book.store.company_id
-    with pytest.raises(ValueError):
+    with pytest.raises(KernelError) as error:
         dashboard.funds("2026-09", limit=501)
+    assert error.value.code == "invalid_command"
 
 
 def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path):

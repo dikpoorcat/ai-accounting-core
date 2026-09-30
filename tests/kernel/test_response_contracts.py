@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
 from response_samples import http_samples, native_samples
@@ -38,6 +39,9 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
         command, response = item["command"], item["response"]
         assert validate_response(command, response) == response
         assert RESPONSE_ADAPTERS[command].dump_python(response) == response
+        assert json.loads(RESPONSE_ADAPTERS[command].dump_json(response)) == http_response(
+            command, response
+        )
     empty = samples["empty_context"]["response"]
     assert "generated_at" not in empty and empty["current_company"] is None
     assert samples["company_without_period"]["response"]["periods"] == []
@@ -262,6 +266,155 @@ def test_service_and_http_fail_closed_for_bad_reads(resident, monkeypatch):
         },
     )
     assert status == 500 and result["code"] == "response_contract_mismatch"
+
+
+def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
+    resident, samples, monkeypatch
+):
+    import ai_accounting.kernel.response_contracts as contracts
+
+    service, _, _, http, _ = resident
+    headers, token = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "合成响应边界公司")["id"]
+    original = contracts.validate_response
+    checked = []
+
+    def counted(command, value):
+        checked.append(command)
+        return original(command, value)
+
+    monkeypatch.setattr(contracts, "validate_response", counted)
+    native = service.dispatch("dashboard_funds", {"company_id": company}, session_token=token)
+    assert type(native["schema_version"]) is int
+    checked.clear()
+    adapter = RESPONSE_ADAPTERS["dashboard_funds"]
+    original_json = type(adapter).dump_json
+    original_python = type(adapter).dump_python
+    serialized = {"json": 0, "python": 0}
+
+    def counted_json(self, *args, **kwargs):
+        if self is adapter:
+            serialized["json"] += 1
+        return original_json(self, *args, **kwargs)
+
+    def counted_python(self, *args, **kwargs):
+        if self is adapter:
+            serialized["python"] += 1
+        return original_python(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(adapter), "dump_json", counted_json)
+        patch.setattr(type(adapter), "dump_python", counted_python)
+        status, _, _, response = http.request(
+            f"/api/dashboard/funds?company_id={company}", headers=headers
+        )
+    assert status == 200
+    assert checked == ["dashboard_funds"]
+    assert serialized == {"json": 1, "python": 0}
+    assert response["data"] is None
+    with pytest.raises(KernelError) as failure:
+        service.dispatch(
+            "workflow", {"company_id": company}, session_token=token, response_format="http"
+        )
+    assert failure.value.code == "invalid_command"
+    assert checked == ["dashboard_funds"]
+    for amount in (None, 2**63 - 1):
+        synthetic = copy.deepcopy(samples["cash_funds"]["response"])
+        synthetic["data"]["total_fen"] = amount
+        monkeypatch.setattr(Dashboard, "funds", lambda *args, result=synthetic, **kwargs: result)
+        native = service.dispatch("dashboard_funds", {"company_id": company}, session_token=token)
+        wire = service.dispatch(
+            "dashboard_funds",
+            {"company_id": company},
+            session_token=token,
+            response_format="http",
+        )
+        wire_json = service.dispatch(
+            "dashboard_funds",
+            {"company_id": company},
+            session_token=token,
+            response_format="http_json",
+        )
+        assert json.loads(wire_json) == wire
+        assert native["data"]["total_fen"] == amount
+        assert wire["data"]["total_fen"] == (None if amount is None else str(amount))
+
+
+@pytest.mark.parametrize(
+    "action,sample,extra",
+    [
+        ("context", "company_with_period", {}),
+        ("brief", "brief", {"period": "2026-01"}),
+        ("funds", "cash_funds", {"period": "2026-01"}),
+        ("employees", "employees", {"period": "2026-01"}),
+        ("assets", "assets", {"period": "2026-01"}),
+        ("business-status", "business_status", {"period": "2026-01", "subject_id": "sample"}),
+        ("quarterly-report", "quarterly_report", {"year": 2026, "quarter": 1}),
+        ("period-preparation", "period_preparation", {
+            "period": "2026-01", "expected_read_version": "sample", "as_of": "2026-02-25",
+        }),
+        ("close-review", None, {"period": "2026-01"}),
+    ],
+)
+def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
+    resident, samples, monkeypatch, action, sample, extra,
+):
+    """Observe the common HTTP boundary with current kernel-generated responses."""
+    import ai_accounting.kernel.response_contracts as contracts
+
+    service, _, _, http, _ = resident
+    headers, token = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "合成全页合同公司")["id"]
+    command = "dashboard_" + action.replace("-", "_")
+    payload = {"company_id": company, **extra}
+    value = (
+        copy.deepcopy(samples[sample]["response"])
+        if sample else service.dispatch(command, payload, session_token=token)
+    )
+    original_validate = contracts.validate_response
+    adapter_type = type(RESPONSE_ADAPTERS[command])
+    original_dump = adapter_type.dump_json
+    observed = []
+
+    def read(actual_command, actual_payload, **kwargs):
+        assert actual_command == command
+        assert {key: actual_payload[key] for key in payload} == payload
+        assert kwargs["authority"] is not None
+        return value
+
+    def checked(actual_command, actual_value):
+        observed.append(("validate", actual_command))
+        return original_validate(actual_command, actual_value)
+
+    def encoded(self, *args, **kwargs):
+        if self is RESPONSE_ADAPTERS[command]:
+            observed.append(("encode", command))
+        return original_dump(self, *args, **kwargs)
+
+    monkeypatch.setattr(service, "_dispatch", read)
+    monkeypatch.setattr(contracts, "validate_response", checked)
+    monkeypatch.setattr(adapter_type, "dump_json", encoded)
+    native = service.dispatch(command, payload, session_token=token)
+    assert native == value and observed == [("validate", command)]
+    expected_wire = json.loads(original_dump(RESPONSE_ADAPTERS[command], native))
+    observed.clear()
+    status, _, _, result = http.request(
+        f"/api/dashboard/{action}?{urlencode(payload)}", headers=headers,
+    )
+    assert status == 200 and result == expected_wire
+    assert observed == [("validate", command), ("encode", command)]
+
+    # An invalid response must never reach serialization or become a business question.
+    value["schema_version"] = 999
+    value["private-data"] = "do-not-disclose"
+    observed.clear()
+    status, _, _, result = http.request(
+        f"/api/dashboard/{action}?{urlencode(payload)}", headers=headers,
+    )
+    assert status == 500 and result["code"] == "response_contract_mismatch"
+    assert "do-not-disclose" not in json.dumps(result)
+    assert "fact_issues" not in result
+    assert observed == [("validate", command)]
 
 
 def test_invalid_numeric_mapping_keys_are_not_reported_as_list_positions(samples):

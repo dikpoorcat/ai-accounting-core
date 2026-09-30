@@ -141,9 +141,9 @@ def build_asset_card_adoptions(reads, *, close_period, calculation_ids, voucher_
 
 def prove_asset_card_adoptions(reads, *, close_period, manifest, metadata, independent_proofs):
     """Validate explicitly declared card roles; absent declarations are corruption."""
-    from .close_contract import direct_calculation_ids
+    from .content_history_context import close_contract
 
-    members = direct_calculation_ids(manifest)
+    members = close_contract().direct_calculation_ids(manifest)
     proven_batches = {
         ident
         for ident, proof in independent_proofs.items()

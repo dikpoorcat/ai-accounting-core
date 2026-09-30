@@ -1,5 +1,7 @@
 """Immutable publication chains and the posting rule shared by all publishers."""
 
+import hashlib
+
 from .contracts import KernelError
 from .types import YearMonth, canonical, digest
 
@@ -12,6 +14,9 @@ CONTENT_FIELDS = (
     "posting_period",
     "baseline_calculation_id",
     "voucher_id",
+)
+_CONTENT_JSON_SQL = (
+    "json_object(" + ",".join(f"'{field}',{field}" for field in sorted(CONTENT_FIELDS)) + ")"
 )
 
 
@@ -29,6 +34,25 @@ def verify_record(row):
     """Verify a bounded publication record without loading its calculation."""
     if row["id"] != "p_" + digest({key: row[key] for key in CONTENT_FIELDS}).hex():
         _invalid(row["id"], "publication_digest")
+
+
+def verified_period_headers(connection, periods):
+    """Check every source field while returning only the period index metadata.
+
+    The publication contract contains only TEXT, INTEGER and NULL fields. Its
+    sorted-key SQLite JSON is the same UTF-8 canonical representation used to
+    create the identity. No calculation body or second Python object is needed.
+    Full chain verification continues to use ``verify_record`` independently.
+    """
+    for row in connection.execute(
+        "SELECT id,posting_period,sequence," + _CONTENT_JSON_SQL + " content "
+        "FROM calculation_publication WHERE posting_period IN "
+        "(SELECT value FROM json_each(?)) ORDER BY posting_period,sequence",
+        (canonical(sorted(set(periods))),),
+    ):
+        if row[0] != "p_" + hashlib.sha256(row[3].encode("utf-8")).hexdigest():
+            _invalid(row[0], "publication_digest")
+        yield {"id": row[0], "posting_period": row[1], "sequence": row[2]}
 
 
 def chain_rows(connection, subject_ids=None):

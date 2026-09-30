@@ -9,7 +9,7 @@ async function fundsApi(requestDashboardFunds = async () => ({})) {
   const key = `fundsApiHarness${++harnessNumber}`;
   globalThis[key] = requestDashboardFunds;
   const source = readFileSync(new URL("../src/api/funds.ts", import.meta.url), "utf8").replace(/import[^;]+;/g, "");
-  const { outputText } = ts.transpileModule(`const requestDashboardFunds = globalThis.${key};\n` + source, {
+  const { outputText } = ts.transpileModule(`const validateDashboardFundsResponse = () => true;\nconst requestGeneratedJson = (url, _endpoint, _validator, _matches, options) => globalThis.${key}(url, options);\n` + source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
@@ -133,6 +133,28 @@ test("changing company while refreshing context cannot load the previous selecti
   assert.equal(view.funds.value, null);
   assert.equal(view.selectedPeriod.value, "");
   assert.equal(view.selectedAccount.value, "");
+});
+
+test("hot funds refresh waits for context before exposing its concurrent main response", async () => {
+  const calls = [];
+  let releaseContext;
+  const view = await fundsView(() => new Promise(resolve => calls.push(resolve)),
+    () => new Promise(resolve => { releaseContext = resolve; }));
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-09" }], default_period: "2026-09" };
+  view.dashboardContext.value = current;
+  await Vue.nextTick();
+  assert.equal(calls.length, 1);
+  calls[0](response(data("bank-a", null)));
+  await Vue.nextTick();
+  const pending = view.refresh();
+  assert.equal(calls.length, 2, "funds starts the main request while context refreshes");
+  calls[1](response(data("bank-b", null)));
+  await Vue.nextTick();
+  assert.equal(view.funds.value, null, "the new funds response waits for context validation");
+  releaseContext(current);
+  await pending;
+  assert.equal(view.funds.value.movements[0].account_id, "bank-b");
+  assert.equal(calls.length, 2, "the context watcher does not duplicate the main request");
 });
 
 test("funds API sends both account filters with the continuation version", async () => {

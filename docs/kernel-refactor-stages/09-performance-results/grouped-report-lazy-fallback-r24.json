@@ -1,0 +1,44 @@
+{
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-r24-release",
+  "book_status": "complete",
+  "mode": "actual_report_ABBA_VM_diagnostic_not_pure_timing",
+  "samples": [
+    {
+      "label": "old",
+      "vm": 2398900,
+      "wall_ms": 1074.5842999313027,
+      "result_sha256": "7d35e57e6b803641a9a4e00a85eacf3a416a5df98d0b06ee588fb56d07133da0",
+      "source_count": 19746,
+      "fallback_reference_queries": 1,
+      "unrooted_header_validation": 2
+    },
+    {
+      "label": "new",
+      "vm": 1909000,
+      "wall_ms": 795.5080000683665,
+      "result_sha256": "7d35e57e6b803641a9a4e00a85eacf3a416a5df98d0b06ee588fb56d07133da0",
+      "source_count": 19746,
+      "fallback_reference_queries": 0,
+      "unrooted_header_validation": 2
+    },
+    {
+      "label": "new",
+      "vm": 1909800,
+      "wall_ms": 757.9546999186277,
+      "result_sha256": "7d35e57e6b803641a9a4e00a85eacf3a416a5df98d0b06ee588fb56d07133da0",
+      "source_count": 19746,
+      "fallback_reference_queries": 0,
+      "unrooted_header_validation": 2
+    },
+    {
+      "label": "old",
+      "vm": 2403400,
+      "wall_ms": 873.933200025931,
+      "result_sha256": "7d35e57e6b803641a9a4e00a85eacf3a416a5df98d0b06ee588fb56d07133da0",
+      "source_count": 19746,
+      "fallback_reference_queries": 1,
+      "unrooted_header_validation": 2
+    }
+  ],
+  "identical_results": true
+}

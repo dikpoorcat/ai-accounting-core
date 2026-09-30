@@ -1,0 +1,78 @@
+{
+  "source": "r29 fixed read-only main12",
+  "periods": 6,
+  "results": [
+    {
+      "mode": "old",
+      "cpu_seconds": 1.5156,
+      "rows": 7476,
+      "repr_sha256": "36d8d8ca2368a22f889573be5ba465476abf642f2aa659dd44bab66190e795b1",
+      "calls_requested_cache": {
+        "calculation": [
+          4597,
+          35093,
+          29133742
+        ],
+        "prime_parents": [
+          2,
+          12534,
+          6267
+        ]
+      }
+    },
+    {
+      "mode": "new",
+      "cpu_seconds": 1.3125,
+      "rows": 7476,
+      "repr_sha256": "36d8d8ca2368a22f889573be5ba465476abf642f2aa659dd44bab66190e795b1",
+      "calls_requested_cache": {
+        "calculation": [
+          4597,
+          35093,
+          29133742
+        ],
+        "prime_parents": [
+          2,
+          12534,
+          6267
+        ]
+      }
+    },
+    {
+      "mode": "new",
+      "cpu_seconds": 1.3594,
+      "rows": 7476,
+      "repr_sha256": "36d8d8ca2368a22f889573be5ba465476abf642f2aa659dd44bab66190e795b1",
+      "calls_requested_cache": {
+        "calculation": [
+          4597,
+          35093,
+          29133742
+        ],
+        "prime_parents": [
+          2,
+          12534,
+          6267
+        ]
+      }
+    },
+    {
+      "mode": "old",
+      "cpu_seconds": 1.5781,
+      "rows": 7476,
+      "repr_sha256": "36d8d8ca2368a22f889573be5ba465476abf642f2aa659dd44bab66190e795b1",
+      "calls_requested_cache": {
+        "calculation": [
+          4597,
+          35093,
+          29133742
+        ],
+        "prime_parents": [
+          2,
+          12534,
+          6267
+        ]
+      }
+    }
+  ]
+}

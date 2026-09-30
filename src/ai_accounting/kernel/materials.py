@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import posixpath
 import re
 from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from typing import Annotated, ClassVar, Literal
@@ -40,6 +42,20 @@ from .types import ActualDate, Fen, YearMonth, canonical, checked, digest, sum_f
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 EvidenceDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+MATERIAL_READ_INDEX_DDL = {
+    kind: (
+        f"CREATE INDEX {kind}_source ON fact_{kind}(source_id,revision_id);"
+        + (
+            "CREATE INDEX material_resolution_link_fact ON "
+            "fact_material_resolution_v2_links(fact_id,revision_id);"
+            if kind == "material_resolution_v2" else ""
+        )
+    )
+    for kind in (
+        "material_resolution_v2", "material_group_resolution", "material_period_allocation"
+    )
+}
 Category = Literal["transactions", "payroll", "bank", "tax", "assets", "financing"]
 PageLimit = Annotated[int, Field(strict=True, ge=1, le=500)]
 
@@ -415,6 +431,7 @@ class _TableBudget:
         self.cells = 0
         self.sheets = set()
         self.control_locations = {item.location for item in spec.controls}
+        self._amount_columns = {}
         if any(row > MAX_HEADER_ROWS for row in spec.header_rows.values()):
             _too_large("每表最多支持100行表头")
         if (
@@ -439,11 +456,13 @@ class _TableBudget:
         self.cells += len(cells)
         if self.cells > MAX_NONEMPTY_CELLS:
             _too_large("文件最多支持200万个非空单元格")
-        amount_columns = [
-            item.column
-            for item in self.spec.sheet_columns.get(sheet, self.spec.columns)
-            if item.role == "amount"
-        ]
+        if sheet not in self._amount_columns:
+            self._amount_columns[sheet] = tuple(
+                item.column
+                for item in self.spec.sheet_columns.get(sheet, self.spec.columns)
+                if item.role == "amount"
+            )
+        amount_columns = self._amount_columns[sheet]
         grouped_control_row = bool(amount_columns) and all(
             f"{sheet}!{column}{row}" in self.control_locations for column in amount_columns
         )
@@ -696,6 +715,7 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
     budget = _TableBudget(spec)
     rows = {"csv": _csv_rows, "xls": _xls_rows, "xlsx": _xlsx_rows}[spec.format](raw, budget)
     mappings, issues, items, coverage, totals, sums = {}, [], [], [], [], {}
+    known_periods = {}
     grouped_locations = {item.location for item in spec.controls}
     for sheet, row, cells in rows:
         if sheet not in mappings:
@@ -727,11 +747,12 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
                 context.append(str(value))
             if rule is not None and rule.role == "recognition_period" and value is not None:
                 try:
-                    period = (
-                        ActualDate(str(value)).period
-                        if len(str(value)) == 10
-                        else YearMonth(str(value))
-                    )
+                    text = str(value)
+                    if text not in known_periods:
+                        known_periods[text] = (
+                            ActualDate(text).period if len(text) == 10 else YearMonth(text)
+                        )
+                    period = known_periods[text]
                 except ValueError:
                     issues.append(
                         _issue(
@@ -812,6 +833,8 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
 
 def _bind_controls(items, totals, spec, issues):
     """Controls reference original leaf amounts, never other controls."""
+    if not totals and not spec.controls:
+        return
     by_location = {item["location"]: item for item in items}
     by_column = {}
     for item in items:
@@ -971,7 +994,7 @@ def _coalesce_entries(entries):
     return tuple(result)
 
 
-def _period_partition(source, inspection, entries, proofs, *, complete):
+def _period_partition(source, inspection, entries, proofs, *, complete, build_entries=True):
     """A complete exact partition; caller labels never override an original period."""
     items = {item["location"]: item for item in inspection["items"]}
     columns = {}
@@ -1037,14 +1060,18 @@ def _period_partition(source, inspection, entries, proofs, *, complete):
                             location=location,
                         )
                     )
-            assigned[location] = entry.model_copy(
-                update={
-                    "location": location if item.get("sheet") is None else None,
-                    "sheet": item.get("sheet"),
-                    "column": item.get("column"),
-                    "first_row": _row_number(location) if item.get("sheet") else None,
-                    "last_row": _row_number(location) if item.get("sheet") else None,
-                }
+            assigned[location] = (
+                entry.model_copy(
+                    update={
+                        "location": location if item.get("sheet") is None else None,
+                        "sheet": item.get("sheet"),
+                        "column": item.get("column"),
+                        "first_row": _row_number(location) if item.get("sheet") else None,
+                        "last_row": _row_number(location) if item.get("sheet") else None,
+                    }
+                )
+                if build_entries
+                else entry
             )
     for location, item in items.items():
         if location not in assigned:
@@ -1054,9 +1081,12 @@ def _period_partition(source, inspection, entries, proofs, *, complete):
                     _issue("material_allocation_gap", "归属版本漏掉原件业务位置", location=location)
                 )
                 period, basis = None, "unknown"
-            assigned[location] = _entry_for_item(item, period, basis)
-    periods = {location: entry.recognition_period for location, entry in assigned.items()}
-    return _coalesce_entries(assigned.values()), periods, issues
+            assigned[location] = _entry_for_item(item, period, basis) if build_entries else period
+    periods = {
+        location: entry.recognition_period if isinstance(entry, PeriodAllocationEntry) else entry
+        for location, entry in assigned.items()
+    }
+    return _coalesce_entries(assigned.values()) if build_entries else (), periods, issues
 
 
 def _allocation_proofs(connection, entries):
@@ -1133,23 +1163,57 @@ def _inspect_passages(raw, spec):
     }
 
 
+def _unfrozen_material_heads(connection, kind, excluded_sources):
+    """Seek source keys in authority, then only their current typed revisions.
+
+    Source keys come from the typed table, including missing or withdrawn
+    sources. Joining only the material-source registry would hide those issues.
+    """
+    if kind not in MATERIAL_READ_INDEX_DDL:
+        raise ValueError("unsupported material source lookup")
+    table = "fact_" + kind
+    return connection.execute(
+        "WITH RECURSIVE sources(source_id) AS ("
+        f"SELECT min(source_id) FROM {table} UNION ALL "
+        f"SELECT (SELECT min(source_id) FROM {table} "
+        "WHERE source_id>sources.source_id) FROM sources WHERE source_id IS NOT NULL) "
+        f"SELECT c.fact_id FROM sources CROSS JOIN {table} t ON t.source_id=sources.source_id "
+        "CROSS JOIN fact_current c ON c.fact_id=t.revision_id "
+        "CROSS JOIN subject s ON s.id=c.subject_id "
+        "WHERE s.kind=? AND sources.source_id NOT IN (SELECT value FROM json_each(?)) "
+        "ORDER BY c.subject_id",
+        (kind, canonical(sorted(excluded_sources))),
+    ).fetchall()
+
+
 class _CompletenessReads:
     """Lazy reads owned by one completeness check on its supplied snapshot."""
 
-    def __init__(self, connection, registry):
+    def __init__(self, connection, registry, *, query_reads=None):
         self.connection, self.registry = connection, registry
+        if query_reads is not None and (
+            query_reads.connection is not connection or query_reads.store.registry is not registry
+        ):
+            raise ValueError("material fact reads belong to another snapshot")
+        self.query_reads = query_reads
         self._versions, self._scopes, self._current = {}, {}, {}
+        self._indexed_scope_kinds = set()
+        self.excluded_sources = frozenset()
 
     def fact(self, fact_id):
         if fact_id not in self._versions:
-            self._versions[fact_id] = Store.fact(self, self.connection, fact_id)
+            self.versions((fact_id,))
         return self._versions[fact_id]
 
     def versions(self, fact_ids):
         identifiers = tuple(dict.fromkeys(fact_ids))
         missing = [ident for ident in identifiers if ident not in self._versions]
         if missing:
-            self._versions.update(Store.facts(self, self.connection, missing))
+            self._versions.update(
+                self.query_reads.fact_versions(missing)
+                if self.query_reads is not None
+                else Store.facts(self, self.connection, missing)
+            )
         return {ident: self._versions[ident] for ident in identifiers}
 
     def facts(self, kind, scope):
@@ -1161,9 +1225,14 @@ class _CompletenessReads:
                 MaterialPeriodAllocation.kind,
                 MaterialGroupResolution.kind,
             }:
-                self._scopes[key] = tuple(
-                    item for item in self.current_facts(kind) if scope in item.fact.scopes()
-                )
+                if kind not in self._indexed_scope_kinds:
+                    grouped = {}
+                    for item in self.current_facts(kind):
+                        for declared_scope in set(item.fact.scopes()):
+                            grouped.setdefault((kind, declared_scope), []).append(item)
+                    self._scopes.update((key, tuple(items)) for key, items in grouped.items())
+                    self._indexed_scope_kinds.add(kind)
+                self._scopes.setdefault(key, ())
             else:
                 self._scopes[key] = _facts(self.connection, self.registry, kind, scope, _reads=self)
         return self._scopes[key]
@@ -1171,11 +1240,19 @@ class _CompletenessReads:
     def current_facts(self, kind):
         """Load authoritative current heads without trusting the scope directory."""
         if kind not in self._current:
-            rows = self.connection.execute(
-                "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
-                "WHERE s.kind=? ORDER BY c.subject_id",
-                (kind,),
-            ).fetchall()
+            filtered = self.excluded_sources and kind in {
+                MaterialResolution.kind,
+                MaterialGroupResolution.kind,
+                MaterialPeriodAllocation.kind,
+            }
+            rows = (
+                _unfrozen_material_heads(self.connection, kind, self.excluded_sources)
+                if filtered
+                else self.connection.execute(
+                    "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
+                    "WHERE s.kind=? ORDER BY c.subject_id", (kind,),
+                ).fetchall()
+            )
             identifiers = [row[0] for row in rows]
             versions = self.versions(identifiers)
             self._current[kind] = tuple(versions[ident] for ident in identifiers)
@@ -1229,10 +1306,11 @@ def _amount_basis(fact, calculation, path):
     requested = normalized(path.split(".")[1])
     members = {}
     for prefix, values in (
-        ("fact", {name: getattr(fact, name) for name in type(fact).model_fields}),
-        ("result", calculation.values),
+        ("fact", ((name, getattr(fact, name)) for name in type(fact).model_fields
+                  if name.endswith("_fen"))),
+        ("result", calculation.values.items()),
     ):
-        for field, value in values.items():
+        for field, value in values:
             if field.endswith("_fen") and type(value) is int and normalized(field) == requested:
                 members[f"{prefix}.{field}"] = value
     if len(set(members.values())) > 1:
@@ -1244,9 +1322,45 @@ def _amount_basis(fact, calculation, path):
     return requested
 
 
+_MATERIAL_AMOUNT_VALUES_SQL = (
+    "CASE WHEN json_type(c.outcome,'$.values')='object' THEN "
+    "(SELECT json_group_object(j.key,json(c.outcome->j.fullkey)) "
+    "FROM json_each(c.outcome,'$.values') j WHERE substr(j.key,-4)='_fen') "
+    "ELSE json_extract(c.outcome,'$.values') END"
+)
+_MATERIAL_RESULT_COLUMNS_SQL = (
+    "c.id,c.fact_id,c.period,c.outcome stored_outcome,c.digest result_digest,"
+    + _MATERIAL_AMOUNT_VALUES_SQL
+    + " result_values"
+)
+
+
+def _material_result(row, *, _sql_outcome_batch=None):
+    # This local checker only reads identity, period and amount values. It does
+    # not pass results into a calculator, so constructing/freezing a complete
+    # calculation dependency tree would only copy data already decoded here.
+    # Links and declared aliases accept only top-level *_fen fields. The SQL
+    # projection preserves their original JSON types, including invalid values;
+    # it must not coerce a boolean, float or unknown amount to an integer.
+    from .stored_json import verify_outcome_bytes
+
+    if _sql_outcome_batch is None:
+        verify_outcome_bytes(row["stored_outcome"], row["result_digest"], row["id"])
+    else:
+        _sql_outcome_batch.verify(row)
+    return SimpleNamespace(
+        id=row["id"],
+        fact_id=row["fact_id"],
+        period=YearMonth.from_ordinal(row["period"]),
+        values=json.loads(row["result_values"]),
+    )
+
+
 def _current_material_result(connection, registry, subject):
     row = connection.execute(
-        "SELECT f.fact_id current_fact_id,c.* FROM fact_current f "
+        "SELECT f.fact_id current_fact_id,"
+        + _MATERIAL_RESULT_COLUMNS_SQL
+        + " FROM fact_current f "
         "LEFT JOIN calculation_current a ON a.subject_id=f.subject_id "
         "LEFT JOIN calculation c ON c.id=a.calculation_id WHERE f.subject_id=?",
         (subject,),
@@ -1255,7 +1369,7 @@ def _current_material_result(connection, registry, subject):
         return None
     reader = SimpleNamespace(registry=registry)
     return Store.fact(reader, connection, row["current_fact_id"]), (
-        Store.calculation(row) if row["id"] else None
+        _material_result(row) if row["id"] else None
     )
 
 
@@ -1523,6 +1637,89 @@ class _CompletenessInspectionCache:
     def __init__(self, connection):
         self.connection = connection
         self.results = {}
+        self.source_changes = {}
+        self._first_created_scope = None
+        self._first_created_events = None
+        self._first_created_result = frozenset()
+
+    def first_created_subjects(self, connection, events, *, _fact_rows=None):
+        """Reuse only a successful proof for the same managed read snapshot.
+
+        The duplicate checker supplies a subset of the material watch's fact
+        events.  A subject may be reused only when *all* of its fact events
+        match the previously proved set; a later restoration alone is not a
+        first creation.
+        """
+        from .change_journal import first_created_subjects
+        from .storage import _active_fact_reads
+
+        if connection is not self.connection:
+            raise ValueError("first-created facts belong to another snapshot connection")
+        events = tuple(events)
+        reads = _active_fact_reads.get()
+        managed = (
+            reads is not None
+            and reads.connection is connection
+            and reads._snapshot_active
+            and connection.in_transaction
+        )
+        if not managed:
+            return first_created_subjects(connection, events, _fact_rows=_fact_rows)
+        if self._first_created_scope is not reads:
+            self._first_created_scope = reads
+            self._first_created_events = None
+            self._first_created_result = frozenset()
+        by_subject = {}
+        for event in events:
+            if event.source == "fact":
+                by_subject.setdefault(event.target_id, []).append(event)
+        if self._first_created_events is not None and all(
+            tuple(subject_events) == self._first_created_events.get(subject_id, ())
+            for subject_id, subject_events in by_subject.items()
+        ):
+            return self._first_created_result.intersection(by_subject)
+        result = first_created_subjects(connection, events, _fact_rows=_fact_rows)
+        # Publish the memo only after the authority query and every owner/
+        # revision/earliest-event check has succeeded.
+        self._first_created_events = {
+            subject_id: tuple(subject_events) for subject_id, subject_events in by_subject.items()
+        }
+        self._first_created_result = result
+        return result
+
+    def source_changes_since(self, connection, after, *, through=None):
+        """Reuse one successful journal interval within this completeness check."""
+        from .change_journal import changes_since, head
+
+        if connection is not self.connection:
+            raise ValueError("source changes belong to another snapshot connection")
+        latest = head(connection)
+        bound = latest if through is None else through
+        key = after, bound, latest
+        if key not in self.source_changes:
+            self.source_changes[key] = changes_since(connection, after, through=bound)
+        return self.source_changes[key]
+
+    def inspect(self, connection, source_fact_id, evidence_digest, specification, raw):
+        if connection is not self.connection:
+            raise ValueError("material inspection belongs to another snapshot connection")
+        key = (
+            source_fact_id,
+            evidence_digest,
+            digest(specification.model_dump(mode="json")).hex(),
+        )
+        if key not in self.results:
+            # A failure is never retained as a successful inspection.
+            self.results[key] = inspect_bytes(raw, specification)
+        return self.results[key]
+
+
+@dataclass(frozen=True)
+class MaterialReadSummary:
+    """Current-read issues and identity, deliberately not a frozen coverage proof."""
+
+    issues: tuple[dict, ...]
+    coverage_digest: str
 
 
 def check_completeness_many(
@@ -1532,6 +1729,9 @@ def check_completeness_many(
     *,
     closed_through=_CURRENT_CLOSED_THROUGH,
     _inspection_cache=None,
+    _allow_frozen_reuse=False,
+    _query_reads=None,
+    _summary_only=False,
 ) -> dict[int, dict]:
     """Evaluate several review months once, including every current closed-period row."""
     review_months = tuple(sorted(set(months)))
@@ -1540,12 +1740,40 @@ def check_completeness_many(
     review_periods = {month: YearMonth.from_ordinal(month) for month in review_months}
     if _inspection_cache is not None and _inspection_cache.connection is not connection:
         raise ValueError("material inspection cache belongs to another snapshot connection")
-    reads = _CompletenessReads(connection, registry)
+    sql_outcome_batch = (
+        _query_reads._material_sql_outcome_batch(connection)
+        if _query_reads is not None else None
+    )
+    reads = _CompletenessReads(connection, registry, query_reads=_query_reads)
+    amount_bases = {}
+
+    def amount_basis(version, calculation, path):
+        # Row validation and competing-use checks ask about the same exact
+        # source. Reuse only successful normalization within this check.
+        key = version.id, calculation.id, path
+        if key not in amount_bases:
+            amount_bases[key] = _amount_basis(version.fact, calculation, path)
+        return amount_bases[key]
+
     if closed_through is _CURRENT_CLOSED_THROUGH:
         closed_row = connection.execute("SELECT max(period) FROM period_close").fetchone()
         closed_through = closed_row[0] if closed_row is not None else None
     elif closed_through is not None and type(closed_through) is not int:
         raise TypeError("closed_through must be an ordinal month or None")
+    frozen = None
+    if _allow_frozen_reuse and len(review_months) == 1:
+        from .frozen_material import verified_frozen_material_summary, verified_frozen_materials
+
+        frozen = (verified_frozen_material_summary if _summary_only else verified_frozen_materials)(
+            connection,
+            review_months[0],
+            closed_through,
+            registry,
+            _query_reads=_query_reads,
+            **({"_inspection_cache": _inspection_cache} if _summary_only else {}),
+        )
+        if frozen is not None:
+            reads.excluded_sources = frozen.source_ids
     current_sources = dict(
         connection.execute(
             "SELECT c.subject_id,c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
@@ -1560,6 +1788,9 @@ def check_completeness_many(
     groups_by_source = {}
     for item in all_groups:
         groups_by_source.setdefault(item.fact.source_id, []).append(item)
+    resolutions_by_source = {}
+    for item in all_resolutions:
+        resolutions_by_source.setdefault(item.fact.source_id, []).append(item)
 
     def source_groups(source_id):
         return tuple(groups_by_source.get(source_id, ()))
@@ -1569,9 +1800,13 @@ def check_completeness_many(
         for item in all_allocations
         if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
     }
+    if frozen is not None:
+        mapped_sources.update(frozen.source_ids)
     unallocated = current_sources.keys() - mapped_sources
     allocation_versions, group_versions, resolution_versions = {}, {}, {}
     relevant = set(unallocated)
+    if frozen is not None:
+        relevant.update(frozen.source_ids)
     for allocation in all_allocations:
         if current_sources.get(allocation.fact.source_id) != allocation.fact.source_fact_id:
             continue
@@ -1714,6 +1949,8 @@ def check_completeness_many(
             by_id[source_id] = matches[0]
         version = by_id[source_id]
         fact = version.fact
+        if frozen is not None and source_id in frozen.source_ids:
+            continue
         if (
             len(
                 reads.facts(
@@ -1728,9 +1965,7 @@ def check_completeness_many(
                     "material_duplicate_source", "同一原件只能有一个来源身份", source_id=source_id
                 )
             )
-        for item in all_resolutions:
-            if item.fact.source_id != source_id:
-                continue
+        for item in resolutions_by_source.get(source_id, ()):
             resolution_versions[item.id] = item
             if item.fact.treatment == "duplicate" and item.fact.duplicate_source_id:
                 queue.append(item.fact.duplicate_source_id)
@@ -1747,27 +1982,13 @@ def check_completeness_many(
                 )
             )
             continue
-        inspection_key = (
-            version.id,
-            fact.evidence_digest,
-            digest(fact.specification.model_dump(mode="json")).hex(),
-        )
         try:
             if _inspection_cache is None:
                 inspection = inspect_bytes(row[0], fact.specification)
-            elif inspection_key not in _inspection_cache.results:
-                try:
-                    _inspection_cache.results[inspection_key] = (
-                        True,
-                        inspect_bytes(row[0], fact.specification),
-                    )
-                except (ValueError, OSError, KeyError) as exc:
-                    _inspection_cache.results[inspection_key] = (False, str(exc))
-            if _inspection_cache is not None:
-                valid, cached = _inspection_cache.results[inspection_key]
-                if not valid:
-                    raise ValueError(cached)
-                inspection = cached
+            else:
+                inspection = _inspection_cache.inspect(
+                    connection, version.id, fact.evidence_digest, fact.specification, row[0]
+                )
             parsed[source_id] = inspection
             parsed_items[source_id] = {
                 item["location"]: item for item in parsed[source_id]["items"]
@@ -1783,6 +2004,9 @@ def check_completeness_many(
             )
     for item in resolution_versions.values():
         by_item.setdefault((item.fact.source_id, item.fact.location), []).append(item)
+    resolution_locations_by_source = {}
+    for source_id, location in by_item:
+        resolution_locations_by_source.setdefault(source_id, []).append(location)
     by_group_member = {}
     group_amounts = {}
     for group in group_versions.values():
@@ -1797,7 +2021,9 @@ def check_completeness_many(
     )
     current_rows = (
         connection.execute(
-            "SELECT ids.value requested_subject_id,f.fact_id current_fact_id,c.* "
+            "SELECT ids.value requested_subject_id,f.fact_id current_fact_id,"
+            + _MATERIAL_RESULT_COLUMNS_SQL
+            + " "
             "FROM json_each(?) ids LEFT JOIN fact_current f ON f.subject_id=ids.value "
             "LEFT JOIN calculation_current a ON a.subject_id=f.subject_id "
             "LEFT JOIN calculation c ON c.id=a.calculation_id ORDER BY ids.value",
@@ -1815,7 +2041,7 @@ def check_completeness_many(
             if row["current_fact_id"] is None
             else (
                 linked_versions[row["current_fact_id"]],
-                Store.calculation(row) if row["id"] else None,
+                _material_result(row, _sql_outcome_batch=sql_outcome_batch) if row["id"] else None,
             )
         )
         for row in current_rows
@@ -1849,7 +2075,12 @@ def check_completeness_many(
             proofs = _allocation_proofs(connection, allocation.fact.entries)
             proofs.intersection_update(allocation.evidence)
             _, periods, errors = _period_partition(
-                source.fact, inspection, allocation.fact.entries, proofs, complete=True
+                source.fact,
+                inspection,
+                allocation.fact.entries,
+                proofs,
+                complete=True,
+                build_entries=False,
             )
             if source.fact.evidence_digest not in allocation.evidence:
                 errors.append(
@@ -1861,7 +2092,7 @@ def check_completeness_many(
                 )
         else:
             _, periods, errors = _period_partition(
-                source.fact, inspection, (), set(), complete=False
+                source.fact, inspection, (), set(), complete=False, build_entries=False
             )
             errors.append(
                 _issue(
@@ -2160,7 +2391,7 @@ def check_completeness_many(
                     source_amounts=(amount,) if type(amount) is int else (),
                     source_directions=(item.get("funds_direction"),),
                 )
-                basis = _amount_basis(fact_version.fact, calculation, link.amount_field)
+                basis = amount_basis(fact_version, calculation, link.amount_field)
             except KernelError as error:
                 result.append(_issue(error.code, str(error), location=key[1], **error.details))
                 continue
@@ -2243,6 +2474,15 @@ def check_completeness_many(
         file_summaries, file_diagnostics = [], {}
         for source_id in sorted(relevant):
             source = by_id.get(source_id)
+            if frozen is not None and source_id in frozen.source_ids:
+                if not _summary_only:
+                    coverage.extend(
+                        dict(item, review_period=str(period), responsibility="closed_followup")
+                        for item in frozen.coverage_by_source[source_id]
+                    )
+                file_summaries.append(dict(frozen.file_summaries_by_source[source_id]))
+                file_diagnostics[source_id] = []
+                continue
             if source is None or source_id not in parsed:
                 continue
             inspection = parsed[source_id]
@@ -2317,8 +2557,27 @@ def check_completeness_many(
                         )
                         if decorated is not None:
                             issues.append(decorated)
-                    coverage.append(
-                        {
+                    if _summary_only:
+                        # The page returns only issues and this read identity.
+                        # Keep all row inputs in a compact, versioned tuple;
+                        # only the close path needs a display-ready coverage
+                        # dictionary and repeated formatted period strings.
+                        coverage.append(
+                            (
+                                source_id,
+                                source.id,
+                                location,
+                                item["amount_fen"],
+                                allocated_period,
+                                tuple(sorted(origins)),
+                                unknown,
+                                tuple(sorted(shared_periods)),
+                                tuple(sorted(group.subject_id for group in groups)),
+                                not item_issues,
+                            )
+                        )
+                    else:
+                        coverage.append({
                             "source_id": source_id,
                             "source_fact_id": source.id,
                             "location": location,
@@ -2344,8 +2603,7 @@ def check_completeness_many(
                                 else {}
                             ),
                             "complete": not item_issues,
-                        }
-                    )
+                        })
             file_summaries.append(
                 {
                     "source_id": source_id,
@@ -2362,13 +2620,13 @@ def check_completeness_many(
             locations = {
                 item["location"] for item in (*inspection["items"], *inspection["control_totals"])
             }
-            for key in by_item:
-                if key[0] == source_id and key[1] not in locations:
+            for location in resolution_locations_by_source.get(source_id, ()):
+                if location not in locations:
                     location_issue = _issue(
                         "material_location_unknown",
                         "处置位置不在原件业务行中",
                         source_id=source_id,
-                        location=key[1],
+                        location=location,
                     )
                     file_diagnostics[source_id].append(location_issue)
                     decorated = decorate(location_issue, review_month, source_id=source_id)
@@ -2382,7 +2640,8 @@ def check_completeness_many(
             if target is None or target[1] is None:
                 continue
             fact_version, calculation = target
-            amount, competitor_origins, competitor_unknown = 0, set(), False
+            amount = 0
+            counted_competitors = []
             for competitor in competitors:
                 if isinstance(
                     competitor.fact, MaterialResolution
@@ -2397,19 +2656,12 @@ def check_completeness_many(
                     ):
                         continue
                     try:
-                        basis = _amount_basis(fact_version.fact, calculation, link.amount_field)
+                        basis = amount_basis(fact_version, calculation, link.amount_field)
                     except KernelError:
                         continue
                     if basis == key[1]:
                         amount += abs(link.amount_fen)
-                        locations = (
-                            (competitor.fact.location,)
-                            if isinstance(competitor.fact, MaterialResolution)
-                            else tuple(member.location for member in competitor.fact.members)
-                        )
-                        origins, unknown = origin_ordinals(competitor.fact.source_id, locations)
-                        competitor_origins.update(origins)
-                        competitor_unknown = competitor_unknown or unknown
+                        counted_competitors.append(competitor)
             if amount > capacity:
                 capacity_issue = _issue(
                     "material_business_overallocated",
@@ -2418,6 +2670,20 @@ def check_completeness_many(
                     amount_field=key[1],
                 )
                 if key in active_capacities:
+                    # Period attribution is needed only for an actual excess.
+                    # Every current competitor still contributes to the amount;
+                    # a valid use does not need another pass through its source
+                    # allocation and group periods just to discard that result.
+                    competitor_origins, competitor_unknown = set(), False
+                    for competitor in counted_competitors:
+                        locations = (
+                            (competitor.fact.location,)
+                            if isinstance(competitor.fact, MaterialResolution)
+                            else tuple(member.location for member in competitor.fact.members)
+                        )
+                        origins, unknown = origin_ordinals(competitor.fact.source_id, locations)
+                        competitor_origins.update(origins)
+                        competitor_unknown = competitor_unknown or unknown
                     decorated = decorate(
                         capacity_issue,
                         review_month,
@@ -2449,9 +2715,17 @@ def check_completeness_many(
             "issues": issues,
             "coverage": list(coverage),
             "source_versions": sorted(item.id for item in by_id.values()),
-            "resolution_versions": sorted(resolution_versions),
-            "group_versions": sorted(group_versions),
-            "allocation_versions": sorted(allocation_versions),
+            "resolution_versions": sorted(
+                set(resolution_versions)
+                | (frozen.version_ids_by_kind["resolution"] if frozen else set())
+            ),
+            "group_versions": sorted(
+                set(group_versions) | (frozen.version_ids_by_kind["group"] if frozen else set())
+            ),
+            "allocation_versions": sorted(
+                set(allocation_versions)
+                | (frozen.version_ids_by_kind["allocation"] if frozen else set())
+            ),
             "inventory_versions": inventory_versions,
             "file_summaries": file_summaries,
             "file_status": (
@@ -2466,13 +2740,59 @@ def check_completeness_many(
             | set(result["allocation_versions"])
             | set(result["group_versions"])
         )
+        if _summary_only:
+            # A read identity binds verified closed source commitments and the
+            # complete current-source check. It is never an approval token or
+            # the all-row coverage object saved by a close.
+            return MaterialReadSummary(
+                issues=tuple(issues),
+                coverage_digest=digest(
+                    {
+                        "contract": "ai-accounting-kernel/2/material-read-summary/2",
+                        "current": result,
+                        "closed_sources": frozen.summary_commitments if frozen else {},
+                        "closed_period": frozen.close_period if frozen else None,
+                    }
+                ).hex(),
+            )
         return {
             **result,
             "status": "complete" if not issues else "needs_information",
             "coverage_digest": digest(result).hex(),
         }
 
-    return {month: build_result(month) for month in review_months}
+    try:
+        result = {month: build_result(month) for month in review_months}
+        if sql_outcome_batch is not None:
+            sql_outcome_batch.commit()
+        return result
+    finally:
+        # The recursive resolver otherwise keeps its own closure, including all
+        # loaded facts and results, alive until cyclic collection. No callback
+        # escapes this check; release the cycle on success and failure alike.
+        resolve = None
+
+
+def read_completeness_summary(
+    connection,
+    month,
+    registry,
+    *,
+    closed_through=_CURRENT_CLOSED_THROUGH,
+    _inspection_cache=None,
+    _query_reads=None,
+) -> MaterialReadSummary:
+    """Same issue rules as full completeness, with bounded frozen source reads."""
+    return check_completeness_many(
+        connection,
+        (month,),
+        registry,
+        closed_through=closed_through,
+        _inspection_cache=_inspection_cache,
+        _query_reads=_query_reads,
+        _allow_frozen_reuse=True,
+        _summary_only=True,
+    )[month]
 
 
 def check_completeness(
@@ -2482,6 +2802,8 @@ def check_completeness(
     *,
     closed_through=_CURRENT_CLOSED_THROUGH,
     _inspection_cache=None,
+    _allow_frozen_reuse=False,
+    _query_reads=None,
 ) -> dict:
     """Read one bound snapshot; the returned digest belongs in the close manifest."""
     return check_completeness_many(
@@ -2490,6 +2812,8 @@ def check_completeness(
         registry,
         closed_through=closed_through,
         _inspection_cache=_inspection_cache,
+        _allow_frozen_reuse=_allow_frozen_reuse,
+        _query_reads=_query_reads,
     )[month]
 
 

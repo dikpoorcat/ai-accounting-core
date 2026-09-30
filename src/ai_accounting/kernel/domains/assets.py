@@ -1051,6 +1051,35 @@ def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
 
 def required_reads(period: YearMonth):
     before = YearMonth.from_ordinal(period.ordinal + 1)
+    # Readiness records the exact sources used by the asset and loan checks.
+    # Formal publication/source verification remains independent at close.
+    fact_kinds = (
+        "asset",
+        "reimbursed_asset",
+        "reimbursed_asset_batch",
+        "opening_asset",
+        "opening_identity_binding",
+        "asset_activation",
+        "asset_disposal",
+        "loan_agreement",
+        "loan_drawdown",
+        "opening_loan",
+        "loan_interest",
+        *ACTUAL_PAYMENT_KINDS,
+        "employee_advance",
+    )
+    calculation_kinds = (
+        "reimbursed_asset",
+        "opening_asset",
+        "asset_activation",
+        "asset_consumption",
+        "asset_disposal",
+        "loan_drawdown",
+        "opening_loan",
+        "loan_interest",
+        *ACTUAL_PAYMENT_KINDS,
+        "employee_advance",
+    )
     return tuple(
         Read(
             source,
@@ -1058,24 +1087,8 @@ def required_reads(period: YearMonth):
             "loan-principal" if kind in (*ACTUAL_PAYMENT_KINDS, "employee_advance") else "*",
             before,
         )
-        for source in ("fact", "calculation")
-        for kind in (
-            "asset",
-            "reimbursed_asset",
-            "reimbursed_asset_batch",
-            "opening_asset",
-            "opening_identity_binding",
-            "asset_activation",
-            "asset_consumption",
-            "asset_disposal",
-            "loan_agreement",
-            "loan_drawdown",
-            "opening_loan",
-            "loan_interest",
-            *ACTUAL_PAYMENT_KINDS,
-            "employee_advance",
-        )
-        if source == "fact" or kind != "loan_agreement"
+        for source, kinds in (("fact", fact_kinds), ("calculation", calculation_kinds))
+        for kind in kinds
     )
 
 

@@ -1,12 +1,22 @@
 """Focused end-to-end accounting ownership checks for asset batch publication."""
 
+from unittest.mock import patch
+
 import pytest
 
 from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
+
+
+def _assert_asset_response_parity(engine, period):
+    dashboard = Dashboard(engine)
+    with patch("ai_accounting.kernel.period_balances.balance_totals", return_value=[]):
+        complete = dashboard.assets(period, preparation="deferred")["data"]
+    assert dashboard.assets(period, preparation="deferred")["data"] == complete
 
 
 @pytest.fixture
@@ -143,6 +153,15 @@ def test_batch_one_voucher_card_lines_and_balances(asset_engine):
     before = engine.overview("2026-02")
     engine.rebuild_projections(request_id="rebuild")
     assert before == engine.overview("2026-02")
+    from ai_accounting.kernel.integrity import verify_integrity
+
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM report_open_contribution_anchor"
+        ).fetchone()[0] == connection.execute(
+            "SELECT count(*) FROM calculation_publication WHERE calculation_id IS NOT NULL"
+        ).fetchone()[0]
+        verify_integrity(engine, connection)
 
 
 def test_preview_readonly_and_atomic_failure(asset_engine):
@@ -228,6 +247,7 @@ def test_open_activation_amendment_rebuilds_month_preserving_numbers(asset_engin
         ]
         == "560103"
     )
+    _assert_asset_response_parity(engine, "2026-01")
 
 
 def test_open_activation_batch_withdraws_member_and_preserves_number(asset_engine):
@@ -270,6 +290,7 @@ def test_open_activation_batch_withdraws_member_and_preserves_number(asset_engin
             "WHERE subject_id='activate-intangible-b' ORDER BY rowid DESC"
         ).fetchone()
         assert disposition[0] == "withdrawn"
+    _assert_asset_response_parity(engine, "2026-01")
 
 
 def test_activation_withdrawal_rejects_real_consumption_dependants(asset_engine):

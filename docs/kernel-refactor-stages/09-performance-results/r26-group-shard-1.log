@@ -1,0 +1,16 @@
+........................................................................ [ 28%]
+........................................................................ [ 57%]
+........................................................................ [ 86%]
+.................................                                        [100%]
+============================ slowest 10 durations =============================
+61.75s call     tests/kernel/test_dashboard_projection.py::test_summary_and_detail_pages_do_not_truncate_financial_totals
+7.32s call     tests/kernel/test_close_management_sections.py::test_released_v1_portable_backup_replays_nonempty_history_position
+5.62s call     tests/kernel/test_dashboard_metadata.py::test_profile_key_iteration_and_entity_batch_do_not_decode_other_records
+5.13s call     tests/kernel/test_reports.py::test_closed_correction_uses_original_classification_in_next_quarter
+4.98s call     tests/kernel/test_single_month_close.py::test_formation_months_freeze_exact_sources_and_independent_backups
+4.30s call     tests/kernel/test_identity_corrections.py::test_frozen_opening_supersession_requires_balanced_named_details_and_is_reversible
+3.98s call     tests/kernel/test_dashboard_reports_adapter.py::test_invalid_delivery_is_reported_and_new_request_can_regenerate
+3.97s call     tests/kernel/test_dashboard_provenance.py::test_asset_creditor_names_and_single_payee_fallback_keep_later_sources
+3.87s call     tests/kernel/test_maintenance.py::test_new_commands_are_available_through_the_existing_service_and_schema
+3.76s call     tests/kernel/test_identity_corrections.py::test_payroll_conflict_resolution_recomputes_later_cumulative_state[True]
+249 passed in 420.46s (0:07:00)

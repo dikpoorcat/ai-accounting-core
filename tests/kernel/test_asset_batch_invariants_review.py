@@ -3,12 +3,15 @@
 import json
 import sqlite3
 from contextlib import closing
+from unittest.mock import patch
 
 import pytest
 
-from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
+from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members, frozen_members_many
 from ai_accounting.kernel.contracts import FactVersion, KernelError
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
@@ -145,6 +148,125 @@ def test_asset_owner_alone_posts_and_projection_rebuild_preserves_card_balances(
         assert [
             tuple(row) for row in connection.execute("SELECT * FROM balance ORDER BY 1,2")
         ] == before
+
+
+def test_frozen_members_batch_verifies_all_owners_with_bounded_reads(batch_book):
+    engine, batches, proof = batch_book
+    preview = batches.prepare_consumption_month("2026-02", evidence=(proof,), expected_revision=0)
+    batches.confirm_consumption_month(
+        "2026-02",
+        evidence=(proof,),
+        expected_revision=0,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-batched-read",
+    )
+    with engine.store.connection(read_only=True) as connection:
+        owners = [
+            row["id"]
+            for row in connection.execute(
+                "SELECT id FROM calculation WHERE kind IN "
+                "('asset_activation_batch','asset_consumption_month') ORDER BY id"
+            )
+        ]
+        assert len(owners) == 2
+        statements = []
+        connection.set_trace_callback(statements.append)
+        try:
+            batched = frozen_members_many(connection, owners)
+            assert len(statements) == 3
+            assert all(len(batched[ident]) == 2 for ident in owners)
+            reads = QueryReads(engine, connection)
+            assert reads.asset_members_many(owners) == {
+                ident: tuple(batched[ident]) for ident in owners
+            }
+            after_first = len(statements)
+            assert reads.asset_members_many(reversed(owners)) == {
+                ident: tuple(batched[ident]) for ident in owners
+            }
+            assert len(statements) == after_first
+        finally:
+            connection.set_trace_callback(None)
+
+
+def test_frozen_members_batch_does_not_cache_partial_success(batch_book):
+    engine, batches, proof = batch_book
+    preview = batches.prepare_consumption_month("2026-02", evidence=(proof,), expected_revision=0)
+    batches.confirm_consumption_month(
+        "2026-02",
+        evidence=(proof,),
+        expected_revision=0,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-batched-damage",
+    )
+    with closing(connect(engine.store.path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        owners = [
+            row["id"]
+            for row in connection.execute(
+                "SELECT id FROM calculation WHERE kind IN "
+                "('asset_activation_batch','asset_consumption_month') ORDER BY id"
+            )
+        ]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name='calculation_seal'"
+        ).fetchall():
+            connection.execute('DROP TRIGGER "' + row[0] + '"')
+        connection.execute("DELETE FROM calculation_seal WHERE calculation_id=?", (owners[-1],))
+        reads = QueryReads(engine, connection)
+        with pytest.raises(KernelError, match="资产汇总计算尚未封印"):
+            reads.asset_members_many(owners)
+        assert reads._asset_members == {}
+        connection.rollback()
+
+
+def test_active_asset_balance_path_matches_complete_member_history(batch_book):
+    engine, batches, proof = batch_book
+    preview = batches.prepare_consumption_month("2026-02", evidence=(proof,), expected_revision=0)
+    batches.confirm_consumption_month(
+        "2026-02",
+        evidence=(proof,),
+        expected_revision=0,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-balance-parity",
+    )
+    dashboard = Dashboard(engine)
+    for period in ("2026-01", "2026-02"):
+        with patch("ai_accounting.kernel.period_balances.balance_totals", return_value=[]):
+            complete = dashboard.assets(period, preparation="deferred")["data"]
+        bounded = dashboard.assets(period, preparation="deferred")["data"]
+        assert bounded == complete
+
+
+def test_active_asset_head_rejects_damaged_older_membership(batch_book):
+    engine, batches, proof = batch_book
+    preview = batches.prepare_consumption_month("2026-02", evidence=(proof,), expected_revision=0)
+    batches.confirm_consumption_month(
+        "2026-02",
+        evidence=(proof,),
+        expected_revision=0,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-damaged-directory",
+    )
+    with closing(connect(engine.store.path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type='trigger' "
+            "AND tbl_name='asset_batch_member'"
+        ).fetchall():
+            connection.execute('DROP TRIGGER "' + row[0] + '"')
+        owner = current_owner(connection, "asset_activation_batch")
+        connection.execute(
+            "UPDATE asset_batch_member SET summary=json_set(summary,'$.asset_id','wrong') "
+            "WHERE owner_calculation_id=? AND position=1",
+            (owner["id"],),
+        )
+        connection.commit()
+    with pytest.raises(KernelError):
+        Dashboard(engine).assets("2026-02", preparation="deferred")
 
 
 @pytest.mark.parametrize(

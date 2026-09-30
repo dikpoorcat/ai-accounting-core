@@ -21,6 +21,7 @@ def main():
     commands.add_parser("mcp", help="通过本地服务提供 stdio MCP")
     commands.add_parser("stop", help="安全停止此资料目录的本地服务")
     commands.add_parser("service-info", help="只读核验本资料目录的服务连接信息")
+    commands.add_parser("upgrade", help="离线升级已登记的正式版本数据库")
     daemon = commands.add_parser("daemon", help="运行每个资料根目录唯一的本地服务")
     daemon.add_argument("--port", type=int, default=0)
     web = commands.add_parser("serve", help="启动本地服务并打开会计界面")
@@ -41,6 +42,15 @@ def main():
 
         try:
             print(json.dumps(_metadata_for_root(args.root), ensure_ascii=False))
+        except Exception as exc:
+            print(json.dumps(error_response(exc), ensure_ascii=False))
+            raise SystemExit(1) from None
+        return
+    if args.mode == "upgrade":
+        from .offline_upgrade import upgrade_root
+
+        try:
+            print(json.dumps(upgrade_root(args.root), ensure_ascii=False, indent=2))
         except Exception as exc:
             print(json.dumps(error_response(exc), ensure_ascii=False))
             raise SystemExit(1) from None
