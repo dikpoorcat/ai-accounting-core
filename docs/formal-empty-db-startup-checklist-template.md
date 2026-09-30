@@ -28,7 +28,7 @@
 - [ ] `unknown` 只表示当前公司库没有相符记录；原载荷不能可靠恢复时先查真实状态，不据此另记一笔。
 - [ ] 预览过期或内容改变后重新核对并使用新键；旧公司预览、批准和回答范围不跨公司沿用。
 - [ ] 普通记账合成场景采用 `preview_close`、同版页面核对、本机密码批准和 `close`，按公司逐月执行。
-- [ ] 重放批量合成场景按[重放专用批量关账](replay-batch-close.md)单独记录：本机以私有合成范围文件显式启动 `daemon --replay-scope <private.json>`，限定公司、数据库、月份及已登记负责人确认摘要，且仍要求有效登录；普通常驻服务拒绝批量命令。功能已实现并通过合成验证，实际重建仍暂停、第9阶段未完成；空白勾选不代表本次验证已经通过，需显式重新启动才启用范围。
+- [ ] 重放批量合成场景按[重放专用批量关账](replay-batch-close.md)单独记录：本机以私有合成范围文件显式启动 `daemon --replay-scope <private.json>`，限定公司、数据库、月份及已登记负责人确认摘要，且仍要求有效登录；普通常驻服务拒绝批量命令。功能已实现并通过合成验证，第9阶段未完成；合成验收不自动恢复真实操作，真实执行状态及回执另存私有记录。空白勾选不代表本次验证已经通过，范围只由本机显式启动启用。
 - [ ] 范围文件严格采用 `format="ai-accounting-kernel/2/replay-close-scope/1"`、`catalog_instance_id`、`targets`，目标字段为 `company_id`、`database_id`、`first_period`、`last_period`、`owner_confirmation`；核对精确身份、1至120个连续月及公司不重复。仅开发draft公司库允许测试范围，released正式公司库拒绝。文件只在显式启动时读取固定，ensure默认普通服务且不继承；不添加manifest、token或其它mode参数。
 - [ ] 重放场景先 `preview_replay_close_range`，再以相同 `company_id`、`first_period`、`last_period`、`owner_confirmation`、`preview_digest`、`epochs` 和稳定 `request_id` 调用 `confirm_replay_close_range`；逐月完整检查、独立冻结和备份任务均保留，不逐月弹出密码窗口，冻结 `approval=null`，范围审计不冒充密码批准。
 - [ ] 重放中间阻断保留已关前缀、停在首个阻断月；原样稳定键重试核对实际提交后接续。事实、资料、管理、读取修复或会话改变后重新预览剩余范围，不跳过问题月份。
