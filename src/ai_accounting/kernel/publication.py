@@ -55,11 +55,16 @@ def verified_period_headers(connection, periods):
         yield {"id": row[0], "posting_period": row[1], "sequence": row[2]}
 
 
-def chain_rows(connection, subject_ids=None):
-    restriction = (
-        " WHERE subject_id IN (SELECT value FROM json_each(?))" if subject_ids is not None else ""
-    )
-    parameters = (canonical(sorted(subject_ids)),) if subject_ids is not None else ()
+def chain_rows(connection, subject_ids=None, *, publication_highwater=None):
+    restrictions = []
+    parameters = []
+    if subject_ids is not None:
+        restrictions.append("subject_id IN (SELECT value FROM json_each(?))")
+        parameters.append(canonical(sorted(subject_ids)))
+    if publication_highwater is not None:
+        restrictions.append("sequence<=?")
+        parameters.append(publication_highwater)
+    restriction = " WHERE " + " AND ".join(restrictions) if restrictions else ""
     return [
         dict(r)
         for r in connection.execute(
@@ -169,10 +174,12 @@ def append(connection, subject_id, calculation_id, decision, voucher_id):
     return ident
 
 
-def active_tranches(connection, subject_ids=None):
+def active_tranches(connection, subject_ids=None, *, publication_highwater=None):
     """Reconstruct effective segments without evaluating any historical fact."""
     active = {}
-    for row in chain_rows(connection, subject_ids):
+    for row in chain_rows(
+        connection, subject_ids, publication_highwater=publication_highwater
+    ):
         segments = active.setdefault(row["subject_id"], [])
         if row["mode"] in ("initial", "closed_correction"):
             segments.append(row)

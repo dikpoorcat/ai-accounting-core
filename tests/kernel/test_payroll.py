@@ -43,7 +43,7 @@ from ai_accounting.kernel.domains.payroll import (
 from ai_accounting.kernel.domains.transactions import Allocation, Payment, calculate_payment
 from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
 from ai_accounting.kernel.payroll_preparation import BoundedPayrollPlan, PayrollPlan
-from ai_accounting.kernel.types import MAX_FEN
+from ai_accounting.kernel.types import MAX_FEN, YearMonth
 from ai_accounting.payroll import AnnualBonusTaxPolicy, CumulativeIncomeTaxPolicy
 
 
@@ -61,6 +61,7 @@ def context_for(current, facts=(), calculations=()):
                 item
                 for item in facts
                 if (read.kind == "*" or item.fact.kind == read.kind)
+                and (read.before_period is None or item.fact.period < read.before_period)
                 and (
                     read.key == "*"
                     or read.key == f"#{item.id}"
@@ -341,7 +342,10 @@ def test_regular_payroll_produces_balanced_obligations_and_records_empty_actual_
         in ctx.used
     )
     assert (
-        Read("fact", "payroll_first_wage_treatment", employee_year("employee", "2026-01"))
+        Read(
+            "fact", "payroll_first_wage_treatment", employee_year("employee", "2026-01"),
+            YearMonth("2026-02"),
+        )
         in ctx.used
     )
     assert result.values["rule_versions"] == ["contributions:v1", "income-tax:v1"]

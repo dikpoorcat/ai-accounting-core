@@ -336,11 +336,35 @@ class PayrollOpeningState(Fact):
 class PayrollFirstWageTreatment(Fact):
     kind: ClassVar[str] = "payroll_first_wage_treatment"
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
+    period: YearMonth = Field(
+        description="首次工资处理开始适用的核算月份，不是录入或负责人确认月份",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "accounting", "meaning": "first_wage_treatment_effective_month",
+            "allowed_precision": ["month"],
+            "reusable_sources": ["confirmed_first_wage_treatment_effective_month"],
+            "constraint": "仅工资所属期不早于本月时适用；有源适用月不能改为录入确认月",
+        }},
+    )
     employee_id: Identifier
-    standard_deduction_start_month: Annotated[int, Field(ge=1, le=12)]
+    standard_deduction_start_month: Annotated[int, Field(
+        ge=1, le=12,
+        description="适用后累计基本减除费用的起算月，不改变本处理的适用首月",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "accounting", "meaning": "cumulative_standard_deduction_clock_start",
+            "allowed_precision": ["month_number"],
+            "reusable_sources": ["confirmed_first_wage_standard_deduction_start_month"],
+            "constraint": "仅决定累计减除费用时钟；不向更早工资月份追溯应用本处理",
+        }},
+    )]
 
     def scopes(self) -> tuple[str, ...]:
         return (employee_year(self.employee_id, self.period),)
+
+
+def first_wage_read(employee_id: str, period: YearMonth) -> Read:
+    """Only treatments already effective in this wage month may be adopted."""
+    cutoff = YearMonth.from_ordinal(period.ordinal + 1) if period.ordinal < 119987 else None
+    return Read("fact", PayrollFirstWageTreatment.kind, employee_year(employee_id, period), cutoff)
 
 
 class PayrollWithholdingActual(Fact):
@@ -412,7 +436,7 @@ class Payroll(Fact):
             Read("fact", "opening_payroll_state", year_scope),
             Read("calculation", "opening_payroll_state", year_scope),
             *opening_binding_reads(year_scope),
-            Read("fact", PayrollFirstWageTreatment.kind, year_scope),
+            first_wage_read(self.employee_id, self.period),
             Read("fact", PayrollWithholdingActual.kind, current_scope),
             *prior,
         )
@@ -483,8 +507,10 @@ def _unique_subject(version: FactVersion, context: Context, key: str) -> None:
         raise KernelError("duplicate_remuneration", "同一人员和所属期存在另一笔有效薪酬")
 
 
-def _optional_one(context: Context, kind: str, key: str) -> FactVersion | None:
-    items = context.facts(kind, key)
+def _optional_one(
+    context: Context, kind: str, key: str, *, read: Read | None = None
+) -> FactVersion | None:
+    items = context.select(read) if read is not None else context.facts(kind, key)
     if len(items) > 1:
         raise KernelError("ambiguous_source", f"同一范围存在多个 {kind} 来源")
     return items[0] if items else None
@@ -931,7 +957,8 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
             precision=("month",),
         )
     treatment = _optional_one(
-        context, PayrollFirstWageTreatment.kind, employee_year(fact.employee_id, fact.period)
+        context, PayrollFirstWageTreatment.kind, employee_year(fact.employee_id, fact.period),
+        read=first_wage_read(fact.employee_id, fact.period),
     )
     if treatment is not None and not treatment.evidence:
         raise NeedsInformation("first_wage_treatment.evidence", "首次工资扣除处理需要留存依据")

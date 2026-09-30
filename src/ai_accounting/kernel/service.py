@@ -146,6 +146,10 @@ OPERATING_PROTOCOL = {
         "方案绑定完整工资输入、档案和政策修订及全部变更通知；无变化绑定完整人员范围和逐人上期输入。"
         "prepare_payroll也检查已有工资；confirm_payroll_preparation只登记事实，不代表已发布。"
         "累计或实际扣款重算不自动使工资输入确认失效；先处理明确的待重算来源，不补造负责人确认。"
+        "payroll_first_wage_treatment.period是有源适用首月，standard_deduction_start_month是累计扣除起点；"
+        "工资只采用当月及以前的处理，未来月份规则不能反向改变历史工资。"
+        "历史无界依赖误标待复核时先用同subject公开预览核对；完整签名相等才可review_no_impact发布，"
+        "保留原凭证和冻结，不直接改待复核记录或强制声称无影响。"
     ),
     "tax_import_mapping": (
         "工资准备和期间待办的tax_import_mapping只检查个税文件列对应。"

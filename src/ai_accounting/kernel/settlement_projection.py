@@ -93,10 +93,12 @@ def _relation_rows(calculation, relation, sign):
     return result
 
 
-def _active_tranches(connection, *, subject_ids=None):
+def _active_tranches(connection, *, subject_ids=None, publication_highwater=None):
     from .publication import active_tranches
 
-    return active_tranches(connection, subject_ids=subject_ids)
+    return active_tranches(
+        connection, subject_ids=subject_ids, publication_highwater=publication_highwater
+    )
 
 
 def _may_contribute_settlement(calculation, known_kinds):
@@ -152,6 +154,7 @@ def expected_settlement_projection(
     periods=None,
     subject_ids=None,
     verified_calculations=None,
+    publication_highwater=None,
 ):
     """Derive exact contribution rows without consulting current projections."""
 
@@ -167,7 +170,9 @@ def expected_settlement_projection(
         }
     tranches = [
         item
-        for item in _active_tranches(connection, subject_ids=subject_ids)
+        for item in _active_tranches(
+            connection, subject_ids=subject_ids, publication_highwater=publication_highwater
+        )
         if selected_periods is None or item["posting_period"] in selected_periods
     ]
     calculation_ids = {

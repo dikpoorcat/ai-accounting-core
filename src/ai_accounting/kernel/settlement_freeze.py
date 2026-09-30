@@ -831,27 +831,77 @@ def frozen_key(connection, period: int, key: str) -> dict | None:
     return state
 
 
+def _verify_late_reviews(connection, period, reviews, *, reads=None, engine=None):
+    """Prove later reviews preserve the entire frozen accounting meaning."""
+    from .accounting import AccountingBook
+    from .content_history_context import publication_reader
+    from .integrity import verify_publication
+
+    if engine is None and reads is not None:
+        engine = reads.engine
+    if engine is None:
+        # Low-level SQL readers may lack a QueryReads context. Reuse this exact
+        # connection and the installed bundle; constructing Store opens no DB.
+        from .engine import Engine
+        from .schema_bundle import production_bundle
+        from .storage import Store
+
+        identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
+        path = next(
+            row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"
+        )
+        engine = Engine(Store(
+            path, production_bundle(), identity["company_id"], identity["database_id"],
+            taxpayer_id=identity["taxpayer_id"],
+        ))
+    publication_reader().verify_publication_chain(
+        connection, subject_ids={row["subject_id"] for row in reviews}
+    )
+    pairs = []
+    for row in reviews:
+        prior = connection.execute(
+            "SELECT calculation_id FROM calculation_publication WHERE id=?",
+            (row["previous_publication_id"],),
+        ).fetchone()
+        if prior is None or prior[0] is None or row["calculation_id"] is None:
+            _fail("late_review_predecessor_missing", period)
+        pairs.append((prior[0], row["calculation_id"]))
+    identifiers = {ident for pair in pairs for ident in pair}
+    verify_publication(engine, connection, identifiers)
+    book = AccountingBook(engine.store.registry)
+    book.load(engine.store, connection, identifiers)
+    for before, after in pairs:
+        if book.signature(before) != book.signature(after):
+            _fail("late_review_accounting_mismatch", period)
+
+
 def _tail_rows(
     connection, base_root: dict, maximum: int | None, *, reads=None, minimum: int | None = None
 ) -> list[dict]:
     """Verify every authoritative open posting period before reading its rows.
 
     Future postings published before the last close are included by posting
-    period.  Sequence is separately checked so a later publication cannot
-    mutate a previously frozen posting period.
+    period. Sequence is separately checked so a later financial publication
+    cannot mutate a frozen posting period. No-impact reviews retain their
+    original posting month but do not enter the frozen financial state.
     """
     from .settlement_projection import verify_settlement_periods
 
     last = base_root["period"]
     lower = max(last, minimum) if minimum is not None else last
     highwater = base_root["publication_highwater"]
-    invalid = connection.execute(
-        "SELECT id FROM calculation_publication "
-        "WHERE sequence>? AND posting_period<=? LIMIT 1",
+    late = connection.execute(
+        "SELECT * FROM calculation_publication "
+        "WHERE sequence>? AND posting_period<=? ORDER BY sequence",
         (highwater, last),
-    ).fetchone()
-    if invalid is not None:
+    ).fetchall()
+    if any(row["mode"] != "review_no_impact" for row in late):
         _fail("published_into_frozen_period", last)
+    if late:
+        _verify_late_reviews(connection, last, late, reads=reads)
+        verify_settlement_periods(
+            connection, {row["posting_period"] for row in late}, reads=reads
+        )
     upper = " AND posting_period<=?" if maximum is not None else ""
     parameters = (lower, maximum) if maximum is not None else (lower,)
     periods = {
@@ -1745,6 +1795,7 @@ def _authoritative_freezes(
         _COLUMNS,
         _VerifiedProjection,
         compare_settlement_projection,
+        expected_settlement_projection,
     )
 
     if _verified_projection is None:
@@ -1768,8 +1819,7 @@ def _authoritative_freezes(
     publications = {
         row["id"]: row
         for row in connection.execute(
-            "SELECT id,sequence,calculation_id,posting_period "
-            "FROM calculation_publication"
+            "SELECT * FROM calculation_publication"
         )
     }
     calculations = {
@@ -1813,6 +1863,33 @@ def _authoritative_freezes(
         header = reader.verified_header(connection, close)
         highwater = header.root["small"]["publication_sequence"]
         period_rows = by_period.pop(period, [])
+        late = [
+            publication for publication in publications.values()
+            if publication["posting_period"] == period and publication["sequence"] > highwater
+        ]
+        if late:
+            if any(publication["mode"] != "review_no_impact" for publication in late):
+                _fail("published_into_frozen_period", period)
+            _verify_late_reviews(connection, period, late, engine=engine)
+            # A current review replaces its tranche, so filtering current rows
+            # would also lose the original. Reconstruct at the close boundary.
+            historical = expected_settlement_projection(
+                engine, connection, periods={period},
+                verified_calculations=verified_calculations,
+                publication_highwater=highwater,
+            )
+            period_rows = []
+            for values in historical:
+                item = dict(zip(_COLUMNS, values, strict=True))
+                publication = publications[item["publication_id"]]
+                calculation = calculations.get(item["source_calculation_id"])
+                item.update({
+                    "sequence": publication["sequence"],
+                    "publication_calculation_id": publication["calculation_id"],
+                    "source_kind": calculation["kind"] if calculation else None,
+                    "source_fact_id": calculation["fact_id"] if calculation else None,
+                })
+                period_rows.append(item)
         period_rows.sort(key=lambda row: (row["sequence"], row["item_no"]))
         rows = {}
         for item in period_rows:
