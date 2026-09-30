@@ -11,7 +11,7 @@ import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from decimal import Context as DecimalContext
-from typing import Annotated, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
@@ -29,13 +29,10 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import MAX_FEN, ActualDate, Fen, NonNegativeFen, YearMonth, sum_fen
+from ..types import MAX_FEN, ActualDate, Fen, NonNegativeFen, SubjectId, YearMonth, sum_fen
 from .money import ACTUAL_PAYMENT_KINDS
 
 Money = NonNegativeFen
-TaxSourceId = Annotated[
-    str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-]
 VAT_CALCULATION_KINDS = (
     "service_sale",
     "sale_return",
@@ -245,9 +242,9 @@ class TaxAssessment(Fact):
     identity_fields: ClassVar[tuple[str, ...]] = ("period_start", "period_end")
     period_start: ActualDate
     period_end: ActualDate
-    vat_policy_id: str = Field(min_length=1)
-    surtax_policy_id: str = Field(min_length=1)
-    tax_credit_ids: tuple[TaxSourceId, ...] = ()
+    vat_policy_id: SubjectId
+    surtax_policy_id: SubjectId
+    tax_credit_ids: tuple[SubjectId, ...] = ()
 
     @model_validator(mode="after")
     def valid_period(self):
@@ -519,8 +516,8 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
 class TaxCreditReturn(TaxInput):
     """A credit-note source, explicitly attributed to an originally filed sale."""
 
-    return_id: TaxSourceId
-    original_sale_id: TaxSourceId
+    return_id: SubjectId
+    original_sale_id: SubjectId
     return_kind: ClassVar[str] = "sale_return"
     original_kind: ClassVar[str] = "service_sale"
 
@@ -532,8 +529,8 @@ class TaxCreditReturn(TaxInput):
 class TaxCreditAdvanceReturn(TaxInput):
     """An explicitly selected refund of an originally taxed customer advance."""
 
-    return_id: TaxSourceId
-    original_advance_id: TaxSourceId
+    return_id: SubjectId
+    original_advance_id: SubjectId
     return_kind: ClassVar[str] = "advance_refund"
     original_kind: ClassVar[str] = "advance"
 
@@ -553,7 +550,7 @@ class TaxCreditConfirmation(Fact):
 
     kind: ClassVar[str] = "tax_credit_confirmation"
     immutable: ClassVar[bool] = True
-    original_assessment_id: TaxSourceId
+    original_assessment_id: SubjectId
     original_period_start: ActualDate
     original_period_end: ActualDate
     returns: tuple[TaxCreditReturn | TaxCreditAdvanceReturn, ...] = Field(min_length=1)

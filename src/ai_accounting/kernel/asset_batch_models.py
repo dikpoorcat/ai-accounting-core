@@ -5,8 +5,7 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from .contracts import Fact, KernelError, Read
-from .domains.transactions import Identifier
-from .types import YearMonth
+from .types import SubjectId, YearMonth
 
 MEMBER_KINDS = frozenset({"asset_activation", "asset_consumption"})
 OWNER_KINDS = frozenset({"asset_activation_batch", "asset_consumption_month"})
@@ -22,7 +21,7 @@ LIFECYCLE_KINDS = (
 
 class ActivationMember(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    subject_id: Identifier
+    subject_id: SubjectId
 
 
 class AssetActivationBatch(Fact):

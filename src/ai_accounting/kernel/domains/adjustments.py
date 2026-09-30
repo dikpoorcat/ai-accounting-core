@@ -14,7 +14,7 @@ from ..contracts import (
     Outcome,
     Read,
 )
-from ..types import ActualDate, PositiveFen, YearMonth, sum_fen
+from ..types import ActualDate, PositiveFen, SubjectId, YearMonth, sum_fen
 from .transactions import Allocation, Identifier, _source_obligation, obligation
 
 
@@ -240,7 +240,7 @@ class PassThroughReturn(Fact):
     kind: ClassVar[str] = "pass_through_return"
     material_category: ClassVar[str] = "transactions"
     identity_fields: ClassVar[tuple[str, ...]] = ("source_id",)
-    source_id: str = Field(min_length=1)
+    source_id: SubjectId
     amount_fen: PositiveFen
     refund_right_confirmed: Literal[True]
 

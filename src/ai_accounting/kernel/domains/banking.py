@@ -5,7 +5,7 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..contracts import Fact, KernelError, NeedsInformation, Outcome, Read
-from ..types import ActualDate, Fen, YearMonth, sum_fen
+from ..types import ActualDate, Fen, SubjectId, YearMonth, sum_fen
 from .transactions import Identifier
 
 # Exact reconciliation lookup; the row ordinal remains the immutable child key.
@@ -251,8 +251,11 @@ class Match(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     reference: str = Field(min_length=1, max_length=500)
     source_kind: CashKind
-    source_id: Identifier = Field(
-        description="已发布实际资金身份；同一来源可对应多条同账户、同日、同方向的原行，组内合计必须等于来源总额"
+    source_id: SubjectId = Field(
+        description=(
+            "已发布实际资金身份；同一来源可对应多条同账户、同日、同方向的原行。"
+            "同一reference也可列多个不同来源，每个组合来源只能对应该原行，完整合计须等于原行金额"
+        )
     )
 
 
@@ -261,8 +264,10 @@ def _previous_reconciliation_read(bank_account_id: str, period: YearMonth) -> Re
         return None
     previous = YearMonth.from_ordinal(period.ordinal - 1)
     return Read(
-        "calculation", "bank_reconciliation",
-        f"bank:{bank_account_id}:{previous}", period,
+        "calculation",
+        "bank_reconciliation",
+        f"bank:{bank_account_id}:{previous}",
+        period,
     )
 
 
@@ -271,7 +276,7 @@ class BankReconciliation(Fact):
     material_category: ClassVar[str] = "bank"
     activity_count_field: ClassVar[str] = "matched_count"
     identity_fields: ClassVar[tuple[str, ...]] = ("statement_id", "bank_account_id", "period")
-    statement_id: Identifier
+    statement_id: SubjectId
     bank_account_id: Identifier = Field(description="从所引用银行流水复用的实际账户身份，必须一致")
     matches: tuple[Match, ...]
 
@@ -341,19 +346,82 @@ def calculate_reconciliation(version, context):
     if opening_fen != statement.opening_fen:
         raise KernelError("bank_opening_difference", "流水期初与账面起点或上期对账不一致")
     entries = {entry.reference: entry for entry in statement.entries}
-    if len({match.reference for match in fact.matches}) != len(fact.matches) or set(entries) != {
-        match.reference for match in fact.matches
-    }:
-        raise NeedsInformation("matches", "每笔银行流水必须有且仅有一项明确资金匹配")
+    if len({(m.reference, m.source_kind, m.source_id) for m in fact.matches}) != len(
+        fact.matches
+    ) or set(entries) != {match.reference for match in fact.matches}:
+        raise NeedsInformation("matches", "每笔银行原行须有明确资金匹配，原行与来源的引用不得重复")
     expected = published_cash(
         context, fact.bank_account_id, f"bank:{fact.bank_account_id}:{fact.period}"
     )
     groups = {}
+    by_reference = {}
     for match in fact.matches:
         key = (match.source_kind, match.source_id)
         groups.setdefault(key, []).append(entries[match.reference])
+        by_reference.setdefault(match.reference, []).append(key)
+    combined = set()
+    for reference, keys in by_reference.items():
+        if len(keys) == 1:
+            continue
+        if any(len(groups[key]) != 1 for key in keys):
+            raise NeedsInformation(
+                "matches",
+                "组合资金来源必须只对应同一原行，不能混入不明确的多对多匹配",
+                sources=(fact.statement_id, *(source_id for _, source_id in keys)),
+                precision=("day", "integer_fen"),
+            )
+        entry = entries[reference]
+        amounts = []
+        for source_kind, source_id in keys:
+            real = context.one(source_kind, "@" + source_id).fact
+            amount = cash_amount(real, fact.bank_account_id)
+            if real.actual_date != entry.actual_date or (amount > 0) != (entry.signed_fen > 0):
+                raise KernelError(
+                    "bank_match_difference",
+                    "组合来源的实际日期或方向与银行原行存在差异",
+                    fact_issues=[
+                        {
+                            "field": "matches",
+                            "reference": reference,
+                            "source_kind": source_kind,
+                            "source_id": source_id,
+                            "semantics": "accounting",
+                            "allowed_precision": ["day", "integer_fen"],
+                            "constraint": "same_actual_date_and_direction",
+                            "reusable_sources": [fact.statement_id, source_id],
+                        }
+                    ],
+                )
+            if (source_kind, source_id) not in expected:
+                raise NeedsInformation(
+                    "actual_funds", "组合资金尚未形成当前账户月份的正式结果", sources=(source_id,)
+                )
+            amounts.append(amount)
+        if sum_fen(amounts) != entry.signed_fen:
+            raise KernelError(
+                "bank_match_difference",
+                "组合来源的完整合计金额与银行原行存在差异",
+                fact_issues=[
+                    {
+                        "field": "matches",
+                        "reference": reference,
+                        "semantics": "accounting",
+                        "allowed_precision": ["integer_fen"],
+                        "constraint": "whole_source_sum",
+                        "expected_signed_fen": entry.signed_fen,
+                        "actual_signed_fen": sum_fen(amounts),
+                        "reusable_sources": [
+                            fact.statement_id,
+                            *(source_id for _, source_id in keys),
+                        ],
+                    }
+                ],
+            )
+        combined.update(keys)
     for (source_kind, source_id), group in groups.items():
         key = (source_kind, source_id)
+        if key in combined:
+            continue
         real = context.one(source_kind, "@" + source_id).fact
         amount = cash_amount(real, fact.bank_account_id)
         if (

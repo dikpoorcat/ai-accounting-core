@@ -16,6 +16,10 @@ MAX_FEN = 2**63 - 1
 Fen = Annotated[StrictInt, Field(ge=MIN_FEN, le=MAX_FEN)]
 NonNegativeFen = Annotated[Fen, Field(ge=0)]
 PositiveFen = Annotated[Fen, Field(gt=0)]
+# A business source refers to the engine's stable subject identity, including
+# generated names such as payroll:<employee>:<month>. It is not an entity ID
+# or an obligation/kind code and must share the subject wire length contract.
+SubjectId = Annotated[str, Field(strict=True, min_length=1, max_length=200)]
 _YEAR_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
 _ACTUAL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 

@@ -28,7 +28,7 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, sum_fen
+from ..types import ActualDate, NonNegativeFen, PositiveFen, SubjectId, YearMonth, sum_fen
 from .money import ACTUAL_PAYMENT_KINDS, payment_funds_account
 from .taxes import VatPolicy, split_tax_inclusive
 
@@ -108,7 +108,7 @@ class ServiceSale(Fact):
     fulfillment_date: ActualDate | None = Field(
         default=None, description="可省略的实际履约日；收入核算使用 period，不用月末补造实际日"
     )
-    vat_policy_id: Identifier | None = None
+    vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
     tax_obligation_period: YearMonth | None = Field(
         default=None, description="明确的增值税纳税义务所属月，核算来源；不得从履约日推断"
@@ -244,7 +244,7 @@ class ExpenseRecovery(Fact):
     """A confirmed return of a previously recognized cost; cash is recorded separately."""
 
     kind: ClassVar[str] = "expense_recovery"
-    source_expense_id: Identifier
+    source_expense_id: SubjectId
     counterparty_id: Identifier
     amount_fen: PositiveFen
     recovery_right_confirmed: StrictBool | None = None
@@ -369,7 +369,7 @@ def calculate_project_cost(version: FactVersion, ctx: Context) -> Outcome:
 
 class ProjectCostSource(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    source_id: Identifier
+    source_id: SubjectId
     amount_fen: PositiveFen
 
 
@@ -532,7 +532,7 @@ class Advance(Fact):
     side: Literal["customer", "supplier"]
     contractual_obligation_established: StrictBool | None = None
     vat_due_on_advance: StrictBool | None = None
-    vat_policy_id: Identifier | None = None
+    vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
     tax_obligation_period: YearMonth | None = None
     tax_obligation_date: ActualDate | None = None
@@ -641,10 +641,10 @@ class AdvanceFulfillment(Fact):
 
     kind: ClassVar[str] = "advance_fulfillment"
     identity_fields: ClassVar[tuple[str, ...]] = ("advance_id",)
-    advance_id: Identifier
+    advance_id: SubjectId
     fulfilled_gross_fen: PositiveFen
     fulfillment_date: ActualDate | None = None
-    vat_policy_id: Identifier | None = None
+    vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
     tax_obligation_period: YearMonth | None = None
     tax_obligation_date: ActualDate | None = None
@@ -769,7 +769,7 @@ class AdvanceRefund(Fact):
 
     kind: ClassVar[str] = "advance_refund"
     identity_fields: ClassVar[tuple[str, ...]] = ("advance_id",)
-    advance_id: Identifier
+    advance_id: SubjectId
     refunded_gross_fen: PositiveFen
     refund_right_confirmed: StrictBool | None = None
 
@@ -904,7 +904,7 @@ def calculate_funding(version: FactVersion, ctx: Context) -> Outcome:
 class Allocation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     source_kind: Identifier
-    source_id: Identifier
+    source_id: SubjectId
     obligation: Identifier
     amount_fen: PositiveFen
     recipient_id: Identifier | None = None
@@ -1269,10 +1269,10 @@ class ServiceTaxPoint(Fact):
 
     kind: ClassVar[str] = "service_tax_point"
     identity_fields: ClassVar[tuple[str, ...]] = ("sale_id", "trigger")
-    sale_id: Identifier
+    sale_id: SubjectId
     trigger: Literal["declared", "receipt"]
     declaration_confirmed: StrictBool | None = None
-    payment_id: Identifier | None = None
+    payment_id: SubjectId | None = None
     payment_kind: Literal["payment", "cash_payment"] = "payment"
 
     def scopes(self):
@@ -1458,7 +1458,7 @@ def calculate_settlement(version: FactVersion, ctx: Context) -> Outcome:
 class SaleReturn(Fact):
     kind: ClassVar[str] = "sale_return"
     identity_fields: ClassVar[tuple[str, ...]] = ("sale_id",)
-    sale_id: Identifier
+    sale_id: SubjectId
     returned_gross_fen: PositiveFen
     credit_note_vat_fen: NonNegativeFen
     customer_id: Identifier
@@ -1716,7 +1716,7 @@ class Overpayment(Fact):
 
     kind: ClassVar[str] = "overpayment"
     source_kind: Identifier
-    source_id: Identifier
+    source_id: SubjectId
     obligation_name: Identifier
     counterparty_id: Identifier
     amount_fen: PositiveFen

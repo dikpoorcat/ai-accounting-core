@@ -19,7 +19,7 @@ from ..contracts import (
     Outcome,
     Read,
 )
-from ..types import ActualDate, Fen, NonNegativeFen, PositiveFen, YearMonth, sum_fen
+from ..types import ActualDate, Fen, NonNegativeFen, PositiveFen, SubjectId, YearMonth, sum_fen
 from .investments import CostBasis, ShortTermClassification, cost_key, require_basis
 from .payroll import PayrollOpeningState
 from .transactions import Identifier, obligation
@@ -27,7 +27,7 @@ from .transactions import Identifier, obligation
 
 class OpeningDetail(Fact):
     immutable: ClassVar[bool] = True
-    package_id: Identifier
+    package_id: SubjectId
 
     def scopes(self):
         return (str(self.period), f"opening:{self.package_id}")
@@ -139,7 +139,7 @@ class OpeningAsset(OpeningDetail):
 
 class OpeningLoan(OpeningDetail):
     kind: ClassVar[str] = "opening_loan"
-    agreement_id: Identifier
+    agreement_id: SubjectId
     lender_id: Identifier
     loan_term: Literal["short_term", "long_term"]
     principal_fen: PositiveFen
@@ -200,7 +200,7 @@ class OpeningPayrollState(PayrollOpeningState):
     # A continuation basis is evidenced by its opening package, not this month's wages.
     material_category: ClassVar[str | None] = None
     immutable: ClassVar[bool] = True
-    package_id: Identifier
+    package_id: SubjectId
     separate_method_already_used: bool
 
     def calculation_state(self):
@@ -304,8 +304,8 @@ OpeningKind = Literal[
 class Member(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     kind: OpeningKind
-    subject_id: Identifier
-    agreement_id: Identifier | None = None
+    subject_id: SubjectId
+    agreement_id: SubjectId | None = None
 
     @model_validator(mode="after")
     def supporting_agreement(self):
@@ -332,7 +332,7 @@ class Counts(BaseModel):
 class OpeningPackage(Fact):
     kind: ClassVar[str] = "opening_package"
     immutable: ClassVar[bool] = True
-    package_id: Identifier
+    package_id: SubjectId
     counts: Counts
     members: tuple[Member, ...]
     completeness_confirmed: Literal[True]

@@ -18,7 +18,7 @@ from ..contracts import (
     Outcome,
     Read,
 )
-from ..types import ActualDate, NonNegativeFen, PositiveFen, sum_fen
+from ..types import ActualDate, NonNegativeFen, PositiveFen, SubjectId, sum_fen
 from .transactions import Identifier, obligation, outcome
 
 STANDARD_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
@@ -113,7 +113,7 @@ def calculate_subscription(version, ctx):
 class RedemptionCost(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     source_kind: Literal["money_fund_subscription", "opening_money_fund"]
-    source_id: Identifier
+    source_id: SubjectId
     cost_fen: PositiveFen
 
 

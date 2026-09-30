@@ -39,7 +39,15 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, canonical, sum_fen
+from ..types import (
+    ActualDate,
+    NonNegativeFen,
+    PositiveFen,
+    SubjectId,
+    YearMonth,
+    canonical,
+    sum_fen,
+)
 from .money import ACTUAL_PAYMENT_KINDS
 from .taxes import round_fen
 from .transactions import (
@@ -255,7 +263,7 @@ class ReimbursedAsset(Fact):
     cost_fen: PositiveFen
     company_acceptance_confirmed: Literal[True]
     creditors: tuple[ReimbursementCreditor, ...] = ()
-    acceptance_id: Identifier | None = Field(
+    acceptance_id: SubjectId | None = Field(
         default=None, description="整批验收来源；采用批次时不再提交逐资产债权人分摊。"
     )
     acquisition_date: ActualDate | None = Field(
@@ -618,7 +626,7 @@ class AssetDisposal(Fact):
     disposal_kind: Literal["sale", "scrap"]
     gross_proceeds_fen: NonNegativeFen
     buyer_id: Identifier | None = None
-    vat_policy_id: Identifier | None = None
+    vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
 
     @model_validator(mode="after")
@@ -784,7 +792,7 @@ class LoanAgreement(Fact):
 class LoanDrawdown(Fact):
     kind: ClassVar[str] = "loan_drawdown"
     immutable: ClassVar[bool] = True
-    agreement_id: Identifier
+    agreement_id: SubjectId
     principal_fen: PositiveFen
     actual_date: ActualDate
     bank_account_id: Identifier
@@ -845,8 +853,8 @@ def calculate_drawdown(version: FactVersion, ctx: Context) -> Outcome:
 class LoanInterest(Fact):
     kind: ClassVar[str] = "loan_interest"
     identity_fields: ClassVar[tuple[str, ...]] = ("drawdown_id", "agreement_id")
-    drawdown_id: Identifier
-    agreement_id: Identifier
+    drawdown_id: SubjectId
+    agreement_id: SubjectId
     period_start: ActualDate
     period_end_exclusive: ActualDate
 

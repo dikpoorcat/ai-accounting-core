@@ -875,24 +875,39 @@ class FundsRead:
                     if item["closing_fen"] is not None
                     else None,
                 }
-        self.bank_parameters = [canonical(headers)]
+        self.bank_parameters = [
+            canonical(headers),
+            canonical(
+                sorted({item["reconciliation_id"] for item in headers if item["reconciliation_id"]})
+            ),
+        ]
         self.bank_source = (
             "SELECT printf('%s:%012d',json_extract(h.value,'$.subject_id'),e.item_no) page_key,"
             "json_extract(h.value,'$.account_id') account_id,"
             "json_extract(h.value,'$.reconciliation_calculation_id') "
-            "reconciliation_calculation_id,m.source_kind,m.source_id,"
-            "count(*) OVER (PARTITION BY "
+            "reconciliation_calculation_id,"
+            "CASE WHEN m.match_count=1 THEN m.source_kind END source_kind,"
+            "CASE WHEN m.match_count=1 THEN m.source_id END source_id,"
+            "m.matched_sources,"
+            "CASE WHEN m.match_count>1 THEN 1 ELSE count(*) OVER (PARTITION BY "
             "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
-            "source_row_count,sum(abs(e.signed_fen)) OVER (PARTITION BY "
+            "END source_row_count,"
+            "CASE WHEN m.match_count>1 THEN abs(e.signed_fen) ELSE "
+            "sum(abs(e.signed_fen)) OVER (PARTITION BY "
             "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
-            "source_rows_total_fen,e.*,CASE WHEN "
+            "END source_rows_total_fen,e.*,CASE WHEN "
             "json_extract(h.value,'$.valid') "
-            "AND m.reference IS NOT NULL THEN "
+            "AND m.match_count>0 THEN "
             "'matched' "
             "WHEN json_extract(h.value,'$.review') THEN 'needs_review' ELSE 'unmatched' END state "
             "FROM json_each(?) h JOIN fact_bank_statement_entries e ON "
             "e.revision_id=json_extract(h.value,'$.fact_id') LEFT JOIN "
-            "fact_bank_reconciliation_matches m ON m.revision_id="
+            "(SELECT r.revision_id,r.reference,count(*) match_count,"
+            "min(r.source_kind) source_kind,min(r.source_id) source_id,"
+            "json_group_array(json_array(r.source_kind,r.source_id)) matched_sources "
+            "FROM json_each(?) ids JOIN fact_bank_reconciliation_matches r "
+            "ON r.revision_id=ids.value GROUP BY r.revision_id,r.reference) m "
+            "ON m.revision_id="
             "json_extract(h.value,'$.reconciliation_id') AND m.reference=e.reference"
         )
         if not headers:
@@ -900,7 +915,8 @@ class FundsRead:
             self.bank_source = (
                 "SELECT NULL page_key,NULL account_id,NULL actual_date,NULL signed_fen,"
                 "NULL description,NULL reconciliation_calculation_id,NULL source_kind,"
-                "NULL source_id,NULL source_row_count,NULL source_rows_total_fen,"
+                "NULL source_id,NULL matched_sources,NULL source_row_count,"
+                "NULL source_rows_total_fen,"
                 "NULL reference,NULL state WHERE 0"
             )
         sums = (
@@ -993,23 +1009,32 @@ class FundsRead:
 
     def prepare_bank_items(self, rows):
         """Bind page rows to the exact funds calculations adopted by reconciliation."""
-        requests = [
-            {
-                "page_key": row["page_key"],
-                "root": row["reconciliation_calculation_id"],
-                "source_kind": row["source_kind"],
-                "source_id": row["source_id"],
-            }
-            for row in rows
-            if row["state"] == "matched"
-            and row["reconciliation_calculation_id"]
-            and row["source_kind"]
-            and row["source_id"]
-        ]
+        expected = {}
+        requests = []
+        for row in rows:
+            if row["state"] != "matched" or not row["reconciliation_calculation_id"]:
+                continue
+            sources = sorted(
+                {tuple(source) for source in json.loads(row["matched_sources"] or "[]")}
+            )
+            if not sources:
+                continue
+            expected[row["page_key"]] = sources
+            requests.extend(
+                {
+                    "page_key": row["page_key"],
+                    "root": row["reconciliation_calculation_id"],
+                    "source_kind": kind,
+                    "source_id": subject,
+                }
+                for kind, subject in sources
+            )
         if not requests:
             return
         matches = self.connection.execute(
-            "SELECT json_extract(r.value,'$.page_key') page_key,min(c.id) calculation_id,"
+            "SELECT json_extract(r.value,'$.page_key') page_key,"
+            "json_extract(r.value,'$.source_kind') source_kind,"
+            "json_extract(r.value,'$.source_id') source_id,min(c.id) calculation_id,"
             "count(*) candidate_count FROM json_each(?) r "
             "JOIN calculation c INDEXED BY calculation_subject ON "
             "c.subject_id=json_extract(r.value,'$.source_id') AND "
@@ -1017,17 +1042,28 @@ class FundsRead:
             "JOIN fact_revision f ON f.id=c.fact_id AND f.subject_id=c.subject_id "
             "JOIN dependency_calculation d INDEXED BY dependency_upstream ON "
             "d.upstream_id=c.id AND d.calculation_id=json_extract(r.value,'$.root') "
-            "GROUP BY page_key",
+            "GROUP BY page_key,source_kind,source_id",
             (canonical(requests),),
         ).fetchall()
-        selected = {
-            row["page_key"]: row["calculation_id"] for row in matches if row["candidate_count"] == 1
+        candidates = {
+            (row["page_key"], row["source_kind"], row["source_id"]): row["calculation_id"]
+            for row in matches
+            if row["candidate_count"] == 1
         }
-        self.prepare_calculation_items(selected.values())
+        selected = {
+            page_key: tuple(candidates[(page_key, *source)] for source in sources)
+            for page_key, sources in expected.items()
+            if all((page_key, *source) in candidates for source in sources)
+        }
+        self.prepare_calculation_items(
+            calculation_id for identifiers in selected.values() for calculation_id in identifiers
+        )
         self.bank_match_calculations.update(
             {
-                page_key: self.snap.calculation(calculation_id)
-                for page_key, calculation_id in selected.items()
+                page_key: tuple(
+                    self.snap.calculation(calculation_id) for calculation_id in identifiers
+                )
+                for page_key, identifiers in selected.items()
             }
         )
 
@@ -1085,11 +1121,35 @@ class FundsRead:
         account = self.account_display("bank", row["account_id"])
         profile = self.profile("fund_account", row["account_id"])
         amount = row["signed_fen"]
-        calc = self.bank_match_calculations.get(row["page_key"])
+        calculations = self.bank_match_calculations.get(row["page_key"], ())
+        calc = calculations[0] if len(calculations) == 1 else None
         batch_party, batch, batch_party_sources = (
             self.bank_batch_presentation(calc, row) if calc else (None, None, [])
         )
-        if batch:
+        if len(calculations) > 1:
+            parts, all_parties = [], {}
+            for source in calculations:
+                data = source["fact"]["data"]
+                source_amount = data[
+                    "principal_fen" if source["kind"] == "loan_drawdown" else "amount_fen"
+                ]
+                short, _ = self.snap.business_summary(source, 1)
+                source_party, source_parties = self.money_parties(
+                    source, 1, internal_transfer=self.calculation_is_internal_transfer(source)
+                )
+                label = (
+                    short
+                    if source_party in {"未提供往来对象", "公司账户内部划转"}
+                    else f"{short} · {source_party}"
+                )
+                parts.append({"party": label, "amount_fen": source_amount})
+                all_parties.update((item["party_id"], item) for item in source_parties)
+            if sum(part["amount_fen"] for part in parts) != abs(amount):
+                raise KernelError("dashboard_bank_match_difference", "银行原行的组合来源金额不一致")
+            party = f"组合{'收款' if amount > 0 else '付款'} · {len(parts)} 项"
+            party_sources = list(all_parties.values())
+            batch = {"bank_row_count": 1, "total_fen": abs(amount), "items": parts}
+        elif batch:
             party, party_sources = batch_party, batch_party_sources
         elif calc:
             party, party_sources = self.money_parties(
@@ -1160,8 +1220,7 @@ class FundsRead:
         source_ids = {
             row[0]
             for row in self.connection.execute(
-                source
-                + "SELECT DISTINCT c.id FROM events e,"
+                source + "SELECT DISTINCT c.id FROM events e,"
                 "json_each(e.outcome,'$.values.settlements') s "
                 "JOIN calculation c ON c.id=json_extract(s.value,'$.source_calculation') "
                 "WHERE c.kind IN ('money_fund_subscription','money_fund_redemption') "

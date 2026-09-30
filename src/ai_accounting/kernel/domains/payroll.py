@@ -64,7 +64,16 @@ from ..contracts import (
     Registry,
 )
 from ..payroll_confirmation import confirmation_reads, resolve_payroll_confirmation
-from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, canonical, checked, sum_fen
+from ..types import (
+    ActualDate,
+    NonNegativeFen,
+    PositiveFen,
+    SubjectId,
+    YearMonth,
+    canonical,
+    checked,
+    sum_fen,
+)
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 Rate = Annotated[str, Field(pattern=r"^(?:0(?:\.[0-9]{1,18})?|1(?:\.0{1,18})?)$")]
@@ -368,9 +377,9 @@ class Payroll(Fact):
     kind: ClassVar[str] = "payroll"
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     employee_id: Identifier
-    profile_id: Identifier
-    contribution_policy_id: Identifier
-    income_tax_policy_id: Identifier
+    profile_id: SubjectId
+    contribution_policy_id: SubjectId
+    income_tax_policy_id: SubjectId
     accounting_gross_salary_fen: NonNegativeFen
     tax_reported_salary_fen: NonNegativeFen
     tax_exempt_income_fen: NonNegativeFen
@@ -433,9 +442,9 @@ class PayrollBounded(Fact):
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     material_amount_aliases: ClassVar[dict[str, str]] = Payroll.material_amount_aliases
     employee_id: Identifier
-    profile_id: Identifier
-    contribution_policy_id: Identifier
-    income_tax_policy_id: Identifier
+    profile_id: SubjectId
+    contribution_policy_id: SubjectId
+    income_tax_policy_id: SubjectId
     accounting_gross_salary_fen: NonNegativeFen
     tax_reported_salary_fen: NonNegativeFen
     tax_exempt_income_fen: UnknownDeduction
@@ -1140,10 +1149,10 @@ class AnnualBonus(Fact):
     income_date: ActualDate
     bonus_fen: PositiveFen
     expense_class: ExpenseClass
-    bonus_policy_id: Identifier
-    income_tax_policy_id: Identifier
+    bonus_policy_id: SubjectId
+    income_tax_policy_id: SubjectId
     tax_method: Literal["separate", "combined"] | None = None
-    regular_payroll_id: Identifier | None = None
+    regular_payroll_id: SubjectId | None = None
 
     @model_validator(mode="after")
     def income_period_matches(self):
@@ -1408,7 +1417,7 @@ class LaborRemuneration(Fact):
     identity_fields: ClassVar[tuple[str, ...]] = ("person_id", "period")
     person_id: Identifier
     income_date: ActualDate
-    policy_id: Identifier
+    policy_id: SubjectId
     expense_class: ExpenseClass
     recipient_tax_status: Literal["ordinary_resident"]
     remuneration_method: Literal["fixed", "commission"]
@@ -1416,7 +1425,7 @@ class LaborRemuneration(Fact):
         Literal["net_after_withholding", "gross_paid_without_withholding"] | None
     ) = None
     gross_payment_kind: Literal["payment", "cash_payment"] | None = None
-    gross_payment_id: Identifier | None = None
+    gross_payment_id: SubjectId | None = None
     fixed_fee_fen: PositiveFen | None = None
     commission_base_fen: PositiveFen | None = None
     commission_rate_ppm: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
