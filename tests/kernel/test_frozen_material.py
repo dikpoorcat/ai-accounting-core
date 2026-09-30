@@ -189,6 +189,90 @@ def _compare_page_checks(company, period="2026-02"):
     return full
 
 
+def test_old_complete_template_proof_requires_new_rule_fallback_without_rewriting_history(
+    tmp_path, monkeypatch
+):
+    from test_material_empty_templates import spec, template
+
+    from ai_accounting.kernel.materials import PeriodAllocationEntry
+
+    old_rule = digest({"contract": "ai-accounting-kernel/2/material-coverage", "version": 1})
+    assert frozen_material.MATERIAL_COVERAGE_RULE_DIGEST != old_rule
+    company = Company(tmp_path)
+    # Model the exact prior parser behavior, with explicitly confirmed original
+    # placeholder dispositions. Only this isolated synthetic company is written.
+    with monkeypatch.context() as previous:
+        previous.setattr(materials, "_empty_xlsx_template", lambda *args: False)
+        previous.setattr(frozen_material, "MATERIAL_COVERAGE_RULE_DIGEST", old_rule)
+        source, _ = company.source(template(), spec=spec().model_dump(mode="json"))
+        assignments = tuple(
+            PeriodAllocationEntry(
+                sheet="Sheet", column=column, first_row=2, last_row=4,
+                recognition_period="2026-01", basis="confirmed_period",
+                basis_evidence_digest=company.proof, basis_location="L1",
+                basis_excerpt="负责人逐项确认",
+            ) for column in ("AC", "AD", "AE", "AF")
+        )
+        preview = company.materials.preview_period_allocation(source["subject_id"], assignments)
+        company.materials.confirm_period_allocation(
+            source["subject_id"], assignments, preview_digest=preview["digest"],
+            epochs=preview["epochs"], expected_revision=preview["expected_revision"],
+            request_id=company.request(),
+        )
+        for row in range(2, 5):
+            for column in ("AC", "AD", "AE", "AF"):
+                company.resolve(
+                    source, f"Sheet!{column}{row}", treatment="no_accounting",
+                    non_accounting_reason="zero_amount", amount_fen=0,
+                    reason="合成负责人明确核准未使用模板占位，没有业务金额",
+                )
+        with company.engine.store.connection(read_only=True) as connection:
+            proof = materials.check_completeness(
+                connection, YearMonth("2026-01").ordinal, company.engine.store.registry
+            )
+        assert proof["status"] == "complete"
+        assert len(proof["coverage"]) == 12
+        _save_frozen_proof(company, proof)
+
+    def saved_history():
+        with company.engine.store.connection(read_only=True) as connection:
+            return (
+                tuple(connection.execute(
+                    "SELECT period,digest,manifest FROM period_close"
+                ).fetchone()),
+                tuple(connection.execute("SELECT period,rule_digest FROM material_close_rule")
+                      .fetchone()),
+            )
+
+    original = saved_history()
+    # Demonstrate the unsafe reuse if the new parser retained the prior rule ID.
+    with monkeypatch.context() as same_rule:
+        same_rule.setattr(frozen_material, "MATERIAL_COVERAGE_RULE_DIGEST", old_rule)
+        with company.engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            full = materials.check_completeness(
+                connection, YearMonth("2026-02").ordinal, company.engine.store.registry
+            )
+            fast = materials.check_completeness(
+                connection, YearMonth("2026-02").ordinal, company.engine.store.registry,
+                _allow_frozen_reuse=True,
+            )
+        assert full["status"] == "needs_information"
+        assert fast["status"] == "complete"
+        assert "material_location_unknown" in {issue["code"] for issue in full["issues"]}
+
+    assert _reusable(company) is None
+    result = _compare_page_checks(company)
+    assert result["status"] == "needs_information"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert frozen_material.verified_frozen_material_summary(
+            connection, YearMonth("2026-02").ordinal, YearMonth("2026-01").ordinal,
+            company.engine.store.registry,
+        ) is None
+    assert saved_history() == original
+    assert original[1][1] == old_rule
+
+
 def test_verified_frozen_rows_keep_unchanged_source_and_exclude_changed_link(tmp_path, monkeypatch):
     company, source, proof, _ = _company_with_proof(tmp_path, monkeypatch)
     _save_frozen_proof(company, proof)

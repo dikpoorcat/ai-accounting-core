@@ -17,11 +17,14 @@ from .integrity import _invalid
 from .types import YearMonth, canonical, digest
 
 # This identifies the coverage semantics, not the application build. Increment
-# it when parsing, allocation, disposition or competing-use rules change. An
-# unknown rule falls back to the full checker; the identity never substitutes
+# it when parsing, allocation, disposition or competing-use rules change. Version
+# 2 excludes proven empty XLSX formula templates from invented amount positions;
+# v1 complete proofs may still contain dispositions for those former positions.
+# Their current reads must run the full checker, without rewriting old anchors.
+# An unknown rule falls back to the full checker; the identity never substitutes
 # for the manifest, current-source and evidence-content checks below.
 MATERIAL_COVERAGE_RULE_DIGEST = digest(
-    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 1}
+    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 2}
 )
 
 
