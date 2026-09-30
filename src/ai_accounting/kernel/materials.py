@@ -263,7 +263,21 @@ class MaterialResolution(Fact):
     ]
     amount_fen: Fen | None = None
     recognition_period: YearMonth | None = None
-    links: tuple[MaterialLink, ...] = ()
+    links: tuple[MaterialLink, ...] = Field(
+        default=(),
+        description="认账金额分配；重复资料仅精确选择目标联合组的完整正式关联。",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "contextual",
+            "meaning": "material_result_association_or_exact_group_duplicate_selector",
+            "constraint": (
+                "认账为金额分配；duplicate仅选择目标group完整typed link，"
+                "不新增业务或消耗容量"
+            ),
+            "reusable_sources": [
+                "current_material_group_resolution", "current_published_business_result"
+            ],
+        }},
+    )
     duplicate_source_id: Identifier | None = None
     duplicate_location: Identifier | None = None
     reason: str | None = None
@@ -1579,6 +1593,10 @@ def _group_issues(
         for other in others:
             if other.subject_id == version.subject_id:
                 continue
+            if isinstance(other.fact, MaterialResolution) and other.fact.treatment not in {
+                "recognize", "other_period"
+            }:
+                continue
             if current_sources is None:
                 active_source = connection.execute(
                     "SELECT fact_id FROM fact_current WHERE subject_id=?", (other.fact.source_id,)
@@ -2284,7 +2302,7 @@ def check_completeness_many(
             return [_issue("material_amount_unconfirmed", "原文金额尚未明确确认", location=key[1])]
         if fact.treatment == "duplicate":
             target = fact.duplicate_source_id, fact.duplicate_location
-            if not all(target) or fact.links or not (fact.reason or "").strip():
+            if not all(target) or not (fact.reason or "").strip():
                 return [
                     _issue(
                         "material_duplicate_basis",
@@ -2292,6 +2310,62 @@ def check_completeness_many(
                         location=key[1],
                     )
                 ]
+            if fact.links:
+                # These links select complete existing allocations; they do not
+                # consume the business capacity for a second time.
+                groups = by_group_member.get(target, ())
+                if len(groups) != 1 or target in by_item:
+                    return result + [_issue(
+                        "material_duplicate_basis",
+                        "重复分配须指向唯一联合组的真实原行",
+                        location=key[1],
+                    )]
+                group_issues = collective(target)
+                if group_issues:
+                    return result + group_issues
+                selected = [canonical(link.model_dump(mode="json")) for link in fact.links]
+                available = [
+                    canonical(link.model_dump(mode="json")) for link in groups[0].fact.links
+                ]
+                if (
+                    len(set(selected)) != len(selected)
+                    or any(available.count(link) != 1 for link in selected)
+                ):
+                    return result + [_issue(
+                        "material_duplicate_basis",
+                        "重复分配须唯一完整匹配联合组的正式关联，不能拆切金额",
+                        location=key[1],
+                    )]
+                if sum_fen(link.amount_fen for link in fact.links) != amount:
+                    result.append(_issue(
+                        "material_duplicate_amount", "重复分配合计与原行金额不一致",
+                        location=key[1],
+                    ))
+                expected_period = item_periods.get(key[0], {}).get(key[1])
+                periods = {link.recognition_period for link in fact.links}
+                if (
+                    len(periods) != 1
+                    or fact.recognition_period not in periods
+                    or (expected_period is not None and expected_period not in periods)
+                ):
+                    result.append(_issue(
+                        "material_duplicate_period", "重复分配须属于同一明确业务期间",
+                        location=key[1],
+                    ))
+                for link in fact.links:
+                    original, _calculation = current(link.subject_id)
+                    try:
+                        original.fact.validate_material_amount(
+                            link.amount_field,
+                            link.amount_fen,
+                            source_amounts=(amount,),
+                            source_directions=(item.get("funds_direction"),),
+                        )
+                    except KernelError as error:
+                        result.append(_issue(
+                            error.code, str(error), location=key[1], **error.details
+                        ))
+                return result
             target_item = parsed_items.get(target[0], {}).get(target[1])
             target_amount = (
                 target_item["amount_fen"]
