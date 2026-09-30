@@ -486,6 +486,35 @@ def _clear_rollover(marker: Path, pending: Path) -> None:
     _sync_directory(marker.parent)
 
 
+def _verify_rollover_archive(path, bundle, identity_checks):
+    """Verify a retained source ZIP only for an explicitly declared draft rollover.
+
+    Normal restore and verification still require their exact active contract.
+    This fallback does not rewrite the archive or relabel its original format.
+    """
+    try:
+        return verify_portable(path, _bundle=bundle, **identity_checks)
+    except BackupError as original_error:
+        if original_error.code != "backup_schema_unsupported" or bundle.status != "draft":
+            raise
+        from .offline_development_upgrade import SOURCE_FINGERPRINT, source_bundle
+
+        if (SOURCE_FINGERPRINT, bundle.current("company")["sha256"]) not in (
+            bundle.draft_transitions.get("company", ())
+        ):
+            raise
+        historical = source_bundle(bundle)
+        # The first verifier already checked archive paths, sizes and manifest
+        # shape before rejecting its historical format. Recheck with the exact
+        # source contract, including content, evidence and all identity fields.
+        try:
+            return verify_portable(path, _bundle=historical, **identity_checks)
+        except BackupError as source_error:
+            if source_error.code == "backup_schema_unsupported":
+                raise original_error from source_error
+            raise
+
+
 def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -> None:
     marker, pending = _rollover_paths(output, taxpayer_id)
     if not marker.exists():
@@ -536,7 +565,7 @@ def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -
         pending_state = _archive_state(pending)
         if pending_state[-1] != state["old_current"] or previous_digest != state["old_previous"]:
             raise _error("backup_target_changed", "Previous backup changed during rollover")
-        verify_portable(pending, _bundle=bundle, **identity_checks)
+        _verify_rollover_archive(pending, bundle, identity_checks)
         _replace_archive(
             pending,
             previous,
@@ -779,6 +808,54 @@ def _validate_manifest(manifest: Any, *, member_size: int) -> dict[str, Any]:
     return manifest
 
 
+def portable_result_verified(result: Any) -> bool:
+    """Validate the saved completion proof, without checking today's file availability.
+
+    The manifest digest identifies the SQLite member, not the ZIP itself. A
+    portable job therefore does not use the export jobs' top-level sha256 field.
+    """
+    if not isinstance(result, dict) or not isinstance(result.get("path"), str):
+        return False
+    if not result["path"].strip():
+        return False
+    manifest = result.get("manifest")
+    try:
+        _validate_manifest(manifest, member_size=manifest["database_bytes"])
+    except (BackupError, KeyError, TypeError, ValueError):
+        return False
+    for field in ("identity", "database_format", "evidence_count", "latest_closed_period"):
+        if field not in result or result[field] != manifest[field]:
+            return False
+    if type(result["evidence_count"]) is not int:
+        return False
+    if not valid_database_format(result["database_format"]):
+        return False
+    verification = result.get("verification")
+    if not isinstance(verification, dict):
+        return False
+    if verification.get("status") != "verified" or verification.get("limitations") != []:
+        return False
+    if verification.get("coverage") != {
+        "sources": "verified",
+        "historical_adoption": "verified",
+        "projections": "verified",
+        "read_indexes": "verified",
+    }:
+        return False
+    counts = verification.get("counts")
+    if not isinstance(counts, dict) or set(counts) != {
+        "facts",
+        "calculations",
+        "vouchers",
+        "closes",
+        "evidence",
+    }:
+        return False
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        return False
+    return counts["evidence"] == result["evidence_count"]
+
+
 def _assert_supported_format(format_value: dict[str, Any], bundle) -> None:
     if format_value["family"] != bundle.family:
         raise _error("backup_format_unsupported", "Portable backup belongs to another family")
@@ -1014,9 +1091,13 @@ def _create_portable_unlocked(
     existing = None
     if final.exists():
         ensure_private_file(final)
-        existing = verify_portable(final, **checks)
+        existing = _verify_rollover_archive(final, bundle, identity_checks)
     if existing is not None:
-        if request_id is not None and existing["manifest"].get("request_id") == request_id:
+        if (
+            request_id is not None
+            and existing["manifest"].get("request_id") == request_id
+            and existing["database_format"] == source_result["database_format"]
+        ):
             # Replay publishes no new snapshot. Retain the prior requirement
             # that the current live source itself passes full verification.
             verify_file(source, _bundle=bundle, **identity_checks)

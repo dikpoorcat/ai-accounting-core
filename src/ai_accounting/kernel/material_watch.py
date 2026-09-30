@@ -129,16 +129,30 @@ def _directory(connection, period, manifest, *, historic_heads=None):
             keys[f"business:{subject_id}"].add(source_id)
             keys[f"business:{source_id}"].add(source_id)
         if label in ("resolution_versions", "group_versions") and proof[label]:
-            for revision_id, subject_id, fact_id, calculation_id in connection.execute(
-                "SELECT l.revision_id,l.subject_id,l.fact_id,l.calculation_id "
+            for (
+                revision_id,
+                subject_id,
+                fact_id,
+                calculation_id,
+                recognition_period,
+            ) in connection.execute(
+                "SELECT l.revision_id,l.subject_id,l.fact_id,l.calculation_id,"
+                "l.recognition_period "
                 "FROM json_each(?) ids "
                 f"CROSS JOIN {table}_links l ON l.revision_id=ids.value",
                 (canonical(proof[label]),),
             ):
                 keys[f"business:{subject_id}"].add(sources[revision_id])
-                if historic_heads is not None and (
-                    historic_heads["fact"].get(subject_id) != fact_id
-                    or historic_heads["calculation"].get(subject_id) != calculation_id
+                # The proof retains the whole cross-month disposition. Future
+                # links are watched, but their adoption is checked in their
+                # own month; retaining them does not freeze future accounting.
+                if (
+                    historic_heads is not None
+                    and recognition_period <= period
+                    and (
+                        historic_heads["fact"].get(subject_id) != fact_id
+                        or historic_heads["calculation"].get(subject_id) != calculation_id
+                    )
                 ):
                     _invalid(period, "frozen_link_adoption_mismatch")
         if label == "resolution_versions" and proof[label]:
@@ -221,11 +235,7 @@ class _HistoricHeads:
         self.selected = {"fact": {}, "calculation": {}}
 
     def through(self, period, highwater):
-        if (
-            type(highwater) is not int
-            or highwater < self.highwater
-            or highwater > self.latest
-        ):
+        if type(highwater) is not int or highwater < self.highwater or highwater > self.latest:
             _invalid(period, "journal_highwater_invalid")
         while self.index < len(self.events) and self.events[self.index].sequence <= highwater:
             event = self.events[self.index]
@@ -385,10 +395,9 @@ def _read_keys(connection, period, root, keys):
                 _invalid(period, "unexpected_directory")
             continue
         try:
-            if (
-                bytes(directory_row[2]).hex() != expected_directories[directory_number]
-                or _text_digest(directory_row[1]) != bytes(directory_row[2])
-            ):
+            if bytes(directory_row[2]).hex() != expected_directories[
+                directory_number
+            ] or _text_digest(directory_row[1]) != bytes(directory_row[2]):
                 _invalid(period, "directory_mismatch")
             directory = json.loads(directory_row[1])
             if (
@@ -416,16 +425,12 @@ def _read_keys(connection, period, root, keys):
                 _invalid(period, "unexpected_bucket")
             continue
         try:
-            if (
-                bytes(row[2]).hex() != expected_buckets[number]
-                or _text_digest(row[1]) != bytes(row[2])
+            if bytes(row[2]).hex() != expected_buckets[number] or _text_digest(row[1]) != bytes(
+                row[2]
             ):
                 _invalid(period, "bucket_mismatch")
             content = json.loads(row[1])
-            if (
-                not isinstance(content, dict)
-                or any(_bucket(key) != number for key in content)
-            ):
+            if not isinstance(content, dict) or any(_bucket(key) != number for key in content):
                 _invalid(period, "bucket_mismatch")
         except (TypeError, KeyError, ValueError, json.JSONDecodeError):
             _invalid(period, "bucket_invalid")
@@ -470,11 +475,7 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
                 (references,),
             )
         )
-        kinds = {
-            row[0]: row[2]
-            for row in fact_rows
-            if row[1] == fact_targets[row[0]]
-        }
+        kinds = {row[0]: row[2] for row in fact_rows if row[1] == fact_targets[row[0]]}
         if set(kinds) != set(fact_targets):
             _invalid(closed_through, "changed_fact_revision_missing")
         references_by_kind = {

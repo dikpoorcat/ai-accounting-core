@@ -298,6 +298,7 @@ class Worklist:
 
     @staticmethod
     def _company_jobs(connection):
+        from .backup import portable_result_verified
         from .read_indexes import verify_sources
 
         def object_record(raw, field, *, required=False):
@@ -357,11 +358,16 @@ class Worklist:
                             "content_integrity_failed", "job.payload.close_period 无效"
                         ) from None
             result_issue = None
-            if row["status"] == "succeeded" and (
-                not isinstance(result, dict)
-                or not isinstance(result.get("path"), str)
-                or not isinstance(result.get("sha256"), str)
-            ):
+            valid_result = (
+                portable_result_verified(result)
+                if row["kind"] == "portable_backup"
+                else (
+                    isinstance(result, dict)
+                    and isinstance(result.get("path"), str)
+                    and isinstance(result.get("sha256"), str)
+                )
+            )
+            if row["status"] == "succeeded" and not valid_result:
                 result_issue = {"field": "job.result", "message": "成功备份缺少已验证文件结果"}
             items.append(
                 {
