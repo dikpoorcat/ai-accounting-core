@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from threading import RLock
 
 from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
@@ -22,6 +23,7 @@ from .identity_corrections import IdentityCorrections
 from .materials import Materials
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
+from .replay_close import ReplayClose, ReplayCloseScope, ReplayScopeConfig
 from .reports import Reports, run_report_jobs
 from .security import SecurityService, consume_close_approval
 from .tax_import import TaxImport
@@ -176,12 +178,24 @@ OPERATING_PROTOCOL = {
         "不更改冻结凭证，不要求负责人补写AI应完成的经营说明。"
     ),
     "closing": (
-        "按公司逐月preview_close，使用返回的核对定位让负责人查看经营简报的同版月度核对。"
+        "普通记账按公司逐月preview_close，使用返回的核对定位让负责人查看经营简报的同版月度核对。"
         "页面只读；实际采用的政策、工资确认、原始资料和金额由内核提供，不用AI自写摘要替代。"
         "核对后请求approve_period_close原生密码窗口，携带同一preview_digest及版本；"
         "取得approval_id后执行close。密码只在原生窗口输入，批准窗口不执行关账。"
         "预览替换或版本变化须重新核对；响应丢失先查询原状态并沿用幂等键，不重复关账。"
         "连续月份逐月完成；空数据库或零待匹配项不能证明无业务。"
+    ),
+    "reconstruction_replay": (
+        "按重放文档重建默认采用重放专用批量关账，不逐月请求密码批准。"
+        "先由本机daemon --replay-scope加载明确私有范围文件，"
+        "核对schema的replay_close_contract.enabled。"
+        "范围限定目录、开发测试公司库、数据库身份、起止月份及已登记负责人原确认；普通服务明确拒绝。"
+        "有效登录后调用preview_replay_close_range，再携带同一first_period、last_period、owner_confirmation、"
+        "preview_digest、epochs及稳定request_id调用confirm_replay_close_range。"
+        "内核按实际前序关账逐月重新预览、检查、冻结和生成备份；范围不代替逐月资料或业务事实。"
+        "部分完成停于首个阻断月；原样重试校验持久子请求与冻结链，不能跳月或重复已关账。"
+        "来源版本、读取修复、程序、会话或凭据变化停止旧批量并重新核对剩余范围。"
+        "冻结approval为null，审计标明replay_scope，不冒充密码批准；不自动恢复暂停的真实重放。"
     ),
     "material_allocation": (
         "跨月原件先核对逐项归属，再分别处理各月业务；归属不等于入账完成，未知归属不能默认接收月。"
@@ -273,6 +287,7 @@ class LocalService:
         *,
         enable_read_pool: bool = False,
         enable_parallel_brief: bool = False,
+        replay_scope: dict | None = None,
         _static_runtime=None,
     ):
         from .schema_bundle import production_bundle
@@ -296,6 +311,13 @@ class LocalService:
 
                 self.read_pool = ResidentReadPool(maximum=4)
             self.security = SecurityService(self.catalog.path)
+            self.replay_close_scope = (
+                ReplayCloseScope.from_config(replay_scope, self.security.catalog_instance_id)
+                if replay_scope is not None
+                else None
+            )
+            self.replay_close_previews = {}
+            self.replay_close_lock = RLock()
             self.close_previews = {}
             self.active_close_previews = {}
             if prepared_models is None:
@@ -620,6 +642,18 @@ class LocalService:
                 },
                 "security_request_schema": NativeRequest.model_json_schema(),
                 "security_operations": ["request", "status", "cancel", "session_status"],
+                "replay_close_contract": {
+                    "format": "ai-accounting-kernel/2/replay-close-scope/1",
+                    "enabled": self.replay_close_scope is not None,
+                    "scope_digest": (
+                        self.replay_close_scope.scope_digest if self.replay_close_scope else None
+                    ),
+                    "authorization_method": "replay_scope",
+                    "startup": "daemon --replay-scope <private-scope.json>",
+                    "maximum_months": 120,
+                    "scope_schema": ReplayScopeConfig.model_json_schema(),
+                    "normal_close_password_required": True,
+                },
                 "agent_operating_protocol": OPERATING_PROTOCOL,
                 "format": 1,
                 "fact_semantics": "核算字段决定计算；管理说明单独版本化；实际收付日不得由月份代替",
@@ -648,6 +682,12 @@ class LocalService:
             "session_id": authority.session_id,
             "credential_version": authority.credential_version,
         }
+        if command in {"preview_replay_close_range", "confirm_replay_close_range"}:
+            replay = ReplayClose(self, engine, authority)
+            if command == "preview_replay_close_range":
+                return replay.preview(**data)
+            with self.replay_close_lock:
+                return replay.confirm(**data)
         if command == "close" and data.get("backup_directory") is None:
             setting = self.catalog.company_settings(company_id)
             data["backup_directory"] = setting["backup_directory"] or str(

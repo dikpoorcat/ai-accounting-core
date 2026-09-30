@@ -337,6 +337,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                 if not self.has_capability():
                     self.json_reply(403, {"code": "local_capability_required"})
                     return
+                replay_scope = getattr(service, "replay_close_scope", None)
                 self.json_reply(
                     200,
                     {
@@ -345,6 +346,10 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                         "database_format": service.catalog.database_format(),
                         "build_id": server.build_id,
                         "catalog_id": service.security.catalog_instance_id,
+                        "execution_mode": "replay" if replay_scope is not None else "normal",
+                        "replay_scope_digest": (
+                            replay_scope.scope_digest if replay_scope is not None else None
+                        ),
                     },
                 )
                 return

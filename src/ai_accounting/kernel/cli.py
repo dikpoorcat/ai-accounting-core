@@ -24,6 +24,9 @@ def main():
     commands.add_parser("upgrade", help="离线升级已登记的正式版本数据库")
     daemon = commands.add_parser("daemon", help="运行每个资料根目录唯一的本地服务")
     daemon.add_argument("--port", type=int, default=0)
+    daemon.add_argument(
+        "--replay-scope", type=Path, help="显式加载私有 JSON 重放范围；需先停止现有服务"
+    )
     web = commands.add_parser("serve", help="启动本地服务并打开会计界面")
     web.add_argument("--port", type=int, default=0)
     security = commands.add_parser("security", help="请求本机安全窗口；密码只在窗口输入")
@@ -38,10 +41,26 @@ def main():
         print(json.dumps(error_response(exc), ensure_ascii=False))
         raise SystemExit(1) from None
     if args.mode == "service-info":
-        from .daemon import _metadata_for_root
+        from .daemon import _check_health, _metadata_for_root, _request
 
         try:
-            print(json.dumps(_metadata_for_root(args.root), ensure_ascii=False))
+            metadata = _metadata_for_root(args.root)
+            health = _request(metadata, "/api/health")
+            _check_health(metadata, health)
+            print(
+                json.dumps(
+                    {
+                        key: value
+                        for key, value in {
+                            **metadata,
+                            "execution_mode": health["execution_mode"],
+                            "replay_scope_digest": health["replay_scope_digest"],
+                        }.items()
+                        if key != "capability"
+                    },
+                    ensure_ascii=False,
+                )
+            )
         except Exception as exc:
             print(json.dumps(error_response(exc), ensure_ascii=False))
             raise SystemExit(1) from None
@@ -73,7 +92,7 @@ def main():
         from .daemon import run
 
         try:
-            run(args.root, port=args.port)
+            run(args.root, port=args.port, replay_scope_file=args.replay_scope)
         except Exception as exc:
             print(json.dumps(error_response(exc), ensure_ascii=False))
             raise SystemExit(1) from None

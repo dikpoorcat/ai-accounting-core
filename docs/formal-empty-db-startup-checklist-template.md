@@ -2,7 +2,7 @@
 
 # 新公司库隔离验证与恢复检查单
 
-本模板用于新建合成公司、格式 2 便携包恢复和当前接口联调。复制到私有验证目录填写实际结果；空白勾选项不表示真实公司已重录、关账或恢复。本轮不处理真实资料重录、旧库升级、旧备份导入或正式换库。历史事实与原件索引见[历史流程记录](empty-database-replay.md)。
+本模板用于新建合成公司、格式 2 便携包恢复和当前接口联调。复制到私有验证目录填写实际结果；空白勾选项不表示真实公司已重录、关账或恢复。本模板不用于执行真实资料重录、旧库升级、旧备份导入或正式换库。明确授权的真实重建及来源保全方法见[当前内核空库重建](empty-database-replay.md)，其计划和实际进度另存私有目录，不与合成验收混记。
 
 ## 目标与结构
 
@@ -27,7 +27,11 @@
 - [ ] 每次写入保存原请求键与载荷；响应丢失时原样重试，或用 `request_result` 查询 `committed` 原结果。
 - [ ] `unknown` 只表示当前公司库没有相符记录；原载荷不能可靠恢复时先查真实状态，不据此另记一笔。
 - [ ] 预览过期或内容改变后重新核对并使用新键；旧公司预览、批准和回答范围不跨公司沿用。
-- [ ] 关账采用 `preview_close`、同版页面核对、本机密码批准和 `close`，按公司逐月执行。
+- [ ] 普通记账合成场景采用 `preview_close`、同版页面核对、本机密码批准和 `close`，按公司逐月执行。
+- [ ] 重放批量合成场景按[重放专用批量关账](replay-batch-close.md)单独记录：本机以私有合成范围文件显式启动 `daemon --replay-scope <private.json>`，限定公司、数据库、月份及已登记负责人确认摘要，且仍要求有效登录；普通常驻服务拒绝批量命令。功能已实现并通过合成验证，实际重建仍暂停、第9阶段未完成；空白勾选不代表本次验证已经通过，需显式重新启动才启用范围。
+- [ ] 范围文件严格采用 `format="ai-accounting-kernel/2/replay-close-scope/1"`、`catalog_instance_id`、`targets`，目标字段为 `company_id`、`database_id`、`first_period`、`last_period`、`owner_confirmation`；核对精确身份、1至120个连续月及公司不重复。仅开发draft公司库允许测试范围，released正式公司库拒绝。文件只在显式启动时读取固定，ensure默认普通服务且不继承；不添加manifest、token或其它mode参数。
+- [ ] 重放场景先 `preview_replay_close_range`，再以相同 `company_id`、`first_period`、`last_period`、`owner_confirmation`、`preview_digest`、`epochs` 和稳定 `request_id` 调用 `confirm_replay_close_range`；逐月完整检查、独立冻结和备份任务均保留，不逐月弹出密码窗口，冻结 `approval=null`，范围审计不冒充密码批准。
+- [ ] 重放中间阻断保留已关前缀、停在首个阻断月；原样稳定键重试核对实际提交后接续。事实、资料、管理、读取修复或会话改变后重新预览剩余范围，不跳过问题月份。
 - [ ] 已关账历史保持冻结；开放月承接真实更正，外部办理和文件待办可继续未完成。
 - [ ] `jobs(job_id=...)` 的备份／导出任务成功且产物验证后才交付；失败看安全 `error_code`／`error_message`，处理原因后再 `retry_job`。
 - [ ] 每家初始备份在已配置目录独立生成 `<统一社会信用代码>.finance-company.zip`，不把 pending 或中间 SQLite 文件作为交付。

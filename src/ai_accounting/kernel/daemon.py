@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from .build import calculator_build_id
 from .catalog import ensure_catalog
 from .contracts import KernelError
-from .permissions import ensure_private_file, reject_reparse_path
+from .permissions import assert_private_file, ensure_private_file, reject_reparse_path
 from .runtime import private_file_lock
 from .schema_bundle import production_bundle, valid_database_format
 from .security.credentials import WindowsCredentialStore
@@ -418,7 +418,7 @@ def build_native_security_controller(
     )
 
 
-def run(root, *, port=0):
+def run(root, *, port=0, replay_scope_file=None):
     static_runtime = _prepare_static_runtime()
     from .http import create_server
     from .jobs import JobRunner
@@ -428,19 +428,36 @@ def run(root, *, port=0):
     ensure_catalog(root)
     with instance_lock(root) as acquired:
         if not acquired:
+            if replay_scope_file is not None:
+                raise KernelError(
+                    "replay_service_already_running",
+                    "此资料目录已有本地服务运行；请先停止服务，再显式启动重放服务",
+                )
             return
         from .offline_upgrade import check_root_current
 
         check_root_current(root)
+        replay_scope = None
+        if replay_scope_file is not None:
+            try:
+                replay_scope = json.loads(
+                    assert_private_file(replay_scope_file).read_text(encoding="utf-8-sig")
+                )
+            except (UnicodeError, json.JSONDecodeError):
+                raise KernelError("invalid_replay_scope", "重放范围文件不是有效 JSON") from None
+        if replay_scope_file is not None and not isinstance(replay_scope, dict):
+            raise KernelError("invalid_replay_scope", "重放范围文件必须是 JSON 对象")
         service = server = runner = None
         serving = False
         try:
-            service = LocalService(
-                root,
-                enable_read_pool=True,
-                enable_parallel_brief=True,
-                _static_runtime=static_runtime,
-            )
+            service_options = {
+                "enable_read_pool": True,
+                "enable_parallel_brief": True,
+                "_static_runtime": static_runtime,
+            }
+            if replay_scope_file is not None:
+                service_options["replay_scope"] = replay_scope
+            service = LocalService(root, **service_options)
             server, capability = create_server(service, port=port)
 
             # Controller owns native request state, separate from business command payloads.

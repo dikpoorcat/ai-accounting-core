@@ -30,6 +30,7 @@ from .materials import (
 )
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
+from .replay_close import ReplayClose
 from .reports import Reports
 from .tax_import import TaxImport
 from .types import canonical
@@ -71,6 +72,8 @@ def command_models(registry):
         "inventory": Periods.inventory,
         "preview_close": Periods.preview_close,
         "close": Periods.close,
+        "preview_replay_close_range": ReplayClose.preview,
+        "confirm_replay_close_range": ReplayClose.confirm,
         "closed_report": Periods.closed_report,
         "preview_delete": Engine.preview_delete,
         "delete": Engine.delete,
@@ -249,9 +252,7 @@ def _registration_missing_issue(error, command, payload, registry):
     field_info = model.model_fields.get(str(field_path[0]))
     extra = field_info.json_schema_extra if field_info else None
     metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
-    semantics = metadata.get(
-        "role", "accounting" if model.lane == "accounting" else "management"
-    )
+    semantics = metadata.get("role", "accounting" if model.lane == "accounting" else "management")
     precision = metadata.get("precision")
     if precision is None and field_path[0] == "period":
         precision = "month"
