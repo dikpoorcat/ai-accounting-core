@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,29 +15,38 @@ interface LocalServiceMetadata {
   capability: string;
 }
 
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function localServiceMetadata(): LocalServiceMetadata {
   const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-released");
   const statePath = resolve(dataRoot, ".service.json");
   let metadata: unknown;
+  let privateState: unknown;
   try {
-    // The kernel verifies the catalog and exact protocol before exposing a local capability.
+    // The kernel verifies the catalog and running service; service-info omits the private capability.
     metadata = JSON.parse(execFileSync(
       resolve(repositoryRoot, ".tmp-kernel-venv/Scripts/python.exe"),
       ["-I", "-X", "utf8", "-m", "ai_accounting.kernel.cli", "--root", dataRoot, "service-info"],
       { cwd: repositoryRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     ));
+    privateState = JSON.parse(readFileSync(statePath, "utf8"));
   } catch {
     throw new Error(
       `本地会计服务未启动。请先在仓库根目录运行 .\\deploy\\windows\\start_accounting.ps1（资料目录：${dataRoot}）。`,
     );
   }
-  if (typeof metadata !== "object" || metadata === null
-      || !("port" in metadata) || typeof metadata.port !== "number"
+  if (!record(metadata) || !record(privateState)
+      || typeof metadata.port !== "number"
       || !Number.isInteger(metadata.port) || metadata.port < 1 || metadata.port > 65535
-      || !("capability" in metadata) || typeof metadata.capability !== "string" || !metadata.capability) {
+      || !["protocol", "pid", "port", "catalog_id", "build_id"].every(
+        key => key in metadata && key in privateState && metadata[key] === privateState[key],
+      )
+      || typeof privateState.capability !== "string" || !privateState.capability) {
     throw new Error(`本地会计服务状态无效：${statePath}`);
   }
-  return { port: metadata.port, capability: metadata.capability };
+  return { port: metadata.port, capability: privateState.capability };
 }
 
 function localApiProxy(metadata: LocalServiceMetadata): ProxyOptions {

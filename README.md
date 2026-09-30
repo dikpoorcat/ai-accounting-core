@@ -12,22 +12,17 @@
 
 本轮按全新开发、全新库推进，不安排真实换库或重录。未来正式版本的迁移能力已建立，正常事实历史和更正能力保留；开发库只接受当前精确结构，不跨开发基线升级，第 9 阶段才冻结正式 v1。各阶段的边界和实际验收以[整体架构](docs/kernel-refactor-architecture.md)及[路线图](docs/kernel-refactor-roadmap.md)为准。
 
-## 开发页面手动重启
+## 5173 开发页面
 
-你现在用的是开发页面，按下面做最稳妥：
-
-1. 在运行 `npm run dev` 的终端按 `Ctrl+C`。
-
-2. 在仓库根目录依次执行：
+在仓库根目录运行：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -I -X utf8 -m ai_accounting.kernel.cli --root .\data\kernel-released stop
-.\deploy\windows\start_accounting.ps1 -NoBrowser
-Set-Location .\frontend
+$env:FINANCE_DATA_ROOT = Join-Path $PWD 'data/kernel-released'
+.\deploy\windows\start_accounting.ps1 -DataRoot $env:FINANCE_DATA_ROOT -NoBrowser
 npm run dev
 ```
 
-3. 刷新 `http://127.0.0.1:5173`。
+打开 `http://127.0.0.1:5173/`。若 5173 已在运行，先在原 Vite 终端按 `Ctrl+C`，再执行 `npm run dev`；后台服务会按资料根目录复用。开发页面显示连接错误时，先确认后台已启动，再重启 Vite 并刷新页面。
 
 后台重启后端口可能变化，重启 Vite 会重新核验同一资料根的目录身份和服务协议。启动器、仓库 MCP 和 Vite 默认使用仓库 `data/kernel-released`；原开发目录保留，不移动或转换。当前合同仍为 draft，目录名称不表示正式 v1 已经交付；第 9 阶段验收状态见路线图。
 
