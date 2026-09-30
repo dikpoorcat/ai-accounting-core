@@ -592,6 +592,96 @@ def _xlsx_dates(archive):
     }
 
 
+class _XlsxRow(dict):
+    """Private parsing evidence; never part of the material wire contract."""
+
+    verified_empty_template = False
+
+
+_EMPTY_SUM = re.compile(
+    r"SUM\(\s*(\$?[A-Z]+\$?[1-9][0-9]*)\s*:\s*"
+    r"(\$?[A-Z]+\$?[1-9][0-9]*)\s*\)", re.IGNORECASE,
+)
+
+
+def _empty_xlsx_template(number, originals):
+    actual = {
+        column: item for column, item in originals.items()
+        if item[1] is not None or item[2] == "e"
+        or (item[0] is not None and str(item[0]).strip())
+    }
+    if not actual:
+        return False
+    for value, formula, kind in actual.values():
+        # Literal zero, identity, date or text is actual input, never a template.
+        if formula is None or kind not in {"n", None}:
+            return False
+        match = _EMPTY_SUM.fullmatch(formula.strip())
+        if match is None:
+            return False
+        try:
+            # Formula caches are raw XML numeric values, not currency inputs.
+            # Never strip currency symbols or grouping separators to prove zero.
+            cache = Decimal(str(value))
+            if not cache.is_finite() or cache != 0:
+                return False
+            first, last = (coordinate_from_string(x.replace("$", "")) for x in match.groups())
+            left, right = (column_index_from_string(x[0]) for x in (first, last))
+            if first[1] != number or last[1] != number or left > right or right > MAX_COLUMNS:
+                return False
+            if any(column in actual for column in range(left, right + 1)):
+                return False
+        except (InvalidOperation, ValueError):
+            return False
+    return True
+
+
+def _xlsx_template_formula(node, origin, shared):
+    """Resolve only known same-sheet shared SUM seeds within their declared ref."""
+    from openpyxl.formula.translate import Translator, TranslatorError
+
+    if node is None:
+        return None
+    text = node.text or ""
+    if node.get("t", "normal") == "normal":
+        return text
+    if node.get("t") != "shared" or node.get("si") is None:
+        return ""
+    key = node.get("si")
+    if text:
+        ref = node.get("ref")
+        if key in shared or ref is None or _EMPTY_SUM.fullmatch(text.strip()) is None:
+            shared[key] = None
+        else:
+            try:
+                bounds = range_boundaries(ref)
+                column, row = coordinate_from_string(origin)
+                match = _EMPTY_SUM.fullmatch(text.strip())
+                first, last = (
+                    coordinate_from_string(value.replace("$", "")) for value in match.groups()
+                )
+                if first[1] != row or last[1] != row:
+                    raise ValueError("shared seed must sum only its own row")
+                if not (bounds[0] <= column_index_from_string(column) <= bounds[2]
+                        and bounds[1] <= row <= bounds[3]):
+                    raise ValueError("shared seed is outside its declared range")
+                shared[key] = (text, origin, bounds)
+            except (TypeError, ValueError):
+                shared[key] = None
+    seed = shared.get(key)
+    if seed is None:
+        return ""
+    text, seed_origin, bounds = seed
+    column, row = coordinate_from_string(origin)
+    if not (bounds[0] <= column_index_from_string(column) <= bounds[2]
+            and bounds[1] <= row <= bounds[3]):
+        return ""
+    try:
+        return Translator("=" + text, origin=seed_origin).translate_formula(origin)[1:]
+    except (TranslatorError, ValueError):
+        return ""
+
+
 def _xlsx_rows(raw, budget):
     """Stream exact XML values once, including hidden cells and formula caches."""
     from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900, from_excel
@@ -622,6 +712,7 @@ def _xlsx_rows(raw, budget):
                 else posixpath.normpath(posixpath.join("xl", target))
             )
             hidden_columns = set()
+            shared_formulas = {}
             last_row = 0
             sheet_hidden = sheet.get("state", "visible") != "visible"
             with archive.open(path) as source:
@@ -663,7 +754,8 @@ def _xlsx_rows(raw, budget):
                             raise ValueError("Excel row locations must be unique and increasing")
                         last_row = number
                         row_hidden = node.get("hidden") in {"1", "true"}
-                        cells = {}
+                        cells = _XlsxRow()
+                        originals = {}
                         seen_columns = set()
                         for cell in node.findall(main + "c"):
                             column_text, cell_row = coordinate_from_string(cell.attrib["r"])
@@ -673,7 +765,11 @@ def _xlsx_rows(raw, budget):
                             seen_columns.add(column)
                             kind = cell.get("t", "n")
                             value = cell.findtext(main + "v")
-                            formula = cell.find(main + "f") is not None
+                            formula_node = cell.find(main + "f")
+                            formula = formula_node is not None
+                            template_formula = _xlsx_template_formula(
+                                formula_node, cell.attrib["r"], shared_formulas
+                            )
                             if kind == "inlineStr":
                                 inline = cell.find(main + "is")
                                 value = _xlsx_display_text(inline) if inline is not None else ""
@@ -696,6 +792,7 @@ def _xlsx_rows(raw, budget):
                                     else date_value.isoformat()
                                 )
                             missing = (formula and (value is None or value == "")) or kind == "e"
+                            originals[column] = (value, template_formula, kind)
                             if value is None or not str(value).strip():
                                 if not missing:
                                     continue
@@ -705,6 +802,7 @@ def _xlsx_rows(raw, budget):
                                 sheet_hidden or row_hidden or column in hidden_columns,
                             )
                         if cells:
+                            cells.verified_empty_template = _empty_xlsx_template(number, originals)
                             budget.accept(name, number, cells)
                             yield name, number, cells
                         node.clear()
@@ -748,8 +846,16 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
                 for column, (value, _, hidden) in cells.items()
             )
             continue
+        empty_template = getattr(cells, "verified_empty_template", False) and (
+            row not in spec.total_rows.get(sheet, ())
+            and not any(
+                re.fullmatch(re.escape(sheet) + r"![A-Z]+" + str(row), control.location)
+                for control in spec.controls
+                if control.location.startswith(sheet + "!")
+            )
+        )
         for column, rule in mapping.items():
-            if rule.role == "amount" and column not in cells:
+            if rule.role == "amount" and column not in cells and not empty_template:
                 budget.cells += 1
                 if budget.cells > MAX_NONEMPTY_CELLS:
                     _too_large("原单元格与待补金额字段合计最多支持200万个")
