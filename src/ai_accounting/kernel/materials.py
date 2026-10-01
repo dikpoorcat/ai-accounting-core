@@ -1524,6 +1524,62 @@ def _groups_cover_unknown(allocation, groups):
     return True
 
 
+def _whole_group_duplicate_targets(groups, resolutions):
+    """Derive exact whole-pool copies, without inventing member allocations."""
+    by_member, by_resolution = {}, {}
+    for group in groups:
+        for member in group.fact.members:
+            by_member.setdefault((group.fact.source_id, member.location), []).append(group)
+    for resolution in resolutions:
+        by_resolution.setdefault(
+            (resolution.fact.source_id, resolution.fact.location), []
+        ).append(resolution)
+    result = {}
+    for group in groups:
+        fact = group.fact
+        periods = {link.recognition_period for link in fact.links}
+        if len(periods) != 1:
+            continue
+        targets = set()
+        for member in fact.members:
+            copies = by_resolution.get((fact.source_id, member.location), ())
+            if len(copies) != 1:
+                break
+            copy = copies[0].fact
+            if (
+                copy.treatment != "duplicate" or copy.links
+                or copy.source_fact_id != fact.source_fact_id
+                or copy.period != fact.period or copy.recognition_period not in periods
+                or copy.amount_fen != member.amount_fen or not (copy.reason or "").strip()
+                or not copy.duplicate_source_id or not copy.duplicate_location
+            ):
+                break
+            targets.add((copy.duplicate_source_id, copy.duplicate_location))
+        else:
+            if len(targets) != 1:
+                continue
+            target = next(iter(targets))
+            candidates = by_member.get(target, ())
+            if len(candidates) != 1 or target[0] == fact.source_id:
+                continue
+            primary = candidates[0]
+            # A copy is of the entire sole primary original, never a cut from
+            # a multi-member target or a chain through another duplicate pool.
+            if len(primary.fact.members) != 1 or by_resolution.get(target):
+                continue
+            selected = [canonical(link.model_dump(mode="json")) for link in fact.links]
+            available = [canonical(link.model_dump(mode="json")) for link in primary.fact.links]
+            if (
+                fact.group_amount_fen == primary.fact.group_amount_fen
+                and primary.fact.members[0].amount_fen == primary.fact.group_amount_fen
+                and len(set(selected)) == len(selected)
+                and len(set(available)) == len(available)
+                and set(selected) == set(available)
+            ):
+                result[group.id] = primary.id
+    return result
+
+
 def _group_issues(
     connection,
     registry,
@@ -1535,6 +1591,7 @@ def _group_issues(
     current_sources=None,
     pending_subjects=None,
     competitors_by_subject=None,
+    whole_duplicate_targets=None,
     _reads=None,
 ):
     """Validate a pool as a whole; its members never acquire invented individual links."""
@@ -1545,6 +1602,16 @@ def _group_issues(
         if _reads is not None
         else lambda kind, scope: _facts(connection, registry, kind, scope)
     )
+    group_reads = _reads or _CompletenessReads(connection, registry)
+    if whole_duplicate_targets is None:
+        groups = [
+            item for item in group_reads.current_facts(MaterialGroupResolution.kind)
+            if item.subject_id != version.subject_id
+        ]
+        whole_duplicate_targets = _whole_group_duplicate_targets(
+            [*groups, version], group_reads.current_facts(MaterialResolution.kind)
+        )
+    whole_duplicate = version.id in whole_duplicate_targets
 
     def problem(code, message, **details):
         issues.append(_issue(code, message, group_id=version.subject_id, **details))
@@ -1566,6 +1633,18 @@ def _group_issues(
         problem("material_group_basis_missing", "联合组必须有完整原件和明确核准共同形成的依据")
     if fact.period != source.fact.period:
         problem("material_group_source_period", "组登记月份必须与原件登记月份相同")
+    if whole_duplicate:
+        for copy in group_reads.current_facts(MaterialResolution.kind):
+            if (
+                copy.fact.source_id == fact.source_id
+                and copy.fact.location in {member.location for member in fact.members}
+                and source.fact.evidence_digest not in copy.evidence
+            ):
+                problem(
+                    "material_duplicate_basis",
+                    "完整联合重复的每条成员处置必须实际引用该完整原件",
+                    location=copy.fact.location,
+                )
     for proof in (source.fact.evidence_digest, fact.basis_evidence_digest):
         if not connection.execute(
             "SELECT 1 FROM evidence WHERE digest=?", (bytes.fromhex(proof),)
@@ -1624,6 +1703,10 @@ def _group_issues(
             )
             overlap = selected & other_locations
             if overlap:
+                if whole_duplicate and kind == MaterialResolution.kind:
+                    # The derivation verified all members, their exact copy
+                    # endpoints and the complete unchanged primary allocations.
+                    continue
                 problem(
                     "material_group_overlap",
                     "同一原行不能同时属于逐行处置或另一联合组",
@@ -1686,6 +1769,8 @@ def _group_issues(
         totals[key] = sum_fen((totals.get(key, 0), abs(link.amount_fen)))
         targets[key] = original, calculation, capacity
     for (subject_id, basis), (original, calculation, capacity) in targets.items():
+        if whole_duplicate:
+            continue
         allocated = totals[subject_id, basis]
         others = (
             competitors_by_subject.get(subject_id, ())
@@ -1698,6 +1783,8 @@ def _group_issues(
         )
         for other in others:
             if other.subject_id == version.subject_id:
+                continue
+            if other.id in whole_duplicate_targets:
                 continue
             if isinstance(other.fact, MaterialResolution) and other.fact.treatment not in {
                 "recognize", "other_period"
@@ -1730,6 +1817,32 @@ def _group_issues(
                 "联合组与其他原资料合计超过同一业务金额",
                 subject_id=subject_id,
             )
+    if whole_duplicate:
+        primary = next(
+            item for item in group_reads.current_facts(MaterialGroupResolution.kind)
+            if item.id == whole_duplicate_targets[version.id]
+        )
+        original_sources = tuple(
+            item for item in group_reads.current_facts(MaterialSource.kind)
+            if item.subject_id == primary.fact.source_id
+        )
+        original_source = original_sources[0] if len(original_sources) == 1 else None
+        raw = (
+            connection.execute(
+                "SELECT content FROM evidence WHERE digest=?",
+                (bytes.fromhex(original_source.fact.evidence_digest),),
+            ).fetchone() if original_source is not None else None
+        )
+        original_inspection = (
+            inspect_bytes(raw[0], original_source.fact.specification) if raw is not None
+            else {"items": [], "control_totals": []}
+        )
+        issues.extend(_group_issues(
+            connection, registry, primary, original_source, original_inspection,
+            current=current, current_sources=current_sources,
+            pending_subjects=pending_subjects, competitors_by_subject=competitors_by_subject,
+            whole_duplicate_targets=whole_duplicate_targets, _reads=_reads,
+        ))
     return issues
 
 
@@ -1909,6 +2022,7 @@ def check_completeness_many(
     all_allocations = reads.current_facts(MaterialPeriodAllocation.kind)
     all_groups = reads.current_facts(MaterialGroupResolution.kind)
     all_resolutions = reads.current_facts(MaterialResolution.kind)
+    whole_duplicate_targets = _whole_group_duplicate_targets(all_groups, all_resolutions)
     groups_by_source = {}
     for item in all_groups:
         groups_by_source.setdefault(item.fact.source_id, []).append(item)
@@ -2312,7 +2426,9 @@ def check_completeness_many(
         matches = by_group_member.get(key, ())
         if not matches:
             return None
-        if len(matches) != 1 or key in by_item:
+        if len(matches) != 1 or (
+            key in by_item and matches[0].id not in whole_duplicate_targets
+        ):
             return [_issue("material_group_overlap", "原行同时存在多个处置归属", location=key[1])]
         group = matches[0]
         if group.id not in group_errors:
@@ -2326,6 +2442,7 @@ def check_completeness_many(
                 current_sources=current_sources,
                 pending_subjects=pending_subjects,
                 competitors_by_subject=competitors_by_subject,
+                whole_duplicate_targets=whole_duplicate_targets,
                 _reads=reads,
             )
         return group_errors[group.id]
@@ -2823,6 +2940,8 @@ def check_completeness_many(
             amount = 0
             counted_competitors = []
             for competitor in competitors:
+                if competitor.id in whole_duplicate_targets:
+                    continue
                 if isinstance(
                     competitor.fact, MaterialResolution
                 ) and competitor.fact.treatment not in {"recognize", "other_period"}:
