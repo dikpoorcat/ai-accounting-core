@@ -203,24 +203,43 @@ function formatDate(value: string | null) {
                 资产 {{ position.assets_fen === null ? '无法完整建立' : formatFen(position.assets_fen) }}
               </button>
               <span id="balance-tooltip" class="balance-tooltip" role="tooltip">
+                <strong class="balance-tooltip-title">平衡关系</strong>
                 <span v-if="position.equation_valid !== null" class="equation">
-                  <strong>平衡关系</strong>
-                  <span class="equation-copy">
-                    <span class="equation-line">
-                      资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} +
-                      所有者权益 {{ formatFen(equityTotal) }}
+                  <span class="equation-line">
+                    <span class="equation-term asset-term">
+                      <span>资产</span>
+                      <strong>{{ formatFen(position.assets_fen) }}</strong>
                     </span>
-                    <span class="equation-line">
-                      所有者权益 {{ formatFen(equityTotal) }} = 资本及公积 {{ formatFen(position.capital_fen) }}
-                      {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }}
-                      {{ fen(position.cumulative_result_fen) < 0n ? "未弥补亏损" : "未分配利润" }}
-                      {{ formatPositiveFen(position.cumulative_result_fen) }}
+                    <span class="equation-operator">=</span>
+                    <span class="equation-term liability-term">
+                      <span>负债</span>
+                      <strong>{{ formatFen(position.liabilities_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">+</span>
+                    <span class="equation-term equity-term">
+                      <span>所有者权益</span>
+                      <strong>{{ formatFen(equityTotal) }}</strong>
+                    </span>
+                  </span>
+                  <span class="equation-line">
+                    <span class="equation-term equity-term">
+                      <span>所有者权益</span>
+                      <strong>{{ formatFen(equityTotal) }}</strong>
+                    </span>
+                    <span class="equation-operator">=</span>
+                    <span class="equation-term">
+                      <span>资本及公积</span>
+                      <strong>{{ formatFen(position.capital_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">{{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }}</span>
+                    <span :class="['equation-term', fen(position.cumulative_result_fen) < 0n ? 'liability-term' : 'asset-term']">
+                      <span>{{ fen(position.cumulative_result_fen) < 0n ? "未弥补亏损" : "未分配利润" }}</span>
+                      <strong>{{ formatPositiveFen(position.cumulative_result_fen) }}</strong>
                     </span>
                   </span>
                 </span>
-                <span v-else class="equation">
-                  <strong>平衡关系</strong>
-                  <span>部分来源尚不能精确归属，暂不判断资产负债等式。</span>
+                <span v-else class="equation-unavailable">
+                  部分来源尚不能精确归属，暂不判断资产负债等式。
                 </span>
                 <span v-if="position.issues?.length" class="position-issues">
                   <span v-for="(issue, index) in position.issues" :key="index">
@@ -726,9 +745,9 @@ h3 {
   right: 0;
   z-index: 30;
   display: grid;
-  width: min(430px, calc(100vw - 64px));
-  gap: 9px;
-  padding: 11px;
+  width: min(480px, calc(100vw - 64px));
+  gap: 12px;
+  padding: 16px;
   border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
   border-radius: 12px;
   background: var(--brief-surface);
@@ -831,41 +850,88 @@ h3 {
 
 .equation {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: 14px;
   margin: 0;
-  padding: 10px 11px;
-  border-radius: 10px;
-  background: var(--brief-soft);
-  color: var(--brief-muted);
-  font-size: 11px;
-  line-height: 1.55;
 }
 
-.equation strong {
-  color: var(--brief-green);
-  white-space: nowrap;
-}
-
-.equation-copy {
-  display: grid;
-  gap: 3px;
+.balance-tooltip-title {
+  color: var(--brief-text);
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .equation-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr) 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+}
+
+.equation-line + .equation-line {
+  padding-top: 14px;
+  border-top: 1px solid var(--brief-line);
+}
+
+.equation-term {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 9px 5px;
+  border-radius: 8px;
+  background: var(--brief-soft);
+  color: var(--brief-text);
+  text-align: center;
+}
+
+.equation-term > span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.equation-term > strong {
+  font-size: 14px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.asset-term {
+  background: color-mix(in srgb, var(--brief-green-soft) 65%, var(--brief-surface));
+  color: var(--brief-green);
+}
+
+.liability-term {
+  background: color-mix(in srgb, var(--brief-red-soft) 65%, var(--brief-surface));
+  color: var(--brief-red);
+}
+
+.equity-term {
+  background: color-mix(in srgb, var(--brief-blue-soft) 65%, var(--brief-surface));
+  color: var(--brief-blue);
+}
+
+.equation-operator {
   color: var(--brief-muted);
-  font-size: 11px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.equation-unavailable {
+  color: var(--brief-muted);
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .position-issues {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
   padding: 9px 11px;
   border-radius: 10px;
   background: var(--brief-amber-soft);
   color: var(--brief-amber);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 @media (max-width: 900px) {
@@ -903,9 +969,27 @@ h3 {
     --component-value-width: 86px;
   }
 
-  .equation {
-    grid-template-columns: 1fr;
-    gap: 3px;
+  .equation-line {
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .equation-term {
+    grid-column: 2;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    text-align: left;
+  }
+
+  .equation-term > strong {
+    max-width: 145px;
+    text-align: right;
+  }
+
+  .equation-operator {
+    grid-column: 1;
   }
 
   .balance-tooltip {
