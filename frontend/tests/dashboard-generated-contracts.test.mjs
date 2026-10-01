@@ -30,7 +30,7 @@ function findField(value, predicate) {
 }
 
 test("generated validators accept all current synthetic backend response branches", () => {
-  for (const name of ["empty_workflow", "open_workflow", "empty_readiness", "open_readiness", "frozen_readiness"]) assert(samples[name], name);
+  for (const name of ["empty_workflow", "open_workflow", "empty_readiness", "open_readiness", "frozen_readiness", "employees_labor_sources"]) assert(samples[name], name);
   for (const [name, sample] of Object.entries(samples)) {
     const validate = validators[validatorNames[sample.command]];
     assert(validate, `${name}: missing generated validator`);
@@ -102,5 +102,47 @@ test("generated money validation accepts canonical int64 strings and rejects num
     const field = findField(changed, (key, current) => key.endsWith("_fen") && typeof current === "string");
     assert(field); field.owner[field.key] = value;
     assert.equal(validators.validateDashboardFundsResponse(changed), false, String(value));
+  }
+});
+
+test("personnel date validators preserve month and day precision and reject malformed dates", () => {
+  const scenarios = [
+    ["employees_month_dates", validators.validateDashboardEmployeesResponse, ["employment_start_date", "employment_end_date", "tax_withholding_start_date"]],
+    ["business_month_dates", validators.validateDashboardBusinessStatusResponse, ["employment_start", "employment_end"]],
+  ];
+  for (const [name, validate, fields] of scenarios) {
+    assert(samples[name], name);
+    for (const key of fields) {
+      for (const value of ["2025-12", "2025-12-15", null]) {
+        const changed = structuredClone(samples[name].response);
+        const field = findField(changed, (name, value) => name === key && (typeof value === "string" || value === null));
+        assert(field, key); field.owner[field.key] = value;
+        assert.equal(validate(changed), true, `${name}.${key}: ${JSON.stringify(validate.errors)}`);
+      }
+      for (const value of ["2025-00", "2025-13", "2025-1", "2025-12-00", "", 202512, true]) {
+        const changed = structuredClone(samples[name].response);
+        const field = findField(changed, (name, value) => name === key && (typeof value === "string" || value === null));
+        assert(field, key); field.owner[field.key] = value;
+        assert.equal(validate(changed), false, `${name}.${key}: ${String(value)}`);
+      }
+    }
+  }
+});
+
+test("employment conflicts use the actual code and fields response shape", () => {
+  assert(samples.employees_date_conflict);
+  const original = samples.employees_date_conflict.response;
+  const validate = validators.validateDashboardEmployeesResponse;
+  assert.equal(validate(original), true, JSON.stringify(validate.errors));
+  for (const conflict of [
+    { field: "employment_start", values: [], sources: [] },
+    { code: "unknown", fields: ["employment_start", "employment_end"] },
+    { code: "employment_interval_conflict", fields: ["unknown"] },
+    { code: "employment_interval_conflict" },
+  ]) {
+    const changed = structuredClone(original);
+    const field = findField(changed, name => name === "field_conflicts");
+    assert(field); field.owner[field.key] = [conflict];
+    assert.equal(validate(changed), false, JSON.stringify(conflict));
   }
 });

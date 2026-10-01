@@ -18,6 +18,7 @@ from ai_accounting.kernel.domains.assets import ReimbursedAsset, ReimbursedAsset
 from ai_accounting.kernel.domains.transactions import Payment
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.response_contracts import http_response, validate_response
 from ai_accounting.kernel.tax_import import TaxImportIdentity
 
 asset_book = _asset_book
@@ -68,6 +69,9 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
 
     monkeypatch.setattr(dashboard, "recorded_times", counted)
     response = Dashboard(company.engine).employees("2026-01")
+    assert validate_response("dashboard_employees", response) == response
+    wire = http_response("dashboard_employees", response)
+    assert wire["data"]["collections"]["employees"]["items"][0]["employment_end_date"] == "2026-04"
     employee = response["data"]["collections"]["employees"]["items"][0]
     assert len(calls) == 1
     assert employee["name"] == "原姓名" and employee["in_period"] is True
@@ -148,11 +152,16 @@ def test_date_conflict_cannot_claim_a_historical_employee_is_in_period(company):
         employment_start="2025-12",
         employment_end="2026-01-05",
     )
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
-        "items"
-    ][0]
+    response = Dashboard(company.engine).employees("2026-01")
+    validate_response("dashboard_employees", response)
+    wire = http_response("dashboard_employees", response)
+    employee = response["data"]["collections"]["employees"]["items"][0]
     assert employee["period_state"] == "unknown" and employee["in_period"] is None
     assert employee["field_conflicts"][0]["code"] == "employment_interval_conflict"
+    assert (
+        wire["data"]["collections"]["employees"]["items"][0]["field_conflicts"]
+        == employee["field_conflicts"]
+    )
 
 
 def test_false_and_empty_management_fields_keep_their_actual_selected_sources(engine):

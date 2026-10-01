@@ -29,6 +29,7 @@ from .response_types import Version1, Version2, Version4, Version5, Version7, Wi
 
 Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")]
 Day = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")]
+MonthOrDay = Month | Day
 Count = Annotated[int, Field(ge=0)]
 AccountType = Literal["bank", "cash", "payment_platform"]
 WorkArea = Literal["bank", "payroll", "transactions", "tax", "assets", "financing"]
@@ -1406,9 +1407,8 @@ class TaxDetail(ResponseObject):
 
 
 class FieldConflict(ResponseObject):
-    field: str
-    values: list[str]
-    sources: list[SourceMetadata]
+    code: Literal["employment_interval_conflict"]
+    fields: list[Literal["employment_start", "employment_end"]]
 
 
 class EmployeeItem(ResponseObject):
@@ -1422,9 +1422,9 @@ class EmployeeItem(ResponseObject):
     period_state: str
     period_state_label: str
     in_period: bool | None
-    employment_start_date: Day | None
-    employment_end_date: Day | None
-    tax_withholding_start_date: Day | None
+    employment_start_date: MonthOrDay | None
+    employment_end_date: MonthOrDay | None
+    tax_withholding_start_date: MonthOrDay | None
     profile_available: bool
     expense_areas: list[str]
     social_insurance_participating: bool | None
@@ -1559,7 +1559,6 @@ class LaborSource(SourceSettlement):
     period: Month
     person_id: str
     name: str
-    party: str
     field_sources: FieldSources
     capitalized: bool
     project_id: str | None
@@ -1932,8 +1931,8 @@ class DisplayProfileValues(ResponseObject):
     display_number: str | None
     purpose: str | None
     note: str | None
-    employment_start: Day | None
-    employment_end: Day | None
+    employment_start: MonthOrDay | None
+    employment_end: MonthOrDay | None
     employment_status: str | None
     active: bool | None
     category_label: str | None

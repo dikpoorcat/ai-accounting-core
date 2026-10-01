@@ -18,12 +18,17 @@ from test_dashboard_empty_replay import (
     replay_sources,
     reviewed_confirmation,
 )
+from test_dashboard_provenance import profile as display_profile
 from test_payroll import payroll
+from test_payroll import profile as payroll_profile
+from test_payroll_corrections import Company
+from test_payroll_corrections import company as correction_company
 from test_payroll_preparation import company as payroll_company
 from test_tax_import import contribution_rule, replace_contribution_policy
 
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.domains.payroll import LaborAccrual
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.response_contracts import http_response, validate_response
@@ -241,6 +246,49 @@ def native_samples(root):
         "late_closed_missing_material",
         "dashboard_funds",
         Dashboard(wage_book.engine).funds("2026-02"),
+    )
+
+    personnel_path = root / "personnel"
+    personnel_path.mkdir()
+    personnel = correction_company.__wrapped__(personnel_path)
+    personnel.save(payroll_profile(withholding_start_date="2026-01"), "profile", revision=1)
+    personnel.confirm_payroll("january", "february")
+    personnel.publish("january", "february")
+    display_profile(personnel.engine, "employee", "employee", employment_start="2025-12")
+    display_profile(personnel.engine, "business", "january", display_name="合成工资业务")
+    personnel_dashboard = Dashboard(personnel.engine)
+    add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    personnel.close("2026-01")
+    display_profile(
+        personnel.engine, "employee", "employee", 1,
+        employment_start="2025-11", employment_end="2026-04-20",
+    )
+    add("employees_mixed_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    add(
+        "business_month_dates", "dashboard_business_status",
+        personnel_dashboard.business_status("2026-01", "january"),
+    )
+    display_profile(
+        personnel.engine, "employee", "employee", 2,
+        employment_start="2025-10", employment_end="2025-11-01",
+    )
+    add("employees_date_conflict", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+
+    labor_path = root / "labor"
+    labor_path.mkdir()
+    labor = Company(labor_path / "labor.sqlite")
+    labor.save(
+        LaborAccrual(
+            period="2026-01", person_id="person", expense_class="management",
+            gross_fee_fen=500000, tax_treatment="not_withheld_not_filed",
+        ),
+        "labor",
+    )
+    labor.publish("labor")
+    display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
+    add(
+        "employees_labor_sources", "dashboard_employees",
+        Dashboard(labor.engine).employees("2026-01", section="labor_sources"),
     )
     from test_workflow import (
         completion_from_basis,

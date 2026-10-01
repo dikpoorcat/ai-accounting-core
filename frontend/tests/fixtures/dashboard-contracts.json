@@ -15841,5 +15841,2437 @@
         }
       ]
     }
+  },
+  "employees_month_dates": {
+    "command": "dashboard_employees",
+    "response": {
+      "schema_version": 7,
+      "snapshot_version": "b1ac628265fb718973b75d22049b1a8fb5796b02fe6953220c6f2706862c5766",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "payroll-company",
+        "database_id": "payroll-db",
+        "as_of": "2026-10-01",
+        "read_version": "43e3b1558758e1e414c097249c24201d4ce4c7b079df044856f3ef4757e2f4e7"
+      },
+      "data": {
+        "employees": {
+          "gross_salary_fen": "1000000",
+          "annual_bonus_fen": "0",
+          "employer_social_insurance_fen": "160000",
+          "employer_housing_fund_fen": "0",
+          "employee_social_insurance_fen": "80000",
+          "employee_housing_fund_fen": "0",
+          "individual_income_tax_fen": "12600",
+          "net_salary_fen": "907400",
+          "tax_reported_salary_fen": "1000000",
+          "personal_deduction_fen": "92600",
+          "unestablished_count": 0,
+          "registered_count": 1,
+          "in_period_count": 0,
+          "unknown_period_count": 1,
+          "payroll_count": 1,
+          "without_payroll_count": 0,
+          "profile_missing_count": 0,
+          "contributions_only_count": 0,
+          "controlled_cost_fen": "1160000",
+          "settlement_adjustment_fen": "0",
+          "ledger_cost_fen": "1160000",
+          "detail_reconciled": true,
+          "breakdown_available": true,
+          "breakdown_reason": null,
+          "identity_note": "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+        },
+        "collections": {
+          "employees": {
+            "items": [
+              {
+                "employee_id": "employee",
+                "selection_status": "established",
+                "code": "人员 1",
+                "name": "未提供姓名或名称",
+                "field_sources": {
+                  "record_status": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_status",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "employment_start_date": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_start",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "tax_withholding_start_date": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "withholding_start_date",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "housing_fund_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "housing_fund_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_base_fen": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_base_fen",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  }
+                },
+                "field_conflicts": [],
+                "record_status": "unknown",
+                "period_state": "unknown",
+                "period_state_label": "未确认人员在册状态",
+                "in_period": null,
+                "employment_start_date": "2025-12",
+                "employment_end_date": null,
+                "tax_withholding_start_date": "2026-01",
+                "profile_available": true,
+                "expense_areas": [
+                  "管理"
+                ],
+                "social_insurance_participating": true,
+                "housing_fund_participating": false,
+                "social_insurance_base_fen": "1000000",
+                "housing_fund_base_fen": null,
+                "has_payroll_activity": true,
+                "batch_count": 1,
+                "tax_details": [
+                  {
+                    "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                    "period": "2026-01",
+                    "kind": "payroll",
+                    "reversal": false,
+                    "booked_tax_fen": "12600",
+                    "calculated_tax_fen": "12600",
+                    "actual_withholding_tax_fen": null,
+                    "actual_withholding_fact_id": null
+                  }
+                ],
+                "declared_tax_fen": null,
+                "recorded_net_payments_fen": "0",
+                "direct_net_payments_fen": "0",
+                "other_net_settlements_fen": "0",
+                "payroll_periods": [
+                  "2026-01"
+                ],
+                "has_annual_bonus": false,
+                "gross_salary_fen": "1000000",
+                "annual_bonus_fen": "0",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0",
+                "individual_income_tax_fen": "12600",
+                "net_salary_fen": "907400",
+                "tax_reported_salary_fen": "1000000",
+                "personal_deduction_fen": "92600",
+                "company_cost_fen": "1160000",
+                "wage_tax_scope": "wage_income",
+                "wage_tax_scope_label": "工资薪金"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "labor_sources": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        },
+        "workforce_cost": {
+          "has_activity": true,
+          "total_fen": "1160000",
+          "capitalized_labor_fen": "0",
+          "employee": {
+            "has_activity": true,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "1160000",
+            "controlled_total_fen": "1160000",
+            "settlement_adjustment_fen": "0",
+            "prior_period_settlement_adjustment_fen": "0",
+            "batch_count": 1,
+            "periods": [
+              {
+                "payroll_period": "2026-01",
+                "total_fen": "1160000",
+                "has_reversal": false,
+                "has_amendment": false,
+                "correction_ids": [],
+                "gross_salary_fen": "1000000",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0"
+              }
+            ],
+            "annual_bonus_fen": "0",
+            "gross_salary_fen": "1000000",
+            "employer_social_insurance_fen": "160000",
+            "employer_housing_fund_fen": "0",
+            "employee_social_insurance_fen": "80000",
+            "employee_housing_fund_fen": "0",
+            "personal_withholding_fen": "92600"
+          },
+          "personal_labor": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "gross_remuneration_fen": "0",
+            "booked_withholding_tax_fen": "0",
+            "unwithheld_tax_fen": "0",
+            "theoretical_withholding_tax_fen": "0",
+            "withholding_status": "none",
+            "withholding_note": "按核算事实确认扣税义务，实际付款及申报分别查看。",
+            "settlement_modes": [],
+            "batch_count": 0,
+            "periods": []
+          }
+        },
+        "period_preparation": {
+          "company_id": "payroll-company",
+          "database_id": "payroll-db",
+          "period": "2026-01",
+          "as_of": "2026-10-01",
+          "as_of_semantics": "current_knowledge",
+          "closure": {
+            "state": "open"
+          },
+          "read_semantics": {
+            "knowledge": "current_knowledge",
+            "frozen_readiness": "exact_period_manifest_only",
+            "current_followups": "never_changes_frozen_readiness"
+          },
+          "projection": "dashboard_period_preparation",
+          "frozen_readiness": null,
+          "readiness": {
+            "period": "2026-01",
+            "order_failure": null,
+            "issues": [
+              {
+                "field": "materials.transactions",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.payroll",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.bank",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.tax",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.assets",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.financing",
+                "message": "需要资料覆盖或无业务确认"
+              }
+            ]
+          },
+          "current_followups": {
+            "knowledge": "current_knowledge",
+            "affects_frozen_readiness": false,
+            "materials": {
+              "status": "needs_information",
+              "issues": [
+                {
+                  "field": "materials.transactions",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.payroll",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.bank",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.tax",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.assets",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.financing",
+                  "message": "需要资料覆盖或无业务确认"
+                }
+              ],
+              "inventory_count": 0,
+              "coverage_digest": "2f73943bcd0e1b42bb37973957e9a451e5d9a155cf0af4d655fca9499a6ceacc"
+            },
+            "accounting": {
+              "status": "ready",
+              "issues": [],
+              "pending_subject_id": null,
+              "unpublished_count": 23
+            },
+            "close_requirements": {
+              "status": "ready",
+              "issues": []
+            },
+            "settlements": {
+              "status": "established",
+              "cutoff_period": "2026-01",
+              "current_cutoff_period": "2026-01",
+              "issues": [],
+              "obligation_count": 6,
+              "followup_count": 4,
+              "complete": true,
+              "unestablished_state_selection_count": 0,
+              "movement_count": 0,
+              "source_amount_fen": "1160000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "remaining_fen": "1160000"
+            },
+            "external": {
+              "status": "unestablished",
+              "obligation_count": 0,
+              "actual_completion_status_counts": {},
+              "basis_review_status_counts": {},
+              "basis_issue_count": 0,
+              "scope_period": "2026-01",
+              "scope_semantics": "obligation_interval_includes_selected_period",
+              "fact_issues": [
+                {
+                  "field": "materials.transactions",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.payroll",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.bank",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.tax",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.assets",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.financing",
+                  "message": "需要资料覆盖或无业务确认"
+                }
+              ]
+            },
+            "file_jobs": {
+              "total_count": 0,
+              "status_counts": {},
+              "issue_count": 0
+            },
+            "tax_import_mapping": {
+              "status": "needs_information",
+              "blocking_scope": "tax_import_file",
+              "mapping_fact_ids": [],
+              "calculation_ids": [
+                "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b"
+              ],
+              "issues": [
+                {
+                  "code": "tax_import_mapping_required",
+                  "category": "management_fact",
+                  "field": "tax_import_mapping",
+                  "message": "需要本月唯一的险种与个税列对应关系"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "employees_mixed_dates": {
+    "command": "dashboard_employees",
+    "response": {
+      "schema_version": 7,
+      "snapshot_version": "de3815e26c5efec458197a848e9326c8c67b636eb48dcb4f2433c5241f791274",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "closed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "frozen_adoption",
+        "display": "frozen_with_current_supplements",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "payroll-company",
+        "database_id": "payroll-db",
+        "as_of": "2026-10-01",
+        "read_version": "50d3536db2d6e482fadf08b96c16dc61b408590e41c91e890eda9812bfb4d4b0"
+      },
+      "data": {
+        "employees": {
+          "gross_salary_fen": "1000000",
+          "annual_bonus_fen": "0",
+          "employer_social_insurance_fen": "160000",
+          "employer_housing_fund_fen": "0",
+          "employee_social_insurance_fen": "80000",
+          "employee_housing_fund_fen": "0",
+          "individual_income_tax_fen": "12600",
+          "net_salary_fen": "907400",
+          "tax_reported_salary_fen": "1000000",
+          "personal_deduction_fen": "92600",
+          "unestablished_count": 0,
+          "registered_count": 1,
+          "in_period_count": 1,
+          "unknown_period_count": 0,
+          "payroll_count": 1,
+          "without_payroll_count": 0,
+          "profile_missing_count": 0,
+          "contributions_only_count": 0,
+          "controlled_cost_fen": "1160000",
+          "settlement_adjustment_fen": "0",
+          "ledger_cost_fen": "1160000",
+          "detail_reconciled": true,
+          "breakdown_available": true,
+          "breakdown_reason": null,
+          "identity_note": "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+        },
+        "collections": {
+          "employees": {
+            "items": [
+              {
+                "employee_id": "employee",
+                "selection_status": "established",
+                "code": "人员 1",
+                "name": "未提供姓名或名称",
+                "field_sources": {
+                  "record_status": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_status",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "employment_start_date": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_start",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "employment_end_date": {
+                    "source_type": "display_profile",
+                    "id": "062c182d52034c53b2f91651d5cb685c",
+                    "revision": 3,
+                    "field": "employment_end",
+                    "source": "明确资料 2",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "current_supplement",
+                    "recorded_at": "2026-10-01T05:02:57.774Z"
+                  },
+                  "tax_withholding_start_date": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "withholding_start_date",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "housing_fund_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "housing_fund_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_base_fen": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_base_fen",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  }
+                },
+                "field_conflicts": [],
+                "record_status": "unknown",
+                "period_state": "in_period",
+                "period_state_label": "已确认在册",
+                "in_period": true,
+                "employment_start_date": "2025-12",
+                "employment_end_date": "2026-04-20",
+                "tax_withholding_start_date": "2026-01",
+                "profile_available": true,
+                "expense_areas": [
+                  "管理"
+                ],
+                "social_insurance_participating": true,
+                "housing_fund_participating": false,
+                "social_insurance_base_fen": "1000000",
+                "housing_fund_base_fen": null,
+                "has_payroll_activity": true,
+                "batch_count": 1,
+                "tax_details": [
+                  {
+                    "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                    "period": "2026-01",
+                    "kind": "payroll",
+                    "reversal": false,
+                    "booked_tax_fen": "12600",
+                    "calculated_tax_fen": "12600",
+                    "actual_withholding_tax_fen": null,
+                    "actual_withholding_fact_id": null
+                  }
+                ],
+                "declared_tax_fen": null,
+                "recorded_net_payments_fen": "0",
+                "direct_net_payments_fen": "0",
+                "other_net_settlements_fen": "0",
+                "payroll_periods": [
+                  "2026-01"
+                ],
+                "has_annual_bonus": false,
+                "gross_salary_fen": "1000000",
+                "annual_bonus_fen": "0",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0",
+                "individual_income_tax_fen": "12600",
+                "net_salary_fen": "907400",
+                "tax_reported_salary_fen": "1000000",
+                "personal_deduction_fen": "92600",
+                "company_cost_fen": "1160000",
+                "wage_tax_scope": "wage_income",
+                "wage_tax_scope_label": "工资薪金"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "labor_sources": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        },
+        "workforce_cost": {
+          "has_activity": true,
+          "total_fen": "1160000",
+          "capitalized_labor_fen": "0",
+          "employee": {
+            "has_activity": true,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "1160000",
+            "controlled_total_fen": "1160000",
+            "settlement_adjustment_fen": "0",
+            "prior_period_settlement_adjustment_fen": "0",
+            "batch_count": 1,
+            "periods": [
+              {
+                "payroll_period": "2026-01",
+                "total_fen": "1160000",
+                "has_reversal": false,
+                "has_amendment": false,
+                "correction_ids": [],
+                "gross_salary_fen": "1000000",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0"
+              }
+            ],
+            "annual_bonus_fen": "0",
+            "gross_salary_fen": "1000000",
+            "employer_social_insurance_fen": "160000",
+            "employer_housing_fund_fen": "0",
+            "employee_social_insurance_fen": "80000",
+            "employee_housing_fund_fen": "0",
+            "personal_withholding_fen": "92600"
+          },
+          "personal_labor": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "gross_remuneration_fen": "0",
+            "booked_withholding_tax_fen": "0",
+            "unwithheld_tax_fen": "0",
+            "theoretical_withholding_tax_fen": "0",
+            "withholding_status": "none",
+            "withholding_note": "按核算事实确认扣税义务，实际付款及申报分别查看。",
+            "settlement_modes": [],
+            "batch_count": 0,
+            "periods": []
+          }
+        },
+        "period_preparation": {
+          "company_id": "payroll-company",
+          "database_id": "payroll-db",
+          "period": "2026-01",
+          "as_of": "2026-10-01",
+          "as_of_semantics": "current_knowledge",
+          "closure": {
+            "state": "exact_close",
+            "digest": "723669d4023c32b2c68ec798b7fd754af36823771128ad22f33424316bda5842"
+          },
+          "read_semantics": {
+            "knowledge": "current_knowledge",
+            "frozen_readiness": "exact_period_manifest_only",
+            "current_followups": "never_changes_frozen_readiness"
+          },
+          "projection": "dashboard_period_preparation",
+          "frozen_readiness": {
+            "status": "ready",
+            "source": "exact_period_manifest",
+            "readiness": {
+              "status": "recorded"
+            },
+            "inventories": {
+              "status": "recorded"
+            },
+            "material_coverage": {
+              "status": "recorded"
+            },
+            "previous_close_digest": {
+              "status": "recorded"
+            }
+          },
+          "readiness": null,
+          "current_followups": {
+            "knowledge": "current_knowledge",
+            "affects_frozen_readiness": false,
+            "materials": {
+              "status": "ready",
+              "issues": [],
+              "inventory_count": 6,
+              "coverage_digest": "d438d6b5093db8a7280bad32714fd92c8689261d5aca8e0a994e52939484ebcf"
+            },
+            "accounting": {
+              "status": "ready",
+              "issues": [],
+              "pending_subject_id": null,
+              "unpublished_count": 23
+            },
+            "close_requirements": {
+              "status": "ready",
+              "issues": []
+            },
+            "settlements": {
+              "status": "established",
+              "cutoff_period": "2026-01",
+              "current_cutoff_period": "2026-01",
+              "issues": [],
+              "obligation_count": 6,
+              "followup_count": 4,
+              "complete": true,
+              "unestablished_state_selection_count": 0,
+              "movement_count": 0,
+              "source_amount_fen": "1160000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "remaining_fen": "1160000"
+            },
+            "external": {
+              "status": "unestablished",
+              "obligation_count": 0,
+              "actual_completion_status_counts": {},
+              "basis_review_status_counts": {},
+              "basis_issue_count": 0,
+              "scope_period": "2026-01",
+              "scope_semantics": "obligation_interval_includes_selected_period",
+              "fact_issues": []
+            },
+            "file_jobs": {
+              "total_count": 0,
+              "status_counts": {},
+              "issue_count": 0
+            },
+            "tax_import_mapping": {
+              "status": "needs_information",
+              "blocking_scope": "tax_import_file",
+              "mapping_fact_ids": [],
+              "calculation_ids": [
+                "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b"
+              ],
+              "issues": [
+                {
+                  "code": "tax_import_mapping_required",
+                  "category": "management_fact",
+                  "field": "tax_import_mapping",
+                  "message": "需要本月唯一的险种与个税列对应关系"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "employees_date_conflict": {
+    "command": "dashboard_employees",
+    "response": {
+      "schema_version": 7,
+      "snapshot_version": "e85efef22adf412d337cf2605bab3f8f5b7cbfa63e6409f1b115776d876035b0",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "closed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "frozen_adoption",
+        "display": "frozen_with_current_supplements",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "payroll-company",
+        "database_id": "payroll-db",
+        "as_of": "2026-10-01",
+        "read_version": "566446d79895ed2e17932fb778034640654afa2f77ae97015ad9768826892f05"
+      },
+      "data": {
+        "employees": {
+          "gross_salary_fen": "1000000",
+          "annual_bonus_fen": "0",
+          "employer_social_insurance_fen": "160000",
+          "employer_housing_fund_fen": "0",
+          "employee_social_insurance_fen": "80000",
+          "employee_housing_fund_fen": "0",
+          "individual_income_tax_fen": "12600",
+          "net_salary_fen": "907400",
+          "tax_reported_salary_fen": "1000000",
+          "personal_deduction_fen": "92600",
+          "unestablished_count": 0,
+          "registered_count": 1,
+          "in_period_count": 0,
+          "unknown_period_count": 1,
+          "payroll_count": 1,
+          "without_payroll_count": 0,
+          "profile_missing_count": 0,
+          "contributions_only_count": 0,
+          "controlled_cost_fen": "1160000",
+          "settlement_adjustment_fen": "0",
+          "ledger_cost_fen": "1160000",
+          "detail_reconciled": true,
+          "breakdown_available": true,
+          "breakdown_reason": null,
+          "identity_note": "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+        },
+        "collections": {
+          "employees": {
+            "items": [
+              {
+                "employee_id": "employee",
+                "selection_status": "established",
+                "code": "人员 1",
+                "name": "未提供姓名或名称",
+                "field_sources": {
+                  "record_status": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_status",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "employment_start_date": {
+                    "source_type": "display_profile",
+                    "id": "3a60fa36fc3442b996bac768aeb4988b",
+                    "revision": 2,
+                    "field": "employment_start",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:57.122Z"
+                  },
+                  "employment_end_date": {
+                    "source_type": "display_profile",
+                    "id": "d1fee383dfaf4c70a9b2c103d1f53002",
+                    "revision": 4,
+                    "field": "employment_end",
+                    "source": "明确资料 3",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "current_supplement",
+                    "recorded_at": "2026-10-01T05:02:57.939Z"
+                  },
+                  "tax_withholding_start_date": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "withholding_start_date",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "housing_fund_participating": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "housing_fund_participating",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  },
+                  "social_insurance_base_fen": {
+                    "source_type": "fact",
+                    "id": "297a690aff6e427ea1abdb5f90d518c7",
+                    "revision": 2,
+                    "field": "social_insurance_base_fen",
+                    "source": null,
+                    "evidence_digest": null,
+                    "evidence": [
+                      "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf"
+                    ],
+                    "basis": "frozen",
+                    "recorded_at": "2026-10-01T05:02:56.480Z"
+                  }
+                },
+                "field_conflicts": [
+                  {
+                    "code": "employment_interval_conflict",
+                    "fields": [
+                      "employment_start",
+                      "employment_end"
+                    ]
+                  }
+                ],
+                "record_status": "unknown",
+                "period_state": "unknown",
+                "period_state_label": "未确认人员在册状态",
+                "in_period": null,
+                "employment_start_date": "2025-12",
+                "employment_end_date": "2025-11-01",
+                "tax_withholding_start_date": "2026-01",
+                "profile_available": true,
+                "expense_areas": [
+                  "管理"
+                ],
+                "social_insurance_participating": true,
+                "housing_fund_participating": false,
+                "social_insurance_base_fen": "1000000",
+                "housing_fund_base_fen": null,
+                "has_payroll_activity": true,
+                "batch_count": 1,
+                "tax_details": [
+                  {
+                    "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                    "period": "2026-01",
+                    "kind": "payroll",
+                    "reversal": false,
+                    "booked_tax_fen": "12600",
+                    "calculated_tax_fen": "12600",
+                    "actual_withholding_tax_fen": null,
+                    "actual_withholding_fact_id": null
+                  }
+                ],
+                "declared_tax_fen": null,
+                "recorded_net_payments_fen": "0",
+                "direct_net_payments_fen": "0",
+                "other_net_settlements_fen": "0",
+                "payroll_periods": [
+                  "2026-01"
+                ],
+                "has_annual_bonus": false,
+                "gross_salary_fen": "1000000",
+                "annual_bonus_fen": "0",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0",
+                "individual_income_tax_fen": "12600",
+                "net_salary_fen": "907400",
+                "tax_reported_salary_fen": "1000000",
+                "personal_deduction_fen": "92600",
+                "company_cost_fen": "1160000",
+                "wage_tax_scope": "wage_income",
+                "wage_tax_scope_label": "工资薪金"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "labor_sources": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        },
+        "workforce_cost": {
+          "has_activity": true,
+          "total_fen": "1160000",
+          "capitalized_labor_fen": "0",
+          "employee": {
+            "has_activity": true,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "1160000",
+            "controlled_total_fen": "1160000",
+            "settlement_adjustment_fen": "0",
+            "prior_period_settlement_adjustment_fen": "0",
+            "batch_count": 1,
+            "periods": [
+              {
+                "payroll_period": "2026-01",
+                "total_fen": "1160000",
+                "has_reversal": false,
+                "has_amendment": false,
+                "correction_ids": [],
+                "gross_salary_fen": "1000000",
+                "employer_social_insurance_fen": "160000",
+                "employer_housing_fund_fen": "0",
+                "employee_social_insurance_fen": "80000",
+                "employee_housing_fund_fen": "0"
+              }
+            ],
+            "annual_bonus_fen": "0",
+            "gross_salary_fen": "1000000",
+            "employer_social_insurance_fen": "160000",
+            "employer_housing_fund_fen": "0",
+            "employee_social_insurance_fen": "80000",
+            "employee_housing_fund_fen": "0",
+            "personal_withholding_fen": "92600"
+          },
+          "personal_labor": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "gross_remuneration_fen": "0",
+            "booked_withholding_tax_fen": "0",
+            "unwithheld_tax_fen": "0",
+            "theoretical_withholding_tax_fen": "0",
+            "withholding_status": "none",
+            "withholding_note": "按核算事实确认扣税义务，实际付款及申报分别查看。",
+            "settlement_modes": [],
+            "batch_count": 0,
+            "periods": []
+          }
+        },
+        "period_preparation": {
+          "company_id": "payroll-company",
+          "database_id": "payroll-db",
+          "period": "2026-01",
+          "as_of": "2026-10-01",
+          "as_of_semantics": "current_knowledge",
+          "closure": {
+            "state": "exact_close",
+            "digest": "723669d4023c32b2c68ec798b7fd754af36823771128ad22f33424316bda5842"
+          },
+          "read_semantics": {
+            "knowledge": "current_knowledge",
+            "frozen_readiness": "exact_period_manifest_only",
+            "current_followups": "never_changes_frozen_readiness"
+          },
+          "projection": "dashboard_period_preparation",
+          "frozen_readiness": {
+            "status": "ready",
+            "source": "exact_period_manifest",
+            "readiness": {
+              "status": "recorded"
+            },
+            "inventories": {
+              "status": "recorded"
+            },
+            "material_coverage": {
+              "status": "recorded"
+            },
+            "previous_close_digest": {
+              "status": "recorded"
+            }
+          },
+          "readiness": null,
+          "current_followups": {
+            "knowledge": "current_knowledge",
+            "affects_frozen_readiness": false,
+            "materials": {
+              "status": "ready",
+              "issues": [],
+              "inventory_count": 6,
+              "coverage_digest": "d438d6b5093db8a7280bad32714fd92c8689261d5aca8e0a994e52939484ebcf"
+            },
+            "accounting": {
+              "status": "ready",
+              "issues": [],
+              "pending_subject_id": null,
+              "unpublished_count": 23
+            },
+            "close_requirements": {
+              "status": "ready",
+              "issues": []
+            },
+            "settlements": {
+              "status": "established",
+              "cutoff_period": "2026-01",
+              "current_cutoff_period": "2026-01",
+              "issues": [],
+              "obligation_count": 6,
+              "followup_count": 4,
+              "complete": true,
+              "unestablished_state_selection_count": 0,
+              "movement_count": 0,
+              "source_amount_fen": "1160000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "remaining_fen": "1160000"
+            },
+            "external": {
+              "status": "unestablished",
+              "obligation_count": 0,
+              "actual_completion_status_counts": {},
+              "basis_review_status_counts": {},
+              "basis_issue_count": 0,
+              "scope_period": "2026-01",
+              "scope_semantics": "obligation_interval_includes_selected_period",
+              "fact_issues": []
+            },
+            "file_jobs": {
+              "total_count": 0,
+              "status_counts": {},
+              "issue_count": 0
+            },
+            "tax_import_mapping": {
+              "status": "needs_information",
+              "blocking_scope": "tax_import_file",
+              "mapping_fact_ids": [],
+              "calculation_ids": [
+                "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b"
+              ],
+              "issues": [
+                {
+                  "code": "tax_import_mapping_required",
+                  "category": "management_fact",
+                  "field": "tax_import_mapping",
+                  "message": "需要本月唯一的险种与个税列对应关系"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "business_month_dates": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 5,
+      "snapshot_version": "de3815e26c5efec458197a848e9326c8c67b636eb48dcb4f2433c5241f791274",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "closed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "frozen_adoption",
+        "display": "frozen_with_current_supplements",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "payroll-company",
+        "database_id": "payroll-db",
+        "as_of": "2026-10-01",
+        "read_version": "50d3536db2d6e482fadf08b96c16dc61b408590e41c91e890eda9812bfb4d4b0"
+      },
+      "data": {
+        "identity": {
+          "company_id": "payroll-company",
+          "database_id": "payroll-db",
+          "subject_id": "january",
+          "kind": "payroll"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-01",
+        "latest_source": {
+          "id": "a53466ab7eec475f8c24891095a1b107",
+          "subject_id": "january",
+          "revision": 1,
+          "kind": "payroll",
+          "period": "2026-01",
+          "evidence": [
+            "8bb80f62d4fbc777f90f5b62630efafb6ba6d947932cb85ec697b2be84a5de56"
+          ],
+          "deleted": false,
+          "knowledge": "current_knowledge",
+          "recorded_at": "2026-10-01T05:02:55.764Z"
+        },
+        "closure": {
+          "state": "exact_close",
+          "digest": "723669d4023c32b2c68ec798b7fd754af36823771128ad22f33424316bda5842"
+        },
+        "as_posted": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "voucher_events": [
+            {
+              "event_type": "voucher",
+              "voucher_version_id": "v_0f4253f89f249cafb7d065f968229a25fffd5d1d49bc56d7ca395edd375d00f5",
+              "voucher_id": "v:january",
+              "voucher_number": 1,
+              "voucher_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "kind": "payroll",
+              "calculation_period": "2026-01",
+              "posting_period": "2026-01",
+              "result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "role": "original",
+              "direction": 1,
+              "reverses_voucher_version_id": null,
+              "selection_source": "close_manifest"
+            }
+          ],
+          "state_results": [],
+          "unestablished_state_selections": []
+        },
+        "current_business_result": {
+          "status": "published",
+          "knowledge": "current_knowledge",
+          "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+          "subject_id": "january",
+          "kind": "payroll",
+          "fact_id": "a53466ab7eec475f8c24891095a1b107",
+          "result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+          "posting_period": "2026-01",
+          "publication_id": "p_81c52c2544167a46e2fdd54615fa9951f34e76b61ec01de1d5725a4b337d8356",
+          "voucher_id": "v:january",
+          "has_journal_lines": true,
+          "current_voucher_version_id": "v_0f4253f89f249cafb7d065f968229a25fffd5d1d49bc56d7ca395edd375d00f5",
+          "amount_fen": "1000000",
+          "amount_label": "税前工资",
+          "payroll_confirmation": {
+            "mode": "monthly_plan",
+            "confirmation_fact_id": "45bd3948e68d4a86b2743a56c7d0eaf8",
+            "confirmation_subject_id": "test-wage-confirmation-047d4d43e5f000ff4e25cf2d",
+            "confirmation_revision": 2,
+            "confirmation_kind": "payroll_plan_v2",
+            "evidence": [
+              "69be8c017b0e0d5e074005bd25f8b1cfc474c5647671e7ab2f149bd29c145bcb"
+            ]
+          }
+        },
+        "frozen_adoption": {
+          "close_period": "2026-01",
+          "publication_id": "p_81c52c2544167a46e2fdd54615fa9951f34e76b61ec01de1d5725a4b337d8356",
+          "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+          "result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+          "role": "journal_basis",
+          "selection_proof": {
+            "basis": "direct_adoption",
+            "close_period": "2026-01",
+            "publication_id": "p_81c52c2544167a46e2fdd54615fa9951f34e76b61ec01de1d5725a4b337d8356",
+            "role": "journal_basis"
+          },
+          "amount_fen": "1000000",
+          "amount_label": "税前工资",
+          "payroll_confirmation": {
+            "mode": "monthly_plan",
+            "confirmation_fact_id": "45bd3948e68d4a86b2743a56c7d0eaf8",
+            "confirmation_subject_id": "test-wage-confirmation-047d4d43e5f000ff4e25cf2d",
+            "confirmation_revision": 2,
+            "confirmation_kind": "payroll_plan_v2",
+            "evidence": [
+              "69be8c017b0e0d5e074005bd25f8b1cfc474c5647671e7ab2f149bd29c145bcb"
+            ]
+          }
+        },
+        "adopted_basis": {
+          "policies": [
+            {
+              "label": "工资个人所得税规则",
+              "kind": "payroll_income_tax_policy",
+              "version": "cn-resident-wage-cumulative-2019",
+              "effective_from": "2019-01-01",
+              "effective_to": null,
+              "official_urls": [
+                "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/201812/c4182700/content.html",
+                "https://www.chinatax.gov.cn/chinatax/n810219/n810744/n3752930/n3752974/c3970366/content.html"
+              ],
+              "reference": {
+                "source_type": "fact",
+                "id": "8ca154aad29e4955824bbaf19ea55871",
+                "revision": 1,
+                "digest": "f95554ad29c4cf8e7ba98e16f75ecc82e989996d5a20186c519d9464e592680b",
+                "name": null,
+                "media_type": null
+              }
+            },
+            {
+              "label": "社保公积金规则",
+              "kind": "payroll_contribution_policy",
+              "version": "test-contribution-2026",
+              "effective_from": "2026-01-01",
+              "effective_to": "2026-12-31",
+              "official_urls": [
+                "https://www.mof.gov.cn/"
+              ],
+              "reference": {
+                "source_type": "fact",
+                "id": "fd3c7b6ba9e14d3f84804330ed63f552",
+                "revision": 1,
+                "digest": "98a2504fe9473f90f4481fc185c517704fe49b9964c9c0931b1feef05aa54690",
+                "name": null,
+                "media_type": null
+              }
+            }
+          ],
+          "payroll_confirmations": [
+            {
+              "label": "工资计提",
+              "mode": "monthly_plan",
+              "calculation_reference": {
+                "source_type": "calculation",
+                "id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "revision": null,
+                "digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+                "name": null,
+                "media_type": null
+              },
+              "confirmation_references": [
+                {
+                  "source_type": "fact",
+                  "id": "45bd3948e68d4a86b2743a56c7d0eaf8",
+                  "revision": 2,
+                  "digest": "b57be2a87ab850bbb67b4bf5f37d875a84dd9a70444bbb8dd94932743ab033fc",
+                  "name": null,
+                  "media_type": null
+                },
+                {
+                  "source_type": "fact",
+                  "id": "fd3c7b6ba9e14d3f84804330ed63f552",
+                  "revision": 1,
+                  "digest": "98a2504fe9473f90f4481fc185c517704fe49b9964c9c0931b1feef05aa54690",
+                  "name": null,
+                  "media_type": null
+                },
+                {
+                  "source_type": "fact",
+                  "id": "8ca154aad29e4955824bbaf19ea55871",
+                  "revision": 1,
+                  "digest": "f95554ad29c4cf8e7ba98e16f75ecc82e989996d5a20186c519d9464e592680b",
+                  "name": null,
+                  "media_type": null
+                },
+                {
+                  "source_type": "fact",
+                  "id": "297a690aff6e427ea1abdb5f90d518c7",
+                  "revision": 2,
+                  "digest": "ee2e68527353242f7de0458898ba98ba5ad320de7276a8f8a911618d89dba4e9",
+                  "name": null,
+                  "media_type": null
+                }
+              ]
+            }
+          ],
+          "evidence": [
+            {
+              "source_type": "evidence",
+              "id": "495172e0fadc56cfc2e125b3b58e162d568096a3d94e8ebe0aaacffdf8dcd719",
+              "revision": null,
+              "digest": "495172e0fadc56cfc2e125b3b58e162d568096a3d94e8ebe0aaacffdf8dcd719",
+              "name": "contributions-confirmed-facts",
+              "media_type": "application/json"
+            },
+            {
+              "source_type": "evidence",
+              "id": "69be8c017b0e0d5e074005bd25f8b1cfc474c5647671e7ab2f149bd29c145bcb",
+              "revision": null,
+              "digest": "69be8c017b0e0d5e074005bd25f8b1cfc474c5647671e7ab2f149bd29c145bcb",
+              "name": "january-owner-wage-confirmation",
+              "media_type": "application/json"
+            },
+            {
+              "source_type": "evidence",
+              "id": "7384d4f8516b2fffbf66a09c8a7cafc0ace12a7f5f6934fc168f9ed1ac6e7629",
+              "revision": null,
+              "digest": "7384d4f8516b2fffbf66a09c8a7cafc0ace12a7f5f6934fc168f9ed1ac6e7629",
+              "name": "income-tax-confirmed-facts",
+              "media_type": "application/json"
+            },
+            {
+              "source_type": "evidence",
+              "id": "7fb665831514b800b5ffe9469fa00ccc5bd370583d7f199b40aca9fe6932e5f7",
+              "revision": null,
+              "digest": "7fb665831514b800b5ffe9469fa00ccc5bd370583d7f199b40aca9fe6932e5f7",
+              "name": "opening-confirmed-facts",
+              "media_type": "application/json"
+            },
+            {
+              "source_type": "evidence",
+              "id": "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf",
+              "revision": null,
+              "digest": "8b1b182406e51af727f316f22a41329e7490f697b4306661ba6a29d8164c2caf",
+              "name": "profile-confirmed-facts",
+              "media_type": "application/json"
+            },
+            {
+              "source_type": "evidence",
+              "id": "8bb80f62d4fbc777f90f5b62630efafb6ba6d947932cb85ec697b2be84a5de56",
+              "revision": null,
+              "digest": "8bb80f62d4fbc777f90f5b62630efafb6ba6d947932cb85ec697b2be84a5de56",
+              "name": "january-confirmed-facts",
+              "media_type": "application/json"
+            }
+          ],
+          "basis": "frozen_adoption",
+          "calculation_ids": [
+            "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b"
+          ]
+        },
+        "review": {
+          "status": "current",
+          "latest_matches_publication": true,
+          "pending_causes": [],
+          "dispositions": [],
+          "disposition_count": 1
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "obligations": [
+            {
+              "key": "payroll:january:employee_housing",
+              "name": "employee_housing",
+              "category": "payable",
+              "account": "224103",
+              "counterparty_id": null,
+              "creditor_id": null,
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "0",
+              "amount_fen": "0",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": [
+                "statutory_payroll_obligation",
+                "payroll:january:employee_housing"
+              ],
+              "party_role": "statutory",
+              "state": "resolved",
+              "source_events": [],
+              "reimbursement_acceptance_basis": "company_confirmation_month"
+            },
+            {
+              "key": "payroll:january:employee_social",
+              "name": "employee_social",
+              "category": "payable",
+              "account": "224102",
+              "counterparty_id": null,
+              "creditor_id": null,
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "80000",
+              "amount_fen": "80000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "80000",
+              "settlement_status": "open",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": [
+                "statutory_payroll_obligation",
+                "payroll:january:employee_social"
+              ],
+              "party_role": "statutory",
+              "state": "resolved",
+              "source_events": [],
+              "reimbursement_acceptance_basis": "company_confirmation_month"
+            },
+            {
+              "key": "payroll:january:employer_housing",
+              "name": "employer_housing",
+              "category": "payable",
+              "account": "221103",
+              "counterparty_id": null,
+              "creditor_id": null,
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "0",
+              "amount_fen": "0",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": null,
+              "party_role": "unresolved",
+              "state": "unresolved",
+              "source_events": [],
+              "reimbursement_acceptance_basis": "company_confirmation_month"
+            },
+            {
+              "key": "payroll:january:employer_social",
+              "name": "employer_social",
+              "category": "payable",
+              "account": "221102",
+              "counterparty_id": null,
+              "creditor_id": null,
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "160000",
+              "amount_fen": "160000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "160000",
+              "settlement_status": "open",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": null,
+              "party_role": "unresolved",
+              "state": "unresolved",
+              "source_events": [],
+              "reimbursement_acceptance_basis": "company_confirmation_month"
+            },
+            {
+              "key": "payroll:january:net",
+              "name": "net",
+              "category": "payable",
+              "account": "221101",
+              "counterparty_id": "employee",
+              "creditor_id": "employee",
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "907400",
+              "amount_fen": "907400",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "907400",
+              "settlement_status": "open",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": [
+                "party",
+                "employee"
+              ],
+              "party_role": "creditor",
+              "state": "resolved",
+              "source_events": []
+            },
+            {
+              "key": "payroll:january:tax",
+              "name": "tax",
+              "category": "payable",
+              "account": "222103",
+              "counterparty_id": null,
+              "creditor_id": null,
+              "source_business": {
+                "subject_id": "january",
+                "kind": "payroll"
+              },
+              "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+              "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+              "source_period": "2026-01",
+              "source_result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+              "source_amount_fen": "12600",
+              "amount_fen": "12600",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "period_paid_fen": "0",
+              "period_other_settled_fen": "0",
+              "remaining_fen": "12600",
+              "settlement_status": "open",
+              "source_event_count": 1,
+              "cashflow": "payroll",
+              "normal": "credit",
+              "party_key": null,
+              "party_role": "unresolved",
+              "state": "unresolved",
+              "source_events": []
+            }
+          ],
+          "issues": [],
+          "business_count": 1,
+          "movement_count": 0,
+          "line_relation_count": 4
+        },
+        "external": {
+          "status": "unestablished",
+          "obligation_count": 0,
+          "actual_completion_status_counts": {},
+          "basis_review_status_counts": {},
+          "basis_issue_count": 0,
+          "as_of": "2026-10-01",
+          "as_of_semantics": "current_knowledge",
+          "completion_count": 0
+        },
+        "file_jobs": {
+          "total_count": 0,
+          "status_counts": {},
+          "issue_count": 0
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "january",
+            "values": {
+              "display_name": "合成工资业务",
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null,
+              "useful_life_basis": null,
+              "counterparty_id": null,
+              "beneficiary_id": null,
+              "handler_id": null
+            },
+            "field_sources": {
+              "display_name": {
+                "source_type": "display_profile",
+                "id": "30a41c00fe564147997363b4141eed75",
+                "revision": 1,
+                "field": "display_name",
+                "source": "明确资料 1",
+                "evidence_digest": null,
+                "evidence": [],
+                "basis": "frozen",
+                "recorded_at": "2026-10-01T05:02:57.168Z"
+              }
+            }
+          }
+        },
+        "trace_targets": [
+          {
+            "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+            "voucher_version_id": "v_0f4253f89f249cafb7d065f968229a25fffd5d1d49bc56d7ca395edd375d00f5"
+          }
+        ],
+        "read_semantics": {
+          "knowledge": "current_knowledge",
+          "accounting": "as_posted",
+          "business_basis": "frozen_adoption",
+          "display": "frozen_with_current_supplements",
+          "as_of": "external_deadlines_and_completion_only"
+        },
+        "projection": "summary",
+        "trace_target_count": 1,
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "obligations": [
+              {
+                "key": "payroll:january:employee_housing",
+                "name": "employee_housing",
+                "category": "payable",
+                "account": "224103",
+                "counterparty_id": null,
+                "creditor_id": null,
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "0",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled",
+                "source_event_count": 1,
+                "source_events": []
+              },
+              {
+                "key": "payroll:january:employee_social",
+                "name": "employee_social",
+                "category": "payable",
+                "account": "224102",
+                "counterparty_id": null,
+                "creditor_id": null,
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "80000",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "80000",
+                "settlement_status": "open",
+                "source_event_count": 1,
+                "source_events": []
+              },
+              {
+                "key": "payroll:january:employer_housing",
+                "name": "employer_housing",
+                "category": "payable",
+                "account": "221103",
+                "counterparty_id": null,
+                "creditor_id": null,
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "0",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled",
+                "source_event_count": 1,
+                "source_events": []
+              },
+              {
+                "key": "payroll:january:employer_social",
+                "name": "employer_social",
+                "category": "payable",
+                "account": "221102",
+                "counterparty_id": null,
+                "creditor_id": null,
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "160000",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "160000",
+                "settlement_status": "open",
+                "source_event_count": 1,
+                "source_events": []
+              },
+              {
+                "key": "payroll:january:net",
+                "name": "net",
+                "category": "payable",
+                "account": "221101",
+                "counterparty_id": "employee",
+                "creditor_id": "employee",
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "907400",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "907400",
+                "settlement_status": "open",
+                "source_event_count": 1,
+                "source_events": []
+              },
+              {
+                "key": "payroll:january:tax",
+                "name": "tax",
+                "category": "payable",
+                "account": "222103",
+                "counterparty_id": null,
+                "creditor_id": null,
+                "source_business": {
+                  "subject_id": "january",
+                  "kind": "payroll"
+                },
+                "source_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "source_fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "source_amount_fen": "12600",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "period_paid_fen": "0",
+                "period_other_settled_fen": "0",
+                "remaining_fen": "12600",
+                "settlement_status": "open",
+                "source_event_count": 1,
+                "source_events": []
+              }
+            ],
+            "issues": [],
+            "business_count": 1,
+            "movement_count": 0,
+            "line_relation_count": 0,
+            "unestablished_state_selections": [],
+            "complete": true,
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "duplicate_checks": {
+          "candidate_contract": "ai-accounting-kernel/2/business-duplicate",
+          "candidate_version": 2,
+          "subject_id": "january",
+          "status": "clear",
+          "strong_candidates": [],
+          "weak_candidates": [],
+          "unresolved": [],
+          "checks": [],
+          "check_count": 0,
+          "checks_truncated": false
+        },
+        "identity_corrections": [],
+        "entity_references": [
+          {
+            "fact_id": "a53466ab7eec475f8c24891095a1b107",
+            "path": "employee_id",
+            "recorded_entity_id": "employee",
+            "current_entity_id": "employee",
+            "role": "employee"
+          }
+        ],
+        "settlement_view": "current",
+        "collections": {
+          "events": {
+            "items": [
+              {
+                "id": "voucher:v_0f4253f89f249cafb7d065f968229a25fffd5d1d49bc56d7ca395edd375d00f5",
+                "event_type": "voucher",
+                "voucher_version_id": "v_0f4253f89f249cafb7d065f968229a25fffd5d1d49bc56d7ca395edd375d00f5",
+                "voucher_id": "v:january",
+                "voucher_number": 1,
+                "voucher_calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                "fact_id": "a53466ab7eec475f8c24891095a1b107",
+                "kind": "payroll",
+                "calculation_period": "2026-01",
+                "posting_period": "2026-01",
+                "result_digest": "d2cf01bdbeba5bf1e50c548a637dcb3c42af4d4817a2cc2cec50cb283f2edbcc",
+                "role": "original",
+                "direction": 1,
+                "reverses_voucher_version_id": null,
+                "selection_source": "close_manifest",
+                "lines": [
+                  {
+                    "line_no": 1,
+                    "account": "560201",
+                    "debit": "1160000",
+                    "credit": "0",
+                    "cashflow": null
+                  },
+                  {
+                    "line_no": 2,
+                    "account": "221101",
+                    "debit": "0",
+                    "credit": "907400",
+                    "cashflow": null
+                  },
+                  {
+                    "line_no": 3,
+                    "account": "222103",
+                    "debit": "0",
+                    "credit": "12600",
+                    "cashflow": null
+                  },
+                  {
+                    "line_no": 4,
+                    "account": "224102",
+                    "debit": "0",
+                    "credit": "80000",
+                    "cashflow": null
+                  },
+                  {
+                    "line_no": 5,
+                    "account": "221102",
+                    "debit": "0",
+                    "credit": "160000",
+                    "cashflow": null
+                  }
+                ]
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "settlement_events": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-02",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          },
+          "source_history": {
+            "items": [
+              {
+                "id": "a53466ab7eec475f8c24891095a1b107",
+                "subject_id": "january",
+                "revision": 1,
+                "kind": "payroll",
+                "period": "2026-01",
+                "evidence": [
+                  "8bb80f62d4fbc777f90f5b62630efafb6ba6d947932cb85ec697b2be84a5de56"
+                ],
+                "recorded_at": "2026-10-01T05:02:55.764Z",
+                "trace_targets": [
+                  {
+                    "calculation_id": "c_d459f15bef0e5d5d607cdaa641c1156d64ff6b3a1dcbbdd0409a58a81fd2bb8b",
+                    "voucher_version_id": null
+                  }
+                ]
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "file_jobs": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null,
+              "collection_version": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          }
+        }
+      }
+    }
+  },
+  "employees_labor_sources": {
+    "command": "dashboard_employees",
+    "response": {
+      "schema_version": 7,
+      "snapshot_version": "deecc2c489c364829e13feac397d8890b4251043dba3772e88bba09ab5131606",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "payroll-company",
+        "database_id": "payroll-db",
+        "as_of": "2026-10-01",
+        "read_version": "f6be9c8f205525918a1b40b684a753ae4a94a437ac5a028b6cff3d55038532c1"
+      },
+      "data": {
+        "employees": {
+          "gross_salary_fen": "0",
+          "annual_bonus_fen": "0",
+          "employer_social_insurance_fen": "0",
+          "employer_housing_fund_fen": "0",
+          "employee_social_insurance_fen": "0",
+          "employee_housing_fund_fen": "0",
+          "individual_income_tax_fen": "0",
+          "net_salary_fen": "0",
+          "tax_reported_salary_fen": "0",
+          "personal_deduction_fen": "0",
+          "unestablished_count": 0,
+          "registered_count": 0,
+          "in_period_count": 0,
+          "unknown_period_count": 0,
+          "payroll_count": 0,
+          "without_payroll_count": 0,
+          "profile_missing_count": 0,
+          "contributions_only_count": 0,
+          "controlled_cost_fen": "0",
+          "settlement_adjustment_fen": "0",
+          "ledger_cost_fen": "0",
+          "detail_reconciled": true,
+          "breakdown_available": true,
+          "breakdown_reason": null,
+          "identity_note": "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+        },
+        "collections": {
+          "labor_sources": {
+            "items": [
+              {
+                "subject_id": "labor",
+                "settlement_view": "historical",
+                "movements_scope": "business_related_settlement_events",
+                "status": "established",
+                "obligations": [
+                  {
+                    "key": "labor_accrual:labor:net",
+                    "name": "net",
+                    "category": "payable",
+                    "account": "224104",
+                    "counterparty_id": "person",
+                    "creditor_id": "person",
+                    "source_business": {
+                      "subject_id": "labor",
+                      "kind": "labor_accrual"
+                    },
+                    "source_calculation_id": "c_14660bf6d01eebf3960b462d339bf73a1608ec09424e82c01c99575252b84ea4",
+                    "source_fact_id": "37cddad7c3594d9c8618b29da0144ff4",
+                    "source_amount_fen": "500000",
+                    "amount_fen": "500000",
+                    "paid_fen": "0",
+                    "other_settled_fen": "0",
+                    "period_paid_fen": "0",
+                    "period_other_settled_fen": "0",
+                    "remaining_fen": "500000",
+                    "settlement_status": "open",
+                    "source_event_count": 1,
+                    "source_events": []
+                  }
+                ],
+                "issues": [],
+                "cutoff_period": "2026-01",
+                "current_followups": {
+                  "status": "established",
+                  "issues": [],
+                  "current_cutoff_period": "2026-01",
+                  "cutoff_semantics": "current_published_relations_independent_of_as_of",
+                  "obligations": [
+                    {
+                      "key": "labor_accrual:labor:net",
+                      "name": "net",
+                      "category": "payable",
+                      "account": "224104",
+                      "counterparty_id": "person",
+                      "creditor_id": "person",
+                      "source_business": {
+                        "subject_id": "labor",
+                        "kind": "labor_accrual"
+                      },
+                      "source_calculation_id": "c_14660bf6d01eebf3960b462d339bf73a1608ec09424e82c01c99575252b84ea4",
+                      "source_fact_id": "37cddad7c3594d9c8618b29da0144ff4",
+                      "source_amount_fen": "500000",
+                      "paid_fen": "0",
+                      "other_settled_fen": "0",
+                      "period_paid_fen": "0",
+                      "period_other_settled_fen": "0",
+                      "remaining_fen": "500000",
+                      "settlement_status": "open",
+                      "source_event_count": 1,
+                      "source_events": []
+                    }
+                  ]
+                },
+                "source_id": "labor",
+                "calculation_id": "c_14660bf6d01eebf3960b462d339bf73a1608ec09424e82c01c99575252b84ea4",
+                "period": "2026-01",
+                "person_id": "person",
+                "name": "合成劳务人员",
+                "field_sources": {
+                  "name": {
+                    "source_type": "display_profile",
+                    "id": "0532ce517a60465e94527928988f10cf",
+                    "revision": 2,
+                    "field": "display_name",
+                    "source": "明确资料 1",
+                    "evidence_digest": null,
+                    "evidence": [],
+                    "basis": "current",
+                    "recorded_at": "2026-10-01T05:09:46.712Z"
+                  }
+                },
+                "capitalized": false,
+                "project_id": null,
+                "gross_fen": "500000",
+                "net_fen": "500000",
+                "booked_tax_fen": "0",
+                "theoretical_tax_fen": null,
+                "withholding_method": "not_withheld_not_filed",
+                "withholding_label": "尚未记录扣缴及申报"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        },
+        "workforce_cost": {
+          "has_activity": true,
+          "total_fen": "500000",
+          "capitalized_labor_fen": "0",
+          "employee": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "controlled_total_fen": "0",
+            "settlement_adjustment_fen": "0",
+            "prior_period_settlement_adjustment_fen": "0",
+            "batch_count": 0,
+            "periods": [],
+            "annual_bonus_fen": "0",
+            "gross_salary_fen": "0",
+            "employer_social_insurance_fen": "0",
+            "employer_housing_fund_fen": "0",
+            "employee_social_insurance_fen": "0",
+            "employee_housing_fund_fen": "0",
+            "personal_withholding_fen": "0"
+          },
+          "personal_labor": {
+            "has_activity": true,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "500000",
+            "gross_remuneration_fen": "500000",
+            "booked_withholding_tax_fen": "0",
+            "unwithheld_tax_fen": null,
+            "theoretical_withholding_tax_fen": null,
+            "withholding_status": "not_withheld",
+            "withholding_note": "尚未记录扣缴及申报；未从理论税額推定实际完成。",
+            "settlement_modes": [
+              "not_withheld_not_filed"
+            ],
+            "batch_count": 1,
+            "periods": [
+              {
+                "remuneration_period": "2026-01",
+                "total_fen": "500000",
+                "has_reversal": false,
+                "has_amendment": false,
+                "correction_ids": [],
+                "gross_remuneration_fen": "500000",
+                "theoretical_withholding_tax_fen": null
+              }
+            ]
+          }
+        },
+        "period_preparation": {
+          "company_id": "payroll-company",
+          "database_id": "payroll-db",
+          "period": "2026-01",
+          "as_of": "2026-10-01",
+          "as_of_semantics": "current_knowledge",
+          "closure": {
+            "state": "open"
+          },
+          "read_semantics": {
+            "knowledge": "current_knowledge",
+            "frozen_readiness": "exact_period_manifest_only",
+            "current_followups": "never_changes_frozen_readiness"
+          },
+          "projection": "dashboard_period_preparation",
+          "frozen_readiness": null,
+          "readiness": {
+            "period": "2026-01",
+            "order_failure": null,
+            "issues": [
+              {
+                "field": "materials.transactions",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.payroll",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.bank",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.tax",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.assets",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.financing",
+                "message": "需要资料覆盖或无业务确认"
+              }
+            ]
+          },
+          "current_followups": {
+            "knowledge": "current_knowledge",
+            "affects_frozen_readiness": false,
+            "materials": {
+              "status": "needs_information",
+              "issues": [
+                {
+                  "field": "materials.transactions",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.payroll",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.bank",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.tax",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.assets",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.financing",
+                  "message": "需要资料覆盖或无业务确认"
+                }
+              ],
+              "inventory_count": 0,
+              "coverage_digest": "823bef9bd498e32c2cddf44e486e6c347973545f50b150819cf3ed8338f49c85"
+            },
+            "accounting": {
+              "status": "ready",
+              "issues": [],
+              "pending_subject_id": null,
+              "unpublished_count": 3
+            },
+            "close_requirements": {
+              "status": "ready",
+              "issues": []
+            },
+            "settlements": {
+              "status": "established",
+              "cutoff_period": "2026-01",
+              "current_cutoff_period": "2026-01",
+              "issues": [],
+              "obligation_count": 1,
+              "followup_count": 1,
+              "complete": true,
+              "unestablished_state_selection_count": 0,
+              "movement_count": 0,
+              "source_amount_fen": "500000",
+              "paid_fen": "0",
+              "other_settled_fen": "0",
+              "remaining_fen": "500000"
+            },
+            "external": {
+              "status": "unestablished",
+              "obligation_count": 0,
+              "actual_completion_status_counts": {},
+              "basis_review_status_counts": {},
+              "basis_issue_count": 0,
+              "scope_period": "2026-01",
+              "scope_semantics": "obligation_interval_includes_selected_period",
+              "fact_issues": [
+                {
+                  "field": "materials.transactions",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.payroll",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.bank",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.tax",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.assets",
+                  "message": "需要资料覆盖或无业务确认"
+                },
+                {
+                  "field": "materials.financing",
+                  "message": "需要资料覆盖或无业务确认"
+                }
+              ]
+            },
+            "file_jobs": {
+              "total_count": 0,
+              "status_counts": {},
+              "issue_count": 0
+            },
+            "tax_import_mapping": {
+              "status": "pending_publication",
+              "blocking_scope": "tax_import_file",
+              "mapping_fact_ids": [],
+              "calculation_ids": [],
+              "issues": []
+            }
+          }
+        }
+      }
+    }
   }
 }

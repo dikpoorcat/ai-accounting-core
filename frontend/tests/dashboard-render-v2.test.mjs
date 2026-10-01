@@ -90,3 +90,44 @@ test("rendered detail pages consume collection items and keep explicit unknown m
     assert.match(html, /暂无法确定|¥/);
   }
 }));
+
+test("employee dates render with their confirmed precision", async () => withServer(async server => {
+  globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
+  const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
+  await useDashboardContext().load(true);
+  const { default: component } = await server.ssrLoadModule("/src/views/EmployeesView.vue");
+  for (const name of ["employees_month_dates", "employees_mixed_dates"]) {
+    const response = samples[name].response;
+    globalThis.stage7RenderResponses = { ...responses, employees: response };
+    const router = await routerFor("/employees");
+    const app = createSSRApp(component); app.use(router);
+    const html = await renderToString(app);
+    const employee = response.data.collections.employees.items.find(item => item.selection_status === "established");
+    assert(employee);
+    for (const key of ["employment_start_date", "employment_end_date", "tax_withholding_start_date"]) {
+      const date = employee[key];
+      if (date === null) continue;
+      assert(html.includes(date.length === 7 ? `${date}（按月确认）` : date), `${name}.${key}`);
+      if (date.length === 10) assert(!html.includes(`${date}（按月确认）`), `${name}.${key}`);
+    }
+  }
+}));
+
+test("personal labor sources render the projected person name", async () => withServer(async server => {
+  const response = samples.employees_labor_sources.response;
+  globalThis.stage7RenderResponses = { ...responses, employees: response };
+  globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
+  const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
+  await useDashboardContext().load(true);
+  const router = await routerFor("/employees");
+  const { default: component } = await server.ssrLoadModule("/src/views/EmployeesView.vue");
+  const app = createSSRApp(component); app.use(router);
+  const html = await renderToString(app);
+  assert.match(html, /个人劳务/);
+  const sources = response.data.collections.labor_sources.items;
+  assert(sources.length);
+  for (const source of sources) {
+    assert.equal("party" in source, false);
+    assert(html.includes(source.name), source.person_id);
+  }
+}));

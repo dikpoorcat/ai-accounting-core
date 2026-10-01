@@ -26,6 +26,7 @@ from ai_accounting.kernel.domains.labor_assets import LaborProjectCost
 from ai_accounting.kernel.domains.opening import OpeningPayrollPayable
 from ai_accounting.kernel.domains.payroll import LaborAccrual
 from ai_accounting.kernel.domains.transactions import Allocation
+from ai_accounting.kernel.response_contracts import http_response, validate_response
 
 company, labor_book, asset_book = _company, _labor_book, _asset_book
 opening_book = _opening_book
@@ -481,10 +482,16 @@ def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_p
     company.publish("labor")
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-01")
+    validate_response("dashboard_employees", response)
     labor = response["data"]["workforce_cost"]["personal_labor"]
-    labor_items = dashboard.employees("2026-01", section="labor_sources")["data"]["collections"][
-        "labor_sources"
-    ]["items"]
+    source_response = dashboard.employees("2026-01", section="labor_sources")
+    wire = http_response("dashboard_employees", source_response)
+    labor_items = source_response["data"]["collections"]["labor_sources"]["items"]
+    assert labor_items[0]["name"] == "未提供姓名或名称"
+    assert (
+        wire["data"]["collections"]["labor_sources"]["items"][0]["name"]
+        == labor_items[0]["name"]
+    )
     assert labor["withholding_status"] == "not_withheld"
     assert labor_items[0]["withholding_method"] == "not_withheld_not_filed"
     assert labor_items[0]["theoretical_tax_fen"] is None

@@ -56,6 +56,95 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     ]
 
 
+def _personnel_date_value(response, sample):
+    if sample == "business_month_dates":
+        return response["data"]["display_profiles"]["business"]["values"]
+    return response["data"]["collections"]["employees"]["items"][0]
+
+
+@pytest.mark.parametrize("sample,field", [
+    ("employees_month_dates", "employment_start_date"),
+    ("employees_month_dates", "employment_end_date"),
+    ("employees_month_dates", "tax_withholding_start_date"),
+    ("business_month_dates", "employment_start"),
+    ("business_month_dates", "employment_end"),
+])
+@pytest.mark.parametrize(
+    "date_value", ["2026-03", "2026-03-20", None, "2026-13", "2026-00", 202603, True]
+)
+def test_personnel_date_contract_preserves_supported_precision(samples, sample, field, date_value):
+    command = samples[sample]["command"]
+    response = copy.deepcopy(samples[sample]["response"])
+    _personnel_date_value(response, sample)[field] = date_value
+    if date_value in ("2026-03", "2026-03-20", None):
+        native = validate_response(command, response)
+        assert _personnel_date_value(native, sample)[field] == date_value
+        assert _personnel_date_value(http_response(command, response), sample)[field] == date_value
+    else:
+        for validate in (validate_response, http_response):
+            with pytest.raises(KernelError) as failure:
+                validate(command, response)
+            assert failure.value.code == "response_contract_mismatch"
+
+
+def test_live_personnel_dates_keep_frozen_and_supplemental_precision(samples):
+    monthly = _personnel_date_value(
+        samples["employees_month_dates"]["response"], "employees_month_dates"
+    )
+    mixed = _personnel_date_value(
+        samples["employees_mixed_dates"]["response"], "employees_mixed_dates"
+    )
+    assert monthly["employment_start_date"] == "2025-12"
+    assert monthly["tax_withholding_start_date"] == "2026-01"
+    assert monthly["employment_end_date"] is None
+    assert mixed["employment_start_date"] == "2025-12"
+    assert mixed["employment_end_date"] == "2026-04-20"
+    assert mixed["field_sources"]["employment_start_date"]["basis"] == "frozen"
+    assert mixed["field_sources"]["employment_end_date"]["basis"] == "current_supplement"
+    conflict = _personnel_date_value(
+        samples["employees_date_conflict"]["response"], "employees_date_conflict"
+    )
+    assert conflict["in_period"] is None
+    assert conflict["field_conflicts"] == [{
+        "code": "employment_interval_conflict",
+        "fields": ["employment_start", "employment_end"],
+    }]
+
+
+@pytest.mark.parametrize("conflict", [
+    {"code": "unknown", "fields": ["employment_start", "employment_end"]},
+    {"code": "employment_interval_conflict", "fields": ["private-field"]},
+    {"fields": ["employment_start", "employment_end"]},
+    {"code": "employment_interval_conflict"},
+    {"field": "employment_start", "values": [], "sources": []},
+])
+def test_employee_interval_conflict_rejects_unsupported_shapes(samples, conflict):
+    response = copy.deepcopy(samples["employees_date_conflict"]["response"])
+    _personnel_date_value(response, "employees_date_conflict")["field_conflicts"] = [conflict]
+    for validate in (validate_response, http_response):
+        with pytest.raises(KernelError) as failure:
+            validate("dashboard_employees", response)
+        assert failure.value.code == "response_contract_mismatch"
+
+
+def test_labor_source_uses_named_person_without_duplicate_party(samples):
+    response = samples["employees_labor_sources"]["response"]
+    item = response["data"]["collections"]["labor_sources"]["items"][0]
+    assert item["name"] == "合成劳务人员"
+    assert "party" not in item
+    assert item["field_sources"]["name"]["field"] == "display_name"
+    wire = http_response("dashboard_employees", response)
+    encoded = wire["data"]["collections"]["labor_sources"]["items"][0]
+    assert encoded["name"] == item["name"] and encoded["gross_fen"] == str(item["gross_fen"])
+    for value in (None, 123):
+        malformed = copy.deepcopy(response)
+        malformed["data"]["collections"]["labor_sources"]["items"][0]["name"] = value
+        for validate in (validate_response, http_response):
+            with pytest.raises(KernelError) as failure:
+                validate("dashboard_employees", malformed)
+            assert failure.value.code == "response_contract_mismatch"
+
+
 def test_workflow_preserves_actual_event_without_claiming_a_review(samples):
     before = samples["actual_tax_unreviewed"]["response"]
     after = samples["actual_tax_reviewed"]["response"]

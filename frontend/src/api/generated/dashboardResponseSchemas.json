@@ -14796,6 +14796,10 @@
           "employment_start_date": {
             "anyOf": [
               {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
                 "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
                 "type": "string"
               },
@@ -14808,6 +14812,10 @@
           "employment_end_date": {
             "anyOf": [
               {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
                 "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
                 "type": "string"
               },
@@ -14819,6 +14827,10 @@
           },
           "tax_withholding_start_date": {
             "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
               {
                 "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
                 "type": "string"
@@ -15497,29 +15509,26 @@
       "FieldConflict": {
         "additionalProperties": false,
         "properties": {
-          "field": {
-            "title": "Field",
+          "code": {
+            "const": "employment_interval_conflict",
+            "title": "Code",
             "type": "string"
           },
-          "values": {
+          "fields": {
             "items": {
+              "enum": [
+                "employment_start",
+                "employment_end"
+              ],
               "type": "string"
             },
-            "title": "Values",
-            "type": "array"
-          },
-          "sources": {
-            "items": {
-              "$ref": "#/$defs/SourceMetadata"
-            },
-            "title": "Sources",
+            "title": "Fields",
             "type": "array"
           }
         },
         "required": [
-          "field",
-          "values",
-          "sources"
+          "code",
+          "fields"
         ],
         "title": "FieldConflict",
         "type": "object"
@@ -15618,10 +15627,6 @@
             "title": "Name",
             "type": "string"
           },
-          "party": {
-            "title": "Party",
-            "type": "string"
-          },
           "field_sources": {
             "additionalProperties": {
               "anyOf": [
@@ -15708,7 +15713,6 @@
           "period",
           "person_id",
           "name",
-          "party",
           "field_sources",
           "capitalized",
           "project_id",
@@ -23449,6 +23453,10 @@
           "employment_start": {
             "anyOf": [
               {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
                 "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
                 "type": "string"
               },
@@ -23460,6 +23468,10 @@
           },
           "employment_end": {
             "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
               {
                 "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
                 "type": "string"

@@ -62,9 +62,8 @@ export namespace DashboardEmployeesContract {
   export type Evidence = string[];
   export type Basis = "frozen" | "current_supplement" | "current";
   export type RecordedAt1 = string | null;
-  export type Field1 = string;
-  export type Values = string[];
-  export type Sources = SourceMetadata[];
+  export type Code1 = "employment_interval_conflict";
+  export type Fields = ("employment_start" | "employment_end")[];
   export type FieldConflicts = FieldConflict[];
   export type RecordStatus = string;
   export type PeriodState = string;
@@ -181,9 +180,9 @@ export namespace DashboardEmployeesContract {
   export type SourceEvents = SettlementSourceEvent[];
   export type ReimbursementAcceptanceBasis = "company_confirmation_month";
   export type Obligations = SettlementObligation[];
-  export type Field2 = string;
+  export type Field1 = string;
   export type Message = string;
-  export type Code1 = string;
+  export type Code2 = string;
   export type Location = string | null;
   export type Semantics = string;
   export type Domain = string;
@@ -242,7 +241,7 @@ export namespace DashboardEmployeesContract {
   export type ReviewPeriod = string;
   export type OriginPeriods = string[];
   export type Responsibility = "direct" | "closed_followup" | "unassigned";
-  export type Code2 =
+  export type Code3 =
     | "same_exact_material_location"
     | "same_complete_signature_and_evidence"
     | "same_complete_actual_money"
@@ -315,7 +314,6 @@ export namespace DashboardEmployeesContract {
   export type Period3 = string;
   export type PersonId = string;
   export type Name3 = string;
-  export type Party = string;
   export type Capitalized = boolean;
   export type ProjectId = string | null;
   export type GrossFen = string;
@@ -397,7 +395,7 @@ export namespace DashboardEmployeesContract {
   export type Status6 = "unavailable";
   export type Reason3 = "no_exact_period_manifest";
   export type Period5 = string;
-  export type Code3 = "already_closed" | "earlier_period_open";
+  export type Code4 = "already_closed" | "earlier_period_open";
   export type Message1 = string;
   export type Period6 = string;
   export type Issues3 = ReadinessIssue[];
@@ -438,9 +436,9 @@ export namespace DashboardEmployeesContract {
   export type BlockingScope = "tax_import_file";
   export type MappingFactIds = string[];
   export type CalculationIds = string[];
-  export type Code4 = string;
+  export type Code5 = string;
   export type Category2 = "management_fact" | "capability" | "publication";
-  export type Field3 = string;
+  export type Field2 = string;
   export type Message2 = string;
   export type EmployeeId4 = string;
   export type ComponentCodes = string[];
@@ -583,9 +581,8 @@ export namespace DashboardEmployeesContract {
     recorded_at: RecordedAt1;
   }
   export interface FieldConflict {
-    field: Field1;
-    values: Values;
-    sources: Sources;
+    code: Code1;
+    fields: Fields;
   }
   export interface TaxDetail {
     calculation_id: CalculationId;
@@ -708,9 +705,9 @@ export namespace DashboardEmployeesContract {
    * explicit contract change; monetary values cannot fall through an open map.
    */
   export interface ReadinessIssue {
-    field: Field2;
+    field: Field1;
     message: Message;
-    code?: Code1;
+    code?: Code2;
     location?: Location;
     semantics?: Semantics;
     domain?: Domain;
@@ -774,7 +771,7 @@ export namespace DashboardEmployeesContract {
     trace_only: TraceOnly1;
   }
   export interface DuplicateSignal {
-    code: Code2;
+    code: Code3;
     matched_fields: MatchedFields;
     evidence?: Evidence1;
     source_locations?: SourceLocations;
@@ -843,7 +840,6 @@ export namespace DashboardEmployeesContract {
     period: Period3;
     person_id: PersonId;
     name: Name3;
-    party: Party;
     field_sources: FieldSources1;
     capitalized: Capitalized;
     project_id: ProjectId;
@@ -970,7 +966,7 @@ export namespace DashboardEmployeesContract {
     issues: Issues3;
   }
   export interface OrderFailure {
-    code: Code3;
+    code: Code4;
     message: Message1;
     details: OrderDetails;
   }
@@ -1051,9 +1047,9 @@ export namespace DashboardEmployeesContract {
     issues: Issues8;
   }
   export interface TaxImportMappingIssue {
-    code: Code4;
+    code: Code5;
     category: Category2;
-    field: Field3;
+    field: Field2;
     message: Message2;
     employee_id?: EmployeeId4;
     component_codes?: ComponentCodes;
