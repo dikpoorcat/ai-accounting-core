@@ -46,7 +46,7 @@ from .dashboard_reads import (
     scalar_facts,
     verified_scalar_facts,
 )
-from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
+from .domains.money import ACTUAL_PAYMENT_KINDS, FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 from .provenance import recorded_times
 from .query_reads import QueryReads
 from .query_semantics import classify_financial_position, report_party_splits
@@ -159,9 +159,12 @@ def _name(kind):
     return KIND_NAMES.get(kind, "其他业务")
 
 
-def _group(kind, reversal=False):
+def _group(kind, reversal=False, *, creditor_kind=None, settlement_groups=()):
     if reversal:
         return "correction"
+    if kind in ACTUAL_PAYMENT_KINDS:
+        groups = set(settlement_groups)
+        return groups.pop() if len(groups) == 1 else "other"
     if kind in PAYROLL_KINDS or kind.startswith("payroll_"):
         return "payroll"
     if kind in LABOR_KINDS or kind == "labor_project_cost":
@@ -172,15 +175,27 @@ def _group(kind, reversal=False):
         return "tax"
     if "funding" in kind or kind.startswith("loan_"):
         return "financing_owner"
-    if kind in {"service_sale", "sale_return", "advance_fulfillment"}:
+    if kind in {"service_sale", "sale_return", "advance_fulfillment", "bank_income"}:
         return "income_customer"
-    if kind in {"employee_advance", "reimbursement_acceptance", "reimbursed_deposit"}:
+    if kind in {"employee_advance", "reimbursement_acceptance"} or (
+        kind == "expense" and creditor_kind == "employee"
+    ):
         return "employee_reimbursement"
     if "expense" in kind or kind.startswith("project_"):
         return "expense_supplier"
-    if "payment" in kind or "transfer" in kind or "deposit" in kind or kind == "bank_income":
+    if "transfer" in kind or "deposit" in kind or kind == "overpayment":
         return "fund_movement"
     return "other"
+
+
+def _settlement_group(kind, *, creditor_kind=None, obligation_name=None):
+    # Acceptance records describe an asset/deposit; paying their personal
+    # creditor is reimbursement. A deposit refund retains its deposit meaning.
+    if kind in {"reimbursed_asset", "reimbursed_asset_batch"} or (
+        kind == "reimbursed_deposit" and obligation_name == "reimbursement"
+    ):
+        return "employee_reimbursement"
+    return _group(kind or "", creditor_kind=creditor_kind)
 
 
 def _page(rows, after, limit, *, key="id"):
@@ -1110,6 +1125,80 @@ class _Snapshot:
     def business_amount(calc):
         return business_display_amount(calc)
 
+    @cached_property
+    def activity_classification(self):
+        """Classify the complete month without hydrating off-page business graphs.
+
+        Use the journal's selected basis and the payment's exact adopted source
+        calculations, including frozen and reversed versions. Verify result JSON
+        before retaining narrow fields; off-page facts, evidence and ancestry
+        remain unhydrated.
+        """
+        query, parameters = self.month_journal.sql()
+        payment_kinds = canonical(ACTUAL_PAYMENT_KINDS)
+        self.reads.verify_sql_outcomes(
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT DISTINCT basis_calculation_id FROM ({query}) WHERE basis_kind='expense' "
+                "OR (basis_kind IN (SELECT value FROM json_each(?)) AND reverses_id IS NULL)",
+                [*parameters, payment_kinds],
+            )
+        )
+        self.reads.verify_sql_outcomes(
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT DISTINCT source.id FROM ({query}) j "
+                "JOIN calculation c ON c.id=j.basis_calculation_id "
+                "JOIN json_each(CASE WHEN j.basis_kind IN "
+                "(SELECT value FROM json_each(?)) AND j.reverses_id IS NULL THEN "
+                "json_extract(c.outcome,'$.values.settlements') ELSE '[]' END) s "
+                "JOIN calculation source "
+                "ON source.id=json_extract(s.value,'$.source_calculation') "
+                "WHERE source.kind IN ('expense','reimbursed_deposit')",
+                [*parameters, payment_kinds],
+            )
+        )
+        records = {}
+        for row in self.connection.execute(
+            "SELECT j.id,j.basis_calculation_id,j.basis_kind kind,"
+            "j.reverses_id IS NOT NULL reversal,"
+            "CASE WHEN j.basis_kind='expense' THEN "
+            "json_extract(c.outcome,'$.values.creditor_kind') END creditor_kind,"
+            "source.kind source_kind,CASE WHEN source.kind='expense' THEN "
+            "json_extract(source.outcome,'$.values.creditor_kind') END source_creditor_kind,"
+            "json_extract(o.value,'$.name') obligation_name "
+            f"FROM ({query}) j JOIN calculation c ON c.id=j.basis_calculation_id "
+            "LEFT JOIN json_each(CASE WHEN j.basis_kind IN "
+            "(SELECT value FROM json_each(?)) AND j.reverses_id IS NULL THEN "
+            "json_extract(c.outcome,'$.values.settlements') ELSE '[]' END) s "
+            "LEFT JOIN calculation source "
+            "ON source.id=json_extract(s.value,'$.source_calculation') "
+            "LEFT JOIN json_each(CASE WHEN source.kind='reimbursed_deposit' THEN "
+            "json_extract(source.outcome,'$.values.obligations') ELSE '[]' END) o "
+            "ON json_extract(o.value,'$.key')=json_extract(s.value,'$.obligation')",
+            [*parameters, payment_kinds],
+        ):
+            record = records.setdefault(row["id"], {**dict(row), "settlement_groups": set()})
+            if row["kind"] in ACTUAL_PAYMENT_KINDS and not row["reversal"]:
+                record["settlement_groups"].add(
+                    _settlement_group(
+                        row["source_kind"],
+                        creditor_kind=row["source_creditor_kind"],
+                        obligation_name=row["obligation_name"],
+                    )
+                )
+        by_basis, counts = {}, defaultdict(int)
+        for row in records.values():
+            group = _group(
+                row["kind"],
+                row["reversal"],
+                creditor_kind=row["creditor_kind"],
+                settlement_groups=row["settlement_groups"],
+            )
+            by_basis[row["basis_calculation_id"], bool(row["reversal"])] = group
+            counts[group, row["kind"]] += 1
+        return by_basis, counts
+
     def voucher(self, row):
         calc = row["basis"]
         fact = calc["fact"]
@@ -1241,7 +1330,7 @@ class _Snapshot:
             "id": fact["subject_id"],
             "key": fact["subject_id"],
             "kind": kind,
-            "group": _group(kind),
+            "group": self.activity_classification[0][calc["id"], row["sign"] < 0],
             "label": _name(kind),
             "description": note,
             "amount_fen": row["sign"] * amount if amount is not None else None,
@@ -1733,27 +1822,23 @@ class Dashboard:
                 ),
             }
             groups = []
-            kind_counts = snap.month_journal.kind_counts()
+            _, activity_counts = snap.activity_classification
             for key, label in GROUPS.items():
-                all_rows = [
-                    row for row in kind_counts if _group(row["kind"], row["reversal"]) == key
+                type_counts = [
+                    {"label": _name(kind), "count": count}
+                    for (group, kind), count in sorted(activity_counts.items())
+                    if group == key
                 ]
-                if not all_rows:
+                if not type_counts:
                     continue
-                selected = [
-                    v
-                    for row, v in zip(rows, vouchers, strict=True)
-                    if _group(row["basis"]["kind"], row["sign"] < 0) == key
-                ]
+                selected = [v for v in vouchers if v["components"][0]["group"] == key]
                 groups.append(
                     {
                         "key": key,
                         "label": label,
-                        "event_count": sum(row["count"] for row in all_rows),
+                        "event_count": sum(row["count"] for row in type_counts),
                         "loaded_count": len(selected),
-                        "type_counts": [
-                            {"label": _name(row["kind"]), "count": row["count"]} for row in all_rows
-                        ],
+                        "type_counts": type_counts,
                         "rows": [
                             {
                                 "date": v["date"],
