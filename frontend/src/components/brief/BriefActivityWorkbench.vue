@@ -4,7 +4,6 @@ import { useRoute } from "vue-router";
 
 import type { BriefActivityGroup, BriefActivityRow, BriefAssetReference, BriefVoucher, BriefVoucherLine } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
-import BusinessDetails from "./BusinessDetails.vue";
 
 const props = defineProps<{
   groups: BriefActivityGroup[];
@@ -450,8 +449,6 @@ watch(() => props.focusedVoucher, () => {
                 </RouterLink>
               </div>
             </div>
-            <BusinessDetails plain :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
-
             <div class="table-wrap">
               <table>
                 <colgroup>
@@ -479,7 +476,7 @@ watch(() => props.focusedVoucher, () => {
                       <template v-if="line.parties?.length > 1">
                         <span v-for="(party, partyIndex) in line.parties" :key="`${party.id}-${partyIndex}`" class="line-party">{{ party.name }} · {{ formatFen(party.amount_fen) }}</span>
                       </template>
-                      <span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '见凭证业务说明' : '—') }}</span>
+                      <span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '往来对象尚待核对' : '—') }}</span>
                       <small v-if="line.source_label">业务来源：{{ line.source_label }}</small>
                     </td>
                     <td class="number" data-label="借方">{{ fen(line.debit_fen) ? formatFen(line.debit_fen) : "—" }}</td>
