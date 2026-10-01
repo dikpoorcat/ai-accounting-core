@@ -299,14 +299,33 @@ function formatDate(value: string | null) {
                   class="component-tooltip"
                   role="tooltip"
                 >
-                  <strong>银行存款</strong>
-                  <span>
-                    <template v-if="hasBankCalculation()">
-                      期初 {{ formatFen(position.bank_calculation?.opening_fen) }} + 本月流入
-                      {{ formatFen(position.bank_calculation?.inflow_fen) }} − 本月流出
-                      {{ formatFen(position.bank_calculation?.outflow_fen) }} = 期末 {{ formatFen(position.bank_fen) }}
-                    </template>
-                    <template v-else>期初及本月收支构成暂不能完整建立，当前期末余额为 {{ formatFen(position.bank_fen) }}。</template>
+                  <strong class="balance-tooltip-title">银行存款</strong>
+                  <span v-if="hasBankCalculation()" class="component-calculation">
+                    <span class="equation-term">
+                      <span>期初余额</span>
+                      <strong>{{ formatFen(position.bank_calculation?.opening_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">+</span>
+                    <span class="equation-term asset-term">
+                      <span>本月流入</span>
+                      <strong>{{ formatFen(position.bank_calculation?.inflow_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">−</span>
+                    <span class="equation-term liability-term">
+                      <span>本月流出</span>
+                      <strong>{{ formatFen(position.bank_calculation?.outflow_fen) }}</strong>
+                    </span>
+                    <span class="calculation-total">
+                      <span class="equation-operator">=</span>
+                      <span class="equation-term asset-term">
+                        <span>期末余额</span>
+                        <strong>{{ formatFen(position.bank_fen) }}</strong>
+                      </span>
+                    </span>
+                  </span>
+                  <span v-else class="equation-unavailable">
+                    期初及本月收支构成暂不能完整建立，当前期末余额为
+                    <strong>{{ formatFen(position.bank_fen) }}</strong>。
                   </span>
                 </span>
                 <span
@@ -315,14 +334,26 @@ function formatDate(value: string | null) {
                   class="component-tooltip"
                   role="tooltip"
                 >
-                  <strong>固定资产净值</strong>
-                  <span>
-                    <template v-if="hasAssetBreakdown(position.fixed_asset_cost_fen, position.accumulated_depreciation_fen, position.fixed_asset_net_fen)">
-                      原值 {{ formatFen(position.fixed_asset_cost_fen) }} − 累计折旧
-                      {{ formatFen(position.accumulated_depreciation_fen) }} = 净值 {{ formatFen(position.fixed_asset_net_fen) }}
-                    </template>
-                    <template v-else>原值、累计折旧与净值暂不能完整建立。</template>
+                  <strong class="balance-tooltip-title">固定资产净值</strong>
+                  <span v-if="hasAssetBreakdown(position.fixed_asset_cost_fen, position.accumulated_depreciation_fen, position.fixed_asset_net_fen)" class="component-calculation">
+                    <span class="equation-term">
+                      <span>原值</span>
+                      <strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">−</span>
+                    <span class="equation-term liability-term">
+                      <span>累计折旧</span>
+                      <strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong>
+                    </span>
+                    <span class="calculation-total">
+                      <span class="equation-operator">=</span>
+                      <span class="equation-term asset-term">
+                        <span>净值</span>
+                        <strong>{{ formatFen(position.fixed_asset_net_fen) }}</strong>
+                      </span>
+                    </span>
                   </span>
+                  <span v-else class="equation-unavailable">原值、累计折旧与净值暂不能完整建立。</span>
                 </span>
                 <span
                   v-if="key === 'intangible_asset_net_fen'"
@@ -330,14 +361,26 @@ function formatDate(value: string | null) {
                   class="component-tooltip"
                   role="tooltip"
                 >
-                  <strong>无形资产净值</strong>
-                  <span>
-                    <template v-if="hasAssetBreakdown(position.intangible_asset_cost_fen, position.accumulated_amortization_fen, position.intangible_asset_net_fen)">
-                      原值 {{ formatFen(position.intangible_asset_cost_fen) }} − 累计摊销
-                      {{ formatFen(position.accumulated_amortization_fen) }} = 净值 {{ formatFen(position.intangible_asset_net_fen) }}
-                    </template>
-                    <template v-else>原值、累计摊销与净值暂不能完整建立。</template>
+                  <strong class="balance-tooltip-title">无形资产净值</strong>
+                  <span v-if="hasAssetBreakdown(position.intangible_asset_cost_fen, position.accumulated_amortization_fen, position.intangible_asset_net_fen)" class="component-calculation">
+                    <span class="equation-term">
+                      <span>原值</span>
+                      <strong>{{ formatFen(position.intangible_asset_cost_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">−</span>
+                    <span class="equation-term liability-term">
+                      <span>累计摊销</span>
+                      <strong>{{ formatFen(position.accumulated_amortization_fen) }}</strong>
+                    </span>
+                    <span class="calculation-total">
+                      <span class="equation-operator">=</span>
+                      <span class="equation-term asset-term">
+                        <span>净值</span>
+                        <strong>{{ formatFen(position.intangible_asset_net_fen) }}</strong>
+                      </span>
+                    </span>
                   </span>
+                  <span v-else class="equation-unavailable">原值、累计摊销与净值暂不能完整建立。</span>
                 </span>
                 <span
                   v-if="key === 'other_assets_fen'"
@@ -345,14 +388,31 @@ function formatDate(value: string | null) {
                   class="component-tooltip"
                   role="tooltip"
                 >
-                  <strong>其他资产</strong>
-                  <span>
-                    <template v-if="hasOtherAssetsCalculation()">
-                      库存现金 {{ formatFen(funds.cash_fen) }} + 支付平台 {{ formatFen(funds.payment_platform_fen) }}
-                      + 其余资产 {{ formatFen(remainingOtherAssets()) }} = {{ formatFen(position.other_assets_fen) }}
-                    </template>
-                    <template v-else>库存现金、支付平台与其余资产的构成暂不能完整建立。</template>
+                  <strong class="balance-tooltip-title">其他资产</strong>
+                  <span v-if="hasOtherAssetsCalculation()" class="component-calculation">
+                    <span class="equation-term asset-term">
+                      <span>库存现金</span>
+                      <strong>{{ formatFen(funds.cash_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">+</span>
+                    <span class="equation-term asset-term">
+                      <span>支付平台</span>
+                      <strong>{{ formatFen(funds.payment_platform_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">+</span>
+                    <span class="equation-term asset-term">
+                      <span>其余资产</span>
+                      <strong>{{ formatFen(remainingOtherAssets()) }}</strong>
+                    </span>
+                    <span class="calculation-total">
+                      <span class="equation-operator">=</span>
+                      <span class="equation-term asset-term">
+                        <span>其他资产</span>
+                        <strong>{{ formatFen(position.other_assets_fen) }}</strong>
+                      </span>
+                    </span>
                   </span>
+                  <span v-else class="equation-unavailable">库存现金、支付平台与其余资产的构成暂不能完整建立。</span>
                 </span>
               </span>
             </div>
@@ -366,14 +426,26 @@ function formatDate(value: string | null) {
                   {{ formatFen(position.liabilities_fen) }}
                 </button>
                 <span id="liability-tooltip" class="component-tooltip" role="tooltip">
-                  <strong>负债</strong>
-                  <span>
-                    <template v-if="hasLiabilityCalculation()">
-                      流动负债 {{ formatFen(position.liability_calculation?.current_fen) }} + 非流动负债
-                      {{ formatFen(position.liability_calculation?.non_current_fen) }} = {{ formatFen(position.liabilities_fen) }}
-                    </template>
-                    <template v-else>流动负债与非流动负债的构成暂不能完整建立。</template>
+                  <strong class="balance-tooltip-title">负债</strong>
+                  <span v-if="hasLiabilityCalculation()" class="component-calculation">
+                    <span class="equation-term liability-term">
+                      <span>流动负债</span>
+                      <strong>{{ formatFen(position.liability_calculation?.current_fen) }}</strong>
+                    </span>
+                    <span class="equation-operator">+</span>
+                    <span class="equation-term liability-term">
+                      <span>非流动负债</span>
+                      <strong>{{ formatFen(position.liability_calculation?.non_current_fen) }}</strong>
+                    </span>
+                    <span class="calculation-total">
+                      <span class="equation-operator">=</span>
+                      <span class="equation-term liability-term">
+                        <span>负债合计</span>
+                        <strong>{{ formatFen(position.liabilities_fen) }}</strong>
+                      </span>
+                    </span>
                   </span>
+                  <span v-else class="equation-unavailable">流动负债与非流动负债的构成暂不能完整建立。</span>
                 </span>
               </span>
             </div>
@@ -818,17 +890,15 @@ h3 {
   right: 0;
   z-index: 28;
   display: grid;
-  width: max-content;
-  max-width: min(380px, calc(100vw - 64px));
-  gap: 3px;
-  padding: 8px 10px;
+  width: min(360px, calc(100vw - 64px));
+  gap: 12px;
+  padding: 16px;
   border: 1px solid color-mix(in srgb, var(--brief-green) 18%, var(--brief-line));
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--brief-surface);
   box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
   opacity: 0;
   color: var(--brief-text);
-  font-size: 11px;
   pointer-events: none;
   text-align: left;
   transform: translateY(-4px);
@@ -836,9 +906,37 @@ h3 {
   visibility: hidden;
 }
 
-.component-tooltip > span {
-  color: var(--brief-muted);
-  line-height: 1.5;
+.component-calculation,
+.calculation-total {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.component-calculation .equation-term {
+  grid-column: 2;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.component-calculation .equation-term > strong {
+  max-width: 145px;
+  text-align: right;
+}
+
+.component-calculation .equation-operator {
+  grid-column: 1;
+}
+
+.calculation-total {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--brief-line);
 }
 
 .component-value:hover .component-tooltip,
@@ -958,7 +1056,8 @@ h3 {
     gap: 7px;
   }
 
-  .component-row strong {
+  .component-row > strong,
+  .component-value > strong {
     grid-column: auto;
     font-size: 11px;
   }
