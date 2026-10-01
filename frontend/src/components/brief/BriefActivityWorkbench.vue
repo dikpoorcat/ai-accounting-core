@@ -1096,6 +1096,8 @@ h3 {
 }
 
 .voucher-card {
+  --voucher-reference-width: 132px;
+  --voucher-column-gap: 14px;
   overflow: hidden;
   background: var(--brief-surface);
 }
@@ -1112,9 +1114,9 @@ h3 {
   display: grid;
   width: 100%;
   min-height: 62px;
-  grid-template-columns: 132px minmax(180px, 1fr) auto 132px 16px;
+  grid-template-columns: var(--voucher-reference-width) minmax(180px, 1fr) auto 132px 16px;
   grid-template-areas: "reference copy state amount chevron";
-  gap: 14px;
+  gap: var(--voucher-column-gap);
   align-items: center;
   padding: 10px 16px;
   border: 0;
@@ -1287,6 +1289,7 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0 8px;
   margin-top: 10px;
   padding: 4px 6px;
@@ -1436,6 +1439,12 @@ td:nth-child(2) > small {
 .activity-pagination :deep(.dashboard-pagination) {
   padding: 0;
   color: var(--brief-muted);
+}
+
+@media (min-width: 761px) {
+  .table-wrap {
+    margin-left: calc(var(--voucher-reference-width) + var(--voucher-column-gap) - 9px);
+  }
 }
 
 @media (min-width: 761px) and (max-width: 1199px) {
