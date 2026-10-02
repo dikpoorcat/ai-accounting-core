@@ -22,6 +22,7 @@ def _source(path):
         "frontend/package.json": "{}\n",
         "frontend/package-lock.json": "{}\n",
         "frontend/vite.config.ts": "// config\n",
+        "frontend/local-api-proxy.ts": "// local service discovery\n",
         "frontend/tsconfig.json": "{}\n",
         "pyproject.toml": "[project]\nname = 'synthetic'\n",
     }
@@ -49,6 +50,7 @@ def test_snapshot_records_equal_before_after_and_copied_bytes(tmp_path):
     assert "src/ai_accounting/__pycache__/example.pyc" not in saved["files"]
     assert "frontend/tests/browser-stage9-hot-refresh.cjs" in saved["files"]
     assert "frontend/package-lock.json" in saved["files"]
+    assert "frontend/local-api-proxy.ts" in saved["files"]
     with pytest.raises(ValueError, match="must not exist"):
         snapshot_stage9_source.snapshot_source(source, target, workspace=workspace)
 

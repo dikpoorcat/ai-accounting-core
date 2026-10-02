@@ -1,69 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 import packageMetadata from "./package.json";
+import { localApiProxy, readLocalServiceMetadata } from "./local-api-proxy";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
-
-interface LocalServiceMetadata {
-  port: number;
-  capability: string;
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function localServiceMetadata(): LocalServiceMetadata {
-  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-released");
-  const statePath = resolve(dataRoot, ".service.json");
-  let metadata: unknown;
-  let privateState: unknown;
-  try {
-    // The kernel verifies the catalog and running service; service-info omits the private capability.
-    metadata = JSON.parse(execFileSync(
-      resolve(repositoryRoot, ".tmp-kernel-venv/Scripts/python.exe"),
-      ["-I", "-X", "utf8", "-m", "ai_accounting.kernel.cli", "--root", dataRoot, "service-info"],
-      { cwd: repositoryRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    ));
-    privateState = JSON.parse(readFileSync(statePath, "utf8"));
-  } catch {
-    throw new Error(
-      `本地会计服务未启动。请先在仓库根目录运行 .\\deploy\\windows\\start_accounting.ps1（资料目录：${dataRoot}）。`,
-    );
-  }
-  if (!record(metadata) || !record(privateState)
-      || typeof metadata.port !== "number"
-      || !Number.isInteger(metadata.port) || metadata.port < 1 || metadata.port > 65535
-      || !["protocol", "pid", "port", "catalog_id", "build_id"].every(
-        key => key in metadata && key in privateState && metadata[key] === privateState[key],
-      )
-      || typeof privateState.capability !== "string" || !privateState.capability) {
-    throw new Error(`本地会计服务状态无效：${statePath}`);
-  }
-  return { port: metadata.port, capability: privateState.capability };
-}
-
-function localApiProxy(metadata: LocalServiceMetadata): ProxyOptions {
-  const target = `http://127.0.0.1:${metadata.port}`;
-  return {
-    target,
-    changeOrigin: true,
-    configure(proxy) {
-      proxy.on("proxyReq", (proxyRequest, request) => {
-        if (request.headers.origin) proxyRequest.setHeader("Origin", target);
-        if (request.url?.split("?", 1)[0] === "/api/browser-ticket") {
-          proxyRequest.setHeader("X-Local-Capability", metadata.capability);
-        }
-      });
-    },
-  };
-}
 
 function gitDescribe(args: string[]) {
   return execFileSync("git", args, {
@@ -87,10 +32,13 @@ function dashboardVersion() {
   return withVersionPrefix(packageMetadata.version);
 }
 
-export default defineConfig(({ command, mode }) => {
-  const proxy = command === "serve" ? { "/api": localApiProxy(localServiceMetadata()) } : undefined;
+export default defineConfig(async ({ command, mode }) => {
+  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-released");
+  const api = command === "serve" ? await localApiProxy(
+    resolve(dataRoot, ".service.json"), () => readLocalServiceMetadata(repositoryRoot, dataRoot),
+  ) : undefined;
   return {
-    plugins: [vue()],
+    plugins: [vue(), api],
     define: {
       __APP_VERSION__: JSON.stringify(dashboardVersion()),
     },
@@ -98,7 +46,6 @@ export default defineConfig(({ command, mode }) => {
       host: "127.0.0.1",
       port: 5173,
       strictPort: true,
-      proxy,
     },
     build: {
       outDir: mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
