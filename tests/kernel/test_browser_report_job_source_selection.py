@@ -1,7 +1,9 @@
-"""Browser job titles select only adopted carry sources; delivery keeps its own proof."""
+"""Export status is a primary-key read; full verification authenticates saved sources."""
 
 import json
 from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import test_opening_continuation as opening_cases
@@ -10,6 +12,7 @@ from test_integrity_content import damage
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.maintenance import Maintenance
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.reports import Reports, run_report_jobs
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import canonical, digest
@@ -80,44 +83,47 @@ def _damage_digest(engine, fact_id, replacement):
         connection.commit()
 
 
-def test_panel_and_single_job_poll_keep_status_and_do_not_decode_unrelated_facts(
-    book, monkeypatch
-):
+def test_single_export_status_does_not_decode_plans_sources_or_read_files(book, monkeypatch):
     report = report_cases.scenario(book)
     report_cases.close_quarter(book)
     engine = book[0]
-    plan, job_id = _queue(report)
-    assert plan["report_fact_ids"]
+    _, job_id = _queue(report)
+    assert run_report_jobs(engine)[0]["status"] == "succeeded"
+    with engine.store.connection() as connection:
+        connection.execute("UPDATE jobs SET result='invalid stored result' WHERE id=?", (job_id,))
 
     def forbidden(*_args, **_kwargs):
-        raise AssertionError("non-carry report facts must not be decoded for a job title")
+        raise AssertionError("status must not decode or verify export data")
 
+    monkeypatch.setattr(engine, "jobs", forbidden)
     monkeypatch.setattr(Store, "fact", forbidden)
-    for status in ("pending", "running", "failed"):
+    monkeypatch.setattr(QueryReads, "snapshot", forbidden)
+    monkeypatch.setattr(report, "download_browser_report", forbidden)
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    monkeypatch.setattr(Path, "read_text", forbidden)
+    monkeypatch.setattr("ai_accounting.kernel.reports.json", SimpleNamespace(loads=forbidden))
+    for status in ("pending", "running", "failed", "succeeded"):
         with engine.store.connection() as connection:
-            connection.execute("UPDATE jobs SET status=? WHERE id=?", (status, job_id))
-        panel = report.browser_job_results(engine.jobs(limit=20))[0]
-        single = report.browser_job_results(engine.jobs(job_id=job_id, limit=1))[0]
-        assert panel["report_source"] == single["report_source"] == {
-            "year": 2026,
-            "quarter": 1,
-            "carry_forward_fact_id": None,
+            connection.execute(
+                "UPDATE jobs SET status=?,error_code='private diagnostic text' WHERE id=?",
+                (status, job_id),
+            )
+        item = report.browser_export_status(job_id)
+        assert item == {
+            "schema_version": 1,
+            "company_id": engine.store.company_id,
+            "database_id": engine.store.database_id,
+            "job_id": job_id,
+            "status": status,
+            "attempts": 1,
+            "error_code": "job_failed" if status == "failed" else None,
+            "error_message": (
+                "后台任务未完成，请检查任务设置或本机运行状态" if status == "failed" else None
+            ),
         }
-        assert panel["status"] == single["status"] == status
-        assert not panel["download_available"] and not single["download_available"]
-        assert "report_source" not in engine.jobs(job_id=job_id)[0]
-
-    with engine.store.connection() as connection:
-        connection.execute("UPDATE jobs SET status='pending' WHERE id=?", (job_id,))
-    assert run_report_jobs(engine)[0]["status"] == "succeeded"
-    item = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert item["report_source"]["carry_forward_fact_id"] is None
-    assert item["delivery_status"] == "verified" and item["download_available"]
-    name, content = report.download_browser_report(job_id)
-    assert item["download_file_name"] == name and content
 
 
-def test_browser_job_rejects_changed_plan_identity_shape_and_missing_sources(book):
+def test_full_verifier_rejects_changed_plan_identity_shape_and_missing_sources(book):
     report = report_cases.scenario(book)
     report_cases.close_quarter(book)
     engine = book[0]
@@ -131,9 +137,10 @@ def test_browser_job_rejects_changed_plan_identity_shape_and_missing_sources(boo
         if resign:
             _resign(changed["plan"])
         _replace_payload(engine, job_id, changed)
-        item = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-        assert item["delivery_status"] == "invalid"
-        assert not item["download_available"] and "report_source" not in item
+        assert report.browser_export_status(job_id)["status"] == "pending"
+        with pytest.raises(KernelError) as error:
+            Maintenance(engine).verify_integrity()
+        assert error.value.code == "content_integrity_failed"
         _replace_payload(engine, job_id, original)
 
     invalid(lambda plan: plan.update(company_id="other-company"))
@@ -142,46 +149,45 @@ def test_browser_job_rejects_changed_plan_identity_shape_and_missing_sources(boo
     invalid(lambda plan: plan["report_fact_ids"].append("missing-fact"))
     invalid(lambda plan: plan["report_fact_ids"].append(7))
     invalid(lambda plan: plan.update(digest="bad"), resign=False)
-    assert report.browser_job_results(engine.jobs(job_id=job_id))[0]["delivery_status"] == "pending"
+    invalid(lambda plan: plan.update(report_fact_ids="not-a-list"))
+    invalid(lambda plan: plan["report_fact_ids"].append(""))
+    for year in (True, 0, 10000, "2026"):
+        invalid(lambda plan, value=year: plan["period"].update(year=value))
+    for quarter in (True, 0, 5, "1"):
+        invalid(lambda plan, value=quarter: plan["period"].update(quarter=value))
+    invalid(lambda plan: plan.update(period=None))
+    assert report.browser_export_status(job_id)["status"] == "pending"
+    Maintenance(engine).verify_integrity()
 
 
 def test_selected_carry_is_authenticated_and_damage_is_rejected(opening_book):
-    opening_cases._midyear_report_supplement_scenario(opening_book)
+    chosen = opening_cases._midyear_report_supplement_scenario(opening_book)
     engine = opening_book[0]
     report = Reports(engine)
-    options = opening_cases.Dashboard(engine).quarterly_report(2026, 3)["carry_forward"]["options"]
-    chosen = options[0]["fact_id"]
-    _, job_id = _queue(report, year=2026, quarter=3, carry=chosen)
-    item = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert item["report_source"]["carry_forward_fact_id"] == chosen
+    plan, job_id = _queue(report, year=2026, quarter=3, carry=chosen)
+    assert chosen in plan["report_fact_ids"]
+    assert report.browser_export_status(job_id)["status"] == "pending"
+    Maintenance(engine).verify_integrity()
     with engine.store.connection(read_only=True) as connection:
         original = connection.execute(
             "SELECT digest FROM fact_revision WHERE id=?", (chosen,)
         ).fetchone()[0]
     _damage_digest(engine, chosen, b"\0" * len(original))
-    damaged = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert damaged["delivery_status"] == "invalid" and not damaged["download_available"]
+    with pytest.raises(KernelError) as error:
+        Maintenance(engine).verify_integrity()
+    assert error.value.code == "content_integrity_failed"
     _damage_digest(engine, chosen, original)
-    restored = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert restored["report_source"]["carry_forward_fact_id"] == chosen
+    Maintenance(engine).verify_integrity()
 
 
 @pytest.mark.parametrize("case", ["carry_kind", "carry_typed", "other_as_carry"])
-def test_browser_job_rejects_inconsistent_carry_kind_and_typed_heads(opening_book, case):
-    opening_cases._midyear_report_supplement_scenario(opening_book)
+def test_full_verifier_rejects_inconsistent_carry_kind_and_typed_heads(opening_book, case):
+    chosen = opening_cases._midyear_report_supplement_scenario(opening_book)
     engine = opening_book[0]
     report = Reports(engine)
-    options = opening_cases.Dashboard(engine).quarterly_report(2026, 3)[
-        "carry_forward"
-    ]["options"]
-    chosen = options[0]["fact_id"]
     plan, job_id = _queue(report, year=2026, quarter=3, carry=chosen)
-    assert (
-        report.browser_job_results(engine.jobs(job_id=job_id))[0]["report_source"][
-            "carry_forward_fact_id"
-        ]
-        == chosen
-    )
+    assert chosen in plan["report_fact_ids"]
+    Maintenance(engine).verify_integrity()
     if case == "carry_kind":
         damage(
             engine,
@@ -218,12 +224,13 @@ def test_browser_job_rejects_inconsistent_carry_kind_and_typed_heads(opening_boo
             "(SELECT subject_id FROM fact_revision WHERE id=?)",
             (other,),
         )
-    item = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert item["delivery_status"] == "invalid"
-    assert not item["download_available"] and "report_source" not in item
+    assert report.browser_export_status(job_id)["status"] == "pending"
+    with pytest.raises(KernelError) as error:
+        Maintenance(engine).verify_integrity()
+    assert error.value.code == "content_integrity_failed"
 
 
-def test_unrelated_source_damage_belongs_to_full_verifier_not_job_title(book):
+def test_source_damage_belongs_to_full_verifier_not_export_status(book):
     report = report_cases.scenario(book)
     report_cases.close_quarter(book)
     engine = book[0]
@@ -234,46 +241,21 @@ def test_unrelated_source_damage_belongs_to_full_verifier_not_job_title(book):
             "SELECT digest FROM fact_revision WHERE id=?", (non_carry_id,)
         ).fetchone()[0]
     _damage_digest(engine, non_carry_id, b"\0" * len(original))
-    item = report.browser_job_results(engine.jobs(job_id=job_id))[0]
-    assert item["delivery_status"] == "pending"
+    assert report.browser_export_status(job_id)["status"] == "pending"
     with pytest.raises(KernelError) as error:
         Maintenance(engine).verify_integrity()
     assert error.value.code == "content_integrity_failed"
     _damage_digest(engine, non_carry_id, original)
 
 
-def test_real_browser_projection_batches_multiple_plans_and_unrelated_sources(
-    book, monkeypatch
-):
+def test_single_export_status_work_is_constant_with_unrelated_jobs_and_history(book, monkeypatch):
     report = report_cases.scenario(book)
-    engine = book[0]
-    subjects = []
-    for number in range(24):
-        subject = f"adopted-cost-{number}"
-        book[1](
-            "expense",
-            subject,
-            {
-                "period": "2026-02",
-                "counterparty_id": "supplier",
-                "amount_fen": 101 + number,
-                "expense_class": "administration",
-                "creditor_kind": "supplier",
-            },
-        )
-        subjects.append(subject)
-    book[2](*subjects)
-    for number, subject in enumerate(subjects):
-        report_cases.classify(engine, book[1], book[2], subject=subject, amount=101 + number)
     report_cases.close_quarter(book)
-    plan, first = _queue(report, request_id="browser-job-one")
-    _, second = _queue(report, request_id="browser-job-two")
-    assert len(plan["report_fact_ids"]) >= 24
-    native = engine.jobs(limit=20)
-    assert {row["id"] for row in native} == {first, second}
+    engine = book[0]
+    _, job_id = _queue(report)
 
     def observed():
-        stats = {"connections": 0, "selects": 0, "vm": 0}
+        stats = {"connections": 0, "selects": [], "vm": 0}
         original = engine.store.connection
 
         @contextmanager
@@ -283,7 +265,7 @@ def test_real_browser_projection_batches_multiple_plans_and_unrelated_sources(
 
                 def sql(statement):
                     if statement.startswith("SELECT"):
-                        stats["selects"] += 1
+                        stats["selects"].append(statement)
 
                 def tick():
                     stats["vm"] += 1
@@ -299,12 +281,12 @@ def test_real_browser_projection_batches_multiple_plans_and_unrelated_sources(
 
         monkeypatch.setattr(engine.store, "connection", traced)
         try:
-            rows = report.browser_job_results(native)
+            item = report.browser_export_status(job_id)
         finally:
             monkeypatch.setattr(engine.store, "connection", original)
-        return rows, stats
+        return item, stats
 
-    # A later, unrelated open-period profile must not enter either frozen plan.
+    baseline, work = observed()
     for number in range(24):
         book[1](
             "report_profile",
@@ -317,14 +299,23 @@ def test_real_browser_projection_batches_multiple_plans_and_unrelated_sources(
                 "newly_established_zero_opening_confirmed": True,
             },
         )
-
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("adopted non-carry source body was decoded for a job title")
-
-    monkeypatch.setattr(Store, "fact", forbidden)
-    projected, work = observed()
-    assert len(projected) == 2
-    assert all(row["report_source"]["carry_forward_fact_id"] is None for row in projected)
+    with engine.store.connection() as connection:
+        connection.executemany(
+            "INSERT INTO jobs(id,kind,payload,status,result) "
+            "VALUES(?,'backup','{}','succeeded','{}')",
+            [(f"unrelated-{number}",) for number in range(400)],
+        )
+        detail = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT kind,status,attempts,error_code FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()[3]
+    padded, padded_work = observed()
+    assert baseline == padded
+    assert "SEARCH jobs USING INDEX" in detail and "id=?" in detail
+    assert work == padded_work
     assert work["connections"] == 1
-    assert work["selects"] <= 8, work
-    assert work["vm"] < 300 * len(plan["report_fact_ids"]), work
+    assert len(work["selects"]) == 1
+    assert work["selects"][0].startswith(
+        "SELECT kind,status,attempts,error_code FROM jobs WHERE id="
+    )
+    assert work["vm"] < 50, work

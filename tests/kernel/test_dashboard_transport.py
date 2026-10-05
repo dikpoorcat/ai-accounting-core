@@ -83,9 +83,6 @@ def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
         ("ledger", "period=2026-09&limit=501"),
         ("trace", ""),
         ("closed_report", "period=bad"),
-        ("jobs", "status=invalid"),
-        ("jobs", "limit=101"),
-        ("jobs", "job_id="),
     ):
         status, _, _, result = http.request(
             f"/api/local/{route}?company_id={company}&{query}", headers=headers
@@ -214,7 +211,7 @@ def test_dashboard_company_selection_query_contract_and_expiration(resident):
     service.security.logout(token)
     assert http.request("/api/dashboard/context", headers=headers)[0] == 401
     for path in (
-        f"/api/local/jobs?company_id={first}&job_id=test",
+        f"/api/local/report-export/test/status?company_id={first}",
         f"/api/local/trace?company_id={first}&calculation_id=test",
         "/api/local/companies",
     ):
@@ -326,15 +323,9 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
     assert http.request(base + f"?company_id={company}", headers=headers)[0] == 404
     assert http.request(base + f"?company_id={company}&path=C:/Windows", headers=headers)[0] == 400
     assert http.request(base + "?company_id=foreign", headers=headers)[0] == 400
-    status, _, _, jobs = http.request(
+    assert http.request(
         f"/api/local/jobs?company_id={company}&job_id=foreign", headers=headers
-    )
-    assert status == 200 and jobs == {
-        "schema_version": 2,
-        "company_id": company,
-        "database_id": service.engine(company).store.database_id,
-        "items": [],
-    }
+    )[0] == 404
 
 
 def _publish_expense(engine, subject, amount, revision=0):

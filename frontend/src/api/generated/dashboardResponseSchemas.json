@@ -13610,148 +13610,11 @@
     "title": "DashboardPeriodPreparationResponse",
     "type": "object"
   },
-  "browser_jobs": {
-    "$defs": {
-      "BrowserJob": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "running",
-              "succeeded",
-              "failed"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "attempts": {
-            "minimum": 0,
-            "title": "Attempts",
-            "type": "integer"
-          },
-          "error_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Code"
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "download_available": {
-            "title": "Download Available",
-            "type": "boolean"
-          },
-          "download_file_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Download File Name"
-          },
-          "delivery_status": {
-            "enum": [
-              "pending",
-              "unavailable",
-              "external",
-              "invalid",
-              "verified"
-            ],
-            "title": "Delivery Status",
-            "type": "string"
-          },
-          "delivery_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Delivery Message"
-          },
-          "report_source": {
-            "$ref": "#/$defs/BrowserReportSource"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "status",
-          "attempts",
-          "error_code",
-          "error_message",
-          "download_available",
-          "download_file_name",
-          "delivery_status",
-          "delivery_message"
-        ],
-        "title": "BrowserJob",
-        "type": "object"
-      },
-      "BrowserReportSource": {
-        "additionalProperties": false,
-        "properties": {
-          "year": {
-            "title": "Year",
-            "type": "integer"
-          },
-          "quarter": {
-            "title": "Quarter",
-            "type": "integer"
-          },
-          "carry_forward_fact_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Carry Forward Fact Id"
-          }
-        },
-        "required": [
-          "year",
-          "quarter",
-          "carry_forward_fact_id"
-        ],
-        "title": "BrowserReportSource",
-        "type": "object"
-      }
-    },
+  "report_export_status": {
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 2,
+        "const": 1,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -13763,21 +13626,59 @@
         "title": "Database Id",
         "type": "string"
       },
-      "items": {
-        "items": {
-          "$ref": "#/$defs/BrowserJob"
-        },
-        "title": "Items",
-        "type": "array"
+      "job_id": {
+        "title": "Job Id",
+        "type": "string"
+      },
+      "status": {
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "attempts": {
+        "minimum": 0,
+        "title": "Attempts",
+        "type": "integer"
+      },
+      "error_code": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Error Code"
+      },
+      "error_message": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Error Message"
       }
     },
     "required": [
       "schema_version",
       "company_id",
       "database_id",
-      "items"
+      "job_id",
+      "status",
+      "attempts",
+      "error_code",
+      "error_message"
     ],
-    "title": "BrowserJobsResponse",
+    "title": "ReportExportStatusResponse",
     "type": "object"
   },
   "browser_security_status": {

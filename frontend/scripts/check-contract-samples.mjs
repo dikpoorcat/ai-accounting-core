@@ -16,7 +16,7 @@ const validatorNames = {
   dashboard_quarterly_report: "validateDashboardQuarterlyReportResponse",
   dashboard_period_preparation: "validateDashboardPeriodPreparationResponse",
   dashboard_close_review: "validateDashboardCloseReviewResponse",
-  browser_jobs: "validateBrowserJobsResponse",
+  report_export_status: "validateReportExportStatusResponse",
   browser_security_status: "validateBrowserSecurityStatusResponse",
   report_export_receipt: "validateReportExportReceiptResponse",
 };

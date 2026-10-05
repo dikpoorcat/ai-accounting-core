@@ -11,6 +11,6 @@ export type { DashboardBusinessStatusResponse, DashboardBusinessStatusContract }
 export type { DashboardQuarterlyReportResponse, DashboardQuarterlyReportContract } from "./dashboardQuarterlyReport";
 export type { DashboardPeriodPreparationResponse, DashboardPeriodPreparationContract } from "./dashboardPeriodPreparation";
 export type { DashboardCloseReviewResponse, DashboardCloseReviewContract } from "./dashboardCloseReview";
-export type { BrowserJobsResponse, BrowserJobsContract } from "./browserJobs";
+export type { ReportExportStatusResponse, ReportExportStatusContract } from "./reportExportStatus";
 export type { BrowserSecurityStatusResponse, BrowserSecurityStatusContract } from "./browserSecurityStatus";
 export type { ReportExportReceiptResponse, ReportExportReceiptContract } from "./reportExportReceipt";

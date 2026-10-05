@@ -14,15 +14,6 @@ after(() => server.close());
 const api = await server.ssrLoadModule("/src/api/localKernel.ts");
 const money = await server.ssrLoadModule("/src/utils/money.ts");
 
-const job = (overrides = {}) => ({
-  id: "j1", kind: "report_export", status: "succeeded", attempts: 1,
-  error_code: null, error_message: null, download_available: true, download_file_name: "report.xlsx",
-  delivery_status: "verified", delivery_message: null, ...overrides,
-});
-const jobsResponse = (companyId, items) => ({
-  schema_version: 2, company_id: companyId, database_id: `db-${companyId}`, items,
-});
-
 test("reserve facts and mixed payroll use the current business labels", () => {
   assert.equal(api.localBusinessName("managed_reserve_expense"), "备用金支出");
   assert.equal(api.localBusinessName("managed_reserve_refund"), "备用金退款");
@@ -96,22 +87,13 @@ test("native security requests carry operation kind and use same-origin cookies"
   assert.equal((await api.localSecurity("request", { kind: "login" })).status, "waiting_for_user");
 });
 
-test("large cents remain exact while browser jobs expose no raw result payload", async () => {
-  const jobs = [job()];
-  globalThis.fetch = async (_url, options) => {
-    assert.equal(options.credentials, "same-origin");
-    return new Response(JSON.stringify(jobsResponse("company-1", jobs)));
-  };
-  assert.equal((await api.fetchLocalJobs("company-1")).at(0).id, "j1");
+test("large cents remain exact", () => {
   assert.equal(money.formatFen("9007199254740993"), "¥90,071,992,547,409.93");
-  const malformed = { ...jobsResponse("company-1", jobs), items: [{ ...jobs[0], result: { total_fen: "9007199254740993" } }] };
-  globalThis.fetch = async () => new Response(JSON.stringify(malformed));
-  await assert.rejects(api.fetchLocalJobs("company-1"), { code: "LOCAL_JOBS_RESPONSE" });
 });
 
 test("expired identity directs the owner to the native window", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ status: "rejected", code: "OWNER_SESSION_EXPIRED" }), { status: 401 });
-  await assert.rejects(api.fetchLocalJobs("company-1"), (error) => error.message.includes("本机安全窗口"));
+  await assert.rejects(api.localSecurity("session_status"), (error) => error.message.includes("本机安全窗口"));
 });
 
 test("unlaunched browser is directed to the local launcher", async () => {
@@ -120,54 +102,8 @@ test("unlaunched browser is directed to the local launcher", async () => {
 });
 
 
-test("recent jobs request is bounded, scoped to one company and read only", async () => {
-  const controller = new AbortController();
-  const jobs = [job({ kind: "portable_backup", status: "pending", attempts: 0,
-    download_available: false, download_file_name: null, delivery_status: "pending" })];
-  globalThis.fetch = async (url, options) => {
-    assert.equal(url, "/api/local/jobs?company_id=company-2&limit=20");
-    assert.equal(options.method, undefined);
-    assert.equal(options.body, undefined);
-    assert.equal(options.signal, controller.signal);
-    assert.equal(options.credentials, "same-origin");
-    return new Response(JSON.stringify(jobsResponse("company-2", jobs)));
-  };
-  assert.deepEqual(await api.fetchLocalJobs("company-2", controller.signal), jobs);
-});
-
-test("queued, running, failed and unknown jobs never imply completion", () => {
-  for (const status of ["pending", "running", "failed", "unrecognized"]) {
-    assert.notEqual(api.localJobStatus(status), "已完成");
-  }
-  assert.equal(api.localJobStatus("succeeded"), "已完成");
-  assert.equal(api.localJobName("payment_export"), "银行代发文件");
-  assert.equal(api.localJobName("unknown"), "后台任务");
-  assert.match(api.localJobMessage({ status: "failed", attempts: 3, last_error: "SECRET_RAW_ERROR" }), /自动重试次数已用尽/);
-  assert.doesNotMatch(api.localJobMessage({ status: "failed", attempts: 1, last_error: "SECRET_RAW_ERROR" }), /SECRET_RAW_ERROR/);
-  assert.match(api.localJobMessage({ status: "succeeded", delivery_status: "invalid", delivery_message: "报表文件校验失败，请重新生成" }), /校验失败/);
-  assert.doesNotMatch(api.localJobMessage({ status: "succeeded", delivery_status: "invalid" }), /文件已生成/);
-});
-
-
-test("an exact background job is queried even when outside the recent list", async () => {
-  globalThis.fetch = async (url) => {
-    assert.equal(url, "/api/local/jobs?company_id=company-2&job_id=older-job&limit=1");
-    return new Response(JSON.stringify(jobsResponse("company-2", [job({ id: "older-job", status: "running",
-      download_available: false, download_file_name: null, delivery_status: "pending" })])));
-  };
-  assert.equal((await api.fetchLocalJob("company-2", "older-job"))[0].id, "older-job");
-});
-
 test("missing money is explicitly unavailable rather than shown as zero", () => {
   assert.equal(money.formatFen(null), "暂无法确定");
   assert.equal(money.formatPositiveFen(undefined), "未提供");
   assert.equal(money.formatFen("0"), "¥0.00");
-});
-
-test("only successful report tasks explicitly approved by the service offer downloads", () => {
-  const job = { kind: "report_export", status: "succeeded", download_available: true };
-  assert.equal(api.localJobDownloadAvailable(job), true);
-  for (const change of [{ download_available: false }, { download_available: undefined }, { status: "running" }, { status: "failed" }, { kind: "portable_backup" }]) {
-    assert.equal(api.localJobDownloadAvailable({ ...job, ...change }), false);
-  }
 });

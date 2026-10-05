@@ -21,7 +21,7 @@ const contracts = [
   ["dashboard_assets", "DashboardAssets"], ["dashboard_business_status", "DashboardBusinessStatus"],
   ["dashboard_quarterly_report", "DashboardQuarterlyReport"],
   ["dashboard_period_preparation", "DashboardPeriodPreparation"],
-  ["dashboard_close_review", "DashboardCloseReview"], ["browser_jobs", "BrowserJobs"],
+  ["dashboard_close_review", "DashboardCloseReview"], ["report_export_status", "ReportExportStatus"],
   ["browser_security_status", "BrowserSecurityStatus"],
   ["report_export_receipt", "ReportExportReceipt"],
 ];

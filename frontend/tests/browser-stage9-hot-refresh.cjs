@@ -14,7 +14,7 @@ const responseSchemas = JSON.parse(fs.readFileSync(
 const responseVersions = Object.freeze(Object.fromEntries([
   "dashboard_context", "dashboard_brief", "dashboard_funds", "dashboard_employees",
   "dashboard_assets", "dashboard_business_status", "dashboard_quarterly_report",
-  "dashboard_period_preparation", "dashboard_close_review", "browser_jobs",
+  "dashboard_period_preparation", "dashboard_close_review", "report_export_status",
 ].map(name => {
   const schema = responseSchemas?.[name];
   const version = schema?.properties?.schema_version;
@@ -415,10 +415,11 @@ async function run(config) {
   }, {
     selectedCompany: company.id, selectedPeriod: company.period, selectedQuarter: quarter,
   });
-  const pageErrors = [], apiFailures = [], closeReviewRequests = [];
+  const pageErrors = [], apiFailures = [], closeReviewRequests = [], legacyJobsRequests = [];
   const allowedCloseReviewRequests = new Set();
   page.on("request", request => {
     if (new URL(request.url()).pathname === "/api/dashboard/close-review") closeReviewRequests.push(request.url());
+    if (new URL(request.url()).pathname === "/api/local/jobs") legacyJobsRequests.push("/api/local/jobs");
   });
   const allowedNavigationAborts = new Set();
   page.on("pageerror", error => pageErrors.push(sanitize(error.message)));
@@ -461,6 +462,7 @@ async function run(config) {
     }));
   }
   function assertNoBrowserFailures() {
+    assert.deepEqual(legacyJobsRequests, [], "default page requested the retired task list");
     assert.deepEqual(closeReviewRequests.filter(url => !allowedCloseReviewRequests.has(url)), [], "default page requested close-review");
     assert.deepEqual(pageErrors, [], "browser error");
     assert.deepEqual(apiFailures.filter(failure => !allowedNavigationAborts.has(failure)), [], "API error");
@@ -526,7 +528,12 @@ async function run(config) {
     if (module.key === "brief") {
       await verifyBriefVisible(data);
       assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按业务", "brief: default view changed");
-      assert.equal(await page.locator("#activity .event-row").count(), data.collections.activity.items.length, "brief: default business rows incomplete");
+      const selectedLabel = (await page.locator("#activity nav[aria-label='业务分类'] button[aria-pressed=true] strong").textContent())?.trim();
+      const selectedGroup = selectedLabel === "全部" ? null
+        : data.activity_groups.find(group => group.label === selectedLabel);
+      assert(selectedLabel === "全部" || selectedGroup, "brief: selected business group missing");
+      const expectedItems = data.collections.activity.items.filter(item => !selectedGroup || item.group === selectedGroup.key);
+      assert.equal(await page.locator("#activity .event-row").count(), expectedItems.length, "brief: selected business rows incomplete");
       assert.equal(await page.locator("#owner-tasks > article:not(.owner-review-request)").count(), data.owner_tasks.length, "brief: owner tasks incomplete");
     } else if (module.key === "funds") {
       assert.equal(await page.locator(".account-grid .account-card").count(), data.collections.accounts.items.length, "funds: default accounts incomplete");
@@ -786,6 +793,10 @@ async function run(config) {
     const firstNavigation = await navigationRendered(modules[0]);
     for (const reply of await Promise.all(firstReplies)) await verifyReply(reply, modules[0]);
     assertNoBrowserFailures();
+    if (config.no_jobs_panel) {
+      assert.equal(await page.getByRole("button", { name: "文件与处理进度", exact: true }).count(), 0);
+      assert.equal(await page.locator(".jobs-panel").count(), 0);
+    }
     const firstLoad = firstNavigation.elapsed_ms;
     await page.getByLabel("切换公司", { exact: true }).waitFor();
     const navigationBase = {

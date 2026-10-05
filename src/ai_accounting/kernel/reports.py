@@ -1962,161 +1962,27 @@ class Reports:
         )
 
 
-    def browser_job_results(self, jobs):
-        """Expose a download only after the same checks used for file delivery."""
-        jobs = list(jobs)
-        report_jobs = {job["id"] for job in jobs if job["kind"] == "report_export"}
-        plans, sources, invalid = {}, {}, set()
-        if report_jobs:
-            from .query_reads import QueryReads
+    def browser_export_status(self, job_id: str):
+        """Read one export task's state without inspecting its plan or artifact."""
+        from .diagnostics import job_error_message, public_job_code
 
-            # One authenticated read view for every title in this response. File
-            # delivery is checked separately against its own current artifact.
-            with QueryReads.snapshot(self.engine) as reads:
-                connection = reads.connection
-                rows = {
-                    row["id"]: row["payload"]
-                    for row in connection.execute(
-                        "SELECT id,payload FROM jobs WHERE id IN "
-                        "(SELECT value FROM json_each(?))",
-                        (canonical(sorted(report_jobs)),),
-                    )
-                }
-                requested_ids = set()
-                for job_id in report_jobs:
-                    try:
-                        payload = json.loads(rows[job_id])
-                        plan = payload["plan"]
-                        identifiers = plan["report_fact_ids"]
-                        period = plan["period"]
-                        if (
-                            not isinstance(identifiers, list)
-                            or any(type(ident) is not str or not ident for ident in identifiers)
-                            or len(set(identifiers)) != len(identifiers)
-                            or not isinstance(period, dict)
-                            or type(period.get("year")) is not int
-                            or not 1 <= period["year"] <= 9999
-                            or type(period.get("quarter")) is not int
-                            or period["quarter"] not in range(1, 5)
-                            or plan.get("company_id") != self.store.company_id
-                            or plan.get("database_id") != self.store.database_id
-                            or plan.get("digest")
-                            != digest(
-                                {
-                                    key: value
-                                    for key, value in plan.items()
-                                    if key not in {"digest", "epochs"}
-                                }
-                            ).hex()
-                        ):
-                            raise ValueError("report plan identity or source set differs")
-                        planned = set(identifiers)
-                        plans[job_id] = payload, plan, planned
-                        requested_ids.update(planned)
-                    except (ValueError, TypeError, KeyError):
-                        invalid.add(job_id)
-                # A job title needs exact plan membership, not every non-carry
-                # typed body. Complete content verification checks those bodies.
-                existing = (
-                    {
-                        row[0]
-                        for row in connection.execute(
-                            "SELECT f.id FROM json_each(?) ids "
-                            "JOIN fact_revision f ON f.id=ids.value "
-                            "JOIN subject s ON s.id=f.subject_id",
-                            (canonical(sorted(requested_ids)),),
-                        )
-                    }
-                    if requested_ids
-                    else set()
-                )
-                carry_kinds = {
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT f.id FROM subject s CROSS JOIN fact_revision f "
-                        "ON f.subject_id=s.id WHERE s.kind=?",
-                        (ReportCarryForward.kind,),
-                    )
-                    if row[0] in requested_ids
-                }
-                carry_typed = {
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT revision_id FROM fact_report_carry_forward"
-                    )
-                    if row[0] in requested_ids
-                }
-                for job_id, (_, plan, planned) in plans.items():
-                    if not planned <= existing:
-                        invalid.add(job_id)
-                        continue
-                    # Either independent header can reveal a planned carry.
-                    # A changed subject kind must not hide its existing typed
-                    # body, and a forged kind must not invent one.
-                    matched = sorted(planned & (carry_kinds | carry_typed))
-                    try:
-                        if any(
-                            ident not in carry_kinds or ident not in carry_typed
-                            for ident in matched
-                        ):
-                            raise ValueError("report carry kind and typed body differ")
-                        _verify_report_fact_sources(connection, reads, matched)
-                        if any(
-                            version.fact.kind != ReportCarryForward.kind
-                            for version in reads.fact_versions(matched).values()
-                        ):
-                            raise ValueError("report carry source kind differs")
-                    except (KernelError, ValidationError, ValueError, TypeError, KeyError):
-                        invalid.add(job_id)
-                        continue
-                    sources[job_id] = {
-                        "year": plan["period"]["year"],
-                        "quarter": plan["period"]["quarter"],
-                        "carry_forward_fact_id": matched[0] if len(matched) == 1 else None,
-                    }
-        result = []
-        for job in jobs:
-            item = {
-                **job,
-                "download_available": False,
-                "download_file_name": None,
-                "delivery_status": "pending"
-                if job["status"] in {"pending", "running"}
-                else "unavailable",
-                "delivery_message": job.get("error_message") if job["status"] == "failed" else None,
-            }
-            if job["kind"] == "report_export":
-                if job["id"] in invalid:
-                    item.update(
-                        delivery_status="invalid",
-                        delivery_message="任务来源信息无法验证，请重新生成报表。",
-                    )
-                    result.append(item)
-                    continue
-                item["report_source"] = sources[job["id"]]
-            if job["kind"] == "report_export" and job["status"] == "succeeded":
-                payload = plans[job["id"]][0]
-                directory = payload.get("output_directory")
-                browser_root = (self.store.path.parent / "exports" / "browser-reports").resolve()
-                if isinstance(directory, str) and not Path(directory).resolve().is_relative_to(
-                    browser_root
-                ):
-                    item.update(
-                        delivery_status="external",
-                        delivery_message="此报表通过会计任务交付，未提供浏览器下载。",
-                    )
-                    result.append(item)
-                    continue
-                try:
-                    name, _ = self.download_browser_report(job["id"])
-                except KernelError as exc:
-                    item.update(delivery_status="invalid", delivery_message=str(exc))
-                else:
-                    item.update(
-                        download_available=True, download_file_name=name, delivery_status="verified"
-                    )
-            result.append(item)
-        return result
+        with self.store.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT kind,status,attempts,error_code FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        if row is None or row["kind"] != "report_export":
+            raise KernelError("unknown_report_job", "当前公司没有该报表任务")
+        code = public_job_code(row["error_code"]) if row["status"] == "failed" else None
+        return {
+            "schema_version": 1,
+            "company_id": self.store.company_id,
+            "database_id": self.store.database_id,
+            "job_id": job_id,
+            "status": row["status"],
+            "attempts": row["attempts"],
+            "error_code": code,
+            "error_message": job_error_message(code),
+        }
 
     def download_browser_report(self, job_id: str):
         """Read a verified successful task; never accept a caller-controlled file path."""

@@ -68,9 +68,54 @@ test("quarterly export follows the same company and exact preview without an int
 test("invalid report delivery retains the service reason and is not described as a completed file", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ code: "report_download_invalid", message: "报表文件校验未通过，请重新生成" }), { status: 409 });
   await assert.rejects(reports.fetchQuarterlyWorkbook("company-a", "job"), error => error.code === "report_download_invalid" && error.message.includes("重新生成"));
-  const job = { kind: "report_export", status: "succeeded", delivery_status: "invalid", delivery_message: "文件缺失，请重新生成", download_available: false };
-  assert.equal(local.localJobDownloadAvailable(job), false);
-  assert.equal(local.localJobMessage(job), "文件缺失，请重新生成");
+
+});
+
+function restoreGlobalsAfterTest(t, keys) {
+  const saved = keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+  t.after(() => {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+}
+
+const reportStatus = (changes = {}) => ({ schema_version: 1, company_id: "company-a", database_id: "database-a",
+  job_id: "older/job ?", status: "running", attempts: 1, error_code: null, error_message: null, ...changes });
+
+test("report status is read only, bound to the captured company and exact encoded job", async t => {
+  restoreGlobalsAfterTest(t, ["window", "fetch"]);
+  const controller = new AbortController();
+  globalThis.window = { location: { origin: "http://offline.invalid", search: "?company_id=another-company" } };
+  globalThis.fetch = async (path, options) => {
+    assert.equal(path, "/api/local/report-export/older%2Fjob%20%3F/status?company_id=company-a");
+    assert.equal(options.method, undefined);
+    assert.equal(options.body, undefined);
+    assert.equal(options.credentials, "same-origin");
+    assert.equal(options.signal, controller.signal);
+    return new Response(JSON.stringify(reportStatus()));
+  };
+  assert.deepEqual(await reports.fetchReportExportStatus("company-a", "older/job ?", controller.signal), reportStatus());
+  for (const changed of [{ company_id: "company-b" }, { job_id: "different" }, { attempts: "1" }, { result: {} }, { status: "unknown" }]) {
+    globalThis.fetch = async () => new Response(JSON.stringify(reportStatus(changed)));
+    await assert.rejects(reports.fetchReportExportStatus("company-a", "older/job ?"), { code: "REPORT_STATUS_RESPONSE" });
+  }
+});
+
+test("report download uses the company and job from its call and preserves expiration feedback", async t => {
+  restoreGlobalsAfterTest(t, ["window", "fetch"]);
+  let expired = 0;
+  globalThis.window = { dispatchEvent(event) { assert.equal(event.type, "finance-session-expired"); expired++; } };
+  globalThis.fetch = async (path, options) => {
+    assert.equal(path, "/api/local/report-export/job%2Fa/download?company_id=company-a");
+    assert.equal(options.credentials, "same-origin");
+    return new Response("verified workbook");
+  };
+  assert.equal(await (await reports.fetchQuarterlyWorkbook("company-a", "job/a")).text(), "verified workbook");
+  globalThis.fetch = async () => new Response(JSON.stringify({ code: "owner_session_required", message: "请重新登录" }), { status: 401 });
+  await assert.rejects(reports.fetchQuarterlyWorkbook("company-a", "job/a"), { code: "owner_session_required" });
+  assert.equal(expired, 1);
 });
 
 test("context refresh preserves the mounted company while replacing its periods", async () => {
@@ -113,15 +158,15 @@ async function reportView(stubs) {
   const imports = `
     const { computed, nextTick, ref, watch } = globalThis.dashboardTestVue;
     const onMounted = () => {}; const onBeforeUnmount = () => {};
-    const { fetchLocalJob, fetchQuarterlyWorkbook, requestQuarterlyExport,
+    const { fetchReportExportStatus, fetchQuarterlyWorkbook, requestQuarterlyExport,
       DashboardApiError, LocalApiError, dashboardErrorMessage } = globalThis.${key};
-    const useRoute = () => ({ query: { company_id: 'company-a' } });
+    const useRoute = () => globalThis.${key}.route ?? ({ query: { company_id: 'company-a' } });
     const useRouter = () => ({ replace: async () => {}, push: async () => {} });
     const useDashboardContext = () => ({ context: ref(null), load: async () => ({}), refresh: async () => ({}) });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const formatFen = String;
   `;
-  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, statementValue, taxTemplateMode, activeTemplateMeta, balanceTemplateRows, templateStatementValue, templateSectionLabel };", {
+  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, invalidateRequests, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, statementValue, taxTemplateMode, activeTemplateMeta, balanceTemplateRows, templateStatementValue, templateSectionLabel };", {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   const view = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
@@ -154,7 +199,7 @@ test("a terminal failure creates a new task on explicit regeneration", async () 
   const view = await reportView({
     ...exportEnvironment(),
     requestQuarterlyExport: async (_company, _report, requestId) => { requests.push(requestId); return { job_id: `job-${requests.length}` }; },
-    fetchLocalJob: async (_company, id) => [{ id, status: id === "job-1" ? "failed" : "succeeded", attempts: 3 }],
+    fetchReportExportStatus: async (_company, id) => ({ job_id: id, status: id === "job-1" ? "failed" : "succeeded", attempts: 3 }),
     fetchQuarterlyWorkbook: async () => new Blob(["verified"]),
   });
   await view.exportReport();
@@ -170,7 +215,7 @@ test("damaged report output does not trap regeneration on the old job", async ()
   const view = await reportView({
     ...exportEnvironment(),
     requestQuarterlyExport: async (_company, _report, requestId) => { requests.push(requestId); return { job_id: `job-${requests.length}` }; },
-    fetchLocalJob: async (_company, id) => [{ id, status: "succeeded", attempts: 1 }],
+    fetchReportExportStatus: async (_company, id) => ({ job_id: id, status: "succeeded", attempts: 1 }),
     fetchQuarterlyWorkbook: async (_company, id) => {
       if (id === "job-1") throw new local.LocalApiError(409, "report_download_invalid", "文件校验失败");
       return new Blob(["verified"]);
@@ -188,9 +233,9 @@ test("an interrupted wait resumes the accepted task without creating a duplicate
   const view = await reportView({
     ...exportEnvironment(),
     requestQuarterlyExport: async () => { requested += 1; return { job_id: "accepted-job" }; },
-    fetchLocalJob: async () => {
+    fetchReportExportStatus: async () => {
       if (++read === 1) throw new DOMException("Aborted", "AbortError");
-      return [{ id: "accepted-job", status: "succeeded", attempts: 1 }];
+      return { job_id: "accepted-job", status: "succeeded", attempts: 1 };
     },
     fetchQuarterlyWorkbook: async () => new Blob(["verified"]),
   });
@@ -200,6 +245,39 @@ test("an interrupted wait resumes the accepted task without creating a duplicate
   assert.equal(requested, 1);
 });
 
+
+test("switching company cancels status and prevents a late download from the previous company", async t => {
+  restoreGlobalsAfterTest(t, ["document", "crypto"]);
+  for (const heldStage of ["status", "download"]) {
+    let finish, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const held = new Promise(resolve => { finish = resolve; });
+    const route = { query: { company_id: "company-a" } };
+    let signal, downloads = 0, clicks = 0;
+    const view = await reportView({
+      ...exportEnvironment(), route,
+      requestQuarterlyExport: async () => ({ job_id: "accepted-job" }),
+      fetchReportExportStatus: async (_company, _job, requestSignal) => {
+        if (heldStage === "status") { signal = requestSignal; entered(); return held; }
+        return { status: "succeeded", attempts: 1 };
+      },
+      fetchQuarterlyWorkbook: async (_company, _job, requestSignal) => {
+        downloads++; signal = requestSignal; entered(); return held;
+      },
+    });
+    globalThis.document.createElement = () => ({ click() { clicks++; }, remove() {} });
+    const pending = view.exportReport();
+    await started;
+    route.query.company_id = "company-b";
+    view.invalidateRequests();
+    assert.equal(signal.aborted, true);
+    finish(heldStage === "status" ? { status: "succeeded", attempts: 1 } : new Blob(["old-company"]));
+    await pending;
+    assert.equal(downloads, heldStage === "status" ? 0 : 1);
+    assert.equal(clicks, 0);
+    assert.equal(view.exportNotice.value, "");
+  }
+});
 
 test("tax template mode restores full rows, form identities and exact yuan amounts", async () => {
   const view = await reportView(exportEnvironment());

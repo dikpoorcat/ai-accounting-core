@@ -27,7 +27,6 @@ from .close_review import (
 from .contracts import KernelError
 from .response_types import (
     Version1,
-    Version2,
     Version3,
     Version4,
     Version5,
@@ -2287,31 +2286,15 @@ class DashboardPeriodPreparationResponse(ResponseObject):
     data: PeriodPreparationData
 
 
-class BrowserReportSource(ResponseObject):
-    year: int
-    quarter: int
-    carry_forward_fact_id: str | None
-
-
-class BrowserJob(ResponseObject):
-    id: str
-    kind: str
+class ReportExportStatusResponse(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    job_id: str
     status: Literal["pending", "running", "succeeded", "failed"]
     attempts: Count
     error_code: str | None
     error_message: str | None
-    download_available: bool
-    download_file_name: str | None
-    delivery_status: Literal["pending", "unavailable", "external", "invalid", "verified"]
-    delivery_message: str | None
-    report_source: NotRequired[BrowserReportSource]
-
-
-class BrowserJobsResponse(ResponseObject):
-    schema_version: Version2
-    company_id: str
-    database_id: str
-    items: list[BrowserJob]
 
 
 SecurityAction = Literal[
@@ -2663,7 +2646,7 @@ RESPONSE_ADAPTERS = {
     "dashboard_business_status": TypeAdapter(DashboardBusinessStatusResponse),
     "dashboard_quarterly_report": TypeAdapter(DashboardQuarterlyReportResponse),
     "dashboard_period_preparation": TypeAdapter(DashboardPeriodPreparationResponse),
-    "browser_jobs": TypeAdapter(BrowserJobsResponse),
+    "report_export_status": TypeAdapter(ReportExportStatusResponse),
     "browser_security_status": TypeAdapter(BrowserSecurityStatusResponse),
     "report_export_receipt": TypeAdapter(ReportExportReceipt),
     "dashboard_close_review": DASHBOARD_CLOSE_REVIEW_ADAPTER,

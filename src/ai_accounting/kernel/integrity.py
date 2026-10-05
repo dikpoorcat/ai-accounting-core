@@ -163,7 +163,14 @@ def _check_facts(engine, connection, identifiers):
     raw_facts = _snapshot_fact_raws(engine.store, connection, fact_ids)
     missing_raw = [ident for ident in fact_ids if ident not in raw_facts]
     if missing_raw:
-        raw_facts.update(engine.store.fact_data_many(connection, missing_raw))
+        try:
+            raw_facts.update(engine.store.fact_data_many(connection, missing_raw))
+        except KernelError as exc:
+            if exc.code == "unknown_fact":
+                # These exact revision headers already exist in this snapshot.
+                # A missing typed body is corruption, not a missing user input.
+                _invalid("fact", "*", "typed_fact_missing")
+            raise
     kinds = defaultdict(set)
     for row in rows:
         kinds[subject_kinds.get(row["subject_id"])].add(row["id"])
@@ -709,6 +716,19 @@ def _check_job_sources(engine, connection, source):
         omitted = {"digest"}
         if row["kind"] == "report_export":
             omitted.add("epochs")
+            references = plan.get("report_fact_ids")
+            period = plan.get("period")
+            if (
+                not isinstance(references, list)
+                or any(type(ident) is not str or not ident for ident in references)
+                or len(set(references)) != len(references)
+                or not isinstance(period, dict)
+                or type(period.get("year")) is not int
+                or not 1 <= period["year"] <= 9999
+                or type(period.get("quarter")) is not int
+                or period["quarter"] not in range(1, 5)
+            ):
+                _invalid("job", row["id"], "unsupported_report_export_plan")
         elif row["kind"] == "tax_import":
             omitted.add("status")
         if (

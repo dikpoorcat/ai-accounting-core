@@ -40,10 +40,10 @@ test("generated validators accept all current synthetic backend response branche
 
 test("the explicit generated manifest covers every browser-visible response contract", () => {
   assert.deepEqual(Object.keys(schemas).sort(), [
-    "browser_jobs", "browser_security_status", "dashboard_assets", "dashboard_brief",
+    "browser_security_status", "dashboard_assets", "dashboard_brief",
     "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
-    "dashboard_quarterly_report", "period_readiness", "report_export_receipt", "workflow",
+    "dashboard_quarterly_report", "period_readiness", "report_export_receipt", "report_export_status", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
   for (const key of Object.keys(schemas)) assert(source.includes(`["${key}"`), key);

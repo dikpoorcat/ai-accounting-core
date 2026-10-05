@@ -151,6 +151,7 @@ def test_core_supplement_selection_still_exports_while_owner_page_has_no_selecto
         ]
     report = Reports(engine)
     plan = report.preview_export(2026, 3, carry_forward_fact_id=chosen)
+    assert chosen in plan["report_fact_ids"]
     task = report.confirm_browser_export(
         2026,
         3,
@@ -161,8 +162,7 @@ def test_core_supplement_selection_still_exports_while_owner_page_has_no_selecto
     )
     assert run_report_jobs(engine)[0]["status"] == "succeeded"
     assert report.download_browser_report(task["job_id"])[0].endswith("2026Q3.xlsx")
-    item = report.browser_job_results(engine.jobs(job_id=task["job_id"]))[0]
-    assert item["report_source"] == {"year": 2026, "quarter": 3, "carry_forward_fact_id": chosen}
+    assert report.browser_export_status(task["job_id"])["status"] == "succeeded"
     with engine.store.connection(read_only=True) as connection:
         assert [
             tuple(row) for row in connection.execute("SELECT * FROM period_close ORDER BY period")
@@ -236,20 +236,22 @@ def test_invalid_delivery_is_reported_and_new_request_can_regenerate(book):
 
     original = queue("first")
     assert queue("first") == original
-    item = report.browser_job_results(book[0].jobs())[0]
-    assert item["delivery_status"] == "pending"
+    assert report.browser_export_status(original["job_id"])["status"] == "pending"
     result = run_report_jobs(book[0])[0]["result"]
     Path(result["path"]).write_bytes(b"synthetic damaged output")
-    item = report.browser_job_results(book[0].jobs())[0]
-    assert item["status"] == "succeeded" and item["delivery_status"] == "invalid"
-    assert not item["download_available"] and item["delivery_message"]
+    assert report.browser_export_status(original["job_id"])["status"] == "succeeded"
+    with pytest.raises(KernelError) as damaged:
+        report.download_browser_report(original["job_id"])
+    assert damaged.value.code == "report_download_invalid"
     # A changed result path is an invalid browser delivery, not a CLI export.
     with book[0].store.connection() as connection:
         changed = {**result, "directory": str(book[0].store.path.parent / "outside")}
         connection.execute(
             "UPDATE jobs SET result=? WHERE id=?", (json.dumps(changed), original["job_id"])
         )
-    assert report.browser_job_results(book[0].jobs())[0]["delivery_status"] == "invalid"
+    with pytest.raises(KernelError) as moved:
+        report.download_browser_report(original["job_id"])
+    assert moved.value.code == "report_download_invalid"
     replacement = queue("regenerate")
     assert replacement["job_id"] != original["job_id"]
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"

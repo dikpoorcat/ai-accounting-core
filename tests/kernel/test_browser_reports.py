@@ -32,16 +32,14 @@ def test_browser_export_job_is_idempotent_scoped_and_verified(book):
     task = queue(report)
     assert queue(report) == task
     assert len(book[0].jobs(job_id=task["job_id"])) == 1
-    assert report.browser_job_results(book[0].jobs())[0]["download_available"] is False
+    assert report.browser_export_status(task["job_id"])["status"] == "pending"
     assert book[0].jobs(job_id="another-company-job") == []
     with pytest.raises(KernelError, match="尚未生成成功"):
         report.download_browser_report(task["job_id"])
     result = run_report_jobs(book[0])[0]
     assert result["status"] == "succeeded"
     name, content = report.download_browser_report(task["job_id"])
-    available = report.browser_job_results(book[0].jobs())[0]
-    assert available["download_available"] is True
-    assert available["download_file_name"] == name
+    assert report.browser_export_status(task["job_id"])["status"] == "succeeded"
     assert name.endswith("2026Q1.xlsx")
     workbook = load_workbook(io.BytesIO(content), data_only=True)
     assert workbook.worksheets[0]["D7"].value == 400
@@ -49,7 +47,7 @@ def test_browser_export_job_is_idempotent_scoped_and_verified(book):
     assert queue(report) == task
     assert book[0].jobs(job_id=task["job_id"])[0]["status"] == "succeeded"
     Path(result["result"]["path"]).write_bytes(b"changed file")
-    assert report.browser_job_results(book[0].jobs())[0]["download_available"] is False
+    assert report.browser_export_status(task["job_id"])["status"] == "succeeded"
     with pytest.raises(KernelError) as error:
         report.download_browser_report(task["job_id"])
     assert error.value.code == "report_download_invalid"
@@ -71,7 +69,7 @@ def test_browser_download_rejects_unknown_job_and_nonbrowser_target(book, tmp_pa
         request_id="cli-output",
     )
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"
-    assert report.browser_job_results(book[0].jobs())[0]["download_available"] is False
+    assert report.browser_export_status(task["job_id"])["status"] == "succeeded"
     with pytest.raises(KernelError) as error:
         report.download_browser_report(task["job_id"])
     assert error.value.code == "report_download_invalid"

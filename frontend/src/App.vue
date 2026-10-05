@@ -1,7 +1,7 @@
 <!-- @format -->
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { DeepReadonly } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
@@ -11,7 +11,6 @@ import { useDashboardContext } from "./composables/useDashboardContext";
 import type { DashboardContext } from "./api/context";
 
 type Theme = "light" | "dark";
-const BackgroundJobsPanel = defineAsyncComponent(() => import("./components/BackgroundJobsPanel.vue"));
 defineProps<{ launchError?: string }>();
 
 const appVersion = __APP_VERSION__;
@@ -25,7 +24,6 @@ const navItems = [
 
 const authenticated = ref(false);
 const showSecurity = ref(false);
-const showJobs = ref(false);
 const contextError = ref("");
 let contextGeneration = 0, mounted = true;
 let activeContextLoad: number | null = null;
@@ -362,7 +360,6 @@ async function selectPeriod(periodKey: string) {
 
         <div class="sidebar-footer">
           <button class="theme-button" type="button" :aria-expanded="showSecurity" aria-label="负责人身份" title="负责人身份" @click="showSecurity = !showSecurity"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span class="control-label">负责人身份</span></button>
-          <button v-if="authenticated && currentCompany" class="theme-button" type="button" :aria-expanded="showJobs" aria-label="文件与处理进度" title="文件与处理进度" @click="showJobs = !showJobs"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="control-label">文件与处理进度</span></button>
           <button
             class="theme-button"
             type="button"
@@ -405,7 +402,6 @@ async function selectPeriod(periodKey: string) {
       <p v-else-if="authenticated && contextLoading && !currentCompany" class="panel" role="status">正在读取所选公司的资料…</p>
       <p v-else-if="authenticated && context && !currentCompany" class="panel">还没有添加公司。添加公司后，可在这里查看财务情况。</p>
       <template v-if="authenticated && currentCompany && routeSelectionReady">
-        <BackgroundJobsPanel v-if="showJobs" :company-id="currentCompany.company_id" />
         <RouterView :key="currentCompany.company_id" />
       </template>
     </main>

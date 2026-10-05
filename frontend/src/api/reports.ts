@@ -1,6 +1,7 @@
 import { DashboardApiError, requestGeneratedJson } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
 import type { DashboardQuarterlyReportContract, DashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport";
+import type { ReportExportStatusResponse } from "./generated/reportExportStatus";
 import { validateDashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport.js";
 
 export type QuarterlyReport = DashboardQuarterlyReportResponse;
@@ -35,7 +36,19 @@ export async function requestQuarterlyExport(companyId: string, report: Quarterl
   signal?.throwIfAborted();
   const result = await requestLocalJson("/api/local/report-export", { method: "POST", signal, body });
   if (!validateReportExportReceiptResponse(result) || result.preview_digest !== previewDigest) {
-    throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请刷新后台任务核对。");
+    throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请重新生成报表。");
+  }
+  return result;
+}
+
+export async function fetchReportExportStatus(companyId: string, jobId: string, signal?: AbortSignal): Promise<ReportExportStatusResponse> {
+  const query = new URLSearchParams({ company_id: companyId });
+  const path = `/api/local/report-export/${encodeURIComponent(jobId)}/status?${query}`;
+  const { validateReportExportStatusResponse } = await import("./generated/reportExportStatus.js");
+  signal?.throwIfAborted();
+  const result = await requestLocalJson(path, { signal });
+  if (!validateReportExportStatusResponse(result) || result.company_id !== companyId || result.job_id !== jobId) {
+    throw new LocalApiError(502, "REPORT_STATUS_RESPONSE", "报表生成状态无法读取，请重试。");
   }
   return result;
 }

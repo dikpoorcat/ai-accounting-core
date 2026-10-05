@@ -10,6 +10,6 @@ export { validateDashboardBusinessStatusResponse } from "./dashboardBusinessStat
 export { validateDashboardQuarterlyReportResponse } from "./dashboardQuarterlyReport.js";
 export { validateDashboardPeriodPreparationResponse } from "./dashboardPeriodPreparation.js";
 export { validateDashboardCloseReviewResponse } from "./dashboardCloseReview.js";
-export { validateBrowserJobsResponse } from "./browserJobs.js";
+export { validateReportExportStatusResponse } from "./reportExportStatus.js";
 export { validateBrowserSecurityStatusResponse } from "./browserSecurityStatus.js";
 export { validateReportExportReceiptResponse } from "./reportExportReceipt.js";

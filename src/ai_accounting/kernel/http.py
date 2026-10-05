@@ -388,6 +388,28 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                 except Exception as exc:
                     self.dashboard_error(exc)
                 return
+            if url.path.startswith("/api/local/report-export/") and url.path.endswith("/status"):
+                try:
+                    from .reports import Reports
+
+                    owner_token = self.session_token()
+                    service.security.authorize(owner_token)
+                    payload = self.query_payload(url.query)
+                    if set(payload) != {"company_id"}:
+                        raise KernelError("invalid_command", "必须提供 company_id")
+                    job_id = url.path.removeprefix("/api/local/report-export/").removesuffix(
+                        "/status"
+                    )
+                    if not job_id or "/" in job_id or len(job_id) > 200:
+                        raise KernelError("invalid_command", "任务标识不正确")
+                    result = Reports(service.engine(payload["company_id"])).browser_export_status(
+                        job_id
+                    )
+                    service.security.authorize(owner_token)
+                    self.contract_reply("report_export_status", result)
+                except Exception as exc:
+                    self.dashboard_error(exc)
+                return
             if url.path.startswith("/api/local/report-export/") and url.path.endswith("/download"):
                 try:
                     from .reports import Reports
@@ -427,32 +449,12 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "ledger",
                     "trace",
                     "closed_report",
-                    "jobs",
                 ):
                     self.reply(404, b'{"error":"unknown read endpoint"}')
                     return
                 try:
                     payload = self.query_payload(url.query)
                     result = service.dispatch(action, payload, session_token=owner_token)
-                    if action == "jobs":
-                        from .reports import Reports
-
-                        engine = service.engine(payload["company_id"])
-                        result = Reports(engine).browser_job_results(result)
-                        service.security.authorize(owner_token)
-                        self.contract_reply(
-                            "browser_jobs",
-                            {
-                                "schema_version": 2,
-                                "company_id": payload["company_id"],
-                                "database_id": engine.store.database_id,
-                                "items": [
-                                    {key: value for key, value in row.items() if key != "result"}
-                                    for row in result
-                                ],
-                            },
-                        )
-                        return
                     self.reply(
                         200, json.dumps(wire_money(result), ensure_ascii=False).encode("utf-8")
                     )

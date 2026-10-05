@@ -24,9 +24,9 @@ const cases = [
     company: value => value.read_context.company_id,
   },
   {
-    name: "background jobs", module: "localKernel", validator: "browserJobs",
-    response: () => ({ schema_version: 2, company_id: "company-a", database_id: "database-a", items: [] }),
-    invoke: (api, value, signal) => api.fetchLocalJobs(value.company_id, signal),
+    name: "report export status", module: "reports", validator: "reportExportStatus",
+    response: () => ({ schema_version: 1, company_id: "company-a", database_id: "database-a", job_id: "job-a", status: "running", attempts: 1, error_code: null, error_message: null }),
+    invoke: (api, value, signal) => api.fetchReportExportStatus(value.company_id, value.job_id, signal),
     company: value => value.company_id,
   },
   {

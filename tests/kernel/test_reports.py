@@ -631,9 +631,7 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
     workbook = load_workbook(core_job["result"]["path"])
     assert len(workbook.worksheets) == 3
     workbook.close()
-    browser_job = report.browser_job_results([core_job])[0]
-    assert browser_job["report_source"]["year"] == 2026
-    assert browser_job["report_source"]["quarter"] == 1
+    assert report.browser_export_status(core_job["id"])["status"] == "succeeded"
     assert (tmp_path / "export" / "manifest.json").read_bytes() == manifest_before
     assert run_report_jobs(book[0]) == []
     with book[0].store.connection() as connection:

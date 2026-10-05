@@ -55,9 +55,9 @@ async page => {
       if (data.company_id !== "company-b" || data.preview_digest !== "fixture-preview" || !data.request_id || data.epochs.accounting !== 1) throw new Error("wrong report export body");
       exportPosts++; return reply({ status: "queued", job_id: "old-report-job" });
     }
-    if (path === "/api/local/jobs") {
-      if (query.job_id) { jobPolls++; return reply([{ id: query.job_id, kind: "report_export", status: jobPolls > 1 ? "succeeded" : "running", attempts: 1, last_error: null, result: {} }]); }
-      return reply([{ id: "pending-job", kind: "portable_backup", status: "pending", attempts: 0, last_error: null, result: null }]);
+    if (path === "/api/local/report-export/old-report-job/status") {
+      jobPolls++;
+      return reply({ schema_version: 1, company_id: query.company_id, database_id: "fixture-db", job_id: "old-report-job", status: jobPolls > 1 ? "succeeded" : "running", attempts: 1, error_code: null, error_message: null });
     }
     if (path === "/api/local/report-export/old-report-job/download") {
       if (jobPolls < 2) throw new Error("download before successful job");
@@ -84,10 +84,6 @@ async page => {
   await page.getByRole("button", { name: "按凭证", exact: true }).click();
   await page.getByRole("button", { name: /演示乙公司月度费用1/ }).waitFor();
   if ((await page.locator("body").innerText()).includes("演示甲公司月度费用")) throw new Error("previous company data retained");
-  await page.getByRole("button", { name: "后台任务", exact: true }).click();
-  await page.getByRole("heading", { name: "最近后台任务" }).waitFor();
-  await page.getByText("等待处理", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "后台任务", exact: true }).click();
   await page.getByRole("link", { name: "资金", exact: true }).click();
   await page.getByRole("button", { name: "加载更多账面明细" }).click();
   await page.getByText("资金第二页", { exact: true }).waitFor();

@@ -3,10 +3,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 
 import { DashboardApiError, dashboardErrorMessage } from "../api/client";
-import { fetchLocalJob, LocalApiError } from "../api/localKernel";
+import { LocalApiError } from "../api/localKernel";
 import {
   fetchDeferredQuarterlyReport,
   fetchQuarterlyWorkbook,
+  fetchReportExportStatus,
   requestQuarterlyExport,
   type DeferredQuarterlyReport,
   type ReportStatement,
@@ -398,12 +399,12 @@ async function exportReport() {
     const jobId = attempt.jobId;
     if (!jobId) throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务没有返回任务编号。");
     if (!isCurrent(generation, selection) || exportController !== controller) return;
-    exportNotice.value = "报表正在生成，完成后将开始下载。离开页面后，仍可在“文件与处理进度”中查看结果。";
+    exportNotice.value = "报表正在生成，完成后将开始下载。";
     while (!controller.signal.aborted) {
-      const [job] = await fetchLocalJob(companyId, jobId, controller.signal);
+      const job = await fetchReportExportStatus(companyId, jobId, controller.signal);
       if (!isCurrent(generation, selection) || exportController !== controller) return;
-      if (job?.status === "succeeded") break;
-      if (!job || (job.status === "failed" && job.attempts >= 3)) throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
+      if (job.status === "succeeded") break;
+      if (job.status === "failed" && job.attempts >= 3) throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
       if (job.status === "failed") exportNotice.value = "本次生成未成功，正在等待自动重试。";
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };

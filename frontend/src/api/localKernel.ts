@@ -1,4 +1,3 @@
-import type { BrowserJobsContract } from "./generated/browserJobs";
 import type { BrowserSecurityStatusContract, BrowserSecurityStatusResponse } from "./generated/browserSecurityStatus";
 import { validateBrowserSecurityStatusResponse } from "./generated/browserSecurityStatus.js";
 
@@ -7,34 +6,6 @@ export class LocalApiError extends Error {
     super(message);
     this.name = "LocalApiError";
   }
-}
-
-export type LocalJob = BrowserJobsContract.BrowserJob;
-
-export function localJobDownloadAvailable(job: LocalJob): boolean {
-  return job.kind === "report_export" && job.status === "succeeded" && job.download_available === true;
-}
-
-export function localJobName(kind: string): string {
-  return ({ portable_backup: "公司备份", payment_export: "银行代发文件", report_export: "季度报表文件" } as Record<string, string>)[kind] ?? "后台任务";
-}
-
-export function localJobStatus(status: string): string {
-  return ({ pending: "等待处理", running: "正在生成", succeeded: "已完成", failed: "生成失败" } as Record<string, string>)[status] ?? "状态待核对";
-}
-
-export function localJobMessage(job: LocalJob): string {
-  if (job.delivery_status === "invalid") return job.delivery_message || "文件校验未通过，不能交付。请到财务报表页重新生成。";
-  if (job.delivery_status === "external") return job.delivery_message || "此文件通过会计任务交付，未提供浏览器下载。";
-  if (job.status === "pending") return "任务已排队，等待生成文件。";
-  if (job.status === "running") return "正在生成并检查文件。";
-  if (job.status === "succeeded") return localJobDownloadAvailable(job)
-    ? "报表已生成并通过校验，可以下载。"
-    : "文件已生成，可在会计任务中查看交付结果。";
-  if (job.status === "failed") return job.attempts >= 3
-    ? "文件生成未完成，自动重试次数已用尽。请在会计任务中处理原因后重试。"
-    : "本次文件生成失败，尚未完成。请刷新查看重试结果。";
-  return "暂时无法确认任务结果，请刷新核对。";
 }
 
 // These labels reuse the existing business presentation vocabulary. The new
@@ -228,25 +199,6 @@ export async function localSecurity(operation: "request" | "status" | "cancel" |
     throw new LocalApiError(502, "LOCAL_SECURITY_RESPONSE", "安全窗口状态无法读取，请重新打开工作台。");
   }
   return result;
-}
-
-async function fetchJobs(companyId: string, parameters: Record<string, string>, signal?: AbortSignal) {
-  const query = new URLSearchParams({ company_id: companyId, ...parameters });
-  const { validateBrowserJobsResponse } = await import("./generated/browserJobs.js");
-  signal?.throwIfAborted();
-  const result = await requestLocalJson(`/api/local/jobs?${query}`, { signal });
-  if (!validateBrowserJobsResponse(result) || result.company_id !== companyId) {
-    throw new LocalApiError(502, "LOCAL_JOBS_RESPONSE", "后台任务状态无法读取，请刷新后重试。");
-  }
-  return result.items;
-}
-
-export function fetchLocalJobs(companyId: string, signal?: AbortSignal) {
-  return fetchJobs(companyId, { limit: "20" }, signal);
-}
-
-export function fetchLocalJob(companyId: string, jobId: string, signal?: AbortSignal) {
-  return fetchJobs(companyId, { job_id: jobId, limit: "1" }, signal);
 }
 
 export function localErrorMessage(error: unknown): string {
