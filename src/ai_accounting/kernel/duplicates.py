@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .contracts import Fact, KernelError, NeedsInformation
 from .stored_json import DuplicateStoredKey, loads_unique
-from .types import YearMonth, canonical, digest
+from .types import EvidenceDigest, YearMonth, canonical, digest, validate_evidence_digests
 
 DUPLICATE_CONTRACT = "ai-accounting-kernel/2/business-duplicate"
 DUPLICATE_CONTRACT_VERSION = 2
@@ -607,7 +607,7 @@ class SourceLocation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     source_id: str = Field(min_length=1)
     source_fact_id: str = Field(min_length=1)
-    evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_digest: EvidenceDigest
     location: str = Field(min_length=1, max_length=500)
 
 
@@ -620,7 +620,7 @@ class ReviewBasis(BaseModel):
         "owner_confirmation",
         "shared_source",
     ]
-    evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_digest: EvidenceDigest
     source_id: str | None = None
     source_fact_id: str | None = None
     location: str | None = Field(default=None, min_length=1, max_length=500)
@@ -2737,9 +2737,9 @@ class Duplicates:
         subject_id: str,
         data: dict,
         *,
-        evidence: Sequence[str],
+        evidence: Sequence[EvidenceDigest],
         expected_revision: int,
-        source_locations: Sequence[SourceLocation | Mapping[str, Any]] = (),
+        source_locations: Sequence[SourceLocation] = (),
     ) -> dict:
         self.engine._require_direct_registration(kind)
         if not subject_id or len(subject_id) > 200:
@@ -2767,12 +2767,7 @@ class Duplicates:
             ) from exc
         if not evidence:
             raise NeedsInformation("evidence", "已确认事实必须引用不可变依据")
-        try:
-            evidence_bytes = [bytes.fromhex(item) for item in evidence]
-        except ValueError as exc:
-            raise ValueError("evidence digest must be hexadecimal") from exc
-        if any(len(item) != 32 for item in evidence_bytes):
-            raise ValueError("evidence digest must be 32 bytes")
+        validate_evidence_digests(evidence)
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             current = connection.execute(

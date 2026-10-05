@@ -1,0 +1,84 @@
+{
+  "kind": "raw_fixed_candidate_and_browser_receipts",
+  "scope": "r61 isolated released candidate, main-12 registered full verification and pure30 browser; first Ruff launcher tool excerpt retained.",
+  "limitations": [
+    "Single main-12 scale only; not 48/120 months, repository freeze, standalone package or actual AI MCP acceptance.",
+    "Overall over_target: brief 2 of 30 successful samples at least 500ms.",
+    "Ruff first-tool JSON is explicitly an excerpt, not raw Ruff stdout/stderr; Ruff did not execute in that attempt.",
+    "Earlier 35/35/21 manifests unchanged."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-owner-main12-r61-verified.json",
+      "source_mtime_utc": "2026-10-02T00:58:42.636678+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-owner-main12-r61-verified.json.gz",
+      "bytes": 9681,
+      "sha256": "1f0fe3d81d4d95efd3c8f65fe2adc2d27d331080f7c1a514317450efb0c636df",
+      "archive_bytes": 2810,
+      "archive_sha256": "ffabfd22162ae7d6b6cd3493d641513b5294f6994c145b9370889443963cacd3"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r61-verified.log",
+      "source_mtime_utc": "2026-10-02T00:58:42.641679+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-owner-main12-r61-verified.log.gz",
+      "bytes": 81,
+      "sha256": "54d6972b33e0cfe51d8087b11c76a57667fc7b78af96219c4186d000127dd02b",
+      "archive_bytes": 98,
+      "archive_sha256": "2792915d00667d06bb57d427fe5f1da371440205ece37266e6359b77388c4a0b"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r61.json",
+      "source_mtime_utc": "2026-10-02T01:03:12.341136+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-owner-main12-browser-r61.json.gz",
+      "bytes": 9151,
+      "sha256": "2d85df17bd79feab4f1ca49ecca6b4cbd69e0f60b3f3c987ec9611bbdc1e0473",
+      "archive_bytes": 2836,
+      "archive_sha256": "e647e29efa667a736495b17b0657b820c8bed3e8b5b84d2547d5e7b7b9df48ed"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r61.log",
+      "source_mtime_utc": "2026-10-02T01:03:12.346136+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-owner-main12-browser-r61.log.gz",
+      "bytes": 115,
+      "sha256": "5f82efa781180980e870e9749edc35ac5f708c3bff22d365bec32fbe28ccd96b",
+      "archive_bytes": 126,
+      "archive_sha256": "143ba17b803c71cb057b71ac3d36ba27b75cb7a1217a39aa0f0b2dab1a4f710b"
+    },
+    {
+      "source": ".tmp/stage9-candidate-owner-r61.log",
+      "source_mtime_utc": "2026-10-02T00:54:26.876785+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-candidate-owner-r61.log.gz",
+      "bytes": 1145,
+      "sha256": "86887069d7c82c1b198fd5e89c4fa4e5f1c501a513a0cfe3aa69dd0b193470a7",
+      "archive_bytes": 603,
+      "archive_sha256": "a9a1b9707ea577d616131d2ab76c0eae4a6585a42f4ca5f41b03aec2ce1121e8"
+    },
+    {
+      "source": ".tmp/stage9-build-source-owner-r61-release/source-manifest.json",
+      "source_mtime_utc": "2026-10-02T00:54:26.854789+00:00",
+      "archive": "owner-candidate-pure-r61-source-manifest.json.gz",
+      "bytes": 72422,
+      "sha256": "f201c5ebb1705e9228b6480921bfe45dc45317bf63006975dce4ec2cbe4e73c3",
+      "archive_bytes": 29699,
+      "archive_sha256": "4052afe23211342b2f982f89ffa7f63e318771aa918170fcc7376901a7a2edec"
+    },
+    {
+      "source": ".tmp/stage9-build-candidate-owner-r61/candidate-provenance.json",
+      "source_mtime_utc": "2026-10-02T00:54:26.874787+00:00",
+      "archive": "owner-candidate-pure-r61-candidate-provenance.json.gz",
+      "bytes": 73577,
+      "sha256": "ce549135bce33d010d3a662bc866851cd9d4cdb65e27d6a55a8f79ebe57e11dd",
+      "archive_bytes": 30190,
+      "archive_sha256": "9b980c28e943cd9ce3cbd4b381a2da73d7d195cb9a53c3c9a78911a35e9811b8"
+    },
+    {
+      "source": ".tmp/stage9-r61-ruff-first-tool-excerpt.json",
+      "source_mtime_utc": "2026-10-02T00:56:38.830420+00:00",
+      "archive": "owner-candidate-pure-r61-stage9-r61-ruff-first-tool-excerpt.json.gz",
+      "bytes": 630,
+      "sha256": "3a144feb297fd38af3221befd09104bb424c09cc81af7b8687b6f0c6704c8f6e",
+      "archive_bytes": 418,
+      "archive_sha256": "03310c5d67a46e2c2f1258e66127253bdaaa2ab7276f95adcc4196ac880ef0f5"
+    }
+  ]
+}

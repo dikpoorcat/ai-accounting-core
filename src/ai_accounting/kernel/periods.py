@@ -6,7 +6,14 @@ import json
 import uuid
 
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
-from .types import YearMonth, canonical, digest
+from .types import (
+    EvidenceDigest,
+    YearMonth,
+    canonical,
+    digest,
+    evidence_digest_bytes,
+    validate_evidence_digests,
+)
 
 MATERIAL_CATEGORIES = ("transactions", "payroll", "bank", "tax", "assets", "financing")
 READINESS_WORK_AREAS = {
@@ -61,10 +68,10 @@ class Periods:
         period: str,
         category: str,
         *,
-        evidence: list[str],
+        evidence: list[EvidenceDigest],
         expected: int,
         no_business: bool,
-        confirmation_evidence: str,
+        confirmation_evidence: EvidenceDigest,
         request_id: str,
     ):
         month = YearMonth(period).ordinal
@@ -74,6 +81,8 @@ class Periods:
             raise ValueError("no-business confirmation conflicts with received materials")
         if not no_business and expected == 0 and not evidence:
             raise NeedsInformation("no_business", "没有资料不能自动证明没有业务")
+        validate_evidence_digests(evidence)
+        evidence_digest_bytes(confirmation_evidence, "confirmation_evidence")
         items = sorted(set(evidence))
         payload = [period, category, items, expected, no_business, confirmation_evidence]
 
@@ -227,7 +236,7 @@ class Periods:
         self,
         connection,
         period: str,
-        owner_confirmation: str,
+        owner_confirmation: EvidenceDigest,
         *,
         previous_close=_CURRENT_CLOSE,
         _inspection_cache=None,
@@ -236,7 +245,8 @@ class Periods:
 
         month = YearMonth(period).ordinal
         if not connection.execute(
-            "SELECT 1 FROM evidence WHERE digest=?", (bytes.fromhex(owner_confirmation),)
+            "SELECT 1 FROM evidence WHERE digest=?",
+            (evidence_digest_bytes(owner_confirmation, "owner_confirmation"),),
         ).fetchone():
             raise NeedsInformation("owner_confirmation", "需要负责人不可变确认依据")
         from .integrity import verify_close_integrity
@@ -416,7 +426,6 @@ class Periods:
         _allow_frozen_materials=False,
         _reuse_closed_materials=False,
         _query_reads=None,
-        _parallel_checks=None,
     ):
         """Collect the exact close checks without requiring owner authorization."""
 
@@ -475,7 +484,6 @@ class Periods:
             _allow_frozen_materials=_allow_frozen_materials,
             _reuse_closed_materials=_reuse_closed_materials,
             _query_reads=_query_reads,
-            _parallel_checks=_parallel_checks,
         )
         return {
             "period": period,
@@ -497,7 +505,6 @@ class Periods:
         _allow_frozen_materials=False,
         _reuse_closed_materials=False,
         _query_reads=None,
-        _parallel_checks=None,
     ):
         """Collect current issues without interpreting a historical close boundary."""
 
@@ -515,13 +522,6 @@ class Periods:
 
         if _inspection_cache is None:
             _inspection_cache = _CompletenessInspectionCache(connection)
-        if _parallel_checks is not None and (
-            not _allow_frozen_materials
-            or _query_reads is None
-            or _query_reads.connection is not connection
-            or not _query_reads._snapshot_active
-        ):
-            raise ValueError("parallel readiness belongs to an active summary snapshot")
 
         checker = read_completeness_summary if _allow_frozen_materials else check_completeness
         material_options = {
@@ -530,7 +530,7 @@ class Periods:
         }
         if _reuse_closed_materials and not _allow_frozen_materials:
             material_options["_allow_frozen_reuse"] = True
-        material_coverage = _parallel_checks.material() if _parallel_checks is not None else (
+        material_coverage = (
             checker(
                 connection,
                 month,
@@ -596,21 +596,13 @@ class Periods:
         snapshot_issues = []
         from .duplicates import DuplicateCandidates
 
-        duplicate_issues = (
-            _parallel_checks.duplicates()
-            if _parallel_checks is not None
-            else DuplicateCandidates(self.store).close_readiness(
-                connection, period, _inspection_cache=_inspection_cache, _query_reads=_query_reads
-            )
+        duplicate_issues = DuplicateCandidates(self.store).close_readiness(
+            connection, period, _inspection_cache=_inspection_cache, _query_reads=_query_reads
         )
         snapshot_issues.extend(duplicate_issues)
         issues.extend(duplicate_issues)
-        for name, checker in self.store.registry.snapshot_readiness.items():
-            found = list(
-                _parallel_checks.report()
-                if _parallel_checks is not None and name == "financial_reports"
-                else checker(self.store, connection, YearMonth(period), reads=_query_reads)
-            )
+        for _name, checker in self.store.registry.snapshot_readiness.items():
+            found = list(checker(self.store, connection, YearMonth(period), reads=_query_reads))
             snapshot_issues.extend(found)
             issues.extend(found)
         from .stored_json import verify_sql_outcomes
@@ -693,7 +685,7 @@ class Periods:
             "issues": issues,
         }
 
-    def preview_close(self, period: str, *, owner_confirmation: str):
+    def preview_close(self, period: str, *, owner_confirmation: EvidenceDigest):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             epochs = self.store.epochs(connection)
@@ -712,7 +704,7 @@ class Periods:
         self,
         period: str,
         *,
-        owner_confirmation: str,
+        owner_confirmation: EvidenceDigest,
         preview_digest: str,
         epochs: dict,
         request_id: str,

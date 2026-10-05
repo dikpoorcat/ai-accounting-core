@@ -10,7 +10,7 @@ from ai_accounting.kernel.dashboard import Dashboard
 opening_book = _opening_book
 
 
-def test_many_payments_page_from_employee_source_into_exact_historical_business(
+def test_employee_month_totals_and_exact_historical_business_payment_pages(
     opening_book, monkeypatch
 ):
     engine, save, publish, package, _ = opening_book
@@ -65,21 +65,27 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     dashboard = Dashboard(engine)
     response = dashboard.employees("2026-01", limit=2)
     employee = response["data"]["collections"]["employees"]["items"][0]
-    sources = dashboard.employees(
-        "2026-01",
-        employee_id=employee["employee_id"],
-        section="payroll_sources",
-        limit=2,
-        expected_version=response["snapshot_version"],
-    )
-    source = sources["data"]["collections"]["payroll_sources"]["items"][0]
-    assert source["subject_id"] == "prior-net"
-    assert source["settlement_view"] == "historical"
-    assert source["movements_scope"] == "business_related_settlement_events"
-    assert source["obligations"][0]["paid_fen"] == 600
-    assert source["obligations"][0]["remaining_fen"] == 1400
-    assert source["current_followups"]["obligations"][0]["paid_fen"] == 650
-    assert "movements" not in source and "movements_page" not in source
+    assert {"payroll_sources", "settlement_events"}.isdisjoint(response["data"]["collections"])
+    assert employee["direct_net_payments_fen"] == 600
+    assert employee["outstanding_net_fen"] == 1400
+    source = BusinessQueries(engine).business_status("prior-net", "2026-01")
+    assert source["identity"]["subject_id"] == "prior-net"
+    assert source["settlements"]["cutoff_period"] == "2026-01"
+    assert source["settlements"]["obligations"][0]["paid_fen"] == 600
+    assert source["settlements"]["obligations"][0]["remaining_fen"] == 1400
+    with engine.store.connection(read_only=True) as connection:
+        queries = BusinessQueries(engine)
+        frozen_relations = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"prior-net"}
+        )
+        current_relations = queries.settlement_summary(
+            connection, "2026-01", subject_ids={"prior-net"}, current=True
+        )
+        assert frozen_relations["movement_count"] == 6
+        assert frozen_relations["obligations"][0]["paid_fen"] == 600
+        assert current_relations["movement_count"] == 7
+        assert current_relations["obligations"][0]["paid_fen"] == 650
+    assert len(source["settlements"]["movements"]) == 6
     historical = dashboard.business_status(
         "2026-01",
         "prior-net",
@@ -90,7 +96,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     )["data"]
     first_page = historical["collections"]["settlement_events"]
     assert "movements" not in historical["settlements"]
-    assert historical["settlements"]["movement_count"] == 6
+    assert historical["settlements"]["obligations"][0]["paid_fen"] == 600
     assert first_page["page"]["total_count"] == 6
     assert first_page["page"]["returned_count"] == len(first_page["items"]) == 2
     assert {item["posting_period"] for item in first_page["items"]} == {"2026-01"}
@@ -110,7 +116,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
         )["data"]
         page = following["collections"]["settlement_events"]
         assert "movements" not in following["settlements"]
-        assert following["settlements"]["movement_count"] == 6
+        assert following["settlements"]["obligations"][0]["paid_fen"] == 600
         assert page["page"]["total_count"] == 6
         assert len(page["items"]) <= 2
         assert not seen.intersection(item["id"] for item in page["items"])
@@ -121,7 +127,8 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     current = dashboard.business_status("2026-01", "prior-net", section="settlement_events")["data"]
     assert current["settlement_view"] == "current"
     assert current["collections"]["settlement_events"]["page"]["total_count"] == 7
-    assert current["settlements"]["movement_count"] == 6
+    assert current["settlements"]["obligations"][0]["paid_fen"] == 600
+    assert current["current_followups"]["settlements"]["obligations"][0]["paid_fen"] == 650
     with pytest.raises(KernelError, match="分页") as failure:
         dashboard.business_status(
             "2026-01",

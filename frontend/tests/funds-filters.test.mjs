@@ -37,7 +37,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String; const formatPositiveFen = String;
   `;
-  const exported = "\nexport { loadFunds, loadMore, refresh, funds, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, visibleMovements, visibleBankRows, loading, pageStates, requestError, accountOptions, responsePeriod, voucherTarget, selectMovementAccount, selectDetailView, updateNotice };";
+  const exported = "\nexport { loadFunds, loadMore, refresh, funds, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, visibleMovements, visibleBankRows, loading, pageStates, requestError, accountOptions, responsePeriod, selectMovementAccount, selectDetailView, updateNotice };";
   const { outputText } = ts.transpileModule(imports + source + exported, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
@@ -49,6 +49,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
 function data(account = "bank-a", next = "next") {
   const page = { has_more: !!next, next_cursor: next, total_count: 2, filtered_count: 2, returned_count: 1 };
   const value = {
+    selected_movement_account: { type: "bank", account_id: account },
     accounts: ["bank-a", "bank-b"].map(account_id => ({
       type: "bank", account_id, code: account_id, name: account_id, movement_count: 2,
       statement: { transaction_count: 2 }, reconciliation: { state: "complete" },
@@ -67,42 +68,57 @@ function data(account = "bank-a", next = "next") {
 }
 
 function response(value, snapshot = "version") {
-  return { schema_version: 5, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
+  return { schema_version: 9, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
 }
 
-test("account clicks switch cached movement groups without a request or route change", async () => {
-  let requested = 0;
-  const view = await fundsView(async () => { requested += 1; return response(data()); });
-  const cached = data();
-  cached.movements.push({ id: "bank-b-first", account_type: "bank", account_id: "bank-b" });
-  cached.collections.movements.items = cached.movements;
-  view.funds.value = cached;
-  view.selectMovementAccount("bank:bank-a");
-  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first"]);
-  const sameSnapshot = view.funds.value;
+test("account selectors request complete-month server filters before displaying returned rows", async () => {
+  const calls = [];
+  const view = await fundsView(async (period, signal, query) => { calls.push(query); return response(data(query?.movement_account_id ?? "bank-a")); });
+  await view.loadFunds("2026-09");
   view.selectMovementAccount("bank:bank-b");
+  await Vue.nextTick(); await Vue.nextTick();
+  assert.equal(calls.at(-1).movement_account_id, "bank-b");
+  assert.equal(calls.at(-1).movement_account_type, "bank");
+  assert.equal(calls.at(-1).cursor, undefined);
   assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-b-first"]);
-  view.selectMovementAccount("");
-  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first", "bank-b-first"]);
-  assert.equal(view.funds.value, sameSnapshot);
-  assert.equal(view.route.query.movement_account_id, undefined);
-  assert.equal(requested, 0);
+  view.selectedBankAccount.value = "bank-b";
+  await Vue.nextTick(); await Vue.nextTick();
+  assert.equal(calls.at(-1).statement_account_id, "bank-b");
 });
 
-test("bank account dropdown filters cached statement rows without a request or route change", async () => {
-  let requested = 0;
-  const view = await fundsView(async () => { requested += 1; return response(data()); });
-  const cached = data();
-  cached.bank_statement.rows = [
-    { id: "statement-a", account_id: "bank-a" },
-    { id: "statement-b", account_id: "bank-b" },
-  ];
-  cached.collections.statements.items = cached.bank_statement.rows;
-  view.funds.value = cached;
-  view.selectedBankAccount.value = "bank-b";
-  assert.deepEqual(view.visibleBankRows.value.map(row => row.id), ["statement-b"]);
-  assert.equal(view.route.query.statement_account_id, undefined);
-  assert.equal(requested, 0);
+test("fund details default to a real account and obtain its whole-month server page", async () => {
+  const calls = [];
+  const view = await fundsView(async (period, signal, query) => {
+    calls.push(query);
+    const value = data(query.movement_account_id ?? "bank-a", null);
+    value.collections.movements.page.filtered_count = 27;
+    return response(value);
+  });
+  await view.loadFunds("2026-09");
+  assert.equal(view.selectedAccount.value, "bank:bank-a");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].movement_account_selection, "first");
+  assert.equal(calls[0].movement_account_id, undefined);
+  assert.deepEqual(view.visibleMovements.value.map(item => item.account_id), ["bank-a"]);
+  assert.equal(view.funds.value.collections.movements.page.filtered_count, 27);
+});
+
+test("no accounts remains an empty selection without a synthetic all-account option", async () => {
+  let calls = 0;
+  const view = await fundsView(async () => {
+    calls += 1;
+    const value = data("bank-a", null);
+    value.selected_movement_account = null;
+    value.collections.accounts = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+    value.collections.movements = { items: [], page: { ...value.collections.accounts.page } };
+    return response(value);
+  });
+  await view.loadFunds("2026-09");
+  assert.equal(calls, 1);
+  assert.equal(view.selectedAccount.value, "");
+  assert.deepEqual(view.accountOptions.value, []);
+  assert.deepEqual(view.visibleMovements.value, []);
+  assert.equal(view.loading.value, false);
 });
 
 test("a late first page cannot replace a later account selection", async () => {
@@ -145,15 +161,23 @@ test("hot funds refresh waits for context before exposing its concurrent main re
   await Vue.nextTick();
   assert.equal(calls.length, 1);
   calls[0](response(data("bank-a", null)));
-  await Vue.nextTick();
+  await Vue.nextTick(); await Vue.nextTick();
+  assert.equal(calls.length, 1, "initial account selection and data share one response");
+  const before = view.funds.value;
   const pending = view.refresh();
-  assert.equal(calls.length, 2, "funds starts the main request while context refreshes");
-  calls[1](response(data("bank-b", null)));
+  assert.equal(view.loading.value, true);
+  assert.equal(calls.length, 2, "funds starts one account-filtered main request while context refreshes");
+  const refreshed = data("bank-a", null);
+  refreshed.collections.movements.items[0].id = "bank-a-refreshed";
+  calls[1](response(refreshed));
   await Vue.nextTick();
-  assert.equal(view.funds.value, null, "the new funds response waits for context validation");
+  assert.equal(view.funds.value, before, "retain the hidden prior scope until context is validated");
+  assert.equal(view.funds.value.movements[0].id, "bank-a-first", "unchecked refreshed rows must not be committed");
+  assert.equal(view.loading.value, true, "the retained projection remains hidden");
   releaseContext(current);
   await pending;
-  assert.equal(view.funds.value.movements[0].account_id, "bank-b");
+  assert.equal(view.funds.value.movements[0].id, "bank-a-refreshed");
+  assert.equal(view.selectedAccount.value, "bank:bank-a");
   assert.equal(calls.length, 2, "the context watcher does not duplicate the main request");
 });
 
@@ -199,7 +223,7 @@ test("independent continuations merge into the latest snapshot and failures stay
   assert.equal(view.funds.value.collections.statements.items.length, 2);
 });
 
-test("legacy account routes select the cached group once and are then removed", async () => {
+test("account route filters bind the initial server request and each later selection", async () => {
   const calls = [];
   const view = await fundsView(async (period, signal, query) => { calls.push(query); return response(data()); }, undefined,
     { movement_account_type: "bank", movement_account_id: "bank-b", statement_account_id: "bank-b", funds_view: "bank" });
@@ -208,16 +232,17 @@ test("legacy account routes select the cached group once and are then removed", 
   assert.equal(view.selectedAccount.value, "bank:bank-b");
   assert.equal(view.selectedBankAccount.value, "bank-b");
   assert.equal(view.selectedDetailView.value, "bank");
-  assert.equal(calls[0].movement_account_id, undefined);
-  assert.equal(calls[0].statement_account_id, undefined);
+  assert.equal(calls[0].movement_account_id, "bank-b");
+  assert.equal(calls[0].statement_account_id, "bank-b");
   assert.equal(calls[0].cursor, undefined);
-  assert.equal(view.route.query.movement_account_id, undefined);
-  assert.equal(view.route.query.statement_account_id, undefined);
+  assert.equal(view.route.query.movement_account_id, "bank-b");
+  assert.equal(view.route.query.statement_account_id, "bank-b");
   view.selectMovementAccount("bank:bank-a");
   await Vue.nextTick(); await Vue.nextTick();
   assert.equal(view.selectedAccount.value, "bank:bank-a");
-  assert.equal(view.route.query.movement_account_id, undefined);
-  assert.equal(calls.length, 1);
+  assert.equal(view.route.query.movement_account_id, "bank-b");
+  assert.equal(calls.length, 2);
+  assert.equal(calls.at(-1).movement_account_id, "bank-a");
   assert.equal(view.funds.value !== null, true);
   view.selectDetailView("book");
   assert.equal(view.route.query.funds_view, "book");
@@ -241,12 +266,74 @@ test("selected later-page account label survives filtering without changing retu
   assert.equal(view.accountOptions.value.find(item => item.value === "bank:bank-z").label, "所选账户（名称尚未加载）");
 });
 
-test("voucher targets use the declared accounting month and positive journal reference", async () => {
-  const view = await fundsView(async () => response(data())); await view.loadFunds("2026-09");
-  assert.deepEqual(view.voucherTarget("12", view.responsePeriod.value), { path: "/", query: { company_id: "company-a", period: "2026-09", voucher: "12" } });
-  assert.equal(view.voucherTarget("摘要 12", "2026-09"), null);
-  assert.equal(view.voucherTarget("12", ""), null);
-  assert.equal(view.voucherTarget("0", "2026-09"), null);
+test("fund movements expose business links without voucher navigation", () => {
+  const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /voucherTarget|query:.*voucher|凭证详情/);
+  assert.match(source, /party|memo/);
+});
+
+test("book and bank tabs preserve the default account, overview and loaded collections", async () => {
+  const calls = [];
+  const view = await fundsView(async (_period, _signal, query) => { calls.push(query); return response(data()); });
+  await view.loadFunds("2026-09");
+  const before = view.funds.value;
+  for (const mode of ["bank", "book", "bank"]) {
+    view.selectDetailView(mode);
+    await Vue.nextTick(); await Vue.nextTick();
+    assert.equal(view.selectedAccount.value, "bank:bank-a");
+    assert.equal(view.funds.value, before);
+    assert.equal(view.loading.value, false);
+    assert.equal(calls.length, 1, "changing only the detail view must not issue a request");
+  }
+});
+
+test("account filtering replaces only its bounded first page and rejects late previous accounts", async () => {
+  const calls = [];
+  const view = await fundsView((_period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+  const first = view.loadFunds("2026-09"); calls[0].resolve(response(data())); await first;
+  const accounts = view.funds.value.collections.accounts;
+  const statements = view.funds.value.collections.statements;
+  const investment = view.funds.value.collections.investment_events;
+  view.selectMovementAccount("bank:bank-b"); await Vue.nextTick();
+  assert.equal(view.loading.value, false);
+  assert.equal(view.pageStates.value.book.loading, true);
+  assert.equal(calls[1].query.section, "movements");
+  assert.equal(calls[1].query.expected_version, "version");
+  assert.equal(calls[1].query.cursor, undefined);
+  assert.equal(view.funds.value.collections.accounts, accounts);
+  assert.equal(view.funds.value.collections.statements, statements);
+  assert.equal(view.funds.value.collections.investment_events, investment);
+  view.selectMovementAccount("bank:bank-a"); await Vue.nextTick();
+  assert.equal(calls[1].signal.aborted, true);
+  calls[1].resolve(response(data("bank-b"))); await Vue.nextTick();
+  assert.deepEqual(view.visibleMovements.value, []);
+  calls[2].resolve(response(data("bank-a"))); await Vue.nextTick(); await Vue.nextTick();
+  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first"]);
+  assert.equal(view.funds.value.collections.accounts, accounts);
+  view.selectedBankAccount.value = "bank-b"; await Vue.nextTick();
+  assert.equal(calls[3].query.section, "statements");
+  assert.equal(view.loading.value, false);
+  const next = data(); next.collections.statements.items = [{ id: "bank-b-statement" }];
+  calls[3].resolve(response(next)); await Vue.nextTick(); await Vue.nextTick();
+  assert.deepEqual(view.visibleBankRows.value.map(row => row.id), ["bank-b-statement"]);
+  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first"]);
+});
+
+test("a failed account first page retries locally without reusing the old cursor", async () => {
+  const calls = [];
+  const view = await fundsView((_period, _signal, query) => new Promise((resolve, reject) => calls.push({ query, resolve, reject })));
+  const first = view.loadFunds("2026-09"); calls[0].resolve(response(data())); await first;
+  const accounts = view.funds.value.collections.accounts;
+  view.selectMovementAccount("bank:bank-b"); await Vue.nextTick();
+  calls[1].reject(new Error("暂不可用")); await Vue.nextTick(); await Vue.nextTick();
+  assert.match(view.pageStates.value.book.error, /暂不可用/);
+  assert.equal(view.loading.value, false);
+  const retry = view.loadMore("book");
+  assert.equal(calls[2].query.section, "movements");
+  assert.equal(calls[2].query.cursor, undefined);
+  calls[2].resolve(response(data("bank-b"))); await retry;
+  assert.equal(view.pageStates.value.book.error, "");
+  assert.equal(view.funds.value.collections.accounts, accounts);
 });
 
 test("an old September snapshot refresh cannot finish the notice of a newer September refresh after A-B-A", async () => {
@@ -254,6 +341,7 @@ test("an old September snapshot refresh cannot finish the notice of a newer Sept
   const view = await fundsView(
     (period, signal, query) => new Promise((resolve, reject) => calls.push({ period, signal, query, resolve, reject })),
     () => new Promise((resolve, reject) => refreshes.push({ resolve, reject })),
+    { movement_account_type: "bank", movement_account_id: "bank-a" },
   );
   const snapshotChanged = () => Object.assign(new Error("changed"), { code: "dashboard_snapshot_changed" });
   view.funds.value = data(); view.snapshotVersion.value = "old-september";

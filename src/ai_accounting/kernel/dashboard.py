@@ -43,7 +43,10 @@ from .dashboard_reads import (
     page_keys,
     payroll_head_identities,
     payroll_head_metadata,
+    payroll_list_head_metadata,
     scalar_facts,
+    verified_adopted_head_identities,
+    verified_payroll_heads,
     verified_scalar_facts,
 )
 from .domains.money import ACTUAL_PAYMENT_KINDS, FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
@@ -256,6 +259,13 @@ def _source_list(source):
 
 class _Snapshot:
     def __init__(self, engine, connection, period, reads=None):
+        try:
+            self._initialize(engine, connection, period, reads)
+        except BaseException:
+            self.release()
+            raise
+
+    def _initialize(self, engine, connection, period, reads):
         from .business_queries import _today_china
 
         self.engine = engine
@@ -280,14 +290,17 @@ class _Snapshot:
         self.month_journal = Journal(self, month=self.month)
         self.calculations = Calculations(self)
         self.frozen_fact_ids = FrozenFacts(self)
-        self.accounts = defaultdict(int, account_totals(self))
+        self.month_account_gross = tuple(
+            (row["account"], row["debit"], row["credit"])
+            for row in connection.execute(
+                "SELECT account,debit,credit FROM monthly_account WHERE period=?", (self.month,)
+            )
+        )
         self.month_accounts = defaultdict(
             int,
             {
-                row["account"]: row["debit"] - row["credit"]
-                for row in connection.execute(
-                    "SELECT account,debit,credit FROM monthly_account WHERE period=?", (self.month,)
-                )
+                account: debit - credit
+                for account, debit, credit in self.month_account_gross
             },
         )
         from .dashboard_metadata import initialize_metadata
@@ -310,6 +323,29 @@ class _Snapshot:
     def release(self):
         """Drop helper views and their back-references at the read boundary."""
         self.__dict__.clear()
+
+    @cached_property
+    def owner_month_state(self):
+        """Classify the selected month without decoding its review directory."""
+        if self.close is not None:
+            return "closed"
+        covering = self.connection.execute(
+            "SELECT period,manifest,digest FROM period_close "
+            "WHERE period>? ORDER BY period LIMIT 1", (self.month,),
+        ).fetchone()
+        if covering is not None:
+            self.reads.close_header(covering)
+            return "covered"
+        return "open"
+
+    @cached_property
+    def accounts(self):
+        """Load ledger totals only for projections that consume them.
+
+        Funds use their account-balance sources, and employees use this month's
+        payroll amounts. Neither needs a second whole-ledger balance read.
+        """
+        return defaultdict(int, account_totals(self))
 
     @property
     def tax_identities(self):
@@ -417,7 +453,7 @@ class _Snapshot:
         if not hasattr(self, "settlement_cache"):
             self.settlement_cache = {}
             self.settlement_current_cache = {}
-        missing = set(subjects) - self.settlement_cache.keys()
+        missing = {subject for subject in subjects if subject not in self.settlement_cache}
         if missing:
             result = self.settlement_summary(subject_ids=missing)
             current = self.settlement_summary(subject_ids=missing, current=True)
@@ -425,24 +461,16 @@ class _Snapshot:
                 self.settlement_cache[subject] = result
                 self.settlement_current_cache[subject] = current
 
-    def settlement_summary(self, *, subject_ids=None, current=False):
-        key = (current, None if subject_ids is None else frozenset(subject_ids))
+    def settlement_summary(self, *, subject_ids=None, current=False, include_history_counts=True):
+        key = (
+            current, None if subject_ids is None else frozenset(subject_ids), include_history_counts
+        )
         if key not in self.settlement_summaries:
             self.settlement_summaries[key] = self.queries.settlement_summary(
-                self.connection, self.period, subject_ids=subject_ids, current=current
+                self.connection, self.period, subject_ids=subject_ids, current=current,
+                include_history_counts=include_history_counts,
             )
         return self.settlement_summaries[key]
-
-    @cached_property
-    def preparation(self):
-        parallel_checks = getattr(self, "_brief_parallel_checks", None)
-        return self.queries._period_readiness(
-            self.connection, self.period,
-            as_of=self.as_of if parallel_checks is not None else None,
-            summary=True,
-            _allow_frozen_materials=True,
-            _parallel_checks=parallel_checks,
-        )
 
     def query_calculation(self, ident):
         return self.reads.calculation(ident)
@@ -564,10 +592,16 @@ class _Snapshot:
         )
         return self.source("management", record, basis, field=field)
 
-    def party_details(self, ident):
+    def party_details(self, ident, *, exact_identity=False):
+        """Reuse frozen names and supplements for an already located object.
+
+        Exact business references need no employee-roster membership lookup:
+        the counterparty profile mapping includes the same person records.
+        Other consumers retain their existing employee-first lookup.
+        """
         if not ident:
             return {"name": "未提供", "source": None}
-        for kind in ("employee", "counterparty"):
+        for kind in (("counterparty",) if exact_identity else ("employee", "counterparty")):
             for profiles in (self.profiles, self.current_profiles):
                 profile = profiles.get(kind, {}).get(ident, {})
                 if profile.get("display_name"):
@@ -639,8 +673,8 @@ class _Snapshot:
     def party_code(self, ident):
         return self.party_code_details(ident)[0]
 
-    def party_code_details(self, ident):
-        profile = self.profile("employee", ident)
+    def party_code_details(self, ident, *, exact_identity=False):
+        profile = self.profile("counterparty" if exact_identity else "employee", ident)
         if profile.get("display_number"):
             return profile["display_number"], profile["field_sources"]["display_number"]
         codes = {
@@ -861,7 +895,7 @@ class _Snapshot:
                         relation["line_number"] = None
 
     def evidence_details(self, proofs):
-        missing = set(proofs) - self.evidence_cache.keys()
+        missing = {proof for proof in proofs if proof not in self.evidence_cache}
         if missing:
             self.evidence_cache.update(
                 (item["digest"], item)
@@ -1134,6 +1168,112 @@ class _Snapshot:
         before retaining narrow fields; off-page facts, evidence and ancestry
         remain unhydrated.
         """
+        verified_rows = self.month_journal.verified_rows()
+        needed_basis = (
+            {row["basis_calculation_id"] for row in verified_rows
+             if row["basis_kind"] == "expense" or (
+                 row["basis_kind"] in ACTUAL_PAYMENT_KINDS and row["reverses_id"] is None
+             )}
+            if verified_rows is not None else set()
+        )
+        contents = self.reads._verified_source_contents if verified_rows is not None else {}
+        if verified_rows is not None and all(ident in contents for ident in needed_basis):
+            # The complete adopted month has already passed Journal's money
+            # proof. Reuse only its exact headers and successfully decoded IDs;
+            # the payment's independently anchored sources are still proved
+            # before consulting their kinds or business classification fields.
+            slots, source_ids = {}, set()
+            for row in verified_rows:
+                if row["basis_kind"] not in ACTUAL_PAYMENT_KINDS or row["reverses_id"] is not None:
+                    continue
+                values = contents[row["basis_calculation_id"]].get("values")
+                settlements = values.get("settlements", []) if isinstance(values, dict) else None
+                if not isinstance(settlements, list) or any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("source_calculation"), str)
+                    or not item["source_calculation"] for item in settlements
+                ):
+                    raise KernelError("content_integrity_failed", "付款核销缺少精确业务来源")
+                slots[row["id"]] = settlements
+                source_ids.update(item["source_calculation"] for item in settlements)
+            from .report_open_contribution import verify_published_source_bindings
+
+            fallback = verify_published_source_bindings(self.reads, source_ids)
+            if fallback:
+                self.reads.verify_saved_input_identity(fallback)
+            self.reads.verify_sql_outcomes(source_ids)
+            decoded_ids = {ident for ident in source_ids if ident in contents}
+            kinds = {ident: self.reads._metadata[ident]["kind"] for ident in decoded_ids
+                     if ident in self.reads._metadata}
+            from . import close_storage
+            from .content_history_context import close_reader
+
+            if (self.reads._snapshot_active and self.connection.in_transaction
+                    and close_reader() is close_storage
+                    and getattr(self.store.registry, "content_version", None) != 1):
+                kinds.update(
+                    (row["basis_calculation_id"], row["basis_kind"])
+                    for row in verified_rows if row["basis_calculation_id"] in decoded_ids
+                )
+            missing_kinds = decoded_ids - kinds.keys()
+            if missing_kinds:
+                kinds.update(self.connection.execute(
+                    "SELECT c.id,c.kind FROM json_each(?) ids "
+                    "CROSS JOIN calculation c ON c.id=ids.value",
+                    (canonical(sorted(missing_kinds)),),
+                ))
+            sources = {}
+            for ident in decoded_ids:
+                values = contents[ident].get("values")
+                if not isinstance(values, dict):
+                    raise KernelError("content_integrity_failed", "付款业务来源内容不一致")
+                obligations = values.get("obligations", [])
+                if kinds[ident] == "reimbursed_deposit" and (
+                    not isinstance(obligations, list)
+                    or any(not isinstance(item, dict) for item in obligations)
+                ):
+                    raise KernelError("content_integrity_failed", "付款业务来源内容不一致")
+                sources[ident] = (
+                    kinds[ident], values.get("creditor_kind"),
+                    [(item.get("key"), item.get("name")) for item in obligations]
+                    if kinds[ident] == "reimbursed_deposit" else [],
+                )
+            # Byte-only proofs need narrow fields, not full result hydration.
+            # Drive this read by the exact missing IDs, never the whole month.
+            missing = source_ids - decoded_ids
+            if missing:
+                for source in self.connection.execute(
+                    "SELECT c.id,c.kind,json_extract(c.outcome,'$.values.creditor_kind') creditor,"
+                    "json_extract(o.value,'$.key') obligation_key,"
+                    "json_extract(o.value,'$.name') obligation_name "
+                    "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
+                    "LEFT JOIN json_each(CASE WHEN c.kind='reimbursed_deposit' THEN "
+                    "json_extract(c.outcome,'$.values.obligations') ELSE '[]' END) o",
+                    (canonical(sorted(missing)),),
+                ):
+                    entry = sources.setdefault(
+                        source["id"], (source["kind"], source["creditor"], [])
+                    )
+                    entry[2].append((source["obligation_key"], source["obligation_name"]))
+            by_basis, counts = {}, defaultdict(int)
+            for row in verified_rows:
+                groups = set()
+                for slot in slots.get(row["id"], ()):
+                    kind, creditor, obligations = sources[slot["source_calculation"]]
+                    names = [name for key, name in obligations
+                             if key is not None and key == slot.get("obligation")]
+                    for name in names or [None]:
+                        groups.add(_settlement_group(kind, creditor_kind=creditor,
+                                                     obligation_name=name))
+                creditor = (
+                    contents[row["basis_calculation_id"]]["values"].get("creditor_kind")
+                    if row["basis_kind"] == "expense" else None
+                )
+                group = _group(row["basis_kind"], row["reverses_id"] is not None,
+                               creditor_kind=creditor, settlement_groups=groups)
+                by_basis[row["basis_calculation_id"], row["reverses_id"] is not None] = group
+                counts[group, row["basis_kind"]] += 1
+            return by_basis, counts
         query, parameters = self.month_journal.sql()
         payment_kinds = canonical(ACTUAL_PAYMENT_KINDS)
         self.reads.verify_sql_outcomes(
@@ -1144,20 +1284,29 @@ class _Snapshot:
                 [*parameters, payment_kinds],
             )
         )
-        self.reads.verify_sql_outcomes(
+        # Every direct settlement slot is consulted to decide its business
+        # group. Authenticate that exact set before filtering by source kind;
+        # a damaged kind must not silently turn a real expense into "other".
+        source_ids = {
             row[0]
             for row in self.connection.execute(
-                f"SELECT DISTINCT source.id FROM ({query}) j "
+                "SELECT DISTINCT json_extract(s.value,'$.source_calculation') "
+                f"FROM ({query}) j "
                 "JOIN calculation c ON c.id=j.basis_calculation_id "
                 "JOIN json_each(CASE WHEN j.basis_kind IN "
                 "(SELECT value FROM json_each(?)) AND j.reverses_id IS NULL THEN "
-                "json_extract(c.outcome,'$.values.settlements') ELSE '[]' END) s "
-                "JOIN calculation source "
-                "ON source.id=json_extract(s.value,'$.source_calculation') "
-                "WHERE source.kind IN ('expense','reimbursed_deposit')",
+                "json_extract(c.outcome,'$.values.settlements') ELSE '[]' END) s",
                 [*parameters, payment_kinds],
             )
-        )
+        }
+        if any(not isinstance(ident, str) or not ident for ident in source_ids):
+            raise KernelError("content_integrity_failed", "付款核销缺少精确业务来源")
+        from .report_open_contribution import verify_published_source_bindings
+
+        fallback = verify_published_source_bindings(self.reads, source_ids)
+        if fallback:
+            self.reads.verify_saved_input_identity(fallback)
+        self.reads.verify_sql_outcomes(source_ids)
         records = {}
         for row in self.connection.execute(
             "SELECT j.id,j.basis_calculation_id,j.basis_kind kind,"
@@ -1199,16 +1348,9 @@ class _Snapshot:
             counts[group, row["kind"]] += 1
         return by_basis, counts
 
-    def voucher(self, row):
+    def _voucher_asset_details(self, row):
         calc = row["basis"]
-        fact = calc["fact"]
-        kind, data = calc["kind"], fact["data"]
-        period = str(YearMonth.from_ordinal(row["period"]))
-        recognition = _recognition(data, period)
-        profile = self.profile("business", fact["subject_id"])
-        management = self.management.get(fact["subject_id"])
-        note = profile.get("note") or (management["note"] if management else None) or ""
-        relations = self.voucher_relations(calc, row["sign"])
+        kind, data = calc["kind"], calc["fact"]["data"]
         asset_references = self.asset_references(calc)
         asset_reference = asset_references[0] if len(asset_references) == 1 else None
         asset_members = []
@@ -1263,6 +1405,71 @@ class _Snapshot:
                 for reference in asset_references
                 if reference["asset_id"] in costs
             ]
+        return asset_references, asset_reference, asset_members, asset_lines, member_evidence
+
+    def owner_voucher(self, row):
+        """Render the selected voucher's saved lines without diagnostic graphs."""
+        calc = row["basis"]
+        relations = self.voucher_relations(calc, row["sign"])
+        references, asset, members, asset_lines, _ = self._voucher_asset_details(row)
+        short, summary = self.business_summary(
+            calc, row["sign"], relations, asset_references=references or members
+        )
+        amount, label = self.business_amount(calc)
+        recognition = _recognition(calc["fact"]["data"], self.period)
+
+        def owner_asset(reference):
+            return {key: value for key, value in reference.items() if key != "field_sources"}
+
+        return {
+            "number": str(row["number"]),
+            "voucher_version_id": row["id"],
+            "subject_id": calc["subject_id"],
+            "reverses_version_id": row["reverses_id"],
+            "date": recognition["date"], "recognition": recognition,
+            "type": _name(calc["kind"]), "kind": calc["kind"],
+            "state": "冲正" if row["sign"] < 0 else "已入账",
+            "group": self.activity_classification[0][calc["id"], row["sign"] < 0],
+            "summary": summary, "list_summary": short,
+            "amount_fen": row["total"],
+            "business_amount_fen": row["sign"] * amount if amount is not None else None,
+            "business_amount_label": label,
+            "asset": owner_asset(asset) if asset is not None else None,
+            "asset_members": [owner_asset(member) for member in members],
+            "lines": [
+                {
+                    "line_number": line["line_no"], "code": line["account"],
+                    "account": ACCOUNT_NAMES.get(line["account"], "未配置名称的科目"),
+                    "debit_fen": line["debit"], "credit_fen": line["credit"],
+                    "party": self.line_party(line, relations),
+                    "source_label": self.asset_reference_label(asset_lines[line["line_no"]])
+                    if line["line_no"] in asset_lines else self.line_source(line, relations),
+                    "parties": [
+                        {"id": r["party_id"], "name": r["party"], "amount_fen": r["amount_fen"]}
+                        for r in relations
+                        if r.get("line_number") == line["line_no"] and r["party_id"]
+                    ],
+                    "party_state": self.line_party_state(line, relations),
+                    **({"asset": owner_asset(asset_lines[line["line_no"]])}
+                       if line["line_no"] in asset_lines else {}),
+                }
+                for line in row["lines"]
+            ],
+        }
+
+    def voucher(self, row):
+        calc = row["basis"]
+        fact = calc["fact"]
+        kind, data = calc["kind"], fact["data"]
+        period = str(YearMonth.from_ordinal(row["period"]))
+        recognition = _recognition(data, period)
+        profile = self.profile("business", fact["subject_id"])
+        management = self.management.get(fact["subject_id"])
+        note = profile.get("note") or (management["note"] if management else None) or ""
+        relations = self.voucher_relations(calc, row["sign"])
+        asset_references, asset_reference, asset_members, asset_lines, member_evidence = (
+            self._voucher_asset_details(row)
+        )
         summary_asset_references = asset_references or asset_members
         short_summary, summary, summary_sources = self.business_summary(
             calc,
@@ -1457,9 +1664,10 @@ class _Snapshot:
 
 
 class Dashboard:
-    def __init__(self, engine, *, company_name="", companies=None):
+    def __init__(self, engine, *, company_name="", companies=None, owner_review_request=None):
         self.engine, self.store = engine, engine.store
         self.company_name, self.companies = company_name, companies
+        self._owner_review_request = owner_review_request
 
     def _periods(self, connection):
         # Step between actual indexed periods before checking their current
@@ -1555,22 +1763,17 @@ class Dashboard:
             quarter_keys = sorted(
                 {(p["year"], (p["month"] - 1) // 3 + 1) for p in periods}, reverse=True
             )
-            reports = Reports(self.engine)
-            coverage = reports.closed_period_coverages(
-                quarter_keys, connection=connection, reads=reads
-            )
             quarters = [
                 {
                     "key": f"{year}-Q{quarter}",
                     "year": year,
                     "quarter": quarter,
                     "label": f"{year} 年第 {quarter} 季度",
-                    "complete": coverage[year, quarter]["complete"],
                 }
                 for year, quarter in quarter_keys
             ]
             return {
-                "schema_version": 2,
+                "schema_version": 3,
                 "company": current["name"],
                 "companies": companies,
                 "current_company": current,
@@ -1586,13 +1789,12 @@ class Dashboard:
         from .business_queries import _today_china
 
         if snapshot:
-            snapshot.attach_recorded_times()
             read_context = self._read_context(snapshot.connection, snapshot.as_of)
         else:
             with self.store.connection(read_only=True) as connection:
                 read_context = self._read_context(connection, _today_china())
         return {
-            "schema_version": 7,
+            "schema_version": 8,
             "snapshot_version": snapshot.snapshot_version if snapshot else None,
             "selected_period": _period_view(snapshot.period, bool(snapshot.close))
             if snapshot
@@ -1665,428 +1867,148 @@ class Dashboard:
             }
 
     def brief(
-        self,
-        period: str | None = None,
-        *,
-        limit: int = 100,
-        expected_version: str | None = None,
-        section: str | None = None,
-        cursor: str | None = None,
-        voucher_version_id: str | None = None,
+        self, period: str | None = None, *, limit: int = 20,
+        expected_version: str | None = None, section: str | None = None,
+        cursor: str | None = None, voucher_version_id: str | None = None,
         voucher_number: int | None = None,
-        preparation: Literal["complete", "deferred"] = "complete",
-        _parallel_attempt=None,
+        preparation: Literal["complete", "deferred"] = "deferred",
     ):
+        # The owner brief is a business projection. Full preparation and its
+        # technical graphs belong to the separate AI-accountant read contract.
         if preparation not in {"complete", "deferred"}:
             raise KernelError("invalid_command", "不支持的准备检查投影")
         validate_page("brief", section, cursor, limit)
         if voucher_version_id is not None and voucher_number is not None:
-            raise KernelError("invalid_command", "精确凭证定位须只提供一个身份")
+            raise KernelError("invalid_command", "精确业务定位须只提供一个身份")
         if voucher_number is not None and (type(voucher_number) is not int or voucher_number < 1):
-            raise KernelError("invalid_command", "凭证编号须为正整数")
+            raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                response = self._response(None, None)
-                if preparation == "deferred":
-                    response.update(projection="dashboard_brief_deferred")
-                return response
+                return {**self._response(None, None), "schema_version": 11}
             self._check_page_version(snap, cursor, expected_version)
-            parallel_started = (
-                _parallel_attempt is not None and _parallel_attempt.start(snap)
-            )
-            if parallel_started:
-                snap._brief_parallel_checks = _parallel_attempt
-            # Brief consumes the page count, kind groups and line totals in the
-            # same snapshot; select their narrow shared aggregate once.
-            snap.month_journal.prime_summary()
-            after = (
-                decode_cursor(snap, "brief", section, cursor, {})
-                if section != "file_jobs"
-                else None
-            )
-            if section in {None, "vouchers"}:
-                rows, page = snap.month_journal.page(after or 0, limit)
+            # Authenticate the complete month's money first. Later scalar and
+            # page reads can reuse this successful proof in this snapshot.
+            position = _brief_amounts(snap)
+            after = decode_cursor(snap, "brief", section, cursor, {})
+            if section in {None, "activity", "vouchers"}:
+                rows, page = snap.month_journal.page(
+                    after or 0, limit, include_lines=section != "activity"
+                )
             else:
-                rows, page = [], page_keys([], limit=limit, total_count=len(snap.month_journal))[1]
+                rows, page = [], None
             focused_row = None
             if voucher_version_id is not None or voucher_number is not None:
                 found, _ = snap.month_journal.page(
-                    0, 1, voucher_number=voucher_number, voucher_version_id=voucher_version_id
+                    0, 1, voucher_number=voucher_number, voucher_version_id=voucher_version_id,
+                    include_lines=False,
                 )
                 if not found:
-                    raise KernelError("dashboard_voucher_not_found", "所选月份没有这张精确凭证")
+                    raise KernelError("dashboard_voucher_not_found", "所选月份没有这项精确业务")
                 focused_row = found[0]
-            profile_rows = [*rows, *([focused_row] if focused_row else [])]
-            calculation_ids = {row["basis_calculation_id"] for row in profile_rows}
-            snap.reads.prime_calculations(calculation_ids, ancestors=True)
-            snap.reads.voucher_lines(row["id"] for row in profile_rows)
-            asset_ids = set()
-            member_ids = set()
-            for row in profile_rows:
-                asset_ids.update(asset_id for asset_id, _ in snap.asset_identities(row["basis"]))
-                _, contributions = snap.asset_member_contributions(row)
-                for _, contribution in contributions:
-                    member_ids.add(contribution["id"])
-                    asset_ids.update(
-                        asset_id for asset_id, _ in snap.asset_identities(contribution)
-                    )
-            snap.reads.prime_calculations(member_ids, ancestors=True)
-            resolutions = snap.reads.relations_many(calculation_ids)
-            subjects = {snap.calculation(ident)["subject_id"] for ident in calculation_ids}
-            snap.metadata.prime_profiles("business", subjects)
-            snap.management.prime(subjects)
-            party_ids, fund_account_ids = set(), set()
-            for ident in calculation_ids:
-                calc = snap.calculation(ident)
-                data = calc["fact"]["data"]
-                calc_parties = {
-                    data[field]
-                    for field in (
-                        "employee_id",
-                        "person_id",
-                        "counterparty_id",
-                        "customer_id",
-                        "supplier_id",
-                        "owner_id",
-                        "buyer_id",
-                        "lender_id",
-                        "payer_id",
-                        "recipient_id",
-                    )
-                    if data.get(field)
+            _brief_prime_activity(snap, [*rows, *([focused_row] if focused_row else [])])
+            focused = _brief_activity_row(snap, focused_row) if focused_row else None
+            focused_voucher = snap.owner_voucher(focused_row) if focused_row else None
+            # Activity and voucher pages share their exact selected rows. The
+            # voucher projection adds saved lines without diagnostic graphs.
+            activity = (
+                [_brief_activity_row(snap, row) for row in rows]
+                if section in {None, "activity"} else []
+            )
+            _, counts = snap.activity_classification
+            groups = [
+                {"key": key, "label": label,
+                 "event_count": sum(count for (group, _), count in counts.items() if group == key),
+                 "type_counts": [
+                     {"label": _name(kind), "count": count}
+                     for (group, kind), count in sorted(counts.items()) if group == key
+                 ]}
+                for key, label in GROUPS.items()
+                if any(group == key for group, _ in counts)
+            ]
+            funds = _funds(snap, summary_only=True)
+            totals = snap.month_journal.totals()
+            valid = (
+                totals["debit"] == totals["credit"]
+                and position["complete"]
+            )
+            open_items = _open_items(
+                snap, after=after if section == "open_items" else None, limit=limit,
+                summary_only=section not in {None, "open_items"},
+            )
+            collections = {}
+            if section in {None, "activity"}:
+                collections["activity"] = {"items": activity, "page": page}
+            if section in {None, "vouchers"}:
+                collections["vouchers"] = {
+                    "items": [snap.owner_voucher(row) for row in rows], "page": page,
                 }
-                if data.get("payment_method") == "bank_batch":
-                    calc_parties.discard(data.get("counterparty_id"))
-                for field in ("allocations", "sources"):
-                    calc_parties.update(
-                        item["recipient_id"]
-                        for item in data.get(field, ())
-                        if item.get("recipient_id")
-                    )
-                party_ids.update(calc_parties)
-                fund_account_ids.update(
-                    effect["key"]
-                    for effect in calc["outcome"].get("balances", ())
-                    if effect["category"] in FUND_TYPES
-                )
-            for resolution in resolutions.values():
-                party_ids.update(
-                    item["creditor_id"]
-                    for item in resolution["obligations"]
-                    if item.get("creditor_id")
-                )
-                party_ids.update(
-                    item["recipient_id"]
-                    for item in resolution["line_relations"]
-                    if item.get("recipient_id")
-                )
-                for item in resolution["obligations"]:
-                    source_id = item.get("source_calculation_id")
-                    if source_id:
-                        source_data = snap.calculation(source_id)["fact"]["data"]
-                        party_ids.update(
-                            source_data[field]
-                            for field in ("employee_id", "person_id")
-                            if source_data.get(field)
-                        )
-            party_ids.discard("payroll-group")
-            snap.metadata.prime_profiles("employee", party_ids)
-            snap.metadata.prime_profiles("counterparty", party_ids)
-            snap.metadata.prime_profiles("fund_account", fund_account_ids)
-            if asset_ids:
-                snap.metadata.prime_profiles("asset", asset_ids)
-            dependencies = defaultdict(list)
-            for row in snap.connection.execute(
-                "SELECT d.calculation_id,d.fact_id FROM json_each(?) ids "
-                "JOIN dependency_fact d ON d.calculation_id=ids.value "
-                "ORDER BY d.calculation_id,d.fact_id",
-                (canonical(sorted(calculation_ids)),),
-            ):
-                dependencies[row["calculation_id"]].append(row["fact_id"])
-            snap.reads.facts(fact_id for fact_ids in dependencies.values() for fact_id in fact_ids)
-            for row in profile_rows:
-                row["_voucher_dependency_facts"] = tuple(dependencies[row["basis_calculation_id"]])
-            vouchers = [snap.voucher(row) for row in rows]
-            focused = snap.voucher(focused_row) if focused_row else None
-            from .close_review import business_adopted_basis
-
-            page_calculation_ids = [voucher["calculation_id"] for voucher in vouchers]
-            adopted_basis = {
-                "scope": "current_voucher_page",
-                "calculation_ids": page_calculation_ids,
-                **business_adopted_basis(
-                    snap.connection,
-                    self.engine,
-                    page_calculation_ids,
-                    reads=snap.reads,
-                ),
-            }
-            groups = []
-            _, activity_counts = snap.activity_classification
-            for key, label in GROUPS.items():
-                type_counts = [
-                    {"label": _name(kind), "count": count}
-                    for (group, kind), count in sorted(activity_counts.items())
-                    if group == key
-                ]
-                if not type_counts:
-                    continue
-                selected = [v for v in vouchers if v["components"][0]["group"] == key]
-                groups.append(
-                    {
-                        "key": key,
-                        "label": label,
-                        "event_count": sum(row["count"] for row in type_counts),
-                        "loaded_count": len(selected),
-                        "type_counts": type_counts,
-                        "rows": [
-                            {
-                                "date": v["date"],
-                                "recognition": v["recognition"],
-                                "reference": v["number"],
-                                "calculation_id": v["calculation_id"],
-                                "voucher_version_id": v["voucher_version_id"],
-                                "title": v["list_summary"],
-                                "subject": v["type"],
-                                "description": v["display_summary"],
-                                "display_description": v["display_summary"],
-                                "asset": v["asset"],
-                                "field_sources": {
-                                    "display_description": v["field_sources"]["display_summary"],
-                                    **(
-                                        {"title": v["field_sources"]["list_summary"]}
-                                        if "list_summary" in v["field_sources"]
-                                        else {}
-                                    ),
-                                },
-                                "amount_fen": v["business_amount_fen"],
-                                "amount_label": v["business_amount_label"],
-                                "journal_total_fen": v["amount_fen"],
-                                "state": v["state"],
-                                "party": "、".join(v["components"][0]["parties"]),
-                                "evidence": v["evidence"],
-                                "evidence_details": v["evidence_details"],
-                                "components": v["components"],
-                                "funds": v["funds"],
-                                "settlements": v["settlements"],
-                            }
-                            for v in selected
-                        ],
-                    }
-                )
-            funds, workforce_cost, assets = (
-                _funds(snap, summary_only=True),
-                _brief_workforce_cost(snap),
-                _long_term_assets(snap),
-            )
-            bank = funds["bank_statement"]
-            unmatched = bank["unmatched_totals"]
-            # Let the workers run while this snapshot completes independent
-            # commentary and open-item reads. The ordinary path keeps its
-            # existing order and one-transaction proof reuse.
-            early_open_items = (
-                _open_items(
-                    snap,
-                    after=after if section == "open_items" else None,
-                    limit=limit,
-                    summary_only=section not in {None, "open_items"},
-                )
-                if parallel_started else None
-            )
-            if parallel_started:
-                _parallel_attempt.supply_position_obligations(snap)
-                _ = snap.commentary
-            prepared = snap.preparation if preparation == "complete" else None
-            checks = _brief_checks(prepared)
-            journal_totals = snap.month_journal.totals()
-            debit, credit = journal_totals["debit"], journal_totals["credit"]
-            position = _parallel_attempt.position() if parallel_started else _position(snap)
-            position["bank_calculation"] = {
-                "opening_fen": funds["bank_opening_fen"],
-                "inflow_fen": funds["bank_inflow_fen"],
-                "outflow_fen": funds["bank_outflow_fen"],
-            }
-            valid = debit == credit and position["equation_valid"]
-            attention = (
-                checks["attention_count"]
-                + int(valid is None)
-                + unmatched["count"]
-                + int(bank["coverage_state"] in {"missing", "partial"})
-            )
-            commentary = snap.commentary.get("current")
-
-            def commentary_item(item):
+            if section in {None, "open_items"}:
+                collection = open_items.pop("collection")
+                collection["items"] = [_brief_open_item(item) for item in collection["items"]]
+                collections["open_items"] = collection
+            open_items.pop("collection", None)
+            for category in open_items["categories"]:
+                category.pop("groups", None)
+            risks = []
+            mapping_issues = [
+                item for item in position["issues"] if item.get("field") == "account_mapping"
+            ]
+            if any("amount_fen" in item for item in mapping_issues):
+                risks.append({"key": "month_amounts", "title": "本月经营金额尚需核对",
+                              "impact": "本月收入、费用仅包含已确认分类的金额",
+                              "status": "ai_reviewing"})
+            if any("amount_fen" not in item for item in mapping_issues):
+                risks.append({"key": "ending_amounts", "title": "月末账面金额尚需核对",
+                              "impact": "部分月末余额尚未确认分类，不能作为完整结论",
+                              "status": "ai_reviewing"})
+            if valid is not True and not mapping_issues:
+                risks.append({"key": "amounts", "title": "经营金额尚需核对",
+                              "impact": "部分金额暂不能作为完整结论", "status": "ai_reviewing"})
+            if open_items["complete"] is False:
+                risks.append({"key": "settlements", "title": "待收待付尚需核对",
+                              "impact": "已知余额暂不能代表全部款项", "status": "ai_reviewing"})
+            if funds["total_fen"] is None:
+                risks.append({"key": "funds_amounts", "title": "资金金额尚需核对",
+                              "impact": "月末账面资金暂不能作为完整结论",
+                              "status": "ai_reviewing"})
+            commentary = snap.commentary
+            from .dashboard_owner import owner_tasks
+            def note(item):
                 if item is None:
                     return None
-                return {
-                    key: item[key]
-                    for key in (
-                        "id",
-                        "period",
-                        "revision",
-                        "text",
-                        "context_digest",
-                        "close_digest",
-                        "source",
-                        "evidence_digest",
-                        "digest",
-                        "supplementary",
-                        "content_validity",
-                    )
-                    if key in item
-                }
-
-            commentary_details = {
-                "status": snap.commentary["status"],
-                "current": commentary_item(snap.commentary.get("current")),
-                "frozen": commentary_item(snap.commentary.get("frozen")),
-                "latest": commentary_item(snap.commentary.get("latest")),
-                "supplements": [
-                    commentary_item(item) for item in snap.commentary.get("supplements", ())
-                ],
-            }
+                return {"id": item["id"], "text": item["text"],
+                        "status": item["content_validity"]["status"]}
             data = {
                 "generated_at": datetime.now(UTC).isoformat(),
-                "management_commentary": (commentary or {}).get("text", ""),
-                "management_commentary_details": commentary_details,
-                "material_completeness": checks["material_completeness"],
-                "period_preparation": preparation_view(prepared) if prepared is not None else None,
-                "voucher_count": len(snap.month_journal),
-                "line_count": journal_totals["line_count"],
-                "total_debit_fen": debit,
-                "total_credit_fen": credit,
-                "focused_voucher": focused,
-                "adopted_basis": adopted_basis,
+                "month_state": snap.owner_month_state,
+                "owner_review_request": self._owner_review_request(snap)
+                if self._owner_review_request is not None and snap.owner_month_state == "open"
+                else None,
+                "management_commentary_details": {
+                    "status": commentary["status"], "current": note(commentary.get("current")),
+                    "latest": note(commentary.get("latest")),
+                    "supplements": [note(item) for item in commentary.get("supplements", ())],
+                },
+                "activity_count": len(snap.month_journal), "focused_activity": focused,
+                "voucher_count": len(snap.month_journal), "focused_voucher": focused_voucher,
                 "activity_groups": groups,
-                "position": position,
-                "funds_overview": {
-                    key: funds[key]
-                    for key in (
-                        "total_fen",
-                        "bank_fen",
-                        "cash_fen",
-                        "payment_platform_fen",
-                        "inflow_fen",
-                        "outflow_fen",
-                        "net_change_fen",
-                        "internal_transfer_fen",
-                    )
-                },
-                "cash": {
-                    k: bank[k]
-                    for k in (
-                        "transaction_count",
-                        "matched_count",
-                        "unmatched_count",
-                        "needs_review_count",
-                        "coverage_state",
-                        "missing_account_count",
-                        "inflow_fen",
-                        "outflow_fen",
-                    )
-                }
-                | {
-                    "net_fen": bank["inflow_fen"] - bank["outflow_fen"]
-                    if bank["inflow_fen"] is not None
-                    else None
-                },
-                "unmatched_bank_activity": {
-                    **unmatched,
-                    "rows": [],
-                    "rows_truncated": unmatched["count"] > 0,
-                },
-                "open_items": early_open_items if parallel_started else _open_items(
-                    snap,
-                    after=after if section == "open_items" else None,
-                    limit=limit,
-                    summary_only=section not in {None, "open_items"},
-                ),
-                "workforce_cost": workforce_cost,
-                "long_term_assets": assets,
-                "validation": {
-                    "state": "error"
-                    if valid is False
-                    else "attention"
-                    if attention
-                    else "pending"
-                    if preparation == "deferred"
-                    else "complete",
-                    "title": "账务核对",
-                    "summary": "账务汇总平衡"
-                    if valid is True
-                    else "财务位置依据不完整"
-                    if valid is None
-                    else "账务汇总需核对",
-                    "integrity_valid": valid,
-                    "voucher_balanced": debit == credit,
-                    "issues": checks["issues"],
-                    "attention_count": attention,
-                    "items": [
-                        {
-                            "key": "balance",
-                            "label": "凭证与余额",
-                            "state": "pass"
-                            if valid is True
-                            else "pending"
-                            if valid is None
-                            else "error",
-                            "text": "借贷及资产负债关系核对",
-                        },
-                        *checks["items"],
-                    ],
-                },
+                "position": {key: position[key] for key in (
+                    "month_revenue_fen", "month_expense_fen", "month_result_fen", "complete"
+                )},
+                "funds_overview": {key: funds[key] for key in (
+                    "total_fen", "bank_fen", "cash_fen", "payment_platform_fen",
+                    "inflow_fen", "outflow_fen", "net_change_fen", "internal_transfer_fen"
+                )},
+                "open_items": {key: open_items[key] for key in (
+                    "receivable_count", "receivable_fen", "payable_count", "payable_fen",
+                    "total_count", "complete", "categories", "cutoff_period",
+                    "current_cutoff_period",
+                )},
+                "risks": risks, "owner_tasks": owner_tasks(snap),
+                "collections": collections,
             }
-            data["collections"] = {
-                **(
-                    {"vouchers": {"items": vouchers, "page": page}}
-                    if section in {None, "vouchers"}
-                    else {}
-                ),
-                **(
-                    {"open_items": data["open_items"].pop("collection")}
-                    if section in {None, "open_items"}
-                    else {}
-                ),
-            }
-            data["open_items"].pop("collection", None)
-            if section in {"businesses", "settlement_events", "file_jobs"}:
-                collection = self._business_collection(
-                    snap,
-                    "brief",
-                    None,
-                    section,
-                    cursor,
-                    {},
-                    limit,
-                    source_section="events" if section == "businesses" else section,
-                )
-                if section == "businesses":
-                    metadata = snap.reads.metadata(
-                        {
-                            item["calculation_id"]
-                            for item in collection["items"]
-                            if item.get("calculation_id")
-                        }
-                    )
-                    collection["items"] = [
-                        {
-                            **item,
-                            "label": _name(item.get("kind", "")),
-                            "subject_id": item.get("subject_id")
-                            or metadata.get(item.get("calculation_id"), {}).get("subject_id"),
-                        }
-                        for item in collection["items"]
-                    ]
-                data["collections"][section] = collection
-            elif section == "external_followups":
-                data["collections"][section] = self._external_collection(snap, after, limit)
-            response = self._response(snap, seal_collections(snap, "brief", data, {}))
-            if preparation == "deferred":
-                response.update(
-                    projection="dashboard_brief_deferred",
-                    read_context=self._read_context(snap.connection, snap.as_of),
-                )
-            return response
+            return {**self._response(snap, seal_collections(snap, "brief", data, {})),
+                    "schema_version": 11}
 
     def funds(
         self,
@@ -2095,11 +2017,12 @@ class Dashboard:
         movement_account_type: str | None = None,
         movement_account_id: str | None = None,
         statement_account_id: str | None = None,
-        limit: int = 100,
+        movement_account_selection: Literal["all", "first"] = "all",
+        limit: int = 20,
         expected_version: str | None = None,
         section: str | None = None,
         cursor: str | None = None,
-        preparation: Literal["complete", "deferred"] = "complete",
+        preparation: Literal["complete", "deferred"] = "deferred",
     ):
         validate_page("funds", section, cursor, limit)
         if preparation not in {"complete", "deferred"}:
@@ -2110,6 +2033,13 @@ class Dashboard:
             raise KernelError("invalid_command", "不支持的资金账户类别")
         if movement_account_id == "" or statement_account_id == "":
             raise KernelError("invalid_command", "资金账户标识不能为空")
+        if movement_account_selection not in {"all", "first"} or (
+            movement_account_selection == "first"
+            and (movement_account_type is not None or section is not None or cursor is not None)
+        ):
+            raise KernelError(
+                "invalid_command", "自动选择首个资金账户只适用于未指定账户的完整首屏请求"
+            )
         filters = {
             "movement_account_type": movement_account_type,
             "movement_account_id": movement_account_id,
@@ -2121,7 +2051,7 @@ class Dashboard:
                     raise KernelError(
                         "dashboard_snapshot_changed", "所选公司或期间已变化，请重新加载明细。"
                     )
-                return self._response(None, None)
+                return {**self._response(None, None), "schema_version": 9}
             self._check_page_version(snap, cursor, expected_version)
             cursors = {section: cursor} if section and cursor is not None else {}
             decoded = {
@@ -2135,11 +2065,10 @@ class Dashboard:
                 cursors=decoded,
                 limit=limit,
                 filters=filters,
+                select_first_account=movement_account_selection == "first",
             )
-            data["period_preparation"] = (
-                preparation_view(snap.preparation) if preparation == "complete" else None
-            )
-            return self._response(snap, seal_collections(snap, "funds", data, filters))
+            return {**self._response(snap, seal_collections(snap, "funds", data, filters)),
+                    "schema_version": 9}
 
     @staticmethod
     def _check_page_version(snapshot, cursor, expected_version):
@@ -2156,23 +2085,23 @@ class Dashboard:
         *,
         section: str | None = None,
         cursor: str | None = None,
-        limit: int = 100,
+        limit: int = 20,
         expected_version: str | None = None,
         employee_filter: str = "all",
         employee_id: str | None = None,
-        preparation: Literal["complete", "deferred"] = "complete",
+        preparation: Literal["complete", "deferred"] = "deferred",
     ):
         validate_page("employees", section, cursor, limit)
         if preparation not in {"complete", "deferred"}:
             raise KernelError("invalid_command", "不支持的准备检查投影")
-        if employee_id == "" or section == "settlement_events" and employee_id is None:
-            raise KernelError("invalid_command", "员工清偿明细须指定有效 employee_id")
+        if employee_id == "":
+            raise KernelError("invalid_command", "须指定有效 employee_id")
         if employee_filter not in {"all", "in_period", "payroll", "no_payroll", "unknown", "ended"}:
             raise KernelError("invalid_command", "不支持的员工筛选")
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return self._response(None, None)
+                return {**self._response(None, None), "schema_version": 9}
             self._check_page_version(snap, cursor, expected_version)
             after = decode_cursor(snap, "employees", section, cursor, filters)
             data = _employees(
@@ -2183,25 +2112,10 @@ class Dashboard:
                 employee_filter=employee_filter,
                 employee_id=employee_id,
             )
-            subjects = data.pop("_entity_sources")
-            if section == "settlement_events":
-                if employee_id is None:
-                    raise KernelError("invalid_command", "员工清偿明细须指定 employee_id")
-                data["collections"][section] = self._business_collection(
-                    snap,
-                    "employees",
-                    subjects,
-                    section,
-                    cursor,
-                    filters,
-                    limit,
-                )
             if section:
                 data["collections"] = {section: data["collections"][section]}
-            data["period_preparation"] = (
-                preparation_view(snap.preparation) if preparation == "complete" else None
-            )
-            return self._response(snap, seal_collections(snap, "employees", data, filters))
+            return {**self._response(snap, seal_collections(snap, "employees", data, filters)),
+                    "schema_version": 9}
 
     def assets(
         self,
@@ -2209,34 +2123,24 @@ class Dashboard:
         *,
         section: str | None = None,
         cursor: str | None = None,
-        limit: int = 100,
+        limit: int = 20,
         expected_version: str | None = None,
         asset_filter: str = "all",
         asset_id: str | None = None,
         project_id: str | None = None,
-        preparation: Literal["complete", "deferred"] = "complete",
+        preparation: Literal["complete", "deferred"] = "deferred",
     ):
         validate_page("assets", section, cursor, limit)
         if preparation not in {"complete", "deferred"}:
             raise KernelError("invalid_command", "不支持的准备检查投影")
-        if (
-            asset_id == ""
-            or project_id == ""
-            or (
-                section in {"source_history", "settlement_events"}
-                and asset_id is None
-                and project_id is None
-            )
-        ):
-            raise KernelError(
-                "invalid_command", "资产来源或清偿明细须指定有效 asset_id 或 project_id"
-            )
+        if asset_id == "" or project_id == "":
+            raise KernelError("invalid_command", "须指定有效 asset_id 或 project_id")
         if asset_filter not in {"all", "active", "fixed", "intangible", "pending", "exited"}:
             raise KernelError("invalid_command", "不支持的资产筛选")
         filters = {"asset_filter": asset_filter, "asset_id": asset_id, "project_id": project_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return self._response(None, None)
+                return {**self._response(None, None), "schema_version": 10}
             self._check_page_version(snap, cursor, expected_version)
             after = decode_cursor(snap, "assets", section, cursor, filters)
             data = _assets(
@@ -2248,27 +2152,10 @@ class Dashboard:
                 asset_id=asset_id,
                 project_id=project_id,
             )
-            subjects = data.pop("_entity_sources")
-            if section in {"source_history", "settlement_events"}:
-                if asset_id is None and project_id is None:
-                    raise KernelError(
-                        "invalid_command", "资产来源或清偿明细须指定 asset_id 或 project_id"
-                    )
-                data["collections"][section] = self._business_collection(
-                    snap,
-                    "assets",
-                    subjects,
-                    section,
-                    cursor,
-                    filters,
-                    limit,
-                )
             if section:
                 data["collections"] = {section: data["collections"][section]}
-            data["period_preparation"] = (
-                preparation_view(snap.preparation) if preparation == "complete" else None
-            )
-            return self._response(snap, seal_collections(snap, "assets", data, filters))
+            return {**self._response(snap, seal_collections(snap, "assets", data, filters)),
+                    "schema_version": 10}
 
     def _external_collection(self, snap, after, limit):
         from .workflow import LABELS, Workflow
@@ -2361,6 +2248,10 @@ class Dashboard:
         )
         if "collection_version" in result:
             result["page"]["collection_version"] = result.pop("collection_version")
+        if section == "settlement_events":
+            from .dashboard_owner import settlement_event_view
+
+            result["items"] = [settlement_event_view(item) for item in result["items"]]
         return result
 
     def business_status(
@@ -2370,7 +2261,7 @@ class Dashboard:
         *,
         section: str | None = None,
         cursor: str | None = None,
-        limit: int = 100,
+        limit: int = 20,
         expected_version: str | None = None,
         as_of: str | None = None,
         settlement_view: Literal["historical", "current"] = "current",
@@ -2386,7 +2277,7 @@ class Dashboard:
                 period,
                 as_of=as_of,
                 summary=True,
-                include_payroll_confirmation=True,
+                owner_projection=True,
             )
             snap.as_of = data["as_of"]
             filters = {
@@ -2394,13 +2285,13 @@ class Dashboard:
                 "as_of": data["as_of"],
                 "settlement_view": settlement_view,
             }
-            data["settlement_view"] = settlement_view
-            sections = (
-                (section,)
-                if section
-                else ("events", "settlement_events", "source_history", "file_jobs")
-            )
-            data["collections"] = {
+            from .dashboard_owner import business_profiles, business_view
+
+            data["display_profiles"] = business_profiles(snap, data)
+            projected = business_view(data)
+            projected["settlement_view"] = settlement_view
+            sections = (section,) if section else ("settlement_events",)
+            projected["collections"] = {
                 key: self._business_collection(
                     snap,
                     "business-status",
@@ -2414,9 +2305,9 @@ class Dashboard:
                 for key in sections
             }
             response = self._response(
-                snap, seal_collections(snap, "business-status", data, filters)
+                snap, seal_collections(snap, "business-status", projected, filters)
             )
-            response["schema_version"] = 5
+            response["schema_version"] = 6
             return response
 
     def quarterly_report(
@@ -2424,7 +2315,6 @@ class Dashboard:
         year: int,
         quarter: int,
         *,
-        carry_forward_fact_id: str | None = None,
         preparation: Literal["complete", "deferred"] = "complete",
     ):
         from .business_queries import _today_china
@@ -2449,7 +2339,7 @@ class Dashboard:
                 source="open",
                 connection=connection,
                 reads=reads,
-                carry_forward_fact_id=carry_forward_fact_id,
+                _issues_only=True,
             )
             quarter_end = YearMonth(f"{year:04d}-{quarter * 3:02d}").ordinal
             if (
@@ -2471,35 +2361,104 @@ class Dashboard:
                     source="closed",
                     connection=connection,
                     reads=reads,
-                    carry_forward_fact_id=carry_forward_fact_id,
                 )
             plan = closed if closed["status"] == "ready" else opened
             response = _quarterly_view(
                 plan,
                 closed,
-                reports.browser_report_details(plan, closed, connection=connection, reads=reads),
-                carry_forward_fact_id,
             )
             response["read_context"] = self._read_context(connection, as_of)
             if preparation == "deferred":
                 response.update(
                     projection="dashboard_quarterly_report_deferred",
-                    period_preparations=None,
                 )
-            else:
-                queries = BusinessQueries(self.engine, reads=reads)
-                response["period_preparations"] = [
-                    preparation_view(
-                        queries._period_readiness(
-                            connection,
-                            f"{year}-{month:02}",
-                            summary=True,
-                            _allow_frozen_materials=True,
-                        )
-                    )
-                    for month in range(quarter * 3 - 2, quarter * 3 + 1)
-                ]
             return response
+
+
+def _brief_prime_activity(snap, rows):
+    """Batch the business names and exact relations used by the bounded page."""
+    identifiers = {row["basis_calculation_id"] for row in rows}
+    resolutions = snap.reads.relations_many(identifiers)
+    subjects, parties, asset_ids = set(), set(), set()
+    for ident in identifiers:
+        calc = snap.calculation(ident)
+        subjects.add(calc["subject_id"])
+        data = calc["fact"]["data"]
+        parties.update(
+            data[field] for field in (
+                "employee_id", "person_id", "counterparty_id", "customer_id", "supplier_id",
+                "owner_id", "buyer_id", "lender_id", "payer_id", "recipient_id"
+            ) if data.get(field)
+        )
+        for field in ("allocations", "sources"):
+            parties.update(
+                item["recipient_id"] for item in data.get(field, ()) if item.get("recipient_id")
+            )
+        asset_ids.update(ident for ident, _ in snap.asset_identities(calc))
+    for resolution in resolutions.values():
+        parties.update(
+            item["creditor_id"] for item in resolution["obligations"] if item.get("creditor_id")
+        )
+        parties.update(
+            item["recipient_id"] for item in resolution["line_relations"]
+            if item.get("recipient_id")
+        )
+    parties.discard("payroll-group")
+    snap.metadata.prime_profiles("business", subjects)
+    snap.management.prime(subjects)
+    snap.metadata.prime_profiles("employee", parties)
+    snap.metadata.prime_profiles("counterparty", parties)
+    if asset_ids:
+        snap.metadata.prime_profiles("asset", asset_ids)
+
+
+def _brief_activity_row(snap, row):
+    """Keep exact business facts and amounts without materialising voucher cards."""
+    calc = row["basis"]
+    relations = snap.voucher_relations(calc, row["sign"])
+    assets = [
+        {**item, "name": item["name"] or (None if item["code"] else "资产名称未提供")}
+        for item in snap.asset_references(calc)
+    ]
+    title, description = snap.business_summary(
+        calc, row["sign"], relations, asset_references=assets
+    )
+    data = calc["fact"]["data"]
+    parties = {
+        data[field] for field in (
+            "employee_id", "person_id", "counterparty_id", "customer_id", "supplier_id",
+            "owner_id", "buyer_id", "lender_id", "payer_id", "recipient_id"
+        ) if data.get(field)
+    }
+    if data.get("payment_method") == "bank_batch":
+        parties.discard(data.get("counterparty_id"))
+    parties.update(item["party_id"] for item in relations if item.get("party_id"))
+    for field in ("allocations", "sources"):
+        parties.update(
+            item["recipient_id"] for item in data.get(field, ()) if item.get("recipient_id")
+        )
+    parties.discard("payroll-group")
+    amount, label = snap.business_amount(calc)
+    recognition = _recognition(data, str(YearMonth.from_ordinal(row["period"])))
+    return {
+        "key": row["id"], "subject_id": calc["subject_id"], "voucher_version_id": row["id"],
+        "date": recognition["date"], "recognition": recognition,
+        "title": title, "description": description,
+        "amount_fen": row["sign"] * amount if amount is not None else None,
+        "amount_label": label, "state": "更正原业务" if row["sign"] < 0 else "已入账",
+        "party": "、".join(snap.party(ident) for ident in sorted(parties)),
+        "group": snap.activity_classification[0][calc["id"], row["sign"] < 0],
+    }
+
+
+def _brief_open_item(item):
+    return {
+        key: item.get(key) for key in (
+            "id", "category_key", "party", "description", "status",
+            "source_amount_fen", "paid_fen", "other_settled_fen", "outstanding_fen",
+            "current_status", "current_outstanding_fen", "subject_id"
+        )
+    }
 
 
 def _brief_checks(prepared):
@@ -2583,7 +2542,70 @@ def _missing_adopted_report_classification_ids(connection, month):
     }
 
 
-def _position(snap, *, position_obligations=None):
+def _profit_amounts(values):
+    """Signed posted operating amounts and unmapped month amounts."""
+    revenue = -sum(
+        value
+        for account, value in values.items()
+        if PROFIT_ACCOUNTS.get(account, (0, 0))[1] == -1
+    )
+    expense = sum(
+        value
+        for account, value in values.items()
+        if PROFIT_ACCOUNTS.get(account, (0, 0))[1] == 1
+    )
+    issues = [
+        {
+            "field": "account_mapping",
+            "message": "存在未映射的非零账户余额，本月收入、费用不含该金额",
+            "semantics": "accounting",
+            "account": account,
+            "amount_fen": value,
+        }
+        for account, value in values.items()
+        if value and account not in KNOWN_POSITION_ACCOUNTS
+    ]
+    return revenue, expense, revenue - expense, issues
+
+
+def _brief_amounts(snap):
+    """Read posted operating money, without constructing a balance sheet.
+
+    The journal selector retains actual posting periods and exact frozen
+    adoption. Check its month amounts against the derived month projection;
+    an inconsistent projection is a content error, not an owner question.
+    """
+    amounts = snap.month_journal.account_amounts()
+    projected = {account: [debit, credit]
+                 for account, debit, credit in snap.month_account_gross if debit or credit}
+    if amounts != projected:
+        raise KernelError(
+            "content_integrity_failed", "本月金额与正式入账不一致", component="monthly_account"
+        )
+    revenue, expense, result, issues = _profit_amounts(
+        {account: debit - credit for account, (debit, credit) in amounts.items()}
+    )
+    issues.extend(
+        {
+            "field": "account_mapping",
+            "message": "存在未映射的非零账户余额",
+            "account": account,
+        }
+        for account, amount in snap.accounts.items()
+        if amount and account not in KNOWN_POSITION_ACCOUNTS
+    )
+    if snap.opening_selection["unestablished_state_selections"]:
+        issues.append({"field": "opening.selection", "message": "期初采用依据尚未建立"})
+    return {
+        "month_revenue_fen": revenue,
+        "month_expense_fen": expense,
+        "month_result_fen": result,
+        "complete": not issues,
+        "issues": issues,
+    }
+
+
+def _position(snap):
     balances = snap.accounts
     source_issues = []
     known = KNOWN_POSITION_ACCOUNTS
@@ -2596,10 +2618,9 @@ def _position(snap, *, position_obligations=None):
     projected = defaultdict(int)
     from .settlement_projection import settlement_position_rows
 
-    if position_obligations is None:
-        position_obligations = settlement_position_rows(
-            snap.connection, snap.period, RECLASS, reads=snap.reads
-        )
+    position_obligations = settlement_position_rows(
+        snap.connection, snap.period, RECLASS, reads=snap.reads
+    )
     from .report_classification_directory import classification_directory_scope
 
     has_classification_type = snap.connection.execute(
@@ -2728,12 +2749,29 @@ def _position(snap, *, position_obligations=None):
             classified_accounts or (RECLASS if has_explicit_party or ambiguous else ())
         )
     projected_fallback = set()
+    net_party_lines = None
     if fallback_accounts and not classifications:
-        from .report_projection import party_balance_rows
+        from .report_projection import (
+            _PARTY_POSITION_SUMMARY_UNSAFE,
+            _party_balance_position_lines,
+            party_balance_rows,
+        )
 
-        party_rows = party_balance_rows(snap.engine, snap.connection, snap.month, reads=snap.reads)
-        if party_rows is not None:
-            rows.extend(row for row in party_rows if row["account"] in fallback_accounts)
+        summarized = _party_balance_position_lines(
+            snap.engine, snap.connection, snap.month, reads=snap.reads,
+            _accounts=fallback_accounts, _validate_party_keys=True,
+        )
+        if summarized is _PARTY_POSITION_SUMMARY_UNSAFE:
+            # Historical/external snapshots and uncertain decoded party shapes
+            # retain their complete rows and original unknown/error semantics.
+            party_rows = party_balance_rows(
+                snap.engine, snap.connection, snap.month, reads=snap.reads
+            )
+            if party_rows is not None:
+                rows.extend(row for row in party_rows if row["account"] in fallback_accounts)
+                projected_fallback = set(fallback_accounts)
+        elif summarized is not None:
+            net_party_lines = summarized
             projected_fallback = set(fallback_accounts)
     journal_accounts = (
         (fallback_accounts - projected_fallback) | (set(balances) - known)
@@ -2816,7 +2854,7 @@ def _position(snap, *, position_obligations=None):
         residual = balances[account] - projected[account]
         if residual:
             rows.append({"account": account, "amount": residual})
-    position = classify_financial_position(rows)
+    position = classify_financial_position(rows, _net_party_lines=net_party_lines)
     if snap.opening_selection["unestablished_state_selections"]:
         source_issues.append(
             {
@@ -2828,33 +2866,8 @@ def _position(snap, *, position_obligations=None):
         position.update(assets_fen=None, liabilities_fen=None, equation_valid=None, complete=False)
     assets, liabilities = position["assets_fen"], position["liabilities_fen"]
 
-    def result(values):
-        revenue = -sum(
-            value
-            for account, value in values.items()
-            if PROFIT_ACCOUNTS.get(account, (0, 0))[1] == -1
-        )
-        expense = sum(
-            value
-            for account, value in values.items()
-            if PROFIT_ACCOUNTS.get(account, (0, 0))[1] == 1
-        )
-        # An account outside every mapping table reaches neither sum, so its amount would
-        # silently understate revenue or expense; collect it instead of dropping it.
-        for account, value in values.items():
-            if value and account not in known:
-                source_issues.append(
-                    {
-                        "field": "account_mapping",
-                        "message": "存在未映射的非零账户余额，本月收入、费用不含该金额",
-                        "semantics": "accounting",
-                        "account": account,
-                        "amount_fen": value,
-                    }
-                )
-        return revenue, expense, revenue - expense
-
-    revenue, expense, monthly = result(snap.month_accounts)
+    revenue, expense, monthly, month_issues = _profit_amounts(snap.month_accounts)
+    source_issues.extend(month_issues)
     fixed, intangible = balances["1601"] + balances["1602"], balances["1701"] + balances["1702"]
     return {
         "assets_fen": assets,
@@ -3482,26 +3495,63 @@ def _brief_workforce_cost(snap):
     ]
 
 
+def _prepare_people_asset_settlements(snap, subjects):
+    """Keep the historical business amounts without reading current followups."""
+    if not hasattr(snap, "people_asset_settlements"):
+        snap.people_asset_settlements = {}
+    missing = {subject for subject in subjects if subject not in snap.people_asset_settlements}
+    if missing:
+        summary = snap.settlement_summary(subject_ids=missing)
+        for subject in missing:
+            snap.people_asset_settlements[subject] = summary
+
+
+def _people_asset_settlement(snap, calc):
+    subject = calc["subject_id"]
+    _prepare_people_asset_settlements(snap, {subject})
+    summary = snap.people_asset_settlements[subject]
+    return {
+        "subject_id": subject,
+        "cutoff_period": summary["cutoff_period"],
+        "checking": bool(summary["issues"]),
+        "obligations": [
+            {"key": item["key"], "name": item["name"],
+             "amount_fen": item["source_amount_fen"],
+             **{field: item[field] for field in (
+                 "paid_fen", "other_settled_fen", "remaining_fen",
+                 "period_paid_fen", "period_other_settled_fen",
+             )}}
+            for item in summary["obligations"]
+            if (item.get("source_business") or {}).get("subject_id") == subject
+        ],
+    }
+
+
 def _employees(
     snap,
     *,
     sections=None,
     cursors=None,
-    limit=100,
+    limit=20,
     employee_filter="all",
     employee_id=None,
     summary_only=False,
+    _full_wage_scope=False,
 ):
     cursors = cursors or {}
     requested = (
-        set(sections) if sections is not None else {"employees", "payroll_sources", "labor_sources"}
+        set(sections) if sections is not None else {"employees", "labor_sources"}
     )
-    money_keys = _WORKFORCE_MONEY_KEYS
-    wage_heads = payroll_head_metadata(
-        snap, PAYROLL_KINDS | {"opening_payroll_payable"}, line_count_period=snap.period
+    money_keys = tuple(key for key in _WORKFORCE_MONEY_KEYS if key != "tax_reported_salary_fen")
+    wage_kinds = PAYROLL_KINDS | {"opening_payroll_payable"}
+    wage_heads = (
+        payroll_list_head_metadata(snap, wage_kinds, line_count_period=snap.period)
+        if not _full_wage_scope else None
     )
+    scoped_wage_heads = wage_heads is not None
+    if wage_heads is None:
+        wage_heads = payroll_head_metadata(snap, wage_kinds, line_count_period=snap.period)
     rows = _workforce_payroll_rows(snap, wage_heads=wage_heads)
-    profile_facts = list(snap.by_kind("payroll_profile"))
     # The verified employee role locates the list. Load scalar wage fields only
     # for a selected source or a registry without that declared role.
     wage_scalars = {}
@@ -3532,7 +3582,7 @@ def _employees(
         return wage_scalars[fact_id]["employee_id"]
 
     def load_wage_scalars(fact_ids):
-        missing = set(fact_ids) - wage_scalars.keys()
+        missing = {ident for ident in fact_ids if ident not in wage_scalars}
         if missing:
             verify_wage_facts(missing)
             values = scalar_facts(snap, [heads_by_fact[ident] for ident in missing])
@@ -3549,24 +3599,22 @@ def _employees(
 
         fact_ids = {row["basis"]["fact_id"] for row in rows}
         fact_ids.update(head["fact_id"] for head in wage_heads)
-        fact_ids.update(fact["id"] for fact in profile_facts)
         confirmed_employees = current_role_matches(
             snap.connection, fact_ids, "employee", registry=snap.store.registry
         )
         missing_role_facts = {head["fact_id"] for head in wage_heads} - confirmed_employees.keys()
         if missing_role_facts:
             load_wage_scalars(missing_role_facts)
+    if scoped_wage_heads and any(
+        head.get("roster_employee_id") is not None
+        and confirmed_employees.get(head["fact_id"]) != head["roster_employee_id"]
+        for head in wage_heads
+    ):
+        raise KernelError("entity_reference_corrupt", "工资人员名单见证与精确来源归属不匹配")
     aggregates, period_rows = _workforce_payroll_aggregates(
         rows,
         lambda calc: confirmed_employees.get(calc["fact_id"], calc["fact"]["data"]["employee_id"]),
     )
-    profiles = defaultdict(list)
-    for fact in profile_facts:
-        data = fact["data"]
-        if data["effective_from"] <= snap.period and (
-            data["effective_to"] is None or data["effective_to"] >= snap.period
-        ):
-            profiles[confirmed_employees.get(fact["id"], data["employee_id"])].append(fact)
     known = set(aggregates) | set(snap.profiles.get("employee", {}))
     # The current accounting selector has no unresolved state candidate lane;
     # its unestablished_state_selections is empty. Do not scan every old wage
@@ -3578,16 +3626,13 @@ def _employees(
         old = representative_heads.get(ident)
         if old is None or (head["posting_period"], head["id"]) > (old["posting_period"], old["id"]):
             representative_heads[ident] = head
+    proven = verified_payroll_heads(snap, wage_heads)
     if representative_heads:
-        proven = snap.calculations.selected(
-            kinds=PAYROLL_KINDS | {"opening_payroll_payable"},
-            subjects={head["subject_id"] for head in representative_heads.values()},
-        )
         if any(
             (selected := proven.get(head["subject_id"])) is None
             or selected["id"] != head["id"]
             or selected["fact_id"] != head["fact_id"]
-            for head in representative_heads.values()
+            for head in wage_heads
         ):
             raise KernelError(
                 "content_integrity_failed", "工资人员名单的采用身份不匹配", component="payroll"
@@ -3597,7 +3642,6 @@ def _employees(
             | {head["fact_id"] for head in representative_heads.values()}
         )
     known.update(wage_identity(head["fact_id"]) for head in wage_heads)
-    known.update(profiles)
     known.update(unestablished_employees)
     if hasattr(snap, "metadata"):
         snap.metadata.prime_profiles("employee", known)
@@ -3639,131 +3683,53 @@ def _employees(
         filtered_ids, cursors.get("employees"), limit, total_count=len(known)
     )
     selected_ids = set(selected_ids) if not summary_only else set()
-    if not requested.intersection({"employees", "payroll_sources"}):
+    if "employees" not in requested:
         selected_ids = set()
-    detail_subjects = {
-        head["subject_id"]
-        for head in wage_heads
-        if employee_id is not None and wage_identity(head["fact_id"]) == employee_id
-    }
-    if employee_id in selected_ids:
-        load_wage_scalars(
-            head["fact_id"] for head in wage_heads if head["subject_id"] in detail_subjects
-        )
-    wage_calculations = (
-        list(
-            snap.calculations.selected(
-                kinds=PAYROLL_KINDS | {"opening_payroll_payable"},
-                subjects=detail_subjects,
-            ).values()
-        )
-        if detail_subjects and employee_id in selected_ids
-        else []
-    )
-    head_by_subject = {head["subject_id"]: head["id"] for head in wage_heads}
-    if any(head_by_subject.get(calc["subject_id"]) != calc["id"] for calc in wage_calculations):
-        raise KernelError("content_integrity_failed", "工资来源采用身份不匹配", component="payroll")
-    source_pages, picked_sources = {}, set()
-    # Payroll history is returned only for the explicitly opened employee.
-    # The default list still computes its complete amounts and payment summary,
-    # but must not build discarded history cards for every listed employee.
-    history_ids = selected_ids & {employee_id} if employee_id is not None else set()
-
-    def wage_source_order(calc):
-        data = wage_scalars[calc["fact_id"]]
-        return (data.get("payroll_period") or data["period"], calc["subject_id"])
-
-    for ident in history_ids:
-        candidates = sorted(
-            (calc for calc in wage_calculations if wage_identity(calc["fact_id"]) == ident),
-            key=wage_source_order,
-        )
-        keys, source_pages[ident] = page_keys(
-            [calc["id"] for calc in candidates],
-            cursors.get("payroll_sources") if employee_id == ident else None,
-            limit,
-        )
-        picked_sources.update(keys)
-    # Declarations are observed later than their tax month. Reuse their current
-    # recorded facts, keeping the recording month visible instead of hiding them.
-    declaration_ids = (
-        [
-            row[0]
-            for row in snap.connection.execute(
-                "SELECT f.id FROM fact_current c JOIN fact_revision f ON f.id=c.fact_id "
-                "JOIN fact_payroll_tax_declaration_actual d ON d.revision_id=f.id "
-                "WHERE d.employee_id IN (SELECT value FROM json_each(?)) AND d.tax_period IN "
-                "(SELECT value FROM json_each(?))",
-                (
-                    json.dumps(sorted(selected_ids)),
-                    json.dumps(
-                        [
-                            YearMonth(value).ordinal
-                            for value in sorted(
-                                {snap.period}
-                                | {
-                                    wage_scalars[calc["fact_id"]]["period"]
-                                    for calc in wage_calculations
-                                    if calc["id"] in picked_sources
-                                }
-                            )
-                        ]
-                    ),
-                ),
-            )
-        ]
-        if selected_ids and "payroll_tax_declaration_actual" in snap.store.registry.models
-        else []
-    )
-    declaration_facts = list(snap.reads.facts(declaration_ids).values())
-    disbursement_calculations = []
-    for row in (
-        snap.connection.execute(
-            "SELECT c.id,c.fact_id=f.fact_id AS current_fact,"
-            "EXISTS(SELECT 1 FROM pending p WHERE p.subject_id=c.subject_id) AS pending "
-            "FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
-            "JOIN calculation_publication v ON v.calculation_id=c.id "
-            "JOIN fact_current f ON f.subject_id=c.subject_id "
-            "JOIN fact_payroll_disbursement_basis b ON b.revision_id=c.fact_id "
-            "WHERE c.kind='payroll_disbursement_basis' "
-            "AND b.payroll_id IN (SELECT value FROM json_each(?))",
-            (
-                json.dumps(
-                    [
-                        calc["subject_id"]
-                        for calc in wage_calculations
-                        if calc["id"] in picked_sources
-                    ]
-                ),
-            ),
-        )
-        if picked_sources and "payroll_disbursement_basis" in snap.store.registry.models
-        else ()
-    ):
-        disbursement_calculations.append(
-            snap.calculation(row["id"])
-            | {"needs_review": not row["current_fact"] or bool(row["pending"])}
-        )
-    displayed_wages = sorted(
-        (calc for calc in wage_calculations if calc["id"] in picked_sources),
-        key=wage_source_order,
-    )
-    snap.prepare_settlements({calc["subject_id"] for calc in displayed_wages})
-    wage_sources = defaultdict(list)
-    net_payments, direct_payments = defaultdict(int), defaultdict(int)
+    net_payments = defaultdict(int)
+    direct_payments, outstanding = defaultdict(int), defaultdict(int)
+    settlement_checking = False
     summarized_wages = {
         head["subject_id"]: head
         for head in wage_heads
-        if wage_identity(head["fact_id"]) in selected_ids
+        if wage_identity(head["fact_id"]) in known
     }
-    if summarized_wages:
-        from .settlement_freeze import frozen_payroll_period_payments
+    frozen_net = None
+    if summarized_wages or scoped_wage_heads:
+        from .settlement_freeze import frozen_employee_net_summary
 
-        payment_rows = frozen_payroll_period_payments(
-            snap.connection, snap.period, reads=snap.reads
+        frozen_net = frozen_employee_net_summary(
+            snap.connection, snap.period, employee_ids=known,
+            wage_heads=None if scoped_wage_heads else wage_heads, reads=snap.reads
         )
-        if payment_rows is None:
-            payment_rows = snap.settlement_summary(subject_ids=set(summarized_wages))["obligations"]
+        if frozen_net is not None and not snap.close:
+            from .dashboard_reads import payroll_cohort_identities_match
+
+            if not payroll_cohort_identities_match(snap, wage_heads, confirmed_employees):
+                frozen_net = None
+        if frozen_net is not None:
+            settlement_checking = frozen_net["checking"]
+            for ident, amounts in frozen_net["employees"].items():
+                outstanding[ident] = amounts["remaining_fen"]
+                direct_payments[ident] = amounts["period_paid_fen"]
+                net_payments[ident] = _nullable_sum((
+                    amounts["period_paid_fen"], amounts["period_other_settled_fen"]
+                ))
+    if scoped_wage_heads and frozen_net is None:
+        # Attribution conflicts and unsupported frozen scopes retain the full
+        # existing reducer. No partial roster can narrow month-end wage money.
+        return _employees(
+            snap, sections=sections, cursors=cursors, limit=limit,
+            employee_filter=employee_filter, employee_id=employee_id,
+            summary_only=summary_only, _full_wage_scope=True,
+        )
+    if summarized_wages and frozen_net is None:
+        # The month-end unpaid amount includes unchanged prior-month sources.
+        # A changed-keys-only payment projection cannot supply that amount.
+        summary = snap.settlement_summary(
+            subject_ids=set(summarized_wages), include_history_counts=False
+        )
+        settlement_checking = summary["complete"] is False or bool(summary["issues"])
+        payment_rows = summary["obligations"]
         paid_subjects = {
             subject
             for obligation in payment_rows
@@ -3774,12 +3740,8 @@ def _employees(
             in summarized_wages
         }
         if paid_subjects:
-            proven_payments = snap.calculations.selected(
-                kinds=PAYROLL_KINDS | {"opening_payroll_payable"},
-                subjects=paid_subjects,
-            )
             if any(
-                (selected := proven_payments.get(subject)) is None
+                (selected := proven.get(subject)) is None
                 or selected["id"] != summarized_wages[subject]["id"]
                 for subject in paid_subjects
             ):
@@ -3793,6 +3755,7 @@ def _employees(
                 if summarized_wages[subject]["kind"] == "opening_payroll_payable"
             )
         net_parts, paid_parts = defaultdict(list), defaultdict(list)
+        remaining_parts = defaultdict(list)
         for obligation in payment_rows:
             source = summarized_wages.get(
                 obligation.get("subject_id")
@@ -3809,82 +3772,17 @@ def _employees(
             if obligation.get("name") == net_name:
                 ident = wage_identity(source["fact_id"])
                 paid_parts[ident].append(obligation["period_paid_fen"])
+                remaining_parts[ident].append(obligation["remaining_fen"])
                 net_parts[ident].extend(
                     (obligation["period_paid_fen"], obligation["period_other_settled_fen"])
                 )
-        for ident in selected_ids:
+        for ident in known:
+            outstanding[ident] = _nullable_sum(remaining_parts[ident])
             direct_payments[ident] = _nullable_sum(paid_parts[ident])
             net_payments[ident] = _nullable_sum(net_parts[ident])
-    for calc in displayed_wages:
-        if calc["kind"] not in PAYROLL_KINDS | {"opening_payroll_payable"}:
-            continue
-        data = calc["fact"]["data"]
-        ident = confirmed_employees.get(calc["fact_id"], data["employee_id"])
-        known.add(ident)
-        # The card shows the obligation summary; the itemised settlement page is
-        # fetched per employee on demand, so it is not built for every source here.
-        settlement = _source_settlement(snap, calc, limit=limit, include_movements=False)
-        declarations = [
-            {
-                "fact_id": fact["id"],
-                "revision": fact["revision"],
-                "source": "current_record",
-                "tax_period": fact["data"]["tax_period"],
-                "recording_period": fact["data"]["period"],
-                "date": fact["data"].get("declaration_date"),
-                "declared_tax_fen": fact["data"]["declared_tax_fen"],
-                "recorded_later": fact["data"]["period"] > snap.period,
-                "recorded_at": None,
-                "source_metadata": snap.fact_source(fact),
-            }
-            for fact in declaration_facts
-            if calc["kind"] in {"payroll", "payroll_bounded"}
-            and fact["data"]["employee_id"] == ident
-            and fact["data"]["tax_period"] == data["period"]
-        ]
-        snap.recorded_records.extend(
-            (record, ("fact", str(record["fact_id"]))) for record in declarations
-        )
-        bases = [
-            {
-                "calculation_id": basis["id"],
-                "recording_period": basis["fact"]["data"]["period"],
-                "needs_review": basis["needs_review"],
-                "matches_displayed_wage": basis["outcome"]["values"]["payroll_calculation_id"]
-                == calc["id"],
-                **basis["outcome"]["values"],
-            }
-            for basis in disbursement_calculations
-            if basis["outcome"]["values"]["payroll_id"] == calc["subject_id"]
-        ]
-        wage_sources[ident].append(
-            {
-                "source_id": calc["subject_id"],
-                "calculation_id": calc["id"],
-                "kind": calc["kind"],
-                "period": data["payroll_period"]
-                if calc["kind"] == "opening_payroll_payable"
-                else data["period"],
-                "opening_period": data["period"]
-                if calc["kind"] == "opening_payroll_payable"
-                else None,
-                "component": data["component"]
-                if calc["kind"] == "opening_payroll_payable"
-                else None,
-                "label": _name(calc["kind"]),
-                "declarations": declarations,
-                "disbursements": bases,
-                **settlement,
-            }
-        )
     items, all_items = [], []
-    for index, ident in enumerate(sorted(known), 1):
+    for ident in sorted(known):
         info = snap.profile("employee", ident)
-        choices = profiles[ident]
-        if choices:
-            latest = max(fact["data"]["effective_from"] for fact in choices)
-            choices = [fact for fact in choices if fact["data"]["effective_from"] == latest]
-        profile = choices[0]["data"] if len(choices) == 1 else None
         amounts = aggregates.get(
             ident,
             {
@@ -3921,7 +3819,6 @@ def _employees(
                 else "established",
                 "in_period": in_period,
                 "has_payroll_activity": bool(amounts["batches"]),
-                "profile_available": profile is not None,
                 "wage_tax_scope": scope,
                 **{key: amounts[key] for key in money_keys},
                 "personal_deduction_fen": amounts["employee_social_insurance_fen"]
@@ -3936,81 +3833,11 @@ def _employees(
         if ident not in selected_ids:
             continue
         person = snap.party_details(ident)
-        code, code_source = snap.party_code_details(ident)
-        tax_details = []
-        for row in rows:
-            calc = row["basis"]
-            if calc["fact"]["data"]["employee_id"] != ident:
-                continue
-            value = calc["outcome"]["values"]
-            actual = value.get("actual_withholding")
-            calculated = value.get("calculated_tax_fen") if actual else value.get("tax_fen")
-            tax_details.append(
-                {
-                    "calculation_id": calc["id"],
-                    "period": calc["fact"]["data"]["period"],
-                    "kind": calc["kind"],
-                    "reversal": row["sign"] < 0,
-                    "booked_tax_fen": row["sign"] * value.get("tax_fen", 0),
-                    "calculated_tax_fen": row["sign"] * calculated
-                    if calculated is not None
-                    else None,
-                    "actual_withholding_tax_fen": row["sign"] * actual["withheld_tax_fen"]
-                    if actual
-                    else None,
-                    "actual_withholding_fact_id": actual["fact_id"] if actual else None,
-                }
-            )
-        declarations = [
-            fact
-            for fact in declaration_facts
-            if fact["data"]["employee_id"] == ident and fact["data"]["tax_period"] == snap.period
-        ]
         items.append(
             {
                 "employee_id": ident,
                 "selection_status": "established",
-                "code": code or f"人员 {index}",
                 "name": person["name"],
-                "field_sources": {
-                    **_display_sources(
-                        info,
-                        record_status="employment_status",
-                        employment_start_date="employment_start",
-                        employment_end_date="employment_end",
-                    ),
-                    **person.get("field_sources", {}),
-                    **({"code": code_source} if code_source else {}),
-                    **(
-                        {
-                            "declared_tax_fen": snap.fact_source(
-                                declarations[0], field="declared_tax_fen"
-                            )
-                        }
-                        if len(declarations) == 1
-                        else {}
-                    ),
-                    **(
-                        {
-                            output: snap.fact_source(choices[0], field=field)
-                            for output, field in (
-                                ("tax_withholding_start_date", "withholding_start_date"),
-                                (
-                                    "social_insurance_participating",
-                                    "social_insurance_participating",
-                                ),
-                                ("housing_fund_participating", "housing_fund_participating"),
-                                ("social_insurance_base_fen", "social_insurance_base_fen"),
-                                ("housing_fund_base_fen", "housing_fund_base_fen"),
-                            )
-                            if profile.get(field) is not None
-                        }
-                        if profile
-                        else {}
-                    ),
-                },
-                "field_conflicts": info["field_conflicts"],
-                "record_status": info.get("employment_status") or "unknown",
                 "period_state": state,
                 "period_state_label": {
                     "unknown": "未确认人员在册状态",
@@ -4021,38 +3848,11 @@ def _employees(
                 "in_period": in_period,
                 "employment_start_date": start,
                 "employment_end_date": end,
-                "tax_withholding_start_date": profile["withholding_start_date"]
-                if profile
-                else None,
-                "profile_available": profile is not None,
-                "expense_areas": sorted(
-                    {
-                        {
-                            "management": "管理",
-                            "administration": "管理",
-                            "sales": "销售",
-                            "service": "服务",
-                        }.get(area, "其他费用归属")
-                        for area in amounts["areas"]
-                    }
-                ),
-                **{
-                    field: profile[field] if profile else None
-                    for field in (
-                        "social_insurance_participating",
-                        "housing_fund_participating",
-                        "social_insurance_base_fen",
-                        "housing_fund_base_fen",
-                    )
-                },
                 "has_payroll_activity": bool(amounts["batches"]),
                 "batch_count": len(amounts["batches"]),
-                "tax_details": tax_details,
-                "declared_tax_fen": declarations[0]["data"]["declared_tax_fen"]
-                if len(declarations) == 1
-                else None,
                 "recorded_net_payments_fen": net_payments[ident],
                 "direct_net_payments_fen": direct_payments[ident],
+                "outstanding_net_fen": outstanding[ident],
                 "other_net_settlements_fen": net_payments[ident] - direct_payments[ident]
                 if net_payments[ident] is not None and direct_payments[ident] is not None
                 else None,
@@ -4077,14 +3877,11 @@ def _employees(
         )
     items = [item for item in items if item["employee_id"] not in unestablished_employees]
     for ident in sorted(selected_ids & unestablished_employees.keys()):
-        proof = unestablished_employees[ident]
         items.append(
             {
                 "employee_id": ident,
                 "name": snap.party(ident),
                 "selection_status": "unestablished",
-                "candidate_selections": proof["candidate_selections"],
-                "trace_targets": proof["trace_targets"],
                 **dict.fromkeys(
                     (
                         *money_keys,
@@ -4093,6 +3890,7 @@ def _employees(
                         "recorded_net_payments_fen",
                         "direct_net_payments_fen",
                         "other_net_settlements_fen",
+                        "outstanding_net_fen",
                     ),
                     None,
                 ),
@@ -4100,62 +3898,47 @@ def _employees(
         )
     items.sort(key=lambda item: item["employee_id"])
     unknown = sum(item["in_period"] is None for item in all_items)
-    cost = _workforce_cost_from_rows(snap, rows, aggregates, period_rows, unestablished_employees)
-    workforce_cost = cost["workforce_cost"]
-    sums = cost["sums"]
-    controlled = cost["controlled"]
-    ledger = cost["ledger"]
-    adjustment = cost["adjustment"]
-    employee_cost = workforce_cost["employee"]
+    sums = {key: sum(item[key] for item in aggregates.values()) for key in money_keys}
+    sums["personal_deduction_fen"] = (
+        sums["employee_social_insurance_fen"] + sums["employee_housing_fund_fen"]
+        + sums["individual_income_tax_fen"]
+    )
+    controlled = (
+        sums["gross_salary_fen"] + sums["annual_bonus_fen"]
+        + sums["employer_social_insurance_fen"] + sums["employer_housing_fund_fen"]
+    )
+    ledger = sum(
+        value for account, value in snap.month_accounts.items()
+        if account in {"560201", "560101", "540101"}
+    )
+    adjustment = ledger - controlled
+    labor_rows = metric_rows(snap.month_journal.select(kinds=LABOR_KINDS), ("gross_fen",))
+    capital_rows = metric_rows(
+        snap.month_journal.select(kinds={"labor_project_cost"}), ("capitalized_fen",)
+    )
+    amount_ids = {row["calculation_id"] for row in (*rows, *labor_rows, *capital_rows)}
+    if amount_ids:
+        snap.reads.verify_selected_content(amount_ids)
+    labor_cost = sum(
+        row["sign"] * row["basis"]["outcome"]["values"]["gross_fen"] for row in labor_rows
+    )
+    capitalized_labor = sum(
+        row["sign"] * row["basis"]["outcome"]["values"]["capitalized_fen"] for row in capital_rows
+    )
     labor_items = []
     labor_heads = adopted_head_metadata(
         snap, LABOR_KINDS | {"labor_project_cost"}, posting_period=snap.period
     )
-    entity_sources = {
-        head["subject_id"]
-        for head in wage_heads
-        if employee_id is not None and wage_identity(head["fact_id"]) == employee_id
-    }
-    if employee_id in unestablished_employees:
-        entity_sources.update(
-            item["subject_id"]
-            for item in unestablished_employees[employee_id]["candidate_selections"]
-        )
-    if employee_id is not None:
-        from .schema import table_name
-
-        labor_subjects = set()
-        for kind in LABOR_KINDS | {"labor_project_cost"}:
-            labor_subjects.update(
-                row[0]
-                for row in snap.connection.execute(
-                    f"SELECT DISTINCT f.subject_id FROM {table_name(kind)} d "
-                    "JOIN fact_revision f ON f.id=d.revision_id WHERE d.person_id=?",
-                    (employee_id,),
-                )
-            )
-        all_labor_calculations = (
-            list(
-                snap.calculations.selected(
-                    kinds=LABOR_KINDS | {"labor_project_cost"}, subjects=labor_subjects
-                ).values()
-            )
-            if labor_subjects
-            else []
-        )
-        labor_scalar = scalar_facts(snap, all_labor_calculations)
-        entity_sources.update(
-            calc["subject_id"]
-            for calc in all_labor_calculations
-            if labor_scalar[calc["fact_id"]]["person_id"] == employee_id
-        )
+    labor_identities = verified_scalar_facts(snap, labor_heads) if employee_id is not None else {}
     labor_keys, labor_page = page_keys(
         [
             head["id"]
             for head in sorted(labor_heads, key=lambda row: (row["period"], row["subject_id"]))
+            if employee_id is None or labor_identities[head["fact_id"]]["person_id"] == employee_id
         ],
         cursors.get("labor_sources"),
         limit,
+        total_count=len(labor_heads),
     )
     displayed_labor = []
     if "labor_sources" in requested and not summary_only and labor_keys:
@@ -4169,7 +3952,7 @@ def _employees(
             raise KernelError(
                 "content_integrity_failed", "劳务来源采用身份不匹配", component="labor"
             )
-    snap.prepare_settlements({calc["subject_id"] for calc in displayed_labor})
+    _prepare_people_asset_settlements(snap, {calc["subject_id"] for calc in displayed_labor})
     for calc in displayed_labor:
         if calc["kind"] not in LABOR_KINDS | {"labor_project_cost"}:
             continue
@@ -4177,23 +3960,21 @@ def _employees(
         labor_items.append(
             {
                 "source_id": calc["subject_id"],
-                "calculation_id": calc["id"],
                 "period": data["period"],
                 "person_id": data["person_id"],
-                **snap.party_field(data["person_id"], "name"),
+                "name": snap.party(data["person_id"]),
                 "capitalized": calc["kind"] == "labor_project_cost",
                 "project_id": data.get("project_id"),
                 "gross_fen": values["gross_fen"],
                 "net_fen": values["net_fen"],
                 "booked_tax_fen": values["tax_fen"],
-                "theoretical_tax_fen": values.get("theoretical_tax_fen"),
                 "withholding_method": values["withholding_method"],
                 "withholding_label": {
                     "not_withheld_not_filed": "尚未记录扣缴及申报",
                     "gross_paid_without_withholding": "已按毛额付款、未扣税",
                     "net_after_withholding": "已确认净额及扣税义务",
                 }[values["withholding_method"]],
-                **_source_settlement(snap, calc, limit=limit, include_movements=False),
+                **_people_asset_settlement(snap, calc),
             }
         )
     labor_items = sorted(labor_items, key=lambda item: (item["period"], item["source_id"]))
@@ -4214,47 +3995,87 @@ def _employees(
                 and item["selection_status"] != "unestablished"
                 for item in all_items
             ),
-            "profile_missing_count": sum(
-                item["in_period"] is True and not item["profile_available"] for item in all_items
-            ),
             "contributions_only_count": sum(
                 item["wage_tax_scope"] == "contributions_only" for item in all_items
             ),
-            "controlled_cost_fen": None if unestablished_employees else controlled,
-            "settlement_adjustment_fen": None if unestablished_employees else adjustment,
             "ledger_cost_fen": ledger,
-            "detail_reconciled": None if unestablished_employees else adjustment == 0,
-            "breakdown_available": not unestablished_employees and adjustment == 0,
-            "breakdown_reason": employee_cost["reason"],
-            "identity_note": (
-                "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+            "checking": bool(unestablished_employees) or adjustment != 0 or settlement_checking,
+            "direct_net_payments_fen": None if unestablished_employees else _nullable_sum(
+                direct_payments[ident] for ident in known
+            ),
+            "other_net_settlements_fen": None if unestablished_employees else _nullable_sum(
+                net_payments[ident] - direct_payments[ident]
+                if net_payments[ident] is not None and direct_payments[ident] is not None else None
+                for ident in known
+            ),
+            "outstanding_net_fen": None if unestablished_employees else _nullable_sum(
+                outstanding[ident] for ident in known
             ),
         },
-        "_entity_sources": entity_sources,
+        "employee_id": employee_id,
+        "employee_filter": employee_filter,
         "collections": {
             "employees": {"items": items, "page": employee_page},
             "labor_sources": {"items": labor_items, "page": labor_page},
-            **(
-                {
-                    "payroll_sources": {
-                        "items": wage_sources[employee_id],
-                        "page": source_pages.get(employee_id, page_keys([], limit=limit)[1]),
-                    }
-                }
-                if employee_id
-                else {}
-            ),
         },
-        "workforce_cost": workforce_cost,
+        "workforce_cost": {
+            "total_fen": ledger + labor_cost,
+            "capitalized_labor_fen": capitalized_labor,
+            "personal_labor_fen": labor_cost,
+        },
     }
 
 
-def _asset_card_sources(snap):
+def _asset_card_sources(snap, *, activation_identities=False):
     """Select and check card identities without loading consumption history."""
-    acquisition_rows = list(snap.calculations_of_kind(*ASSET_KINDS))
-    batches = list(snap.calculations_of_kind("reimbursed_asset_batch"))
-    lifecycle = list(snap.calculations_of_kind("asset_activation", "asset_disposal"))
-    projects = list(snap.calculations_of_kind("project_cost", "labor_project_cost"))
+    # Prove the selected batch identities before the generic head guard runs.
+    # The guard may reuse exact frozen member identities in this owned
+    # snapshot; publication discovery and independent heads remain unchanged.
+    activation_events = (
+        snap.queries._selected_asset_activation_identities(snap.connection, snap.period)
+        if activation_identities else None
+    )
+    kinds = ASSET_KINDS | {
+        "reimbursed_asset_batch", "asset_activation", "asset_disposal",
+        "project_cost", "labor_project_cost",
+    }
+    heads = adopted_head_metadata(snap, kinds, read_line_counts=False)
+    metadata = verified_adopted_head_identities(snap, heads, kinds=kinds)
+    selected = {
+        subject: CalculationView(snap, record) for subject, record in metadata.items()
+    }
+    # Activation members have no independent publication. Keep their exact
+    # batch adoption and reversal selection rather than treating them as heads.
+    member_heads = {}
+    if activation_events is None:
+        activation_events = snap.asset_member_events(kinds={"asset_activation"})
+    for event in activation_events:
+        subject = event["subject_id"]
+        if event["direction"] < 0:
+            if member_heads.get(subject, {}).get("calculation_id") == event["calculation_id"]:
+                member_heads.pop(subject, None)
+        else:
+            member_heads[subject] = event
+    for subject, event in member_heads.items():
+        old = selected.get(subject)
+        if old is None or YearMonth(event["adoption_period"]).ordinal >= old["posting_period"]:
+            selected[subject] = (
+                CalculationView(snap, {
+                    "id": event["calculation_id"], "subject_id": event["subject_id"],
+                    "fact_id": event["fact_id"], "kind": event["kind"],
+                    "period": event["calculation_period"], "posting_period": None,
+                    "result_digest": event["result_digest"],
+                })
+                if event.get("frozen_identity") else snap.calculation(event["calculation_id"])
+            )
+    acquisition_rows = [calc for calc in selected.values() if calc["kind"] in ASSET_KINDS]
+    batches = [calc for calc in selected.values() if calc["kind"] == "reimbursed_asset_batch"]
+    lifecycle = [calc for calc in selected.values() if calc["kind"] in {
+        "asset_activation", "asset_disposal",
+    }]
+    projects = [calc for calc in selected.values() if calc["kind"] in {
+        "project_cost", "labor_project_cost",
+    }]
     scalar = verified_scalar_facts(snap, [*acquisition_rows, *batches, *lifecycle, *projects])
     acquisitions = {scalar[calc["fact_id"]]["asset_id"]: calc for calc in acquisition_rows}
     batch_by_fact = {calc["fact_id"]: calc for calc in batches}
@@ -4344,12 +4165,50 @@ def _long_term_assets(snap):
     }
 
 
+def _asset_payment_summary(summary, source_calculations):
+    """Summarize exact source obligations without allocating them to the card."""
+    subjects = {source["subject_id"] for source in source_calculations}
+    obligations = {
+        item["key"]: item for item in summary["obligations"]
+        if (item.get("source_business") or {}).get("subject_id") in subjects
+    }
+    fields = {"amount_fen": "source_amount_fen", "paid_fen": "paid_fen",
+              "other_settled_fen": "other_settled_fen", "remaining_fen": "remaining_fen"}
+    unknown = any(item[field] is None for item in obligations.values() for field in fields.values())
+    return {
+        "obligation_count": len(obligations),
+        "checking": bool(subjects and summary["issues"]),
+        **{name: None if unknown else sum(item[field] for item in obligations.values())
+           for name, field in fields.items()},
+    }
+
+
+def _asset_open_batch_owners(connection, through: int, after: int | None) -> set[str]:
+    """Locate all consumed batch owners in the publication tail, including baselines.
+
+    These IDs are only candidates for asset_members_many's source/member proof.
+    A known close gives a real lower range bound; a nullable OR would leave the
+    baseline branch scanning every earlier publication despite that boundary.
+    """
+    scope = "p.posting_period<=?"
+    parameters = [through]
+    if after is not None:
+        scope = "p.posting_period>? AND " + scope
+        parameters.insert(0, after)
+    query = " UNION ".join(
+        "SELECT c.id FROM calculation_publication p JOIN calculation c "
+        f"ON c.id=p.{column} WHERE {scope} AND c.kind='asset_consumption_month'"
+        for column in ("calculation_id", "baseline_calculation_id")
+    )
+    return {row[0] for row in connection.execute(query, parameters * 2)}
+
+
 def _assets(
     snap,
     *,
     sections=None,
     cursors=None,
-    limit=100,
+    limit=20,
     asset_filter="all",
     asset_id=None,
     project_id=None,
@@ -4388,17 +4247,19 @@ def _assets(
             batch_amounts[calc["fact_id"]] if calc["kind"] == "reimbursed_asset_batch" else (data,)
         ):
             amounts[detail["asset_type"]] += row["sign"] * detail["cost_fen"]
-    sources = _asset_card_sources(snap)
+    sources = _asset_card_sources(
+        snap, activation_identities=not summary_only and "assets" in requested,
+    )
     acquisitions, asset_details = sources["acquisitions"], sources["details"]
     activations, disposals = sources["activations"], sources["disposals"]
-    lifecycle, project_calculations = sources["lifecycle"], sources["projects"]
+    project_calculations = sources["projects"]
     scalar = lifecycle_scalar = sources["scalar"]
     # Closed carrying balances are rooted by asset key; the open tail is
     # checked against its publication and category seals in the same snapshot.
     # A current, undisposed card can recover cumulative charge from cost less
     # carrying without decoding every older member outcome. Other cards keep
     # their exact historical member walk below.
-    from .period_balances import balance_totals, verify_selected_balances
+    from .period_balances import balance_totals
 
     candidates = {
         ident
@@ -4406,11 +4267,12 @@ def _assets(
         if ident not in disposals and calc["kind"] != "opening_asset"
     }
     asset_keys = {ident: f"asset:{ident}:carrying" for ident in candidates}
+    carrying_keys = set(asset_keys.values())
     carrying = (
         {
             row["key"]: row["amount"]
             for row in balance_totals(
-                snap.connection, snap.month, "asset", set(asset_keys.values()), reads=snap.reads
+                snap.connection, snap.month, "asset", carrying_keys, reads=snap.reads
             )
         }
         if asset_keys
@@ -4451,7 +4313,7 @@ def _assets(
             for publication in acquisition_publications:
                 sign = -1 if publication["reverses_id"] else 1
                 for effect in outcomes[publication["basis_calculation_id"]]["balances"]:
-                    if effect["category"] == "asset" and effect["key"] in asset_keys.values():
+                    if effect["category"] == "asset" and effect["key"] in carrying_keys:
                         noncharge[effect["key"]] += sign * effect["amount"]
     asset_costs = {
         ident: (scalar[calc["fact_id"]] | asset_details.get(ident, {}))["cost_fen"]
@@ -4464,8 +4326,19 @@ def _assets(
         and noncharge.get(asset_keys[ident], 0) == asset_costs[ident]
     }
     if fast_assets:
-        verify_selected_balances(
-            snap.connection, snap.month, "asset", periods={snap.month}, reads=snap.reads
+        snap.reads.verify_balance_periods(snap.month, "asset", {snap.month})
+        # Frozen carrying roots cover closed amounts. The open tail still
+        # consumes complete batch publications, whose member attribution must
+        # remain intact even when the owner page displays no timing history.
+        closed = snap.connection.execute(
+            "SELECT max(period) FROM period_close WHERE period<=?", (snap.month,),
+        ).fetchone()[0]
+        open_owners = _asset_open_batch_owners(snap.connection, snap.month, closed)
+        retained = snap.reads._report_snapshot_cache.get(
+            ("asset_owner_identity_selection", snap.month)
+        )
+        snap.reads.asset_members_many(
+            open_owners, _decoded_owners=retained[3] if retained is not None else None,
         )
     monthly_asset_charge = (
         {
@@ -4487,23 +4360,7 @@ def _assets(
     full_batch_events = (
         snap.asset_member_events(asset_ids=fallback_assets) if fallback_assets else []
     )
-    head_batch_events = (
-        snap.queries._selected_asset_member_heads(
-            snap.connection, snap.period, asset_ids=fast_assets
-        )
-        if fast_assets
-        else []
-    )
-    batch_events = sorted(
-        (*full_batch_events, *head_batch_events),
-        key=lambda item: (
-            item["adoption_period"],
-            item["voucher_number"] or 0,
-            item["owner_calculation_id"],
-            item["asset_id"],
-        ),
-    )
-    charges, monthly_charges, latest_charge = defaultdict(int), defaultdict(int), {}
+    charges, monthly_charges = defaultdict(int), defaultdict(int)
     if "asset_consumption" in snap.store.registry.models:
         query, parameters = snap.journal.select(kinds={"asset_consumption"}).sql()
         snap.reads.verify_sql_outcomes(
@@ -4516,15 +4373,14 @@ def _assets(
             "SELECT f.asset_id,sum((CASE WHEN j.reverses_id IS NULL THEN 1 ELSE -1 END)*"
             "json_extract(c.outcome,'$.values.consumption_fen')) AS total,"
             "sum(CASE WHEN j.period=? THEN (CASE WHEN j.reverses_id IS NULL THEN 1 ELSE -1 END)*"
-            "json_extract(c.outcome,'$.values.consumption_fen') ELSE 0 END) AS monthly,"
-            f"max(j.period) latest FROM ({query}) j JOIN calculation c "
+            "json_extract(c.outcome,'$.values.consumption_fen') ELSE 0 END) AS monthly "
+            f"FROM ({query}) j JOIN calculation c "
             "ON c.id=j.basis_calculation_id JOIN fact_asset_consumption f "
             "ON f.revision_id=c.fact_id GROUP BY f.asset_id",
             [snap.month, *parameters],
         ):
             charges[row["asset_id"]] = row["total"]
             monthly_charges[row["asset_id"]] = row["monthly"]
-            latest_charge[row["asset_id"]] = str(YearMonth.from_ordinal(row["latest"]))
     for ident in fast_assets:
         charges[ident] = asset_costs[ident] - carrying.get(asset_keys[ident], 0)
         monthly_charges[ident] = monthly_asset_charge.get(asset_keys[ident], 0)
@@ -4538,8 +4394,7 @@ def _assets(
         {
             row["id"]: dict(row)
             for row in snap.connection.execute(
-                "SELECT c.id,json_extract(c.outcome,'$.values.consumption_fen') amount,"
-                "json_extract(c.outcome,'$.values.zero_reason') zero_reason "
+                "SELECT c.id,json_extract(c.outcome,'$.values.consumption_fen') amount "
                 "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value",
                 (json.dumps(sorted(consumption_ids)),),
             )
@@ -4547,70 +4402,12 @@ def _assets(
         if consumption_ids
         else {}
     )
-    batch_references, latest_states, latest_positive, latest_period_event = {}, {}, {}, {}
-    for event in batch_events:
-        ident = event["asset_id"]
+    for event in full_batch_events:
         if event["kind"] == "asset_consumption":
-            if ident not in fast_assets:
-                values = consumption_values[event["calculation_id"]]
-                amount = values["amount"] * event["direction"]
-                charges[ident] += amount
-                if event["adoption_period"] == snap.period:
-                    monthly_charges[ident] += amount
-            latest_charge[ident] = max(
-                latest_charge.get(ident, event["calculation_period"]), event["calculation_period"]
-            )
-            if ident in fast_assets and latest_charge[ident] == event["calculation_period"]:
-                latest_period_event[ident] = event
-            if event["direction"] > 0:
-                if ident in fast_assets:
-                    latest_positive[ident] = event
-                else:
-                    latest_states[ident] = values["zero_reason"]
-        if event["direction"] > 0:
-            # Keep activation and the latest monthly adoption on the card; the
-            # complete history remains available through its source history.
-            batch_references[ident, event["kind"]] = {
-                "calculation_id": event["calculation_id"],
-                "owner_calculation_id": event["owner_calculation_id"],
-                "voucher_version_id": event["voucher_version_id"],
-                "voucher_number": event["voucher_number"],
-                "period": event["adoption_period"],
-                "label": _name(event["kind"]),
-            }
-        elif (
-            batch_references.get((ident, event["kind"]), {}).get("calculation_id")
-            == event["calculation_id"]
-        ):
-            batch_references.pop((ident, event["kind"]), None)
-    selected_heads = {
-        (event["owner_calculation_id"], event["calculation_id"]): event
-        for event in (
-            *latest_positive.values(),
-            *latest_period_event.values(),
-            *(
-                ref | {"asset_id": ident}
-                for (ident, _), ref in batch_references.items()
-                if ident in fast_assets
-            ),
-        )
-    }
-    if selected_heads:
-        verified_heads = snap.reads.asset_members_many(owner_id for owner_id, _ in selected_heads)
-        for (owner_id, member_id), head in selected_heads.items():
-            if not any(
-                member["member_calculation_id"] == member_id
-                and member["asset_id"] == head["asset_id"]
-                for member in verified_heads[owner_id]
-            ):
-                raise KernelError("asset_batch_identity", "资产汇总成员身份不匹配")
-        for ident, event in latest_positive.items():
-            member = next(
-                member
-                for member in verified_heads[event["owner_calculation_id"]]
-                if member["member_calculation_id"] == event["calculation_id"]
-            )
-            latest_states[ident] = member["summary"].get("zero_reason")
+            amount = consumption_values[event["calculation_id"]]["amount"] * event["direction"]
+            charges[event["asset_id"]] += amount
+            if event["adoption_period"] == snap.period:
+                monthly_charges[event["asset_id"]] += amount
     all_items = []
     for ident, calc in sorted(acquisitions.items()):
         data = scalar[calc["fact_id"]] | asset_details.get(ident, {})
@@ -4678,60 +4475,18 @@ def _assets(
     source_calculations_by_subject = (
         snap.calculations.selected(subjects=source_subjects) if source_subjects else {}
     )
-    entity_sources = set()
-    if asset_id in acquisitions:
-        entity_sources.add(acquisitions[asset_id]["subject_id"])
-        data = scalar[acquisitions[asset_id]["fact_id"]] | asset_details.get(asset_id, {})
-        if data.get("acceptance_id"):
-            entity_sources.add(data["acceptance_id"])
-        acquisition = acquisitions[asset_id]
-        if "project_sources" in snap.store.registry.models[acquisition["kind"]].model_fields:
-            from .schema import table_name
-
-            entity_sources.update(
-                row[0]
-                for row in snap.connection.execute(
-                    f"SELECT source_id FROM {table_name(acquisition['kind'])}_project_sources "
-                    "WHERE revision_id=?",
-                    (acquisition["fact_id"],),
-                )
-            )
-        entity_sources.update(
-            calc["subject_id"]
-            for calc in lifecycle
-            if lifecycle_scalar[calc["fact_id"]]["asset_id"] == asset_id
-        )
-        consumptions = list(snap.calculations_for_entity("asset_consumption", "asset_id", asset_id))
-        consumption_scalar = scalar_facts(snap, consumptions)
-        entity_sources.update(
-            calc["subject_id"]
-            for calc in consumptions
-            if consumption_scalar[calc["fact_id"]]["asset_id"] == asset_id
-        )
-        entity_sources.update(
-            snap.calculation(event["owner_calculation_id"])["subject_id"]
-            for event in batch_events
-            if event["asset_id"] == asset_id
-        )
     settlement_subjects = {
-        calc["subject_id"] for ident, calc in acquisitions.items() if ident in selected
+        calc["subject_id"] for ident, calc in acquisitions.items()
+        if ident in selected and calc["kind"] != "opening_asset"
+        and not page_facts[calc["fact_id"]]["data"].get("acceptance_id")
+        and not page_facts[calc["fact_id"]]["data"].get("project_sources")
     }
-    snap.prepare_settlements(settlement_subjects)
-    source_subject_by_asset = {}
-    for ident in selected:
-        calc = acquisitions[ident]
-        data = calc["fact"]["data"] | asset_details.get(ident, {})
-        acceptance = source_calculations_by_subject.get(data.get("acceptance_id"))
-        source_subject_by_asset[ident] = (
-            acceptance["subject_id"] if acceptance else calc["subject_id"]
-        )
-    source_rows_by_subject = defaultdict(list)
-    if source_subject_by_asset:
-        journal_subjects = set(source_subject_by_asset.values())
-        for row in snap.journal.select(subjects=journal_subjects):
-            subject_id = row["basis"]["subject_id"]
-            if row["sign"] > 0 and subject_id in journal_subjects:
-                source_rows_by_subject[subject_id].append(row)
+    payment_summary = (
+        snap.settlement_summary(subject_ids=settlement_subjects | source_subjects,
+                                include_history_counts=False)
+        if settlement_subjects | source_subjects else {"obligations": [], "issues": []}
+    )
+    snap.metadata.prime_profiles("asset", selected)
     items = []
     for index, (ident, calc) in enumerate(sorted(acquisitions.items()), 1):
         if ident not in selected:
@@ -4752,10 +4507,6 @@ def _assets(
         acceptance = source_calculations_by_subject.get(data.get("acceptance_id"))
         if acquisition_day is None and acceptance:
             acquisition_day = acceptance["fact"]["data"].get("acquisition_date")
-        creditors = data.get("creditors") or (
-            acceptance["fact"]["data"].get("creditors", ()) if acceptance else ()
-        )
-        source_rows = source_rows_by_subject[source_subject_by_asset[ident]]
         batch_source = acceptance or (calc if calc["kind"] == "reimbursed_asset_batch" else None)
         source_calculations = (
             [
@@ -4774,16 +4525,6 @@ def _assets(
             if batch_source
             else "本资产结算"
         )
-        source_parties = [
-            snap.party_details(party_id)
-            for party_id in (
-                [creditor["employee_id"] for creditor in creditors]
-                if creditors
-                else [data["supplier_id"]]
-                if data.get("supplier_id")
-                else []
-            )
-        ]
         item = {
             "asset_id": ident,
             "asset_type": data["asset_type"],
@@ -4792,28 +4533,6 @@ def _assets(
             "category": data["asset_type"],
             "category_label": profile.get("category_label")
             or ("固定资产" if fixed else "无形资产"),
-            "field_sources": {
-                **_display_sources(
-                    profile,
-                    code="display_number",
-                    name="display_name",
-                    category_label="category_label",
-                    **(
-                        {}
-                        if fixed
-                        else {
-                            "life_basis_label": "useful_life_basis",
-                            "life_basis_explanation": "note",
-                            "rights_description": "rights_description",
-                        }
-                    ),
-                ),
-                "source_parties": [
-                    source
-                    for party in source_parties
-                    for source in _source_list(party.get("field_sources", {}).get("name"))
-                ],
-            },
             "status": status,
             "status_label": {
                 "active": "使用中",
@@ -4826,55 +4545,12 @@ def _assets(
             "recognition_label": "期初接续"
             if opening
             else acquisition_day or f"{data['period']}（按月确认）",
-            "source_label": "期初接续"
-            if opening
-            else "项目形成"
-            if data.get("project_sources")
-            else "整批验收"
-            if batch_source
-            else "报销承接"
-            if "reimbursed" in calc["kind"]
-            else "直接购入",
-            "source_party_label": "本验收批次债权人"
-            if batch_source
-            else "报销债权人"
-            if creditors
-            else "供应方",
-            "source_parties": "、".join(party["name"] for party in source_parties)
-            if source_parties
-            else None,
             "settlement_scope": source_scope,
-            "settlements": [
-                {
-                    "source_id": source["subject_id"],
-                    "label": _name(source["kind"]),
-                    **_source_settlement(snap, source, limit=limit, include_movements=False),
-                }
-                for source in source_calculations
-            ],
+            "payment_summary": _asset_payment_summary(payment_summary, source_calculations),
             "cost_fen": cost,
             "accumulated_charge_fen": accumulated,
             "month_charge_fen": monthly_charges[ident],
             "book_value_fen": 0 if disposal else cost - accumulated,
-            "latest_charge_period": latest_charge.get(ident),
-            "charge_state_label": {
-                "before_consumption_start": "尚未到开始计提月份",
-                "fully_consumed": "已完成折旧摊销",
-            }.get(latest_states.get(ident)),
-            "batch_references": [
-                ref for (asset, _), ref in batch_references.items() if asset == ident
-            ],
-            "benefit_area_label": {
-                "administration": "管理",
-                "sales": "销售",
-                "service": "服务",
-            }.get(basis.get("benefit_area")),
-            "useful_life_months": basis.get("useful_life_months"),
-            "acquisition_reference": str(source_rows[-1]["number"])
-            if source_rows
-            else "期初"
-            if opening
-            else "暂无凭证",
             "month_acquired": not opening and data["period"] == snap.period,
             "month_activated": bool(
                 activation and activation["fact"]["data"]["period"] == snap.period
@@ -4885,12 +4561,6 @@ def _assets(
             item.update(
                 {
                     "in_service_date": basis.get("in_use_date"),
-                    "residual_value_fen": basis.get("residual_fen"),
-                    "depreciation_method_label": "直线法" if basis else None,
-                    "rounding_policy_label": {
-                        "floor_final_remainder": "整分均摊、末期调整",
-                        "round_half_up_card": "四舍五入、末期调整",
-                    }.get(basis.get("rounding_policy")),
                     "disposal": None,
                 }
             )
@@ -4898,26 +4568,14 @@ def _assets(
             item.update(
                 {
                     "available_for_use_date": basis.get("in_use_date"),
-                    "life_basis_label": profile.get("useful_life_basis") or "未提供",
-                    "life_basis_explanation": profile.get("note") or "",
-                    "rights_description": profile.get("rights_description") or "未提供",
                     "retirement": None,
                 }
             )
         if disposal:
             disposed, values = disposal["fact"]["data"], disposal["outcome"]["values"]
-            references = [
-                row
-                for row in snap.journal.select(subjects={disposal["subject_id"]})
-                if row["basis"]["id"] == disposal["id"] and row["sign"] > 0
-            ]
             detail = {
                 "date": disposed["disposal_date"],
                 "book_value_fen": cost - accumulated,
-                "reference": str(references[-1]["number"]) if references else "暂无凭证",
-                "settlement": _source_settlement(
-                    snap, disposal, limit=limit, include_movements=False
-                ),
             }
             if fixed:
                 detail.update(
@@ -4926,7 +4584,7 @@ def _assets(
                         "gross_proceeds_fen": disposed["gross_proceeds_fen"],
                         "gain_fen": max(values["gain_loss_fen"], 0),
                         "loss_fen": max(-values["gain_loss_fen"], 0),
-                        **snap.party_field(disposed.get("buyer_id")),
+                        "party": snap.party(disposed.get("buyer_id")),
                     }
                 )
             item["disposal" if fixed else "retirement"] = detail
@@ -4976,12 +4634,6 @@ def _assets(
     balances = snap.accounts
     project_balances = _project_cost_balances(snap)
     project_scalar = scalar
-    if project_id is not None:
-        entity_sources.update(
-            calc["subject_id"]
-            for calc in project_calculations
-            if project_scalar[calc["fact_id"]]["project_id"] == project_id
-        )
     candidates = sorted(
         (
             calc
@@ -5006,9 +4658,6 @@ def _assets(
     picked_projects = set(project_keys) if "projects" in requested and not summary_only else set()
     if picked_projects:
         snap.reads.calculations(calc["id"] for calc in candidates if calc["id"] in picked_projects)
-    snap.prepare_settlements(
-        {calc["subject_id"] for calc in candidates if calc["id"] in picked_projects}
-    )
     projects = [
         {
             "source_id": calc["subject_id"],
@@ -5016,12 +4665,11 @@ def _assets(
             "period": calc["fact"]["data"]["period"],
             "kind": calc["kind"],
             "label": _name(calc["kind"]),
-            **snap.party_field(
+            "party": snap.party(
                 calc["fact"]["data"].get("person_id") or calc["fact"]["data"].get("supplier_id")
             ),
             "cost_fen": calc["outcome"]["values"]["capitalized_fen"],
             "remaining_fen": project_balances[f"project-cost:{calc['subject_id']}"],
-            "settlement": _source_settlement(snap, calc, limit=limit, include_movements=False),
         }
         for calc in candidates
         if calc["id"] in picked_projects
@@ -5037,12 +4685,7 @@ def _assets(
         + project_cost
     )
     card_accumulated = fixed["active_accumulated_fen"] + intangible["active_accumulated_fen"]
-    differences = {
-        "cost_fen": ledger_cost - card_cost,
-        "accumulated_fen": ledger_accumulated - card_accumulated,
-        "net_fen": ledger_cost - ledger_accumulated - card_cost + card_accumulated,
-    }
-    reconciled = not any(differences.values())
+    checking = ledger_cost != card_cost or ledger_accumulated != card_accumulated
     return {
         "fixed_asset_cost_fen": balances["1601"],
         "accumulated_depreciation_fen": -balances["1602"],
@@ -5060,10 +4703,6 @@ def _assets(
         "pending_intangible_count": intangible["pending_count"],
         "pending_intangible_cost_fen": intangible["pending_cost_fen"],
         "project_cost_fen": project_cost,
-        "reconciliation_scope": "在用及待启用资产、尚未转出项目成本",
-        "card_cost_fen": card_cost,
-        "card_accumulated_fen": card_accumulated,
-        "card_net_fen": card_cost - card_accumulated,
         "established_card_totals": None,
         "pending_fixed_count": fixed["pending_count"],
         "pending_fixed_cost_fen": fixed["pending_cost_fen"],
@@ -5073,16 +4712,12 @@ def _assets(
         "month_cost_adjustment_fen": sum(monthly_adjusted.values()),
         "month_activated_count": sum(row["month_activated"] for row in all_items),
         "month_exited_count": sum(row["month_exited"] for row in all_items),
-        "reconciled": reconciled,
-        "reconciliation_label": "资产卡片与账面一致"
-        if reconciled is True
-        else "资产卡片与账面差异需核对"
-        if reconciled is False
-        else "资产卡片与账面暂无法完整核对",
-        "differences": differences,
+        "checking": checking,
         "fixed": fixed,
         "intangible": intangible,
-        "_entity_sources": entity_sources,
+        "asset_id": asset_id,
+        "project_id": project_id,
+        "asset_filter": asset_filter,
         "collections": {
             "assets": {"items": items, "page": asset_page},
             "projects": {
@@ -5093,7 +4728,7 @@ def _assets(
     }
 
 
-def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
+def _quarterly_view(plan, closed):
     ready = plan["status"] == "ready"
     exportable = closed["status"] == "ready"
     statements = plan["statements"]
@@ -5135,72 +4770,23 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
         }
         for key, label, columns, totals in specifications
     ]
-    details = details or {}
-    issues = details.get("issues", plan["fact_issues"])
-
-    def issue_context(issue):
-        labels = [issue.get("period", "")]
-        if issue.get("voucher_number") is not None:
-            labels.append(f"凭证 {issue['voucher_number']}")
-        if issue.get("line_no") is not None:
-            labels.append(f"第 {issue['line_no']} 行")
-        if issue.get("account"):
-            labels.append(f"科目 {issue['account']}")
-        return " · ".join(value for value in labels if value)
-
-    readiness = [
-        {
-            "key": str(index),
-            "label": "报表资料核对",
-            "state": "pending",
-            "summary": issue["message"],
-            "details": [
-                {
-                    "primary": issue_context(issue) or "请核对相应业务资料",
-                    "secondary": "",
-                    "location": issue,
-                }
-            ],
-        }
-        for index, issue in enumerate(issues)
-    ]
-    if not readiness:
-        readiness = [
-            {
-                "key": "ready",
-                "label": "报表资料核对",
-                "state": "pass",
-                "summary": "现有来源具备报表展示条件",
-                "details": [],
-            }
-        ]
-    labels = {
-        "balance_ending_fen": "期末资产负债平衡",
-        "balance_beginning_fen": "年初资产负债平衡",
-        "profit_current_fen": "本季利润勾稽",
-        "profit_year_to_date_fen": "累计利润勾稽",
-        "cash_current_fen": "本季现金流量勾稽",
-        "cash_year_to_date_fen": "累计现金流量勾稽",
-        "cash_ending_current_fen": "本季现金余额勾稽",
-        "cash_ending_year_to_date_fen": "累计现金余额勾稽",
-    }
     return {
-        "schema_version": 4,
-        "close_state": details.get("close_state", "closed" if exportable else "open"),
+        "schema_version": 5,
+        "close_state": "open" if any(
+            item["field"] in {"period", "closed_periods"} for item in closed["fact_issues"]
+        ) else "closed",
         "readiness_state": "ready" if ready else "blocked",
-        "carry_forward": {
-            "selected_fact_id": carry_forward_fact_id,
-            "options": details.get("carry_forward_options", []),
-        },
         "status": "ready" if exportable else "in_progress" if ready else "blocked",
-        "status_label": "可导出" if exportable else "期间尚未关账" if ready else "资料待核对",
+        "status_label": "可下载" if exportable else "结账后可下载" if ready else "AI 会计核对中",
         "headline": "季度财务报表",
-        "message": "报表来源已核对" if ready else "请根据核对事项检查对应业务和资料来源。",
+        "message": "当前报表已具备下载条件。" if exportable else (
+            "相关月份结账后可下载；当前金额为试算结果。" if ready
+            else "AI 会计正在核对报表资料，如需您补充资料会另列待办。"
+        ),
         "checked_at": datetime.now(UTC).isoformat(),
         "organization": plan["organization"],
         "period": plan["period"]
         | {"label": f"{plan['period']['year']} 年第 {plan['period']['quarter']} 季度"},
-        "readiness": readiness,
         "summary": {
             "assets_total_fen": statements["balance_sheet"]["30"]["ending_fen"],
             "liabilities_total_fen": statements["balance_sheet"]["47"]["ending_fen"],
@@ -5211,30 +4797,11 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
             "ending_cash_fen": statements["cash_flow_statement"]["22"]["current_fen"],
         },
         "statements": views,
-        "checks": {
-            "passed": sum(check["passed"] is True for check in plan["checks"]),
-            "total": len(plan["checks"]),
-            "items": [
-                check | {"label": labels.get(check["code"], "报表勾稽核对")}
-                for check in plan["checks"]
-            ],
-        },
         "draft": not exportable,
         "export": {
             "available": exportable,
             "file_name": _workbook_name(plan),
-            "calculation_hash": closed["digest"] if exportable else None,
             "preview_digest": closed["digest"] if exportable else None,
             "epochs": closed["epochs"] if exportable else None,
-        },
-        "technical": {
-            "calculation_hash": plan["digest"],
-            "template": plan["template"] | {"file_name": plan["template"]["name"]},
-            "rule": plan["rule"],
-            "source_close_hashes": [row["digest"] for row in plan["source_closes"]],
-            "classification_count": details.get("classification_count", 0),
-            "income_tax_confirmation_count": details.get("income_tax_confirmation_count", 0),
-            "requirement_codes": list(dict.fromkeys(issue["field"] for issue in issues)),
-            "errors": [],
         },
     }

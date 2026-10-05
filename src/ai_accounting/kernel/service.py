@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import secrets
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
@@ -304,7 +305,6 @@ class LocalService:
         root: str | Path,
         *,
         enable_read_pool: bool = False,
-        enable_parallel_brief: bool = False,
         replay_scope: dict | None = None,
         _static_runtime=None,
     ):
@@ -320,7 +320,6 @@ class LocalService:
         self.registry = self.bundle.registry
         self.catalog = Catalog(root, self.bundle)
         self.read_pool = None
-        self.brief_parallel = None
         self._catalog_observer = None
         self._catalog_observer_connection = None
         try:
@@ -338,17 +337,12 @@ class LocalService:
             self.replay_close_lock = RLock()
             self.close_previews = {}
             self.active_close_previews = {}
+            self._close_preview_key = secrets.token_bytes(32)
             if prepared_models is None:
                 from .command_schema import command_models
 
                 prepared_models = command_models(self.registry)
             self.command_models = prepared_models
-            if enable_parallel_brief:
-                if not enable_read_pool:
-                    raise ValueError("parallel brief requires resident read connections")
-                from .brief_parallel import BriefParallelPool
-
-                self.brief_parallel = BriefParallelPool()
             if enable_read_pool:
                 # This connection has no read transaction and carries no business
                 # result. It only keeps SQLite's catalog connection lifecycle
@@ -378,62 +372,42 @@ class LocalService:
         )
 
     def close(self):
+        if hasattr(self, "close_previews"):
+            with self.security.authorization_gate:
+                self.close_previews.clear()
+                self.active_close_previews.clear()
         with ExitStack() as cleanup:
             if self.read_pool is not None:
                 cleanup.callback(self.read_pool.close)
-            if self.brief_parallel is not None:
-                cleanup.callback(self.brief_parallel.close)
             if self._catalog_observer is not None:
                 observer, self._catalog_observer = self._catalog_observer, None
                 self._catalog_observer_connection = None
                 cleanup.callback(observer.close)
 
-    def _dashboard_brief(self, dashboard, engine, data):
-        """Use worker proofs only for a bound, ordinary complete brief read."""
-        if (
-            self.brief_parallel is None
-            or data.get("period") is None
-            or data.get("preparation", "complete") != "complete"
-            or data.get("section") is not None
-            or data.get("cursor") is not None
-            or data.get("voucher_version_id") is not None
-            or data.get("voucher_number") is not None
-        ):
-            return dashboard.brief(**data)
-        from .brief_parallel import ParallelBriefUnavailable
-
-        try:
-            with self.brief_parallel.attempt(engine.store) as attempt:
-                if attempt is None:
-                    return dashboard.brief(**data)
-                try:
-                    result = dashboard.brief(**data, _parallel_attempt=attempt)
-                    attempt.finish()
-                    return result
-                except KernelError:
-                    if attempt.guard.unchanged():
-                        raise
-                except ParallelBriefUnavailable:
-                    pass
-        except ParallelBriefUnavailable:
-            pass
-        # A changed source or worker infrastructure failure discards every
-        # partial value. The original page runs again in one read transaction.
-        return dashboard.brief(**data)
-
     def require_active_close_preview(self, company_id, database_id, period, preview_digest):
         """Read the exact active preview under the same gate used by close commits."""
+        from .close_preview import ClosePreviewIntent
+
         with self.security.authorization_gate:
             preview = self.close_previews.get((company_id, database_id, preview_digest))
             if (
                 self.active_close_previews.get((company_id, database_id, period)) != preview_digest
                 or preview is None
-                or preview["manifest"]["period"] != period
             ):
                 raise KernelError("preview_expired", "该关账预览已失效，请重新准备并核对")
-            return preview
+            if not isinstance(preview, ClosePreviewIntent):
+                raise KernelError("content_integrity_failed", "活动关账预览内容不完整")
+            review = preview.require(
+                self._close_preview_key,
+                company_id=company_id,
+                database_id=database_id,
+                period=period,
+                preview_digest=preview_digest,
+            )
+            return preview, review
 
     def _remember_close_preview(self, engine, result, owner_confirmation):
+        from .close_preview import make_close_preview_intent
         from .read_state import repair_revision
 
         company_id, database_id = engine.store.company_id, engine.store.database_id
@@ -449,13 +423,33 @@ class LocalService:
                 }
                 if current != result["manifest"]["read_version"]:
                     raise KernelError("preview_expired", "关账预览已变化，请重新准备并核对")
+            intent = make_close_preview_intent(
+                self._close_preview_key,
+                manifest=result["manifest"],
+                preview_digest=preview_digest,
+                epochs=result["epochs"],
+                owner_confirmation=owner_confirmation,
+            )
+            # Check the store binding too; the signed preview must originate
+            # from this company, not merely contain internally matching fields.
+            intent.require(
+                self._close_preview_key,
+                company_id=company_id,
+                database_id=database_id,
+                period=period,
+                preview_digest=preview_digest,
+            )
             key = (company_id, database_id, preview_digest)
-            self.close_previews[key] = {**result, "owner_confirmation": owner_confirmation}
-            self.active_close_previews[(company_id, database_id, period)] = preview_digest
+            active_key = (company_id, database_id, period)
+            previous = self.active_close_previews.get(active_key)
+            if previous is not None and previous != preview_digest:
+                self.close_previews.pop((company_id, database_id, previous), None)
+            self.close_previews[key] = intent
+            self.active_close_previews[active_key] = preview_digest
             while len(self.close_previews) > 128:
                 removed_key = next(iter(self.close_previews))
                 removed = self.close_previews.pop(removed_key)
-                active_key = (*removed_key[:2], removed["manifest"]["period"])
+                active_key = (*removed_key[:2], removed.period)
                 if self.active_close_previews.get(active_key) == removed_key[2]:
                     self.active_close_previews.pop(active_key)
 
@@ -470,7 +464,7 @@ class LocalService:
                 if company_id:
                     raise KernelError("unknown_company", "公司尚未登记")
                 return {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "company": None,
                     "companies": [],
                     "current_company": None,
@@ -742,7 +736,9 @@ class LocalService:
         display = Display(engine)
         from .dashboard import Dashboard
 
-        dashboard = Dashboard(engine)
+        dashboard = Dashboard(
+            engine, owner_review_request=CloseReview(self, engine).owner_review_request
+        )
         business_queries = BusinessQueries(engine)
         payroll_preparation = PayrollPreparation(engine)
         asset_batches = AssetBatches(engine)
@@ -853,11 +849,7 @@ class LocalService:
                     (company_id, engine.store.database_id, data["preview_digest"]), None
                 )
                 return result
-        result = (
-            self._dashboard_brief(dashboard, engine, data)
-            if command == "dashboard_brief"
-            else actions[command](**data)
-        )
+        result = actions[command](**data)
         if command == "preview_close":
             self._remember_close_preview(engine, result, data["owner_confirmation"])
             result = {

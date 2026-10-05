@@ -1,0 +1,297 @@
+{
+  "created_utc": "2026-10-02T09:40:36.936340+00:00",
+  "scope": "Archive of existing fixed-r69 physical SQLite page-cache reverse comparison and r70 production budget receipts; no new measurement/test/acceptance",
+  "exclusive_creation": true,
+  "fixed_source_sha256": "600fc82ccf6437c28c81c03ff56d04ddb0abaf07446782535ffb0dc29baa8af8",
+  "current_source_full_integrity": "not_run",
+  "diagnostic": {
+    "budget_order_mib": [
+      64,
+      128,
+      256,
+      256,
+      128,
+      64
+    ],
+    "six_operations_each_round": [
+      "context",
+      "brief",
+      "funds",
+      "employees",
+      "assets",
+      "reports"
+    ],
+    "warmups_per_operation": 3,
+    "native_repeats_per_operation": 5,
+    "completed_rounds": 6,
+    "native_sample_count": 180,
+    "not_browser": true,
+    "normalization": "Only context.generated_at, brief.data.generated_at and reports.checked_at are excluded from equality.",
+    "distinct_response_hashes_by_operation": {
+      "context": [
+        "efeddd44ca83eb0516a638f52fef5cf125700e0d7573ec3cda09d2635fc528c9"
+      ],
+      "brief": [
+        "67c1682561864b3e7372bac2599737e86bf4ced2e7f5338f93318548e31a2ffb"
+      ],
+      "funds": [
+        "c19af1cd57d15d648a1bf6342a921ebb5b34cad8bb1e608d31f6bb48b99a13fa"
+      ],
+      "employees": [
+        "353800b6a2d2403d3d174e4a659c33775fbfeae11eca01ebea88d35cca2b49c7"
+      ],
+      "assets": [
+        "246179e3865ee7090850c792113d51178318aaa4ad9294ad4697c9734fd7b0b0"
+      ],
+      "reports": [
+        "0285c0d169ddb7ee07a65a5b561f0edce6eab13581f990c58d404eebd4ffd671"
+      ]
+    },
+    "each_operation_normalized_hash_same_across_all_completed_rounds": true,
+    "gc_policy": {
+      "threshold": [
+        700,
+        10,
+        10
+      ],
+      "enabled": true
+    }
+  },
+  "initial_failed_attempts": [
+    {
+      "raw": ".tmp/stage9-page-cache-r69-initial-import-failure.log",
+      "meaning": "psutil import failed before timing; not a business failure or CPU acceptance"
+    },
+    {
+      "raw_json": ".tmp/stage9-page-cache-r69-context-timestamp-failure.json",
+      "raw_log": ".tmp/stage9-page-cache-r69-context-timestamp-failure.log",
+      "completed_rounds": 0,
+      "meaning": "context generated timestamp equivalence check failed; no completed configuration round; not a business failure or CPU acceptance"
+    }
+  ],
+  "current_production_budget": {
+    "per_connection_mib": 256,
+    "max_connections": 4,
+    "four_connection_page_budget_limit_mib": 1024,
+    "allocation": "on demand, not preallocated",
+    "observed_RSS": "single-process post-read observations only; not peak RSS or proof of actual four-connection memory"
+  },
+  "existing_current_test_receipt": {
+    "passed": 11,
+    "pytest_log_wall_seconds": 13.3,
+    "xml_suite_seconds": 13.12,
+    "ruff": "All checks passed!",
+    "separate_from_prior_test_groups": true
+  },
+  "unverified": [
+    "browser full-page refresh",
+    "unified current-source fixed candidate",
+    "main 120 months",
+    "peak RSS",
+    "actual four-connection memory",
+    "formal independent runtime package",
+    "final stage acceptance"
+  ],
+  "entry_count": 14,
+  "raw_total_bytes": 73690,
+  "archive_total_bytes": 18708,
+  "all_decompressed_byte_equal": true,
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-diagnostic.py",
+      "raw_sha256": "ea51e297551870506d37d936751d7570d5ff9e41ec5269c663551ecc04a69132",
+      "raw_bytes": 4820,
+      "raw_mtime_utc": "2026-10-02T09:29:39.448747+00:00",
+      "raw_mtime_ns": 1790933379448747100,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-001-stage9-page-cache-r69-diagnostic.py.gz",
+      "archive_sha256": "0032579244c909070b15b38f859d3c3838c51ba35f576a1554f76097df1d577c",
+      "archive_bytes": 1795,
+      "archive_mtime_utc": "2026-10-02T09:40:36.843226+00:00",
+      "archive_mtime_ns": 1790934036843226100,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-diagnostic.json",
+      "raw_sha256": "b8b9139969789e0a63a02865d0605037e67b6048fc741b76543ec12ffac81fa9",
+      "raw_bytes": 26378,
+      "raw_mtime_utc": "2026-10-02T09:31:32.888495+00:00",
+      "raw_mtime_ns": 1790933492888495000,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-002-stage9-page-cache-r69-diagnostic.json.gz",
+      "archive_sha256": "b01f0ffb37711dbe227d533ab90f855843567bd255964440379ac05be84f12c0",
+      "archive_bytes": 3163,
+      "archive_mtime_utc": "2026-10-02T09:40:36.850228+00:00",
+      "archive_mtime_ns": 1790934036850227700,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-diagnostic.log",
+      "raw_sha256": "d51f79e36ed0ec9f86848acc9ad710d731417d1653963710cb15bf8281d138ff",
+      "raw_bytes": 5837,
+      "raw_mtime_utc": "2026-10-02T09:31:32.858493+00:00",
+      "raw_mtime_ns": 1790933492858492600,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-003-stage9-page-cache-r69-diagnostic.log.gz",
+      "archive_sha256": "5d788dded5326fc26a2494037f4c9647e65388152b9fc9a070a9df838f27a3b5",
+      "archive_bytes": 1960,
+      "archive_mtime_utc": "2026-10-02T09:40:36.859229+00:00",
+      "archive_mtime_ns": 1790934036859229100,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-initial-import-failure.log",
+      "raw_sha256": "8a055ba7350d245d9fb76ea89f2cd5bb90e8542849a7f80a1b5ae0afbdefe3ad",
+      "raw_bytes": 204,
+      "raw_mtime_utc": "2026-10-02T09:27:43.873986+00:00",
+      "raw_mtime_ns": 1790933263873985700,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-004-stage9-page-cache-r69-initial-import-failure.log.gz",
+      "archive_sha256": "6b51f82ebdf0a0d4235b2fa9aee5f9042470afcc31d8eede2be016eba16c1b4b",
+      "archive_bytes": 186,
+      "archive_mtime_utc": "2026-10-02T09:40:36.866394+00:00",
+      "archive_mtime_ns": 1790934036866393700,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-context-timestamp-failure.json",
+      "raw_sha256": "f8d1a3565b3ed1ce5011f33bb80844bdba40190932e3497c6cc654135de034e9",
+      "raw_bytes": 711,
+      "raw_mtime_utc": "2026-10-02T09:28:55.308748+00:00",
+      "raw_mtime_ns": 1790933335308747500,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-005-stage9-page-cache-r69-context-timestamp-failure.json.gz",
+      "archive_sha256": "4d2738004bd089a1d40c3c402876e9db1fecfde4918808985316223c4fe68294",
+      "archive_bytes": 402,
+      "archive_mtime_utc": "2026-10-02T09:40:36.872189+00:00",
+      "archive_mtime_ns": 1790934036872189100,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-page-cache-r69-context-timestamp-failure.log",
+      "raw_sha256": "daa815665bd8430e4c369923cd64b8d460a48df0f0ed892c650d97ebc13f42ea",
+      "raw_bytes": 282,
+      "raw_mtime_utc": "2026-10-02T09:28:55.358748+00:00",
+      "raw_mtime_ns": 1790933335358748200,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-006-stage9-page-cache-r69-context-timestamp-failure.log.gz",
+      "archive_sha256": "4d6ac243c27ced3b3e0c2942cb6d7401716d6c7037bd8e7273d891b7147ea75f",
+      "archive_bytes": 210,
+      "archive_mtime_utc": "2026-10-02T09:40:36.878189+00:00",
+      "archive_mtime_ns": 1790934036878188700,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-page-budget-r70.log",
+      "raw_sha256": "d58cae848da6a0fba842c3982c7647745932ef8fb8a4c7cd12e978d9f0d85d53",
+      "raw_bytes": 102,
+      "raw_mtime_utc": "2026-10-02T09:35:50.867266+00:00",
+      "raw_mtime_ns": 1790933750867266300,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-007-stage9-resident-page-budget-r70.log.gz",
+      "archive_sha256": "a753178724083e64240e625d93a5a75adc2b0bf470d7590df9bb192de447a7b0",
+      "archive_bytes": 55,
+      "archive_mtime_utc": "2026-10-02T09:40:36.885232+00:00",
+      "archive_mtime_ns": 1790934036885231800,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-page-budget-r70.xml",
+      "raw_sha256": "78f7001255d324eaf9d60846b3836fa0dcaca7807d234d40edd72266237dadb7",
+      "raw_bytes": 1774,
+      "raw_mtime_utc": "2026-10-02T09:35:50.187119+00:00",
+      "raw_mtime_ns": 1790933750187119000,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-008-stage9-resident-page-budget-r70.xml.gz",
+      "archive_sha256": "8fb42fa6086e0e270c011620c835782dc4d54dd3057ad08600fbe6107e9fb82d",
+      "archive_bytes": 507,
+      "archive_mtime_utc": "2026-10-02T09:40:36.893231+00:00",
+      "archive_mtime_ns": 1790934036893231300,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-page-budget-r70-ruff.log",
+      "raw_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "raw_bytes": 20,
+      "raw_mtime_utc": "2026-10-02T09:35:36.914496+00:00",
+      "raw_mtime_ns": 1790933736914495800,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-009-stage9-resident-page-budget-r70-ruff.log.gz",
+      "archive_sha256": "6907f34c82deb8a688eb1658e87fcdbb33e1cfd89fabe0c681fe5186b5ecb153",
+      "archive_bytes": 40,
+      "archive_mtime_utc": "2026-10-02T09:40:36.900231+00:00",
+      "archive_mtime_ns": 1790934036900230800,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/resident_reads.py",
+      "raw_sha256": "eaad7cce083049d14c1685e46f52f21d366b9fb6fc8a786fb47a8d309c18efb4",
+      "raw_bytes": 6251,
+      "raw_mtime_utc": "2026-10-02T09:35:16.778164+00:00",
+      "raw_mtime_ns": 1790933716778163900,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-010-resident_reads.py.gz",
+      "archive_sha256": "7857f91d403a9fd6d9e0b02e30c7791a72db800fdd13c53b026be5ac7bfe2824",
+      "archive_bytes": 1860,
+      "archive_mtime_utc": "2026-10-02T09:40:36.902233+00:00",
+      "archive_mtime_ns": 1790934036902232700,
+      "decompressed_byte_equal": true,
+      "source_role": "current_r70_source_copy_at_archive_time_not_test_start_snapshot"
+    },
+    {
+      "raw_path": "tests/kernel/test_resident_reads.py",
+      "raw_sha256": "8e5c4e10e43e3e85572973fc3455f6815e15cb271e1c9a4effeb3a6f530c41d3",
+      "raw_bytes": 9371,
+      "raw_mtime_utc": "2026-10-02T09:35:16.802645+00:00",
+      "raw_mtime_ns": 1790933716802645200,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-011-test_resident_reads.py.gz",
+      "archive_sha256": "fa05bdc8cabe9537294328972d19b71c39aaff746e42b46ebe8f08b1533dec7e",
+      "archive_bytes": 2289,
+      "archive_mtime_utc": "2026-10-02T09:40:36.907645+00:00",
+      "archive_mtime_ns": 1790934036907645000,
+      "decompressed_byte_equal": true,
+      "source_role": "current_r70_source_copy_at_archive_time_not_test_start_snapshot"
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r69-release/src/ai_accounting/kernel/resident_reads.py",
+      "raw_sha256": "9637fed7a27e2464783ac9cdd4c3d038d135221b579d2dd6722f49ef20ecf734",
+      "raw_bytes": 5837,
+      "raw_mtime_utc": "2026-10-02T08:56:34.264950+00:00",
+      "raw_mtime_ns": 1790931394264949400,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-012-resident_reads.py.gz",
+      "archive_sha256": "4108fcd2eeab8c591444ddc28797a5e9b07d54d22e78b909e22954ad97a6d7c0",
+      "archive_bytes": 1733,
+      "archive_mtime_utc": "2026-10-02T09:40:36.913647+00:00",
+      "archive_mtime_ns": 1790934036913647200,
+      "decompressed_byte_equal": true,
+      "source_role": "fixed_r69_readonly_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r69-release/tests/kernel/test_resident_reads.py",
+      "raw_sha256": "57301dcfea08613e5637b0d8ea7cc35eba4b26e75ab2f26f95e61b8b3813ee25",
+      "raw_bytes": 7896,
+      "raw_mtime_utc": "2026-10-02T08:56:34.596007+00:00",
+      "raw_mtime_ns": 1790931394596007200,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-013-test_resident_reads.py.gz",
+      "archive_sha256": "067e5c47f9ec3001dc824293c81d182e048c2b27f86de0d0c7ef686a7dd3178c",
+      "archive_bytes": 2016,
+      "archive_mtime_utc": "2026-10-02T09:40:36.920649+00:00",
+      "archive_mtime_ns": 1790934036920649000,
+      "decompressed_byte_equal": true,
+      "source_role": "fixed_r69_readonly_source"
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-sqlite-page-budget-r70.md",
+      "raw_sha256": "c0a771f3e8e6a588bb05d792d103b01c3d9e61d139d888a54560c2677a47758a",
+      "raw_bytes": 4207,
+      "raw_mtime_utc": "2026-10-02T09:38:29.613878+00:00",
+      "raw_mtime_ns": 1790933909613878500,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-014-owner-sqlite-page-budget-r70.md.gz",
+      "archive_sha256": "b6a4d9c547ddf02681bb588739b91f48b8846e905ed46b755e212de524a83e5f",
+      "archive_bytes": 2492,
+      "archive_mtime_utc": "2026-10-02T09:40:36.930341+00:00",
+      "archive_mtime_ns": 1790934036930340600,
+      "decompressed_byte_equal": true,
+      "source_role": "existing_raw_evidence"
+    }
+  ]
+}

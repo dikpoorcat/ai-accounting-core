@@ -183,6 +183,10 @@ class PositionInputsV1:
         self.openings = [self.reads.calculation(opening_id)] if opening_id else []
         self.journal = _V1SelectedJournal(self)
 
+    def release(self):
+        """Drop temporary position sources and the journal's back-reference."""
+        self.__dict__.clear()
+
     def fact(self, ident):
         return self.reads.fact(ident)
 

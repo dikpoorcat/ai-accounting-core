@@ -18,7 +18,7 @@ from ..contracts import (
     Outcome,
     Read,
 )
-from ..types import ActualDate, PositiveFen, YearMonth, sum_fen
+from ..types import ActualDate, EvidenceDigest, PositiveFen, YearMonth, sum_fen
 from .money import payment_funds_account
 from .transactions import (
     EXPENSE_ACCOUNTS,
@@ -66,7 +66,7 @@ class PlatformMovement(Fact):
     actual_date: ActualDate
     direction: Literal["inflow", "outflow"]
     amount_fen: PositiveFen
-    source_evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evidence_digest: EvidenceDigest
     source_location: str = Field(min_length=1, max_length=500)
     transaction_reference: str | None = Field(default=None, min_length=1, max_length=200)
 

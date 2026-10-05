@@ -13,12 +13,13 @@ const props = defineProps<{
   title: string;
   options: readonly Option[];
   selected: string;
+  periodStatus?: "open" | "closed" | "covered";
   loading?: boolean;
   selectLabel: string;
 }>();
 
 const selectedStatus = computed(
-  () => props.options.find((item) => item.key === displayedSelection.value)?.status || "",
+  () => props.periodStatus || props.options.find((item) => item.key === displayedSelection.value)?.status || "",
 );
 
 const emit = defineEmits<{
@@ -57,10 +58,10 @@ function handleChange(event: Event) {
       </select>
       <span
         v-if="displayedSelection"
-        :class="['period-status', selectedStatus === 'closed' ? 'closed' : 'open']"
+        :class="['period-status', selectedStatus === 'closed' || selectedStatus === 'covered' ? 'closed' : 'open']"
         role="status"
       >
-        {{ selectedStatus === "closed" ? "已关账" : "未关账" }}
+        {{ selectedStatus === "covered" ? "由后续关账覆盖" : selectedStatus === "closed" ? "已关账" : "未关账" }}
       </span>
       <button class="control refresh" type="button" :disabled="loading" @click="emit('refresh')">
         {{ loading ? "加载中…" : "刷新数据" }}

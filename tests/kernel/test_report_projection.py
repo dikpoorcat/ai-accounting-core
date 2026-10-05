@@ -218,7 +218,7 @@ def test_year_end_party_checkpoint_preserves_exact_payable(book, tmp_path, monke
         assert require_report_projection(engine, connection)["periods"] == 12
     optimized = Reports(engine).report(2026, 4, source="closed")
     monkeypatch.setattr(
-        "ai_accounting.kernel.report_projection.party_balance_rows", lambda *_a, **_k: None
+        "ai_accounting.kernel.report_projection._party_balance_position_lines", lambda *_a, **_k: None
     )
     original = Reports(engine).report(2026, 4, source="closed")
     assert optimized["statements"] == original["statements"]
@@ -284,7 +284,7 @@ def test_open_and_closed_report_reuse_only_their_shared_snapshot(book, monkeypat
     engine = book[0]
     scenario(book)
     close_quarter(book)
-    original_party = projection.party_balance_rows
+    original_party = projection._party_balance_position_lines
     original_refs = reports_module._closed_report_fact_sources
     calls = {"party": 0, "references": 0}
 
@@ -296,7 +296,7 @@ def test_open_and_closed_report_reuse_only_their_shared_snapshot(book, monkeypat
         calls["references"] += 1
         return original_refs(*args, **kwargs)
 
-    monkeypatch.setattr(projection, "party_balance_rows", party)
+    monkeypatch.setattr(projection, "_party_balance_position_lines", party)
     monkeypatch.setattr(reports_module, "_closed_report_fact_sources", references)
     reports = Reports(engine)
     for expected in (1, 2):

@@ -12,7 +12,7 @@
 .\deploy\windows\start_accounting.ps1 -DataRoot D:\会计资料
 ```
 
-未传 `-DataRoot` 时先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-released`。原开发目录和凭据不自动导入；目录名称不改变当前仍为 draft 的结构状态。`-NoBrowser` 只连接服务并返回身份状态；默认打开页面。服务在本机回环地址自动选端口，重复启动复用同一资料根的现有服务。独立运行包可在包目录执行 `finance-local.ps1 --root D:\会计资料 serve`。入口细节见[本地会计工作台启动](local-kernel-startup.md)。
+未传 `-DataRoot` 时先使用 `FINANCE_DATA_ROOT`，否则使用仓库 `data/kernel-released`。原开发目录和凭据不自动导入；目录名称不改变当前draft／0结构状态。本轮按用户决定保持现有5173、资料根和身份，不进行正式合同冻结、正式包交付或运行入口切换；已有released隔离测试不授权转换当前库。`-NoBrowser` 只连接服务并返回身份状态；默认打开页面。服务在本机回环地址自动选端口，重复启动复用同一资料根的现有服务。独立运行包可在包目录执行 `finance-local.ps1 --root D:\会计资料 serve`。入口细节见[本地会计工作台启动](local-kernel-startup.md)。
 
 负责人在页面发起设置或登录，密码和恢复码只在本机安全窗口输入。MCP 使用 `finance_local_security` 请求、查询或取消窗口；成功发起窗口不等于完成登录。取消后结束该次尝试。不要把秘密放进业务命令、聊天或终端参数。
 

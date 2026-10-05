@@ -1,0 +1,183 @@
+{
+  "kind": "raw_fixed_resident_work_diagnostic_receipts",
+  "scope": "Same main-12 synthetic root; actual ResidentReadPool; fixed r61 baseline despite r62 helper filenames, compared with fixed r63.",
+  "baseline": {
+    "scope": "fixed_r61_resident_profile_and_work_diagnostic_not_browser_acceptance",
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r61-release",
+    "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-main12-r43"
+  },
+  "candidate": {
+    "scope": "fixed_r63_resident_profile_and_work_diagnostic_not_browser_acceptance",
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r63-release",
+    "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-main12-r43"
+  },
+  "limitations": [
+    "r63 ran concurrently with main48 full verification; native_ms, instrumented_ms and cProfile times are diagnostic only, not pure timing or speed A/B.",
+    "VM counts sample every 100 SQLite instructions; returned bytes are value bytes delivered to Python, not disk/page/network bytes.",
+    "This is main-12 workload only, not main48/main120, independent, pressure, released package or final delivery acceptance.",
+    "Pure browser acceptance is separate in owner-candidate-pure-r63-manifest.json.",
+    "Archive operation ran no tests or new workload measurements."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-resident-r62-assets.prof",
+      "source_mtime_utc": "2026-10-02T01:05:26.414668+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-assets.prof.gz",
+      "bytes": 96300,
+      "sha256": "82151f14de4906dd272c3868bd8734c2bbd1c1824e3f8bdc24395720da6a49a5",
+      "archive_bytes": 31426,
+      "archive_sha256": "f847f1eaba77f535f53791b636f44157147aff4ad6de022aaddf5cfd315c5f7a",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-brief.prof",
+      "source_mtime_utc": "2026-10-02T01:05:13.315652+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-brief.prof.gz",
+      "bytes": 114746,
+      "sha256": "fb415606f9d3d51eb00435107f172595d63cbdbc49af793d44fc60f67319f094",
+      "archive_bytes": 38237,
+      "archive_sha256": "607032a8323c7b3b8f1f63c88716f1f04231a80223daf5429e7d9123340f165c",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-employees.prof",
+      "source_mtime_utc": "2026-10-02T01:05:22.843332+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-employees.prof.gz",
+      "bytes": 73012,
+      "sha256": "bbc62be7e154c70bdfc5ba92405ed91c6ed926ec4df664eda12504a654fbcd5c",
+      "archive_bytes": 24809,
+      "archive_sha256": "ff6a6e0f200a01fe7de9499bf404da6e96f5c201f76f80d391ef5c8096e11efb",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-funds.prof",
+      "source_mtime_utc": "2026-10-02T01:05:19.500884+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-funds.prof.gz",
+      "bytes": 91085,
+      "sha256": "c1a2d4894d4af52fdfcea9babac58bb405065ed53e135e931bde4ae1266505ec",
+      "archive_bytes": 30479,
+      "archive_sha256": "8125ed0cb16d66a455ffda6bbf5f5e45309536f683e989f151e2fc959294e958",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-profile.json",
+      "source_mtime_utc": "2026-10-02T01:05:35.856523+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-profile.json.gz",
+      "bytes": 627209,
+      "sha256": "6e99d3e48b2f090bd070589cbaac9366d2062dbf25e3fd579e9f4eecda6193a8",
+      "archive_bytes": 80604,
+      "archive_sha256": "882650ccc0a813630cdc405c48c68be760fc51ffccadf52e96daf795f75c8253",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-profile.log",
+      "source_mtime_utc": "2026-10-02T01:05:35.837521+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-profile.log.gz",
+      "bytes": 3668,
+      "sha256": "46fc6f17f23cd320e97bfa503e40953956ff6775b2b77d62e11300723415480e",
+      "archive_bytes": 826,
+      "archive_sha256": "32866681f1d2c8a84f2a444d52802b177b0943ed417cc92494ef55ebd8e3ebef",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-profile.py",
+      "source_mtime_utc": "2026-10-02T01:05:05.770818+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-profile.py.gz",
+      "bytes": 2765,
+      "sha256": "3eb23817f30846d040ae93e15a23180f5ceffeda12bbb826034734be49af24ed",
+      "archive_bytes": 1227,
+      "archive_sha256": "ab7cffd3c6a9c10566a4e4fc44ecccd6bf55aa60fc3e8837de6d605b2d94c63a",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r62-reports.prof",
+      "source_mtime_utc": "2026-10-02T01:05:30.744187+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r62-reports.prof.gz",
+      "bytes": 80124,
+      "sha256": "28c2d5ae79c0cc6a16a7e64cc6007f0d5f03027725334035dc3484ba5912fd78",
+      "archive_bytes": 27239,
+      "archive_sha256": "18bbeacd073e57fe075474aa50cc5347f22617668d2e3ad3cd13634a220e6da6",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-assets.prof",
+      "source_mtime_utc": "2026-10-02T02:46:36.436279+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-assets.prof.gz",
+      "bytes": 97898,
+      "sha256": "68d62b1646405c87a215e27465562366b0b1c341fa4f5ac8ceca90c8e1b392b7",
+      "archive_bytes": 31896,
+      "archive_sha256": "b88947259add5837e7a4891e1c965ae5eb3e4f29414c6ab66af15d66b445121b",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-brief.prof",
+      "source_mtime_utc": "2026-10-02T02:46:23.372058+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-brief.prof.gz",
+      "bytes": 115918,
+      "sha256": "d2568a63f3d94e55f011d6de202ac2ca3596fe2c5d03d1b0449767b382240076",
+      "archive_bytes": 38659,
+      "archive_sha256": "afa289f0de5270d8058d6dc62a0b67355e4ebe47a2c6b9db8e8bdf69134cf6d2",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-employees.prof",
+      "source_mtime_utc": "2026-10-02T02:46:32.727265+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-employees.prof.gz",
+      "bytes": 73613,
+      "sha256": "c82c474b00292ed021106b3f7e32f7e4d013c1288c786f6f2af289edf78b1409",
+      "archive_bytes": 25066,
+      "archive_sha256": "1898101816db6d091ff2622cbb0cc41cb3a332defcbdea0439bf16aab41b3f90",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-funds.prof",
+      "source_mtime_utc": "2026-10-02T02:46:29.451503+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-funds.prof.gz",
+      "bytes": 91522,
+      "sha256": "fa2367e72fa90271383080df4d55cfcf4fb378ea3cb1da1d236a6fc4521ddf35",
+      "archive_bytes": 30489,
+      "archive_sha256": "57ab40a890c2e7b2263d42af544a7cb6d7e9ff64054623f781987101f51fece6",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-profile.json",
+      "source_mtime_utc": "2026-10-02T02:46:46.249142+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-profile.json.gz",
+      "bytes": 628881,
+      "sha256": "322c6c20dbec1a413f47edda4f0b2c8019f0eccb00142a4c61394e92e7a54635",
+      "archive_bytes": 81055,
+      "archive_sha256": "cc9d209532751fb1648dcf48129f42cd69798668437b850074b7ff326711ce72",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-profile.log",
+      "source_mtime_utc": "2026-10-02T02:46:46.229141+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-profile.log.gz",
+      "bytes": 3665,
+      "sha256": "8fc7d79d01a2198db2019c99f73324c46844f0e5170a515b4b1e85b20f7cfa59",
+      "archive_bytes": 820,
+      "archive_sha256": "5d6b4d749e7e6a2e2f0e8975e7ee4e39fd03c32af3c0c7961652f6b45fcfa264",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-profile.py",
+      "source_mtime_utc": "2026-10-02T02:46:15.138247+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-profile.py.gz",
+      "bytes": 2765,
+      "sha256": "1170df2f5eecd4f030dface4bdf727b92607f49f90c29bf185c2ae9f6cae74b9",
+      "archive_bytes": 1226,
+      "archive_sha256": "4dddc6b7ad6171f446f072433cf459108c179c231ec2e428cd9c882bdea23242",
+      "decompressed_matches_source": true
+    },
+    {
+      "source": ".tmp/stage9-resident-r63-reports.prof",
+      "source_mtime_utc": "2026-10-02T02:46:41.015339+00:00",
+      "archive": "owner-resident-work-r63-stage9-resident-r63-reports.prof.gz",
+      "bytes": 80397,
+      "sha256": "6c3be873e9b2e2c5014dfb8fb2412f634c68b9e11d1765a39a3b3584b990d7e9",
+      "archive_bytes": 27239,
+      "archive_sha256": "f45537eead3e493d1390ef3f986085faaf3e6ac2cf940b6509b28ec47acc1ec4",
+      "decompressed_matches_source": true
+    }
+  ]
+}

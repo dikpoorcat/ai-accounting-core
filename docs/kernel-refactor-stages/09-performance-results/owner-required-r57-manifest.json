@@ -1,0 +1,233 @@
+{
+  "kind": "raw_synthetic_receipts",
+  "scope": "Finished r55 matrix, r56 directed results/work measurements, and r57 isolated released candidate full verification and pure browser timing. Not repository released v1 or stage completion.",
+  "limitations": [
+    {
+      "kind": "original_response_json_lost",
+      "sources": [
+        ".tmp/stage9-owner-coherent-r55-brief-activity-value.json",
+        ".tmp/stage9-owner-coherent-r55-brief-cross-month-source-kind.json",
+        ".tmp/stage9-owner-coherent-r55-quarter-amount.json"
+      ],
+      "reason": "Probe helpers reused fixed names and overwrote the original r55 JSON during repaired reruns. Later JSON renamed r56-root is archived under its actual provenance; it cannot reconstruct the original r55 responses. Original r55 failure logs and JUnit remain archived."
+    }
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-owner-coherent-r55.log",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55.log.gz",
+      "bytes": 2112,
+      "sha256": "9914a52aec5159fe2329a1ab69fae67e9e480b937d251e8495cc3bc813c821c6",
+      "archive_bytes": 681,
+      "archive_sha256": "7c25bfbf03f695d30a2e56a2f6840edd8ed13100fc4526ed29719d1e829c1f77"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55.xml",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55.xml.gz",
+      "bytes": 2831,
+      "sha256": "266faa8ff1c8b457f93babdfe9148eab4de66966a9aea67d319a17be90b83b49",
+      "archive_bytes": 863,
+      "archive_sha256": "b8c532198b3043bfe89794d18e1afef7dd3f4923747077267029e24dbc74267a"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-narrow.log",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-narrow.log.gz",
+      "bytes": 1704,
+      "sha256": "33c8aa7af7cc054c64692f432eaa341e00bd8a4f84ec5c57f1737a213716a4fc",
+      "archive_bytes": 456,
+      "archive_sha256": "dfd238ac8d5d241efe23f22ce9304e496f656ce344ef8111ece353f70103dfc8"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-narrow.xml",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-narrow.xml.gz",
+      "bytes": 1992,
+      "sha256": "c0307183900b95b9d9d9f44e0783cee638182a562d70a5a600c62747a0b98f81",
+      "archive_bytes": 564,
+      "archive_sha256": "fb3fef0692b80da0c332cc6af6f1da986e10dc60ac42f4169487808a098fda87"
+    },
+    {
+      "source": ".tmp/stage9-owner-source-classification-r56.log",
+      "archive": "owner-required-r57-stage9-owner-source-classification-r56.log.gz",
+      "bytes": 114,
+      "sha256": "8ece697c581a42493c895963c06a1d4a00fd1aa9a91a1fb200bc8bc26200b0df",
+      "archive_bytes": 67,
+      "archive_sha256": "c6498e73c1a522634e2319195e1a6634e2258d246e4f0a30dfbdd15c19a034d9"
+    },
+    {
+      "source": ".tmp/stage9-owner-source-classification-r56.xml",
+      "archive": "owner-required-r57-stage9-owner-source-classification-r56.xml.gz",
+      "bytes": 1180,
+      "sha256": "5c0b1d8cc9cbb64f497684e9c657d651d019ff310ad841f6e3779a9ce884c038",
+      "archive_bytes": 423,
+      "archive_sha256": "c1c1f6ab9488e1f6832424417e7a6629a0f8f80ca7daf6eecdf41ff9a7389cb1"
+    },
+    {
+      "source": ".tmp/stage9-owner-classification-group-r56.log",
+      "archive": "owner-required-r57-stage9-owner-classification-group-r56.log.gz",
+      "bytes": 112,
+      "sha256": "57e2bddc6a268c1a901419d5dbf054f018f0f11155ebba26d3e18bca39ca0bb7",
+      "archive_bytes": 65,
+      "archive_sha256": "c4b5b08f124f47933e2bc5457dfe7ffa7d1e3c5e06ee324acc826d2d317947a4"
+    },
+    {
+      "source": ".tmp/stage9-owner-classification-group-r56.xml",
+      "archive": "owner-required-r57-stage9-owner-classification-group-r56.xml.gz",
+      "bytes": 7558,
+      "sha256": "c344074b009614b138d72598d999b01e62c2e463b74a0c8c3fff765e216abe25",
+      "archive_bytes": 1439,
+      "archive_sha256": "221d30bfd1cbb5c1c707006ffc3551cb1b014139f13ff48463c77d60c8f18b74"
+    },
+    {
+      "source": ".tmp/stage9-owner-domain-head-r56-agent.log",
+      "archive": "owner-required-r57-stage9-owner-domain-head-r56-agent.log.gz",
+      "bytes": 1622,
+      "sha256": "75381e639a986cba9695e5b66fd55240ed80c83df1cfb79ad1f09f8e6da3001a",
+      "archive_bytes": 521,
+      "archive_sha256": "5fc442896b0b0279c975db55b172c1571ff034bf8ac8a5419461d7bd48a679a6"
+    },
+    {
+      "source": ".tmp/stage9-owner-domain-head-r56-agent.xml",
+      "archive": "owner-required-r57-stage9-owner-domain-head-r56-agent.xml.gz",
+      "bytes": 10033,
+      "sha256": "303fd4a7ab808fa437e4861a9f909b817ffc97abd6af025fdd7da813c9c7049c",
+      "archive_bytes": 1990,
+      "archive_sha256": "be2927952a7121b9143a7568144cb551866ba4b8c18622d0bf42632d8713a540"
+    },
+    {
+      "source": ".tmp/stage9-owner-domain-head-r56-index.log",
+      "archive": "owner-required-r57-stage9-owner-domain-head-r56-index.log.gz",
+      "bytes": 100,
+      "sha256": "7f7fd0746504f9beed5b82ad674e06c38edc08af7b96466d64a5f7d677f346bd",
+      "archive_bytes": 51,
+      "archive_sha256": "dfdc4bc2c2ffa9f40e71f9f640c2ec3934edc4b51e6e1f317871f1bddee152fc"
+    },
+    {
+      "source": ".tmp/stage9-owner-domain-head-r56-index.xml",
+      "archive": "owner-required-r57-stage9-owner-domain-head-r56-index.xml.gz",
+      "bytes": 392,
+      "sha256": "f899908ba640f7442a1b73330098c7e92445ac5f78e5de1837b7415a516d7bac",
+      "archive_bytes": 262,
+      "archive_sha256": "dd312e20b2d5a4414876cb6a3aa587883734c9daf9f865567cacbb9995c24c3e"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-assets-outside-kind.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-assets-outside-kind.json.gz",
+      "bytes": 6961,
+      "sha256": "47e8a3ff37093cc4462b063b5807e1bf5d2c00a94ac5eeb1372ef26674b615a4",
+      "archive_bytes": 1724,
+      "archive_sha256": "f0cf6c51b6571a8b41a6b3ff1c66bb5e9cec7e4eab0b263cf7b83e8f5d378ec7"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-assets-project-value.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-assets-project-value.json.gz",
+      "bytes": 6369,
+      "sha256": "b9caac3f0db2350163a64b4dd15e5aaf05363ec2a14a5a6369144984d823974b",
+      "archive_bytes": 1513,
+      "archive_sha256": "f654453aad683e1fa1dc89e022c4494603bf285a1336ced48398d32db669367c"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-employees-gross.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-employees-gross.json.gz",
+      "bytes": 5726,
+      "sha256": "912faa573e29d466c546cb51fbb315d39d859c36e99b661243bd8c958d422c1f",
+      "archive_bytes": 1498,
+      "archive_sha256": "56e93034f674e886cb21d0f7e1cb3c9900bf1f8e0bbf3293535ff7aea33cd0c3"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r55-employees-outside_kind.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r55-employees-outside_kind.json.gz",
+      "bytes": 8083,
+      "sha256": "c11884680298d2af7d77f9fdc99d8b63abd988e79e63c86768fe91e73dfdefa2",
+      "archive_bytes": 1376,
+      "archive_sha256": "1b33535a55d3db007ff9c2749a4738f66022b4e60e8f5206f534834dafb8826b"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r56-root-brief-activity-value.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r56-root-brief-activity-value.json.gz",
+      "bytes": 7999,
+      "sha256": "7c736c851ab404b1a80c996d82fc4dbc64c77c0fba494dbc0d8ec6460bb04e71",
+      "archive_bytes": 1904,
+      "archive_sha256": "88fe17de03c79edb902e55a22a9a43d9918a84766f4fc5993902fbd50ea8fa1f"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r56-root-brief-cross-month-source-kind.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r56-root-brief-cross-month-source-kind.json.gz",
+      "bytes": 5250,
+      "sha256": "79db3b8bddc48b22748d50690a1739fa7b7fb67adce9b40e21e1288c7cde915c",
+      "archive_bytes": 1670,
+      "archive_sha256": "45526fc5abaa13bfd2b653c1da10cbf36bd55653174027999c04a0799008b146"
+    },
+    {
+      "source": ".tmp/stage9-owner-coherent-r56-root-quarter-amount.json",
+      "archive": "owner-required-r57-stage9-owner-coherent-r56-root-quarter-amount.json.gz",
+      "bytes": 33403,
+      "sha256": "be2b043efa76ecaf9195e035cc256e5747487dcae8b25544255e15d3987f4b63",
+      "archive_bytes": 3061,
+      "archive_sha256": "ec0430cd65eb9f9cdccd6ed1afad73940f523510f89163bc135fa9dc86bd5cca"
+    },
+    {
+      "source": ".tmp/stage9-employee-heads-r51-headscope-r56.json",
+      "archive": "owner-required-r57-stage9-employee-heads-r51-headscope-r56.json.gz",
+      "bytes": 176204,
+      "sha256": "f2ac344b854a562c7a2c5c5de71f2663928f516dfabcaed72e73d25b695edeb1",
+      "archive_bytes": 20993,
+      "archive_sha256": "a74d3c76010596cad88b01c9a3363a5d0ac5d2bc4d767a76f5c4aa6e1c2590b9"
+    },
+    {
+      "source": ".tmp/stage9-employee-headscope-r56-comparison.json",
+      "archive": "owner-required-r57-stage9-employee-headscope-r56-comparison.json.gz",
+      "bytes": 2677,
+      "sha256": "8aa27d0f0c982826737fb262d8901ef27ebefb1c58525c78472d85ff81236b16",
+      "archive_bytes": 395,
+      "archive_sha256": "d68f69ec17b0ae71e4cd6e9e429419e7cd2c84e5e2f296538f1bc714bc98bdcc"
+    },
+    {
+      "source": ".tmp/stage9-employee-headscope-r56-work.log",
+      "archive": "owner-required-r57-stage9-employee-headscope-r56-work.log.gz",
+      "bytes": 1044,
+      "sha256": "b8d48079dffb7a96e6fcdf4fa5d1511067034d270938212036607ba7194ad4fb",
+      "archive_bytes": 330,
+      "archive_sha256": "8c3f0e9b6d732f50e55fd2fc2dbafd4d60e2cab544abc2bf36143b1509d7e73c"
+    },
+    {
+      "source": ".tmp/stage9-owner-candidate-r57.log",
+      "archive": "owner-required-r57-stage9-owner-candidate-r57.log.gz",
+      "bytes": 1145,
+      "sha256": "7b2a43722b38d8d677fc653079bc9f43d1b1f50c7b226dbfb1e6318fa16f0543",
+      "archive_bytes": 603,
+      "archive_sha256": "293fc2ce6c931e33c53b18279c801377c73c5b71cbf0d325bc33e2d99423c0b2"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r57-verified.json",
+      "archive": "owner-required-r57-stage9-owner-main12-r57-verified.json.gz",
+      "bytes": 9682,
+      "sha256": "d37a58c8f742fd46325267025d961a855d8a52f03e1703be5188c4c99b2e9b89",
+      "archive_bytes": 2811,
+      "archive_sha256": "c501e61b6686d71268bec721d6cac2afc1b902823809e17823f3e7f30bd5037a"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r57-verified.log",
+      "archive": "owner-required-r57-stage9-owner-main12-r57-verified.log.gz",
+      "bytes": 81,
+      "sha256": "7c5288524f7d427b999c6a872a2815f7a8858a2cd674c6ede39f96ba278f1537",
+      "archive_bytes": 98,
+      "archive_sha256": "5575944eab0023fd57c8740f4b7bb347fc93d616b24c17c14d2678a265cb6b4a"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r57.json",
+      "archive": "owner-required-r57-stage9-owner-main12-browser-r57.json.gz",
+      "bytes": 9124,
+      "sha256": "c83fd8b77d97a04c140b83c1944e02710f3165830b2276ef50135b2b3fb684a2",
+      "archive_bytes": 2918,
+      "archive_sha256": "660f2e1f94c690fd80e537785b93d4118a3329e9095b69505ff3e0e5dcb153bc"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r57.log",
+      "archive": "owner-required-r57-stage9-owner-main12-browser-r57.log.gz",
+      "bytes": 115,
+      "sha256": "6fb7d5b18c3a619416df0756073263e81e2dd949da4c5b7e879de659507436f6",
+      "archive_bytes": 126,
+      "archive_sha256": "d06ce957708b569c4788e6d1e38f0649d8dd5b9622da9a0fedb83ef9a743a832"
+    }
+  ]
+}

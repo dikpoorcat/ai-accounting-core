@@ -17,6 +17,12 @@ FAMILY = "ai-accounting-kernel/2"
 APPLICATION_ID = 0x41414332  # AAC2; an auxiliary marker, not a schema trust decision.
 STATUS = "draft"
 VERSION = 0
+DEVELOPMENT_SOURCE_FINGERPRINTS = {
+    "company": (
+        "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861",
+        "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb",
+    )
+}
 DATABASE_FORMAT_KEYS = frozenset({"family", "kind", "status", "version", "fingerprint"})
 
 
@@ -153,6 +159,13 @@ def verify_current_company(connection, bundle):
 
 def verify_company_with_registry(connection, bundle, registry):
     """Use the declared historical registry for decoding and reference checks."""
+    from .runtime import verification_snapshot
+
+    with verification_snapshot(connection):
+        return _verify_company_snapshot(connection, bundle, registry)
+
+
+def _verify_company_snapshot(connection, bundle, registry):
     from .engine import Engine
     from .integrity import verify_integrity
     from .storage import Store
@@ -199,18 +212,18 @@ def production_bundle():
 
     from .development_contracts import load_development_contracts
 
-    source_sha = "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+    source_sha, intermediate_sha = DEVELOPMENT_SOURCE_FINGERPRINTS["company"]
     sources = (
         load_development_contracts(
             Path(__file__).with_name("schema_contracts") / "development" / "company",
-            (source_sha,),
+            DEVELOPMENT_SOURCE_FINGERPRINTS["company"],
             family=FAMILY,
             application_id=APPLICATION_ID,
         )
         if STATUS == "draft"
         else {}
     )
-    target_sha = "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+    target_sha = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
     return _require_released_company_verifiers(
         load_bundle(
             default_registry(),
@@ -221,6 +234,8 @@ def production_bundle():
             current_versions={"company": VERSION, "catalog": VERSION},
             company_verifiers=verifiers,
             development_contracts=sources,
-            draft_transitions={"company": ((source_sha, target_sha),)} if STATUS == "draft" else {},
+            draft_transitions={"company": (
+                (source_sha, intermediate_sha), (intermediate_sha, target_sha),
+            )} if STATUS == "draft" else {},
         )
     )

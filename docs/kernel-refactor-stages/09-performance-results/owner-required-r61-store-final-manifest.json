@@ -1,0 +1,201 @@
+{
+  "kind": "raw_synthetic_receipts",
+  "scope": "Final r61 Store scalar identity guard, removal of temporary duplicate prime metadata proof, fixed-source native/generated contracts, corrected lint, real opening preview before/after and updated read-only audit.",
+  "limitations": [
+    "Independent groups not accumulated; prior 12-test result belongs to temporary prime metadata implementation.",
+    "First PowerShell Ruff invocation failed before Ruff ran; zero-byte original log retained, unavailable stderr not fabricated.",
+    "Private opening probes are synthetic diagnostics and show no preview writes; no sealed candidate acceptance claimed.",
+    "Excludes future/in-progress candidate seal, full verification and pure browser files; first two 35-file manifests unchanged."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-store-identity-first.log",
+      "source_mtime_utc": "2026-10-02T00:42:39.524265+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-first.log.gz",
+      "bytes": 639,
+      "sha256": "5e95a806bbd0e879a05f6c108ffec1f401d64e738ffda3230e4b4dbdaac1e6b6",
+      "archive_bytes": 320,
+      "archive_sha256": "6f85efc2e23acb0014d2f52bbb90ad0e58327e163816acc7bb1dde1378abd035"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-first.xml",
+      "source_mtime_utc": "2026-10-02T00:42:39.253889+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-first.xml.gz",
+      "bytes": 2923,
+      "sha256": "d8a5740f54f8bb0184c1b3a8b4f906fa1a6e1f5a58838d4e74dbc1101f1d6d25",
+      "archive_bytes": 598,
+      "archive_sha256": "0dc2519371e133aa7d8d61496d82b2394bea06c348aa20641513a07178686532"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-exact.log",
+      "source_mtime_utc": "2026-10-02T00:46:45.632711+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-exact.log.gz",
+      "bytes": 639,
+      "sha256": "bdad3159f2bb7e1b19f4fe6d6b2dd28dc62ed19e3dca18584ce48c0762edfd56",
+      "archive_bytes": 321,
+      "archive_sha256": "a26674d79c1bf73053a49e8645608c8f106706aaacade3e68ee39b861b0a14b2"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-exact.xml",
+      "source_mtime_utc": "2026-10-02T00:46:45.374488+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-exact.xml.gz",
+      "bytes": 4015,
+      "sha256": "467f22af7366b7dc97c5c2507ec6f770ea2e99161c836b58c17f80f1c6bd4df9",
+      "archive_bytes": 650,
+      "archive_sha256": "a50bdca1981133ba65e2d8dc6b86205e430629deb351300890795652fef506a1"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-work.log",
+      "source_mtime_utc": "2026-10-02T00:49:52.121403+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-work.log.gz",
+      "bytes": 637,
+      "sha256": "53eef374fcb3bf0024ec88c604ce33489f0fa96d72d0f32d8b0e2c0538e766f6",
+      "archive_bytes": 317,
+      "archive_sha256": "9099cb156ac356c7e10d970e8f86090a96e38db658a12e82159a33047b566b24"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-work.xml",
+      "source_mtime_utc": "2026-10-02T00:49:51.827693+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-work.xml.gz",
+      "bytes": 758,
+      "sha256": "ca056751b5c6213d963c23494a49b751514a3529dd8348f7435a99876f2f7858",
+      "archive_bytes": 361,
+      "archive_sha256": "08e828e7b4a394518f62fedbf316afd5c9a38bfe8764f7fcf83b28907d57a860"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-final.log",
+      "source_mtime_utc": "2026-10-02T00:51:37.124786+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-final.log.gz",
+      "bytes": 639,
+      "sha256": "a9e705a98b515a7ddc82cedb5cdce9b1da555e64c776e2d7ba2c2fa42cd7bf9f",
+      "archive_bytes": 321,
+      "archive_sha256": "70ce1c9761b777587fc29c79e91f56f6911377f16f9466c127d7fe14aee8a199"
+    },
+    {
+      "source": ".tmp/stage9-store-identity-final.xml",
+      "source_mtime_utc": "2026-10-02T00:51:36.785485+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-identity-final.xml.gz",
+      "bytes": 7113,
+      "sha256": "cfea94693d4a926772a39023d58abfbc964f7944827c93210d0ad101c0c8c35e",
+      "archive_bytes": 1269,
+      "archive_sha256": "9079f75dced8f393b2132b8ceb8f1456ba662c7344684d738ad56c7d5304cb1f"
+    },
+    {
+      "source": ".tmp/stage9-completion-identity-r61-final.log",
+      "source_mtime_utc": "2026-10-02T00:34:41.814219+00:00",
+      "archive": "owner-required-r61-store-final-stage9-completion-identity-r61-final.log.gz",
+      "bytes": 102,
+      "sha256": "c40d1a1431d0c1e70f7332687b2f18edc35b133b0f792f6e499fe53a9eed57f9",
+      "archive_bytes": 55,
+      "archive_sha256": "89d8868954ef72be8cee32c5248a1249e233638985525e1355db3b6167051010"
+    },
+    {
+      "source": ".tmp/stage9-completion-identity-r61-final.xml",
+      "source_mtime_utc": "2026-10-02T00:34:40.737898+00:00",
+      "archive": "owner-required-r61-store-final-stage9-completion-identity-r61-final.xml.gz",
+      "bytes": 2196,
+      "sha256": "a049efd5719c93b88f1a74605ea07bb553b34c741711a6387bbd6a65ba303887",
+      "archive_bytes": 704,
+      "archive_sha256": "83ad0ebe7c21dee84ec564f4e53a8a8c912e6f8895d9893bd85c272ff7478cb8"
+    },
+    {
+      "source": ".tmp/stage9-completion-identity-r61-store.log",
+      "source_mtime_utc": "2026-10-02T00:50:58.964401+00:00",
+      "archive": "owner-required-r61-store-final-stage9-completion-identity-r61-store.log.gz",
+      "bytes": 101,
+      "sha256": "a077b990884f0e87040a1ce656e842fce27e8ca110466e443f312cb8d9000fb6",
+      "archive_bytes": 54,
+      "archive_sha256": "fc6eb4020ff280440d746eb0ae34b39ae240fdc047e7832ce12fa34e71013b61"
+    },
+    {
+      "source": ".tmp/stage9-completion-identity-r61-store.xml",
+      "source_mtime_utc": "2026-10-02T00:50:58.593077+00:00",
+      "archive": "owner-required-r61-store-final-stage9-completion-identity-r61-store.xml.gz",
+      "bytes": 1302,
+      "sha256": "de3f67a9ffd3940bb3a49fc9d0fd87481e75e56b2e496a460c643bdc5e3bb6ff",
+      "archive_bytes": 424,
+      "archive_sha256": "a5ad9331544c66ddbb56caa2b8d41a08d92a20b829c933496b7db8da34e49518"
+    },
+    {
+      "source": ".tmp/stage9-r61-read-contract-final.log",
+      "source_mtime_utc": "2026-10-02T00:52:25.921702+00:00",
+      "archive": "owner-required-r61-store-final-stage9-r61-read-contract-final.log.gz",
+      "bytes": 101,
+      "sha256": "99adf90b8f89b9bdff6bd66ba72eea005a2457ee2322d2390a5885c3abd7cf5b",
+      "archive_bytes": 53,
+      "archive_sha256": "017c319dad6b8a8962ca69f72bc8835a40ec3df04438cb52d2b36f23c2fff799"
+    },
+    {
+      "source": ".tmp/stage9-r61-read-contract-final.xml",
+      "source_mtime_utc": "2026-10-02T00:52:25.542071+00:00",
+      "archive": "owner-required-r61-store-final-stage9-r61-read-contract-final.xml.gz",
+      "bytes": 522,
+      "sha256": "414a9a3e71208446ad05ba1e798c77427bc42563a9fbab12ae4e7a1a77941cf1",
+      "archive_bytes": 301,
+      "archive_sha256": "c272ba69f3875c3ee7e1fd3d1057feb3ebefe99a47dbdc64f99d4211a4c4a4df"
+    },
+    {
+      "source": ".tmp/stage9-r61-read-contract-final.json",
+      "source_mtime_utc": "2026-10-02T00:52:26.654615+00:00",
+      "archive": "owner-required-r61-store-final-stage9-r61-read-contract-final.json.gz",
+      "bytes": 528,
+      "sha256": "2ca7ab68d59677246f08d1548767fa03c3c4bd597822bb901832a77185010527",
+      "archive_bytes": 296,
+      "archive_sha256": "277104372d02514d6cdf2e7cfd736a79f3e04308f5119c0ea5911f328c31cae5"
+    },
+    {
+      "source": ".tmp/stage9-r61-final-ruff.log",
+      "source_mtime_utc": "2026-10-02T00:52:32.967978+00:00",
+      "archive": "owner-required-r61-store-final-stage9-r61-final-ruff.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archive_bytes": 20,
+      "archive_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".tmp/stage9-r61-final-ruff-corrected.log",
+      "source_mtime_utc": "2026-10-02T00:53:24.385540+00:00",
+      "archive": "owner-required-r61-store-final-stage9-r61-final-ruff-corrected.log.gz",
+      "bytes": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "archive_bytes": 39,
+      "archive_sha256": "84931ab9ec9e1526cb7bec3ccb46f05bfc2bdd164d156ef72c5d02f319baf464"
+    },
+    {
+      "source": ".tmp/stage9-store-kind-opening-probe.log",
+      "source_mtime_utc": "2026-10-02T00:34:52.431889+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-kind-opening-probe.log.gz",
+      "bytes": 5858,
+      "sha256": "21190df8768c2ba63e77a7103e7462a72747f37e764de735bd4deaf8ac409ae3",
+      "archive_bytes": 1082,
+      "archive_sha256": "99be379dfdf5df1b2c5159bdf48ac40b42c3226d19e228c685e0610b44208c2e"
+    },
+    {
+      "source": ".tmp/stage9-store-kind-opening-probe-complete.log",
+      "source_mtime_utc": "2026-10-02T00:36:16.174484+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-kind-opening-probe-complete.log.gz",
+      "bytes": 10885,
+      "sha256": "457159641cd29947bdbe52066b54a899d828e2a825a46057fee5c40f2c95e494",
+      "archive_bytes": 1659,
+      "archive_sha256": "76eda2ba645d09a72f54b74f52ff7ae5e310e648b32246c8bc512bd71c340280"
+    },
+    {
+      "source": ".tmp/stage9-store-kind-opening-probe-fixed.log",
+      "source_mtime_utc": "2026-10-02T00:40:01.939412+00:00",
+      "archive": "owner-required-r61-store-final-stage9-store-kind-opening-probe-fixed.log.gz",
+      "bytes": 11065,
+      "sha256": "df8e33cff72f9b98c88c72843a69a9bafb849626fe71092863977bf87be1fc5d",
+      "archive_bytes": 1580,
+      "archive_sha256": "62a03d46abbab3062d70d14a481affbd697d29568715f76ccd7a1ebf46e65fd2"
+    },
+    {
+      "source": "docs/kernel-refactor-stages/09-performance-results/metadata-kind-filter-audit.md",
+      "source_mtime_utc": "2026-10-02T00:57:53.018793+00:00",
+      "archive": "owner-required-r61-store-final-metadata-kind-filter-audit.md.gz",
+      "bytes": 14425,
+      "sha256": "6aab271d2eaa45374ce4f8cce1233346dd6b341067f8cbe48aca6035da5b1cdf",
+      "archive_bytes": 6919,
+      "archive_sha256": "5cd5fbbe9685de18ef995bf72a2a8e632225ec6c081d685ca83526db76d44112"
+    }
+  ]
+}

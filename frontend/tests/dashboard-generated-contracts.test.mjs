@@ -61,8 +61,16 @@ test("new page contracts keep detail rows only under collections", () => {
     if (sample.command === "dashboard_brief") {
       assert.equal("vouchers" in response.data, false);
       assert.equal("voucher_page" in response.data, false);
+      for (const item of response.data.collections.open_items?.items ?? []) {
+        assert.equal("source_period" in item, false);
+      }
     }
-    if (sample.command === "dashboard_employees") assert.equal("items" in response.data.employees, false);
+    if (sample.command === "dashboard_employees") {
+      assert.equal("items" in response.data.employees, false);
+      for (const key of ["payroll_sources", "settlement_events"]) {
+        assert.equal(key in response.data.collections, false, key);
+      }
+    }
     if (sample.command === "dashboard_assets") {
       assert.equal("projects" in response.data, false);
       assert.equal("items" in response.data.fixed, false);
@@ -74,9 +82,9 @@ test("new page contracts keep detail rows only under collections", () => {
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
     workflow: 1, period_readiness: 1,
-    dashboard_context: 2, dashboard_brief: 7, dashboard_funds: 7,
-    dashboard_employees: 7, dashboard_assets: 7, dashboard_business_status: 5,
-    dashboard_quarterly_report: 4, dashboard_period_preparation: 4,
+    dashboard_context: 3, dashboard_brief: 11, dashboard_funds: 9,
+    dashboard_employees: 9, dashboard_assets: 10, dashboard_business_status: 6,
+    dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {
     assert.equal(sample.response.schema_version, versions[sample.command], name);
@@ -107,7 +115,7 @@ test("generated money validation accepts canonical int64 strings and rejects num
 
 test("personnel date validators preserve month and day precision and reject malformed dates", () => {
   const scenarios = [
-    ["employees_month_dates", validators.validateDashboardEmployeesResponse, ["employment_start_date", "employment_end_date", "tax_withholding_start_date"]],
+    ["employees_month_dates", validators.validateDashboardEmployeesResponse, ["employment_start_date", "employment_end_date"]],
     ["business_month_dates", validators.validateDashboardBusinessStatusResponse, ["employment_start", "employment_end"]],
   ];
   for (const [name, validate, fields] of scenarios) {
@@ -129,20 +137,27 @@ test("personnel date validators preserve month and day precision and reject malf
   }
 });
 
-test("employment conflicts use the actual code and fields response shape", () => {
-  assert(samples.employees_date_conflict);
+test("owner employee responses reject provenance and conflict diagnostics", () => {
   const original = samples.employees_date_conflict.response;
   const validate = validators.validateDashboardEmployeesResponse;
   assert.equal(validate(original), true, JSON.stringify(validate.errors));
-  for (const conflict of [
-    { field: "employment_start", values: [], sources: [] },
-    { code: "unknown", fields: ["employment_start", "employment_end"] },
-    { code: "employment_interval_conflict", fields: ["unknown"] },
-    { code: "employment_interval_conflict" },
-  ]) {
+  for (const key of ["field_sources", "field_conflicts", "accounting_state", "source_history"]) {
     const changed = structuredClone(original);
-    const field = findField(changed, name => name === "field_conflicts");
-    assert(field); field.owner[field.key] = [conflict];
-    assert.equal(validate(changed), false, JSON.stringify(conflict));
+    changed.data.collections.employees.items[0][key] = [];
+    assert.equal(validate(changed), false, key);
+  }
+});
+
+test("employee contract rejects removed historical wage and payment collections", () => {
+  const validate = validators.validateDashboardEmployeesResponse;
+  const original = samples.employees_focused.response;
+  assert(validate(original), JSON.stringify(validate.errors));
+  assert.equal(original.data.collections.employees.items.length, 1);
+  for (const key of ["payroll_sources", "settlement_events"]) {
+    const changed = structuredClone(original);
+    changed.data.collections[key] = {
+      items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null },
+    };
+    assert.equal(validate(changed), false, key);
   }
 });

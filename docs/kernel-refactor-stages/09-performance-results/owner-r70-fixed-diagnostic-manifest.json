@@ -1,0 +1,549 @@
+{
+  "created_utc": "2026-10-02T10:01:27.917808+00:00",
+  "scope": "fixed r70 native/profile/work diagnostic and independent employee groups; not browser/full-integrity/stage acceptance",
+  "source_sha256": "402024802800938685bfb59983e6d717ae32fa55c555bad0a3ced3f3d8a8e404",
+  "source_manifest_file_sha256": "e41c270d929a371fa2f4afad6a301ae012dea3a7174a39e46b14824c7f297398",
+  "source_manifest_file_count": 622,
+  "contracts": {
+    "catalog\\v1.json": {
+      "sha256": "ca7ea76f47f9339ca168acdc28f780fb9e8412fb4ce3a683de508072b19d3971",
+      "fingerprint": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+    },
+    "company\\v1.json": {
+      "sha256": "b729080164e04dc9ddb3eaf80ba2d6a8a7fbed410dbabc9f4360cc35b005f3b7",
+      "fingerprint": "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+    },
+    "content-v1.json": {
+      "sha256": "1a1d5463795777f1df82421400adedada9d8e56e6a547388e9a9b3f57ed896f9",
+      "fingerprint": "ac6d042b8478d87add37376fab5e5c9b4ae99b6ccab89c1e2f52678b779fe5f8"
+    },
+    "development\\company\\923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json": {
+      "sha256": "fe72acdc5cd23b95766ed58c2cc0a174ef27b4dcb974b32906b6e24d0dec9680",
+      "fingerprint": "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+    }
+  },
+  "repository_status": "draft/0",
+  "profile_record_current_source_full_integrity": "not_run",
+  "current_registered_full_verification_at_archive_time": {
+    "status": "running",
+    "session_id": 84789,
+    "no_mutable_intermediate_output_archived": true
+  },
+  "native_samples": {
+    "context": [
+      11.333600006764755,
+      12.128800008213148,
+      11.85870001791045
+    ],
+    "brief": [
+      400.4715000046417,
+      392.44729999336414,
+      386.9903000013437
+    ],
+    "funds": [
+      281.93650001776405,
+      270.43720000074245,
+      268.0107000051066
+    ],
+    "employees": [
+      217.83460001461208,
+      230.0630999961868,
+      249.6701999916695
+    ],
+    "assets": [
+      411.48499998962507,
+      387.9451999964658,
+      366.6312000132166
+    ],
+    "reports": [
+      349.2872000206262,
+      348.07029998046346,
+      339.468999998644
+    ]
+  },
+  "native_samples_not_browser": true,
+  "employee_locator_VM": {
+    "before": 1370800,
+    "after_all_locator_phases": 243200,
+    "typed_month": 24227,
+    "period": "2019-12"
+  },
+  "employee_whole_page_VM": {
+    "before_r69": 1800300,
+    "after_r70": 672300,
+    "returned_rows_before": 5431,
+    "returned_rows_after": 5531,
+    "all_return_volumes_not_claimed_to_decrease": true
+  },
+  "employee_independent_receipts_not_summed": [
+    {
+      "stem": "stage9-r69-employee-scope-repair1",
+      "passed": 12,
+      "deselected": 43,
+      "log_seconds": 95.44
+    },
+    {
+      "stem": "stage9-r69-employee-scope-directed",
+      "passed": 34,
+      "log_seconds": 120.03,
+      "before_final_fallback_change": true
+    },
+    {
+      "stem": "stage9-r69-employee-scope-fallback",
+      "passed": 6,
+      "log_seconds": 20.8,
+      "only_final_affected_branches": true
+    }
+  ],
+  "static_owner_read_review": "no reported new evidence defect; no new tests or measurements",
+  "old_24239_probe": "withdrawn, preserved in prior archive, not recopied",
+  "references": [
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-read-decisions-manifest.json",
+      "sha256": "00cc60dabb8a2db90bbff71618602540a2fc8088e7d62fdb085e496d729d406c",
+      "bytes": 30725,
+      "handling": "reference only, not recopied"
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-page-budget-manifest.json",
+      "sha256": "7be26b6d8f4435139b5b5d8b8592d909221468583dd319793e8ca53c96bf662c",
+      "bytes": 13942,
+      "handling": "reference only, not recopied"
+    }
+  ],
+  "entry_count": 33,
+  "raw_total_bytes": 1678313,
+  "archive_total_bytes": 391876,
+  "all_decompressed_byte_equal": true,
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-candidate-owner-r70.log",
+      "raw_sha256": "df3d873f9ea5741ce0a6b4081fd7ef7dd743e3e166a165008b182ee0975d6c93",
+      "raw_bytes": 1145,
+      "raw_mtime_ns": 1790934952709996900,
+      "raw_mtime_utc": "2026-10-02T09:55:52.709997+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-001-stage9-candidate-owner-r70.log.gz",
+      "archive_sha256": "c004942821967ee533a868d8607e4334a3f2e26f81d06be665710c24aaeeb5e5",
+      "archive_bytes": 603,
+      "archive_mtime_ns": 1790935287471920300,
+      "archive_mtime_utc": "2026-10-02T10:01:27.471920+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-profile.py",
+      "raw_sha256": "2e7cb81999853f3d82149156bb56ff6b784bafc216149070772477a15f7cd7fd",
+      "raw_bytes": 194,
+      "raw_mtime_ns": 1790934611893742200,
+      "raw_mtime_utc": "2026-10-02T09:50:11.893742+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-002-stage9-resident-r70-main48-profile.py.gz",
+      "archive_sha256": "3b08683a26afacd3f794277a0034e42f02fad3dfb3478d1f7d908205c02f1675",
+      "archive_bytes": 168,
+      "archive_mtime_ns": 1790935287507918500,
+      "archive_mtime_utc": "2026-10-02T10:01:27.507919+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r64-main48-profile.py",
+      "raw_sha256": "403cf292485625f35499a01fe6b3276be6b300f8ab38883cafa75eac57fb05c8",
+      "raw_bytes": 3162,
+      "raw_mtime_ns": 1790914902350423400,
+      "raw_mtime_utc": "2026-10-02T04:21:42.350423+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-003-stage9-resident-r64-main48-profile.py.gz",
+      "archive_sha256": "75600ad84a0632baf13ac058df608f4af41b70e73d0fc02919e5c569842f319e",
+      "archive_bytes": 1382,
+      "archive_mtime_ns": 1790935287514922600,
+      "archive_mtime_utc": "2026-10-02T10:01:27.514922+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-profile.json",
+      "raw_sha256": "416fb8102d6424582558613bba92ea899f3876b3facfd348c8bdf22f86c2addf",
+      "raw_bytes": 714875,
+      "raw_mtime_ns": 1790935018451949100,
+      "raw_mtime_utc": "2026-10-02T09:56:58.451949+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-004-stage9-resident-r70-main48-profile.json.gz",
+      "archive_sha256": "3359fc91468b37bcaec974ac42335c0753fe8b9515dce832cdb6cdcd5f98cbe1",
+      "archive_bytes": 92429,
+      "archive_mtime_ns": 1790935287542919200,
+      "archive_mtime_utc": "2026-10-02T10:01:27.542919+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-profile.log",
+      "raw_sha256": "ab4e80c0dd7049cfeee87c7cf249809b88c58788647634300c5575760c09c792",
+      "raw_bytes": 4202,
+      "raw_mtime_ns": 1790935018429948400,
+      "raw_mtime_utc": "2026-10-02T09:56:58.429948+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-005-stage9-resident-r70-main48-profile.log.gz",
+      "archive_sha256": "4600583ac27a0ef9ee697e18d4fa9f61a2bb95145ccc01bf016c581099bec5d5",
+      "archive_bytes": 890,
+      "archive_mtime_ns": 1790935287552739500,
+      "archive_mtime_utc": "2026-10-02T10:01:27.552740+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-context.prof",
+      "raw_sha256": "153b6f4d4097aebf97c050b2105ac8ca5913d8215a373c71e7855ce758debbac",
+      "raw_bytes": 23243,
+      "raw_mtime_ns": 1790934985186009600,
+      "raw_mtime_utc": "2026-10-02T09:56:25.186010+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-006-stage9-resident-r70-main48-context.prof.gz",
+      "archive_sha256": "3c089a64325e7777dd88b3293cef72c3897b3a22c88a40f39f3baaba5b8980df",
+      "archive_bytes": 8119,
+      "archive_mtime_ns": 1790935287571736700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.571737+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-brief.prof",
+      "raw_sha256": "c7dab0159a36918290aa97ddff72f44299307a2d6a723982ca5ff6b7386dc5aa",
+      "raw_bytes": 120192,
+      "raw_mtime_ns": 1790934988741309000,
+      "raw_mtime_utc": "2026-10-02T09:56:28.741309+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-007-stage9-resident-r70-main48-brief.prof.gz",
+      "archive_sha256": "fc42b620a4c7fcbb2b4129e3ce0f8ce0969b4206f9d132362be7460789959f90",
+      "archive_bytes": 39747,
+      "archive_mtime_ns": 1790935287600736000,
+      "archive_mtime_utc": "2026-10-02T10:01:27.600736+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-funds.prof",
+      "raw_sha256": "f76ae934487c3894a4288268f991557aabf294b74788c84b5ba5d0c056e55dd2",
+      "raw_bytes": 96282,
+      "raw_mtime_ns": 1790934996306104200,
+      "raw_mtime_utc": "2026-10-02T09:56:36.306104+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-008-stage9-resident-r70-main48-funds.prof.gz",
+      "archive_sha256": "2b513932b42c6b16d9dec516b626f5eee1d91b7689fabd3ab9899bef0a610e30",
+      "archive_bytes": 32363,
+      "archive_mtime_ns": 1790935287625738800,
+      "archive_mtime_utc": "2026-10-02T10:01:27.625739+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-employees.prof",
+      "raw_sha256": "8c7f680dcab8a27a8de89fb08550ae73c6d9ad86c0376fec492861489b1f8fea",
+      "raw_bytes": 71114,
+      "raw_mtime_ns": 1790935000365036300,
+      "raw_mtime_utc": "2026-10-02T09:56:40.365036+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-009-stage9-resident-r70-main48-employees.prof.gz",
+      "archive_sha256": "8e597d3efd0d60e3ac694c0e1ccd047fbbbbaad5a64c8f6525a8c571e07272c1",
+      "archive_bytes": 23922,
+      "archive_mtime_ns": 1790935287647738300,
+      "archive_mtime_utc": "2026-10-02T10:01:27.647738+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-assets.prof",
+      "raw_sha256": "cf00187a47c2fdc560c0cfbc9cb4862852deaacaecfc2637c06cdfabe1d4d923",
+      "raw_bytes": 102649,
+      "raw_mtime_ns": 1790935005552957000,
+      "raw_mtime_utc": "2026-10-02T09:56:45.552957+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-010-stage9-resident-r70-main48-assets.prof.gz",
+      "archive_sha256": "98bfe442d6d3b6dff5cbea50c0c30e3dc7d24d0a18ea60c884c7088ca0dd73e4",
+      "archive_bytes": 35122,
+      "archive_mtime_ns": 1790935287675737100,
+      "archive_mtime_utc": "2026-10-02T10:01:27.675737+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-resident-r70-main48-reports.prof",
+      "raw_sha256": "0e012c5d4d3e483a9b8db635c069f29c062a96338bff60d72bbbd52efacf5e10",
+      "raw_bytes": 82405,
+      "raw_mtime_ns": 1790935012989948000,
+      "raw_mtime_utc": "2026-10-02T09:56:52.989948+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-011-stage9-resident-r70-main48-reports.prof.gz",
+      "archive_sha256": "be41b6e2feaeb43de37d8893e2697cc24d3db168c9b601ce8633182e6bd301df",
+      "archive_bytes": 27917,
+      "archive_mtime_ns": 1790935287699736700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.699737+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/source-manifest.json",
+      "raw_sha256": "e41c270d929a371fa2f4afad6a301ae012dea3a7174a39e46b14824c7f297398",
+      "raw_bytes": 75025,
+      "raw_mtime_ns": 1790934952678761300,
+      "raw_mtime_utc": "2026-10-02T09:55:52.678761+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-012-source-manifest.json.gz",
+      "archive_sha256": "2cdb563a28a5d498b279ce114f6a906010a0b6fde0b19f2e1c4b455c5f5a6f2f",
+      "archive_bytes": 30746,
+      "archive_mtime_ns": 1790935287711736100,
+      "archive_mtime_utc": "2026-10-02T10:01:27.711736+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-candidate-owner-r70/candidate-provenance.json",
+      "raw_sha256": "f6ea9d04155476f07d512e6a6ac2713fb0d7a5f829d7a8cb32f9278c56f39962",
+      "raw_bytes": 76180,
+      "raw_mtime_ns": 1790934952706996800,
+      "raw_mtime_utc": "2026-10-02T09:55:52.706997+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-013-candidate-provenance.json.gz",
+      "archive_sha256": "fc9db94ba98fa56d124ae5b6015f98478443523a8a6e20014748e60453ed345f",
+      "archive_bytes": 31238,
+      "archive_mtime_ns": 1790935287722737500,
+      "archive_mtime_utc": "2026-10-02T10:01:27.722737+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-repair1.log",
+      "raw_sha256": "64a5195a0a63be03b9ce286dfb61b0ad1e48842eb56347e761fdb44ef26fd57d",
+      "raw_bytes": 265,
+      "raw_mtime_ns": 1790934165108144600,
+      "raw_mtime_utc": "2026-10-02T09:42:45.108145+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-014-stage9-r69-employee-scope-repair1.log.gz",
+      "archive_sha256": "0fe043671aa4d824d62e776b09f81f04bfae2bf07180801ee5da937ee583878e",
+      "archive_bytes": 178,
+      "archive_mtime_ns": 1790935287733736700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.733737+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-repair1.xml",
+      "raw_sha256": "c5cba3b64485cf77aff9385ddeff3cb5c90310d4d7e3694331a792c83ab6b544",
+      "raw_bytes": 2135,
+      "raw_mtime_ns": 1790934164732437100,
+      "raw_mtime_utc": "2026-10-02T09:42:44.732437+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-015-stage9-r69-employee-scope-repair1.xml.gz",
+      "archive_sha256": "d4da12109286252faf0509a15e2d1119ba21633cf16c304f74bb5dff778538be",
+      "archive_bytes": 524,
+      "archive_mtime_ns": 1790935287740738500,
+      "archive_mtime_utc": "2026-10-02T10:01:27.740739+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-repair1.command.txt",
+      "raw_sha256": "070ccd5f42e49ecfdd2c47ee44de6e3c487046b488443d7523de58e1d101de2b",
+      "raw_bytes": 492,
+      "raw_mtime_ns": 1790934068261084600,
+      "raw_mtime_utc": "2026-10-02T09:41:08.261085+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-016-stage9-r69-employee-scope-repair1.command.txt.gz",
+      "archive_sha256": "8ca13da375844e812330d2797e32b3e2aa488defb1bb38c5a9404e38158f4e06",
+      "archive_bytes": 304,
+      "archive_mtime_ns": 1790935287745737800,
+      "archive_mtime_utc": "2026-10-02T10:01:27.745738+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-directed.log",
+      "raw_sha256": "a3c27fffc654f9221bf211f0ec96e57a70a50397073adf3cb7152193b41ab983",
+      "raw_bytes": 109,
+      "raw_mtime_ns": 1790934630435216400,
+      "raw_mtime_utc": "2026-10-02T09:50:30.435216+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-017-stage9-r69-employee-scope-directed.log.gz",
+      "archive_sha256": "ded4f1c6ce0fdae2c022e3f698f3c4598b4e8d62d7b6c8293228a82220135adc",
+      "archive_bytes": 99,
+      "archive_mtime_ns": 1790935287752677900,
+      "archive_mtime_utc": "2026-10-02T10:01:27.752678+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-directed.xml",
+      "raw_sha256": "b89f86968570076e8feb3f428111b2ecee951817dd1898be0b4f924faac8ce51",
+      "raw_bytes": 6055,
+      "raw_mtime_ns": 1790934629870919900,
+      "raw_mtime_utc": "2026-10-02T09:50:29.870920+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-018-stage9-r69-employee-scope-directed.xml.gz",
+      "archive_sha256": "23dcdd993e0b325e44b1e105cbf2fafb51a48a841a3523c3b5b923811e9ccae8",
+      "archive_bytes": 974,
+      "archive_mtime_ns": 1790935287762672700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.762673+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-directed.command.json",
+      "raw_sha256": "4ac7a0d1f789acaf12dc83157f3c591b42326b56133d0658766d6f602afef0b6",
+      "raw_bytes": 5045,
+      "raw_mtime_ns": 1790934509686716500,
+      "raw_mtime_utc": "2026-10-02T09:48:29.686716+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-019-stage9-r69-employee-scope-directed.command.json.gz",
+      "archive_sha256": "c0b6422152a22ace07face5c2dd6abddad5aec6332c418ea3826f53f8dcf5274",
+      "archive_bytes": 869,
+      "archive_mtime_ns": 1790935287769674100,
+      "archive_mtime_utc": "2026-10-02T10:01:27.769674+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-directed.py",
+      "raw_sha256": "5a5c5330adf7da84562ea7648574b5600bb4c0444569b589460cecabfc75021e",
+      "raw_bytes": 2759,
+      "raw_mtime_ns": 1790934508882725000,
+      "raw_mtime_utc": "2026-10-02T09:48:28.882725+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-020-stage9-r69-employee-scope-directed.py.gz",
+      "archive_sha256": "671945f1c43a602816508bcae951a3fa5e29b608e9b81f193e50d9590d409928",
+      "archive_bytes": 1175,
+      "archive_mtime_ns": 1790935287777672600,
+      "archive_mtime_utc": "2026-10-02T10:01:27.777673+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-fallback.log",
+      "raw_sha256": "a73aa1265f0d96952e748e897b270f92b8fb329aee6360d0a399c84f27f417b0",
+      "raw_bytes": 28,
+      "raw_mtime_ns": 1790934811826753400,
+      "raw_mtime_utc": "2026-10-02T09:53:31.826753+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-021-stage9-r69-employee-scope-fallback.log.gz",
+      "archive_sha256": "216109c9d97528b5c2a94de7af8ac9c8f76986968f026925cbda60dfdbda67cf",
+      "archive_bytes": 45,
+      "archive_mtime_ns": 1790935287784672700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.784673+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-fallback.xml",
+      "raw_sha256": "18c14c177e41370e03614939f5a96cb052f63bee3d373444e640e70faa6789f2",
+      "raw_bytes": 1251,
+      "raw_mtime_ns": 1790934811472941700,
+      "raw_mtime_utc": "2026-10-02T09:53:31.472942+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-022-stage9-r69-employee-scope-fallback.xml.gz",
+      "archive_sha256": "9de14d3828afcabe399226f7991246f8e938a03d63a485f66b38f17fb7df39cb",
+      "archive_bytes": 426,
+      "archive_mtime_ns": 1790935287793673700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.793674+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-fallback.command.txt",
+      "raw_sha256": "1acb2994e2e4defb1ee046179c00d608fd6ad3e5d1b15affdfd57a0abde2b4f9",
+      "raw_bytes": 1139,
+      "raw_mtime_ns": 1790934789642939600,
+      "raw_mtime_utc": "2026-10-02T09:53:09.642940+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-023-stage9-r69-employee-scope-fallback.command.txt.gz",
+      "archive_sha256": "40d12d7436a8957cee5af57a7ab16d974d3908170bdbd95c9c5f6fd90092bd39",
+      "archive_bytes": 462,
+      "archive_mtime_ns": 1790935287800675900,
+      "archive_mtime_utc": "2026-10-02T10:01:27.800676+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r70-employee-scope-owned.diff",
+      "raw_sha256": "95bfad91dae8cc6e77dfc2f52b8b62a1b03524b8b936e5230834c5d5133ae18e",
+      "raw_bytes": 22348,
+      "raw_mtime_ns": 1790934863854326000,
+      "raw_mtime_utc": "2026-10-02T09:54:23.854326+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-024-stage9-r70-employee-scope-owned.diff.gz",
+      "archive_sha256": "14baf58ff970f033ecef41c2691fce886d20d188c0c252c159b8e02c1b6b4fb6",
+      "archive_bytes": 5631,
+      "archive_mtime_ns": 1790935287807675000,
+      "archive_mtime_utc": "2026-10-02T10:01:27.807675+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r70-employee-scope-owned.sha.json",
+      "raw_sha256": "e632c995c454abf0359dbfdb581ae4804f93ebd9733a46df7cf031965b88e9eb",
+      "raw_bytes": 304,
+      "raw_mtime_ns": 1790934863854326000,
+      "raw_mtime_utc": "2026-10-02T09:54:23.854326+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-025-stage9-r70-employee-scope-owned.sha.json.gz",
+      "archive_sha256": "3e44009992e1d3654a663959a57b7a8d5e17d4defda06374a9e31075bb1dcedc",
+      "archive_bytes": 239,
+      "archive_mtime_ns": 1790935287816284400,
+      "archive_mtime_utc": "2026-10-02T10:01:27.816284+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-implemented.py",
+      "raw_sha256": "745d0c01640d23719c6dc5e8a9bf90471acd57e853ffd73b3f8a4fd72d30d357",
+      "raw_bytes": 3912,
+      "raw_mtime_ns": 1790934220821573400,
+      "raw_mtime_utc": "2026-10-02T09:43:40.821573+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-026-stage9-r69-employee-scope-implemented.py.gz",
+      "archive_sha256": "06618596cb14973a759df950bb8238edc6119a4ac624d821c22148e777ebb85e",
+      "archive_bytes": 1615,
+      "archive_mtime_ns": 1790935287824283600,
+      "archive_mtime_utc": "2026-10-02T10:01:27.824284+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-implemented.json",
+      "raw_sha256": "0eee87af53a1287b2d329b26ff140ab2ce7bf838f8731c3ab2a9cacdf96b387e",
+      "raw_bytes": 53825,
+      "raw_mtime_ns": 1790934234822827300,
+      "raw_mtime_utc": "2026-10-02T09:43:54.822827+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-027-stage9-r69-employee-scope-implemented.json.gz",
+      "archive_sha256": "4e1a3d21291c6be60dc3c42d8a67cb4b7442b73b59e635442637c9a8a947c796",
+      "archive_bytes": 7507,
+      "archive_mtime_ns": 1790935287834285500,
+      "archive_mtime_utc": "2026-10-02T10:01:27.834285+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r69-employee-scope-implemented.log",
+      "raw_sha256": "38ef080c8f6332b10fbdba3faa3e24c083882aeb3bd6c2b5010d47ed05872b8a",
+      "raw_bytes": 676,
+      "raw_mtime_ns": 1790934234822827300,
+      "raw_mtime_utc": "2026-10-02T09:43:54.822827+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-028-stage9-r69-employee-scope-implemented.log.gz",
+      "archive_sha256": "37cb561271ab0525a99abeacc42e1f09f164ac874a3029039ceaabbb70c44216",
+      "archive_bytes": 396,
+      "archive_mtime_ns": 1790935287841285100,
+      "archive_mtime_utc": "2026-10-02T10:01:27.841285+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/src/ai_accounting/kernel/dashboard_reads.py",
+      "raw_sha256": "00e282c27a03477f89e04361777fd8a800f994d16838d1d7145e81e08f5d7a5f",
+      "raw_bytes": 76595,
+      "raw_mtime_ns": 1790934946401900100,
+      "raw_mtime_utc": "2026-10-02T09:55:46.401900+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-029-dashboard_reads.py.gz",
+      "archive_sha256": "4acad7c71fd3e6870a6589a20ecaf300c5e289187b7453fb82290518700b196b",
+      "archive_bytes": 17190,
+      "archive_mtime_ns": 1790935287855285200,
+      "archive_mtime_utc": "2026-10-02T10:01:27.855285+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/tests/kernel/test_employee_roster_scope.py",
+      "raw_sha256": "5c37c3885d61fcbf2ebb5edd061c90b089733144d8d544e45146f8240004566b",
+      "raw_bytes": 26208,
+      "raw_mtime_ns": 1790934946654319900,
+      "raw_mtime_utc": "2026-10-02T09:55:46.654320+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-030-test_employee_roster_scope.py.gz",
+      "archive_sha256": "ba62e3fb1ad34369f7b3434f648408a89a9427b3a979f34f9173739141299e3e",
+      "archive_bytes": 6093,
+      "archive_mtime_ns": 1790935287865283200,
+      "archive_mtime_utc": "2026-10-02T10:01:27.865283+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/src/ai_accounting/kernel/resident_reads.py",
+      "raw_sha256": "eaad7cce083049d14c1685e46f52f21d366b9fb6fc8a786fb47a8d309c18efb4",
+      "raw_bytes": 6251,
+      "raw_mtime_ns": 1790934946482206300,
+      "raw_mtime_utc": "2026-10-02T09:55:46.482206+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-031-resident_reads.py.gz",
+      "archive_sha256": "7857f91d403a9fd6d9e0b02e30c7791a72db800fdd13c53b026be5ac7bfe2824",
+      "archive_bytes": 1860,
+      "archive_mtime_ns": 1790935287873282900,
+      "archive_mtime_utc": "2026-10-02T10:01:27.873283+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/src/ai_accounting/kernel/settlement_freeze.py",
+      "raw_sha256": "e92ac7d02c832cdd20413caa4b1348c58209a1499dae0ad4e6981c583d56a998",
+      "raw_bytes": 87725,
+      "raw_mtime_ns": 1790934946504206500,
+      "raw_mtime_utc": "2026-10-02T09:55:46.504207+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-032-settlement_freeze.py.gz",
+      "archive_sha256": "3d7d39068b987c3db3caa0b35b9e72e9b030fb19e2203dda2e05dc9c501bead0",
+      "archive_bytes": 18760,
+      "archive_mtime_ns": 1790935287884283900,
+      "archive_mtime_utc": "2026-10-02T10:01:27.884284+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/tests/kernel/stage9_metrics.py",
+      "raw_sha256": "f6f52e2f63bfbd18c24f36499a64f63bc5f3d976736004d5bad5a2e09c232191",
+      "raw_bytes": 10523,
+      "raw_mtime_ns": 1790934946565205900,
+      "raw_mtime_utc": "2026-10-02T09:55:46.565206+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-fixed-diagnostic-033-stage9_metrics.py.gz",
+      "archive_sha256": "49ae8722e7c120382c9a5738e86aedde5a01c6a9e3d3526ab66196d4adea6ecd",
+      "archive_bytes": 2883,
+      "archive_mtime_ns": 1790935287894283700,
+      "archive_mtime_utc": "2026-10-02T10:01:27.894284+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

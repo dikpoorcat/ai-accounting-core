@@ -17,7 +17,16 @@ from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInfo
 from .dependencies import checked_lanes, read_matches, scope_keys
 from .storage import Store
 from .stored_json import load_outcome
-from .types import YearMonth, canonical, checked, digest, sum_fen
+from .types import (
+    EvidenceDigest,
+    YearMonth,
+    canonical,
+    checked,
+    digest,
+    evidence_digest_bytes,
+    sum_fen,
+    validate_evidence_digests,
+)
 
 PROGRAM_VERSION = calculator_build_id()
 
@@ -218,7 +227,7 @@ class Engine:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         review=None,
         source_locations=(),
@@ -278,8 +287,7 @@ class Engine:
             ) from exc
         if not evidence:
             raise NeedsInformation("evidence", "已确认事实必须引用不可变依据")
-        if any(len(bytes.fromhex(e)) != 32 for e in evidence):
-            raise ValueError("evidence digest must be 32 bytes")
+        validate_evidence_digests(evidence)
         locations = tuple(SourceLocation.model_validate(item) for item in source_locations)
         review = (
             DuplicateReview.model_validate_json(canonical(review)) if review is not None else None
@@ -464,7 +472,7 @@ class Engine:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         request_id: str,
         review=None,
@@ -496,7 +504,7 @@ class Engine:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         recording_error_confirmed: bool,
         request_id: str,
@@ -1292,9 +1300,7 @@ class Engine:
         )
         return result
 
-    def _sync_publication_projections(
-        self, connection, subjects, *, new_publication_after=None
-    ):
+    def _sync_publication_projections(self, connection, subjects, *, new_publication_after=None):
         from .period_balances import sync_period_balances
         from .report_open_contribution import sync_open_contributions
         from .report_projection import sync_report_lines
@@ -1870,6 +1876,8 @@ class Engine:
             }
 
     def _delete_plan(self, connection, subject_id, recording_error_evidence):
+        if recording_error_evidence is not None:
+            evidence_digest_bytes(recording_error_evidence, "recording_error_evidence")
         fact = self.store.current_fact(connection, subject_id)
         from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
 
@@ -1994,7 +2002,9 @@ class Engine:
         plan["digest"] = digest({**plan, "epochs": {lane: epochs[lane] for lane in checked}}).hex()
         return plan
 
-    def preview_delete(self, subject_id: str, *, recording_error_evidence: str | None = None):
+    def preview_delete(
+        self, subject_id: str, *, recording_error_evidence: EvidenceDigest | None = None
+    ):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             plan = self._delete_plan(connection, subject_id, recording_error_evidence)
@@ -2008,7 +2018,7 @@ class Engine:
         preview_digest: str,
         epochs: dict,
         request_id: str,
-        recording_error_evidence: str | None = None,
+        recording_error_evidence: EvidenceDigest | None = None,
     ):
         request_hash = digest(
             ["delete", subject_id, preview_digest, epochs, recording_error_evidence]

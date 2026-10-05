@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 from .content_history_context import close_reader
 from .contracts import KernelError
-from .query_reads import selected_voucher_sql, verify_current_voucher_publications
+from .query_reads import (
+    _owns_current_selector_snapshot,
+    _selected_current_voucher_publications,
+    selected_voucher_sql,
+    verify_current_voucher_publications,
+)
 from .types import YearMonth, canonical, digest
 
 # The release schema owner incorporates this constant in the one frozen DDL.
@@ -115,7 +120,60 @@ def _ordinal(period):
     return period.ordinal if isinstance(period, YearMonth) else YearMonth(period).ordinal
 
 
-def _authoritative_rows(connection, scope, period, *, with_absence=False):
+def _open_source_rows_from_headers(connection, selected, parameters):
+    """Carry exact selected headers once and read every selected voucher line.
+
+    Only the owned-current selector branch calls this helper. Headers retain
+    SQL multiplicity; only headers with actual lines enter publication proof.
+    The returned seventeen-field rows keep the original line-major ordering.
+    """
+    headers = list(connection.execute(
+        "WITH selected AS (" + selected + ") "
+        "SELECT v.period,v.id,v.voucher_calculation_id AS calculation_id,"
+        "v.basis_calculation_id,p.id publication_id,v.reverses_id,"
+        "c.kind,c.fact_id,c.period calculation_period,"
+        "c.subject_id calculation_subject_id,c.digest result_digest,"
+        "v.voucher_id,v.voucher_subject_id,v.close_period "
+        "FROM selected v JOIN calculation c ON c.id=v.basis_calculation_id "
+        "LEFT JOIN calculation_publication p ON p.calculation_id=v.basis_calculation_id "
+        "ORDER BY v.id", parameters,
+    ))
+    headers_by_id = {}
+    for header in headers:
+        headers_by_id.setdefault(header["id"], []).append(header)
+    lines_by_id = {}
+    if headers_by_id:
+        for line in connection.execute(
+            "SELECT l.version_id,l.line_no,l.account,l.debit,l.credit,l.cashflow "
+            "FROM json_each(?) ids CROSS JOIN voucher_line l ON l.version_id=ids.value "
+            "ORDER BY l.version_id,l.line_no",
+            (canonical(sorted(headers_by_id)),),
+        ):
+            lines_by_id.setdefault(line["version_id"], []).append(line)
+    rows, proof_headers = [], {}
+    for ident, copies in headers_by_id.items():
+        for line in lines_by_id.get(ident, ()):
+            for header in copies:
+                rows.append((
+                    "open", header["period"], ident, line["line_no"],
+                    header["calculation_id"], header["basis_calculation_id"],
+                    header["publication_id"], header["reverses_id"],
+                    line["account"], line["debit"], line["credit"], line["cashflow"],
+                    header["kind"], header["fact_id"], header["calculation_period"],
+                    header["calculation_subject_id"], header["result_digest"],
+                ))
+                proof_headers[ident] = header
+    return rows, tuple(proof_headers.values())
+
+
+def _authoritative_rows(connection, scope, period, *, with_absence=False, reads=None):
+    if scope == "open":
+        if reads is not None:
+            reads.verify_open_voucher_scope(period, posting_period=period)
+        else:
+            from .query_reads import verify_open_voucher_scope
+
+            verify_open_voucher_scope(connection, period, posting_period=period)
     month = YearMonth.from_ordinal(period)
     no_close_references = False
     if scope == "open" and connection.execute(
@@ -131,25 +189,39 @@ def _authoritative_rows(connection, scope, period, *, with_absence=False):
             "WHERE v.period=? LIMIT 1",
             (period, period),
         ).fetchone() is None
+    reuse_headers = no_close_references and _owns_current_selector_snapshot(reads, connection)
+    if reuse_headers:
+        # The exact all-voucher month probe above proves the existing selector
+        # guard. This says nothing about publication contents or relationships.
+        reads._report_snapshot_cache["open_voucher_period", period, period] = True
     selected, params = selected_voucher_sql(
         month, posting_period=month, no_close_references=no_close_references
     )
     if scope == "closed":
         selected = "SELECT * FROM (" + selected + ") WHERE selection_source='close_manifest'"
-    query = (
-        "WITH selected AS ("
-        + selected
-        + ") SELECT ?,v.period,v.id,l.line_no,v.voucher_calculation_id,"
-        "v.basis_calculation_id,p.id,v.reverses_id,l.account,l.debit,l.credit,l.cashflow,"
-        "c.kind,c.fact_id,c.period,c.subject_id,c.digest "
-        "FROM selected v JOIN voucher_line l ON l.version_id=v.id "
-        "JOIN calculation c ON c.id=v.basis_calculation_id "
-        "LEFT JOIN calculation_publication p ON p.calculation_id=v.basis_calculation_id "
-        "ORDER BY v.id,l.line_no"
-    )
-    rows = [tuple(row) for row in connection.execute(query, (*params, scope))]
+    if reuse_headers:
+        rows, headers = _open_source_rows_from_headers(connection, selected, params)
+    else:
+        query = (
+            "WITH selected AS ("
+            + selected
+            + ") SELECT ?,v.period,v.id,l.line_no,v.voucher_calculation_id AS calculation_id,"
+            "v.basis_calculation_id,p.id,v.reverses_id,l.account,l.debit,l.credit,l.cashflow,"
+            "c.kind,c.fact_id,c.period,c.subject_id,c.digest "
+            "FROM selected v JOIN voucher_line l ON l.version_id=v.id "
+            "JOIN calculation c ON c.id=v.basis_calculation_id "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=v.basis_calculation_id "
+            "ORDER BY v.id,l.line_no"
+        )
+        rows = [tuple(row) for row in connection.execute(query, (*params, scope))]
     if scope == "open":
-        verify_current_voucher_publications(connection, {row[2] for row in rows})
+        publications = None
+        if reuse_headers:
+            publications = _selected_current_voucher_publications(
+                reads, headers, period=period, cutoff=period
+            )
+        if publications is None:
+            verify_current_voucher_publications(connection, {row[2] for row in rows})
     return (rows, no_close_references) if with_absence else rows
 
 
@@ -558,6 +630,17 @@ def _stored_month(connection, period):
     }
 
 
+def _has_accounting_history_before(connection, period):
+    """Mutable publication absence alone cannot erase an earlier source."""
+    return connection.execute(
+        "SELECT 1 WHERE EXISTS(SELECT 1 FROM calculation_publication WHERE posting_period<?) "
+        "OR EXISTS(SELECT 1 FROM voucher_version v INDEXED BY voucher_period "
+        "JOIN voucher_current a ON a.version_id=v.id WHERE v.period<?) "
+        "OR EXISTS(SELECT 1 FROM period_close WHERE period<?)",
+        (period, period, period),
+    ).fetchone() is not None
+
+
 def _prepare_checkpoint(connection, period, party_rows, party_usable):
     if period % 12 != 11:
         return (), None, ()
@@ -575,10 +658,7 @@ def _prepare_checkpoint(connection, period, party_rows, party_usable):
         usable = usable and bool(stored["checkpoint_usable"])
         if usable:
             totals.update({(row[1], row[2]): row[3] for row in stored["checkpoint_rows"]})
-    elif connection.execute(
-        "SELECT 1 FROM calculation_publication WHERE posting_period<? LIMIT 1",
-        (year_start,),
-    ).fetchone():
+    elif _has_accounting_history_before(connection, year_start):
         usable = False
     for month in range(year_start, period):
         if (
@@ -624,10 +704,7 @@ def _expected_checkpoint(connection, period, party_rows, party_usable, months):
         usable = usable and bool(previous["checkpoint_usable"])
         if usable:
             totals.update({(row[1], row[2]): row[3] for row in previous["checkpoint_rows"]})
-    elif connection.execute(
-        "SELECT 1 FROM calculation_publication WHERE posting_period<? LIMIT 1",
-        (year_start,),
-    ).fetchone():
+    elif _has_accounting_history_before(connection, year_start):
         usable = False
     for month in range(year_start, period):
         selected = months.get(month)
@@ -798,7 +875,19 @@ def party_balance_rows(engine, connection, cutoff, *, source="open", reads=None)
     key = ("party_balance_rows", cutoff, source)
     if cache is not None and key in cache:
         return cache[key]
-    result = _party_balance_rows_uncached(engine, connection, cutoff, source=source, reads=reads)
+    nets = _party_balance_nets(engine, connection, cutoff, source=source, reads=reads)
+    if nets is None:
+        return None
+    import json
+
+    result = [
+        {
+            "account": account,
+            "amount": amount,
+            "party_splits": ((_freeze_party_key(json.loads(party_key)), amount),),
+        }
+        for account, party_key, amount in sorted(nets)
+    ]
     if cache is not None and result is not None:
         cache[key] = result
     return result
@@ -810,10 +899,204 @@ def _freeze_party_key(value):
     return value
 
 
-def _party_balance_rows_uncached(engine, connection, cutoff, *, source, reads):
-    """Compute one party balance; only the public wrapper caches success."""
+_PARTY_POSITION_SUMMARY_UNSAFE = object()
 
+
+def _party_balance_position_lines(
+    engine, connection, cutoff, *, source="open", reads=None,
+    _accounts=None, _validate_party_keys=False,
+):
+    """Classify exact parties; owned summaries reuse one immutable base."""
+    from .account_definitions import RECLASS
+
+    selected_accounts = None if _accounts is None else frozenset(_accounts)
+    if engine is None or not _owns_current_selector_snapshot(reads, connection):
+        if _validate_party_keys:
+            return _PARTY_POSITION_SUMMARY_UNSAFE
+        nets = _party_balance_nets(engine, connection, cutoff, source=source, reads=reads)
+        if nets is None:
+            return None
+        return _party_position_totals(nets, _accounts=selected_accounts)
+
+    cache = reads._report_snapshot_cache
+    result_key = ("report_party_position_lines", cutoff, source)
+    if selected_accounts is not None or _validate_party_keys:
+        result_key = (*result_key, selected_accounts, _validate_party_keys)
+    if result_key in cache:
+        return cache[result_key].copy()
+    inputs = _party_balance_inputs(engine, connection, cutoff, source=source, reads=reads)
+    if inputs is None:
+        return None
+    checkpoint, base, changes = inputs
+    base_key = ("report_party_checkpoint_position_lines", checkpoint)
+    base_lines = cache.get(base_key) if checkpoint is not None else None
+    if base_lines is None:
+        # Unsupported keys may later cancel to zero. Keep their original
+        # full-net behavior, and never rescan an already classified base.
+        if any(account not in RECLASS or type(amount) is not int
+               for (account, _), amount in base.items()):
+            nets = _party_balance_nets(engine, connection, cutoff, source=source, reads=reads)
+            if _validate_party_keys:
+                return _PARTY_POSITION_SUMMARY_UNSAFE
+            return (
+                None if nets is None
+                else _party_position_totals(nets, _accounts=selected_accounts)
+            )
+        base_lines = _party_position_totals(
+            ((account, party_key, amount)
+             for (account, party_key), amount in base.items() if amount),
+            by_account=True,
+        )
+    lines = base_lines.copy()
+    changed = {}
+    for rows in changes:
+        if rows is None:
+            return None
+        if any(row[1] not in RECLASS or type(row[3]) is not int for row in rows):
+            nets = _party_balance_nets(engine, connection, cutoff, source=source, reads=reads)
+            if _validate_party_keys:
+                return _PARTY_POSITION_SUMMARY_UNSAFE
+            return (
+                None if nets is None
+                else _party_position_totals(nets, _accounts=selected_accounts)
+            )
+        for row in rows:
+            account, party_key, delta = row[1], row[2], row[3]
+            key = account, party_key
+            old = changed[key] if key in changed else base.get(key, 0)
+            new = old + delta
+            if old:
+                line = account, RECLASS[account][0 if old >= 0 else 1]
+                lines[line] = lines.get(line, 0) - abs(old)
+            if new:
+                line = account, RECLASS[account][0 if new >= 0 else 1]
+                lines[line] = lines.get(line, 0) + abs(new)
+            changed[key] = new
+    # The former dashboard rows consumer decoded every nonzero JSON party key
+    # before account filtering, then classified only selected accounts. Validate
+    # the same scope once per base; questionable shapes retain that exact route.
+    shape_key = ("report_party_checkpoint_party_key_shapes", checkpoint)
+    staged_shapes = None
+    if _validate_party_keys:
+        shapes = cache.get(shape_key) if checkpoint is not None else None
+        if shapes is None:
+            shapes = _party_key_shape_problems(base)
+            staged_shapes = shapes
+        decode_bad, classify_bad = (set(items) for items in shapes)
+        extra_decode, extra_classify = _party_key_shape_problems(changed)
+        decode_bad.update(extra_decode)
+        classify_bad.update(extra_classify)
+        def final_amount(key):
+            return changed[key] if key in changed else base.get(key, 0)
+        if any(final_amount(key) for key in decode_bad) or any(
+            (selected_accounts is None or key[0] in selected_accounts)
+            and final_amount(key) for key in classify_bad
+        ):
+            return _PARTY_POSITION_SUMMARY_UNSAFE
+    result = {}
+    for (account, line), amount in lines.items():
+        if amount and (selected_accounts is None or account in selected_accounts):
+            result[line] = result.get(line, 0) + amount
+    # Inputs and every tail month have already passed their original checks.
+    # No successful summary or classified base is published on an earlier exit.
+    if checkpoint is not None:
+        cache.setdefault(base_key, base_lines)
+        if staged_shapes is not None:
+            cache.setdefault(shape_key, staged_shapes)
+    cache[result_key] = result
+    return result.copy()
+
+
+def _party_position_totals(nets, *, by_account=False, _accounts=None):
+    from .account_definitions import RECLASS
+
+    lines = {}
+    for account, _party_key, amount in nets:
+        if _accounts is not None and account not in _accounts:
+            continue
+        line = RECLASS[account][0 if amount >= 0 else 1]
+        key = (account, line) if by_account else line
+        lines[key] = lines.get(key, 0) + abs(amount)
+    return lines
+
+
+def _string_party_identity(value):
+    # Strings and nested string arrays preserve Python identity equality.
+    # Numeric/bool keys can alias after decoding (1 == 1.0 == True).
+    return type(value) is str or (
+        type(value) is list and all(_string_party_identity(item) for item in value)
+    )
+
+
+def _party_key_shape_problems(amounts):
     import json
+
+    decode_bad, classify_bad = set(), set()
+    for key, amount in amounts.items():
+        try:
+            decoded = json.loads(key[1])
+            party = _freeze_party_key(decoded)
+        except (TypeError, ValueError):
+            decode_bad.add(key)
+            continue
+        try:
+            if (
+                party is None or type(amount) is not int or not _string_party_identity(decoded)
+                or canonical(decoded) != key[1]
+            ):
+                # Noncanonical aliases can decode to the same party. Retain
+                # the full row path's cross-key netting instead of classifying
+                # their raw-string nets separately.
+                classify_bad.add(key)
+            hash(party)
+        except (TypeError, ValueError):
+            classify_bad.add(key)
+    return frozenset(decode_bad), frozenset(classify_bad)
+
+
+def _party_balance_nets(engine, connection, cutoff, *, source, reads):
+    """Keep the complete verified net balances inside their owned snapshot."""
+
+    cache = (
+        reads._report_snapshot_cache
+        if reads is not None and reads._snapshot_active and reads.connection is connection
+        else None
+    )
+    key = ("report_party_nets", cutoff, source)
+    if cache is not None and key in cache:
+        return cache[key]
+    result = _party_balance_nets_uncached(engine, connection, cutoff, source=source, reads=reads)
+    if cache is not None and result is not None:
+        cache[key] = result
+    return result
+
+
+def _party_balance_nets_uncached(engine, connection, cutoff, *, source, reads):
+    """Materialize complete exact nets only for the consumer that needs them."""
+    inputs = _party_balance_inputs(engine, connection, cutoff, source=source, reads=reads)
+    if inputs is None:
+        return None
+    checkpoint, base, changes = inputs
+    shared_base = (
+        checkpoint is not None and reads is not None
+        and reads._snapshot_active and reads.connection is connection
+    )
+    totals = base.copy() if shared_base else base
+    for rows in changes:
+        if rows is None:
+            return None
+        for row in rows:
+            key = row[1], row[2]
+            totals[key] = totals.get(key, 0) + row[3]
+    return tuple(
+        (account, party_key, amount)
+        for (account, party_key), amount in totals.items()
+        if amount
+    )
+
+
+def _party_balance_inputs(engine, connection, cutoff, *, source, reads):
+    """Select and authenticate one base and its tail for both consumers."""
 
     from .account_definitions import RECLASS
 
@@ -841,7 +1124,7 @@ def _party_balance_rows_uncached(engine, connection, cutoff, *, source, reads):
         return selected
 
     if cutoff < 0:
-        return []
+        return None, {}, ()
     if connection.execute(
         "SELECT 1 FROM opening_account WHERE period<=? AND account IN "
         "(SELECT value FROM json_each(?)) AND debit<>credit LIMIT 1",
@@ -853,8 +1136,16 @@ def _party_balance_rows_uncached(engine, connection, cutoff, *, source, reads):
             "SELECT 1 FROM calculation_publication WHERE posting_period<=? LIMIT 1", (cutoff,)
         ).fetchone()
         is None
+        and connection.execute(
+            "SELECT 1 FROM voucher_version v INDEXED BY voucher_period "
+            "JOIN voucher_current a ON a.version_id=v.id WHERE v.period<=? LIMIT 1",
+            (cutoff,),
+        ).fetchone() is None
+        and connection.execute(
+            "SELECT 1 FROM period_close WHERE period<=? LIMIT 1", (cutoff,),
+        ).fetchone() is None
     ):
-        return []
+        return None, {}, ()
     last = connection.execute(
         "SELECT posting_period FROM report_party_checkpoint_seal "
         "WHERE posting_period<=? AND usable=1 ORDER BY posting_period DESC LIMIT 1",
@@ -865,49 +1156,51 @@ def _party_balance_rows_uncached(engine, connection, cutoff, *, source, reads):
         checkpoint = stored_month(last[0])
         if checkpoint is None or not checkpoint["checkpoint_usable"]:
             return None
-        totals = {(row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]}
+        # Both report cutoffs can start from the same authenticated frozen
+        # checkpoint, even when their open/closed source lanes differ. Reuse
+        # only its base; each calculation owns the dict receiving later deltas.
+        key = ("report_party_checkpoint_totals", last[0])
+        if cache is None:
+            totals = {(row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]}
+        else:
+            if key not in cache:
+                cache[key] = {
+                    (row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]
+                }
+            totals = cache[key]
     else:
         start = cutoff - cutoff % 12
-        if connection.execute(
-            "SELECT 1 FROM calculation_publication WHERE posting_period<? LIMIT 1", (start,)
-        ).fetchone():
+        if _has_accounting_history_before(connection, start):
             return None
         totals = {}
-    for month in range(start, cutoff + 1):
-        closed = connection.execute(
-            "SELECT 1 FROM period_close WHERE period=?", (month,)
-        ).fetchone()
-        if closed:
-            selected = stored_month(month)
-            if selected is None or not selected["party_usable"]:
-                return None
-            rows = selected["party_rows"]
-        elif source == "closed":
-            continue
-        else:
-            source_rows, no_close_references = _authoritative_rows(
-                connection, "open", month, with_absence=True
-            )
-            rows, usable = _party_delta(
-                engine, connection, month, tuple(source_rows), reads=reads
-            )
-            if not usable:
-                return None
-            if cache is not None and no_close_references:
-                cache["report_open_source_rows", month] = tuple(source_rows)
-        for row in rows:
-            key = row[1], row[2]
-            totals[key] = totals.get(key, 0) + row[3]
+    def authenticated_tail():
+        for month in range(start, cutoff + 1):
+            closed = connection.execute(
+                "SELECT 1 FROM period_close WHERE period=?", (month,)
+            ).fetchone()
+            if closed:
+                selected = stored_month(month)
+                if selected is None or not selected["party_usable"]:
+                    yield None
+                    return
+                rows = selected["party_rows"]
+            elif source == "closed":
+                continue
+            else:
+                source_rows, no_close_references = _authoritative_rows(
+                    connection, "open", month, with_absence=True, reads=reads
+                )
+                rows, usable = _party_delta(
+                    engine, connection, month, tuple(source_rows), reads=reads
+                )
+                if not usable:
+                    yield None
+                    return
+                if cache is not None and no_close_references:
+                    cache["report_open_source_rows", month] = tuple(source_rows)
+            yield rows
 
-    return [
-        {
-            "account": account,
-            "amount": amount,
-            "party_splits": ((_freeze_party_key(json.loads(party_key)), amount),),
-        }
-        for (account, party_key), amount in sorted(totals.items())
-        if amount
-    ]
+    return last[0] if last else None, totals, authenticated_tail()
 
 
 def sync_report_lines(connection, periods):

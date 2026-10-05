@@ -99,7 +99,8 @@ def test_statement_page_and_summary_do_not_decode_complete_parent(bank_book, mon
         assert len(data["collections"]["statements"]["items"]) == 2
         assert data["bank_statement"]["transaction_count"] == count
         assert data["collections"]["statements"]["page"]["filtered_count"] == count
-        assert data["bank_statement"]["unmatched_totals"] == {
+        assert "unmatched_totals" not in data["bank_statement"]
+        assert FundsRead(snap).bank_summary()["unmatched_totals"] == {
             "count": count,
             "inflow_fen": count,
             "outflow_fen": 0,
@@ -107,12 +108,18 @@ def test_statement_page_and_summary_do_not_decode_complete_parent(bank_book, mon
         assert loaded == set()
     with Dashboard(engine)._snapshot("2026-09") as snap:
         summary = funds(snap, summary_only=True)
-        assert summary["collections"] == {}
-        assert "rows" not in summary["bank_statement"] and "movements" not in summary
-        assert (
-            summary["bank_statement"]["unmatched_totals"]
-            == data["bank_statement"]["unmatched_totals"]
-        )
+        # Statement rows are not posted company money. Their growing match
+        # summary remains in the funds detail above, outside the owner brief.
+        assert summary == {
+            "total_fen": 1000,
+            "bank_fen": 1000,
+            "cash_fen": 0,
+            "payment_platform_fen": 0,
+            "inflow_fen": 1000,
+            "outflow_fen": 0,
+            "net_change_fen": 1000,
+            "internal_transfer_fen": 0,
+        }
         assert loaded == set()
 
 
@@ -210,17 +217,32 @@ def test_default_funds_page_batches_actual_sql_and_keeps_exact_bank_matches(bank
         calls[" ".join(sql.split())] += 1
         return original(connection, sql, *args, **kwargs)
 
+    original_rows, selected_parties = [], set()
+    original_item = FundsRead.bank_item
+
+    def observed_item(read, row):
+        original_rows.append(dict(row))
+        selected_parties.update(
+            item["fact"]["data"]["owner_id"]
+            for item in read.bank_match_calculations[row["page_key"]]
+        )
+        return original_item(read, row)
+
+    monkeypatch.setattr(FundsRead, "bank_item", observed_item)
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
     with Dashboard(engine)._snapshot("2026-09") as snap:
         data = funds(snap, sections={"movements", "statements"}, limit=30)
     movements = data["collections"]["movements"]["items"]
     statements = data["collections"]["statements"]["items"]
     assert len(movements) == len(statements) == 30
-    assert all(item["state"] == "matched" for item in statements)
-    assert {item["reference"] for item in statements} == set(subjects)
-    assert {item["party_sources"][0]["party_id"] for item in statements} == {
-        f"filter-owner-2026-09-{index:04}" for index in range(30)
-    }
+    assert all(
+        not {"state", "reference", "source_check", "party_sources"} & item.keys()
+        for item in statements
+    )
+    assert all(item["signed_amount_fen"] == 1 for item in statements)
+    assert all(item["state"] == "matched" for item in original_rows)
+    assert {item["reference"] for item in original_rows} == set(subjects)
+    assert selected_parties == {f"filter-owner-2026-09-{index:04}" for index in range(30)}
     assert (
         sum(
             count

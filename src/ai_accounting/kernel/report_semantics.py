@@ -475,11 +475,17 @@ def read_report_semantics(connection, period, *, include_sources=False, reads=No
 
 
 def compare_report_semantics(
-    engine, connection, *, through_period=None, _verified_closes=None, _verified_source=None
+    engine,
+    connection,
+    *,
+    through_period=None,
+    _verified_closes=None,
+    _verified_source=None,
+    _verified_reports=None,
 ):
     """Rebuild expected derived rows from each actual logical frozen close."""
 
-    from .report_projection import _manifest_rows
+    from .report_projection import _manifest_rows, _VerifiedReports
 
     restriction = "" if through_period is None else " WHERE period<=?"
     params = () if through_period is None else (through_period,)
@@ -489,6 +495,33 @@ def compare_report_semantics(
     closes = list(
         connection.execute("SELECT * FROM period_close" + restriction + " ORDER BY period", params)
     )
+    reports = None
+    if _verified_reports is not None:
+        from .verified_source_lease import require_verified_lease
+
+        if (
+            type(_verified_reports) is not _VerifiedReports
+            or _verified_reports.connection is not connection
+            or not connection.in_transaction
+        ):
+            raise KernelError("content_integrity_failed", "报表语义来源复用不属于同一读取事务")
+        try:
+            require_verified_lease(connection, _verified_reports.lease)
+        except ValueError as exc:
+            raise KernelError(
+                "content_integrity_failed", "报表语义来源复用不属于同一读取事务"
+            ) from exc
+        reports = dict(_verified_reports.closes)
+        if (
+            len(reports) != len(_verified_reports.closes)
+            or set(reports) != {row["period"] for row in closes}
+            or any(
+                reports[row["period"]].period != row["period"]
+                or reports[row["period"]].close_digest != row["digest"]
+                for row in closes
+            )
+        ):
+            raise KernelError("content_integrity_failed", "报表语义来源复用的关账集合不一致")
     decoded = None
     if _verified_closes is not None:
         if not connection.in_transaction:
@@ -510,7 +543,13 @@ def compare_report_semantics(
         reader = close_reader()
         header = reader.verified_header(connection, close, require_marker=True)
         manifest = reader.decode_close(connection, close) if decoded is None else decoded[period][1]
-        sources = _manifest_rows(connection, period, manifest)
+        # These are the original manifest-selected rows authenticated by report
+        # verification in this lease, never rows from the repairable projection.
+        sources = (
+            _manifest_rows(connection, period, manifest)
+            if reports is None
+            else reports[period].rows
+        )
         prepared = _prepared_from_source(
             engine,
             connection,
@@ -566,6 +605,7 @@ def require_report_semantics(
     through_period=None,
     _verified_closes=None,
     _verified_source=None,
+    _verified_reports=None,
     _return_verified=False,
 ):
     compared = compare_report_semantics(
@@ -574,6 +614,7 @@ def require_report_semantics(
         through_period=through_period,
         _verified_closes=_verified_closes,
         _verified_source=_verified_source,
+        _verified_reports=_verified_reports,
     )
     if compared["changed"]:
         raise KernelError(

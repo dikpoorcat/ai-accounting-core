@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from test_banking import book as book
 from test_banking import entry, funding, match, opening, reconciliation, statement
 from test_cash import close_transactions
+from test_dashboard_projection import diagnostic_position
 from test_query_semantics import calculation, resolver
 
 from ai_accounting.kernel.business_queries import BusinessQueries
@@ -251,7 +252,14 @@ def test_explicit_unnamed_rightsholder_keeps_liability_without_fake_entity(book)
     dashboard = Dashboard(engine)
     brief = dashboard.brief("2026-09")
     validate_response("dashboard_brief", brief)
-    position = brief["data"]["position"]
+    assert brief["data"]["position"] == {
+        "month_revenue_fen": 0, "month_expense_fen": 0,
+        "month_result_fen": 0, "complete": True,
+    }
+    funds = dashboard.funds("2026-09")["data"]
+    assert funds["inflow_fen"] == 1000 and funds["outflow_fen"] == 400
+    assert funds["total_fen"] == 600
+    position = diagnostic_position(engine, "2026-09")
     assert position["complete"] and position["equation_valid"] is True
     assert position["assets_fen"] == position["liabilities_fen"] == 600
     assert position["issues"] == []

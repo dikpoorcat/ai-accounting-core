@@ -672,13 +672,13 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     assert second in {
         row["employee_id"] for row in employees["collections"]["employees"]["items"]
     }
-    sources = Dashboard(engine).employees(
-        "2026-03" if closed else "2026-02",
-        employee_id=second,
-        section="payroll_sources",
-        preparation="deferred",
-    )["data"]["collections"]["payroll_sources"]["items"]
-    assert "jan-b" in {row["source_id"] for row in sources}
+    from ai_accounting.kernel.business_queries import BusinessQueries
+
+    retained = BusinessQueries(engine).business_status(
+        "jan-b", "2026-03" if closed else "2026-02"
+    )
+    assert retained["identity"]["subject_id"] == "jan-b"
+    assert retained["latest_fact"]["data"]["employee_id"] == second
     if closed:
         from ai_accounting.kernel.periods import Periods
 

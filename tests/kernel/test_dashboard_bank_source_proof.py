@@ -1,5 +1,6 @@
 """Frozen bank source proof is local, exact, and separate from state adoption."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -98,30 +99,28 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
 
     dashboard = Dashboard(engine)
     first = dashboard.funds(MONTH, section="statements", limit=1)
-    assert first["data"]["fact_issues"] == []
+    assert "fact_issues" not in first["data"]
     bank = first["data"]["bank_statement"]
-    assert (bank["transaction_count"], bank["matched_count"], bank["needs_review_count"]) == (
-        3,
-        3,
-        0,
-    )
+    assert bank["transaction_count"] == 3 and bank["review_state"] == "complete"
     assert bank["coverage_state"] == "complete" and bank["missing_account_count"] == 0
     statements = first["data"]["collections"]["statements"]
     assert len(statements["items"]) == 1 and statements["page"]["has_more"]
-    check = statements["items"][0]["source_check"]
-    assert check["statement_confirmed"] and check["reconciliation_valid"]
-    assert check["selection_source"] == "close_manifest"
-    assert check["selection_proof"]["basis"] == "direct_adoption"
-    assert check["proof_method"] == "frozen_reconciliation_direct_statement"
-    assert check["statement_calculation_id"] == statement_state["calculation_id"]
+    assert (
+        not {"state", "reference", "source_check", "party_sources"} & statements["items"][0].keys()
+    )
     with engine.store.connection(read_only=True) as connection:
+        read = FundsRead(_Snapshot(engine, connection, MONTH))
+        read.bank_summary()
+        headers = json.loads(read.bank_parameters[0])
+        header = next(item for item in headers if item["account_id"] == "bank-a")
+        assert header["confirmed"] and header["valid"] and not header["review"]
         assert (
             connection.execute(
                 "SELECT json_extract(outcome,'$.values.matched_count') FROM calculation WHERE id=?",
-                (check["reconciliation_calculation_id"],),
+                (header["reconciliation_calculation_id"],),
             ).fetchone()[0]
             == 1
-        )  # Two original statement rows legitimately share one funds source.
+        )  # Two original rows share one adopted funds source.
     next_page = dashboard.funds(
         MONTH,
         section="statements",
@@ -129,10 +128,10 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
         cursor=statements["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
     )
-    assert next_page["data"]["bank_statement"]["matched_count"] == 3
+    assert next_page["data"]["bank_statement"]["transaction_count"] == 3
     next_statements = next_page["data"]["collections"]["statements"]["items"]
     assert next_statements[0]["id"] != statements["items"][0]["id"]
-    assert next_statements[0]["source_check"] == check
+    assert "source_check" not in next_statements[0]
 
     # A later current fact/pending cannot replace the frozen statement or undo
     # its historical matches; it does invalidate an old pagination version.
@@ -144,12 +143,13 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
         dashboard.funds(MONTH, expected_version=first["snapshot_version"])
     assert failure.value.code == "dashboard_snapshot_changed"
     reloaded = dashboard.funds(MONTH, section="statements")["data"]
-    assert reloaded["bank_statement"]["matched_count"] == 3
+    assert reloaded["bank_statement"]["transaction_count"] == 3
+    assert reloaded["bank_statement"]["review_state"] == "complete"
     assert reloaded["bank_statement"]["coverage_state"] == "complete"
     assert all(
         row["memo"] != "later extraction" for row in reloaded["collections"]["statements"]["items"]
     )
-    assert dashboard.brief(MONTH)["data"]["cash"]["missing_account_count"] == 0
+    assert reloaded["bank_statement"]["missing_account_count"] == 0
 
 
 def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(bank_book):
@@ -266,9 +266,10 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
                 else "complete"
             )
             assert summary["coverage_state"] == expected_coverage, case
-            check = read.bank_source_checks[source["fact_id"]]
-            assert not check["reconciliation_valid"], case
-            assert check["state"] in {"unestablished", "needs_review", "conflict"}, case
+            headers = json.loads(read.bank_parameters[0])
+            affected = [item for item in headers if item["account_id"] == "bank-a"]
+            assert affected and all(not item["valid"] and item["review"] for item in affected), case
+            assert all(item["valid"] for item in headers if item["account_id"] == "bank-b"), case
 
 
 def test_prior_frozen_reconciliations_resolve_accumulated_bank_source_warnings(bank_book):
@@ -301,4 +302,12 @@ def test_prior_frozen_reconciliations_resolve_accumulated_bank_source_warnings(b
     data = Dashboard(engine).funds("2026-10")["data"]
 
     assert data["bank_statement"]["coverage_state"] == "complete"
-    assert data["fact_issues"] == []
+    assert "fact_issues" not in data
+    assert data["bank_statement"]["review_state"] == "complete"
+    assert data["total_fen"] == 1000
+    with Dashboard(engine)._snapshot("2026-10") as snap:
+        read = FundsRead(snap)
+        read.account_summary()
+        summary = read.bank_summary()
+        assert summary["needs_review_count"] == 0
+        assert all(item["valid"] for item in json.loads(read.bank_parameters[0]))

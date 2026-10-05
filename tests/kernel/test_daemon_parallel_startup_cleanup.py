@@ -1,4 +1,4 @@
-"""Resident startup releases its spawned reader group on every partial failure."""
+"""Resident startup releases its service and read pool on every partial failure."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ from ai_accounting.kernel import daemon, http, jobs, offline_upgrade, service
 
 
 @pytest.mark.parametrize("failure", ("server", "controller", "metadata", "runner", None))
-def test_daemon_cleans_partial_parallel_startup(tmp_path, monkeypatch, failure):
+def test_daemon_cleans_partial_resident_startup(tmp_path, monkeypatch, failure):
     root = tmp_path / "synthetic-resident"
     root.mkdir()
     events = []
@@ -23,9 +23,9 @@ def test_daemon_cleans_partial_parallel_startup(tmp_path, monkeypatch, failure):
             events.append("unlock")
 
     class FakeService:
-        def __init__(self, selected, *, enable_read_pool, enable_parallel_brief, _static_runtime):
+        def __init__(self, selected, *, enable_read_pool, _static_runtime):
             assert selected == root
-            assert enable_read_pool and enable_parallel_brief
+            assert enable_read_pool
             assert _static_runtime == "static"
             self.catalog = SimpleNamespace(database_format=lambda: "format")
             self.security = SimpleNamespace(catalog_instance_id="catalog")

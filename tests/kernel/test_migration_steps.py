@@ -293,7 +293,7 @@ def test_source_revalidated_after_lock_and_fk_restored_on_failure():
             calls.append(
                 (connection.in_transaction, connection.execute("PRAGMA foreign_keys").fetchone()[0])
             )
-            if connection.in_transaction:
+            if len(calls) == 2:
                 raise RuntimeError("source changed")
 
         before = snapshot(connection)
@@ -306,7 +306,9 @@ def test_source_revalidated_after_lock_and_fk_restored_on_failure():
                 verify_source=changed_after_lock,
                 finish_step=finish,
             )
-        assert calls == [(False, 1), (True, 0)]
+        # The preflight now owns a read snapshot before FK changes; the locked
+        # recheck remains the separate write snapshot with FK temporarily off.
+        assert calls == [(True, 1), (True, 0)]
         assert snapshot(connection) == before
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 

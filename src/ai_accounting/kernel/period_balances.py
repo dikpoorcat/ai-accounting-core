@@ -369,18 +369,12 @@ def _totals(connection, period, category, keys, movement, reads):
                 for row in read_frozen_balances(connection, header, category, keys)
                 if row["activity_present"]
             ]
-        tail_periods = {
-            row[0]
-            for row in connection.execute(
-                "SELECT posting_period FROM calculation_publication "
-                "WHERE posting_period>? AND posting_period<=? "
-                "UNION SELECT posting_period FROM period_balance "
-                "WHERE posting_period>? AND posting_period<=? "
-                "UNION SELECT posting_period FROM period_balance_seal "
-                "WHERE posting_period>? AND posting_period<=?",
-                (close["period"], period) * 3,
-            )
-        }
+        from .posting_period_reads import posting_periods
+
+        tail_periods = posting_periods(
+            connection, ("calculation_publication", "period_balance", "period_balance_seal"),
+            after=close["period"], through=period,
+        )
         if tail_periods:
             if reads is not None and reads.connection is connection:
                 reads.verify_balance_periods(period, category, tail_periods)

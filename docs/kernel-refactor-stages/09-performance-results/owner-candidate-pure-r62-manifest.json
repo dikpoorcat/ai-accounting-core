@@ -1,0 +1,211 @@
+{
+  "kind": "raw_fixed_candidate_and_browser_receipts",
+  "scope": "r62 isolated released candidate, main-12 registered full verification, actual open preview and pure30 browser; independent funds, response-contract and CloseReview groups retain original failures.",
+  "limitations": [
+    "Single main-12 scale only; not 48/120 months, repository freeze, standalone package or actual AI MCP acceptance.",
+    "Overall over_target: brief 1 of 30 successful samples at least 500ms; all 150 refreshes succeeded.",
+    "Funds 35 unique passing cases across separate runs; response-contract 2 and CloseReview 22 are independent groups, not a full final regression.",
+    "Response-contract pytest log reports 24.77s; process JSON elapsed_seconds is 26.139687199989567 with unchanged source inventory.",
+    "Earlier r61 archives and historical failures unchanged; no test or measurement executed by this archive operation."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-candidate-owner-r62.log",
+      "source_mtime_utc": "2026-10-02T01:35:59.882180+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-candidate-owner-r62.log.gz",
+      "bytes": 1145,
+      "sha256": "e60a17e2d82965492ab6c9ef19901428423a42bb423e4d7ad8a58e2e32ba4b8e",
+      "archive_bytes": 600,
+      "archive_sha256": "a0846a2024abf52cded5df12ab8caabb55d8bab9403d6e2241ac79b2302c7f4f"
+    },
+    {
+      "source": ".tmp/stage9-build-source-owner-r62-release/source-manifest.json",
+      "source_mtime_utc": "2026-10-02T01:35:59.842153+00:00",
+      "archive": "owner-candidate-pure-r62-source-manifest.json.gz",
+      "bytes": 72679,
+      "sha256": "4705a4e595fdac8493cc8202b183ed52bfbe3d4db2134b8d951f423bc8200429",
+      "archive_bytes": 29804,
+      "archive_sha256": "ba05834a44c04a33bf13319d3ac06c880eb1a130f2ab81bfce00d0e2a4abe1f3"
+    },
+    {
+      "source": ".tmp/stage9-build-candidate-owner-r62/candidate-provenance.json",
+      "source_mtime_utc": "2026-10-02T01:35:59.881153+00:00",
+      "archive": "owner-candidate-pure-r62-candidate-provenance.json.gz",
+      "bytes": 73834,
+      "sha256": "d97eb0374e5d00777f7abdd541cb792d862ea3998a797d014da6732ce5f9d28d",
+      "archive_bytes": 30291,
+      "archive_sha256": "76e041200bce173d3dc1b4fde25ce542aaf4b00c49821e7ef008ca070de920f1"
+    },
+    {
+      "source": ".tmp/stage9-r62-read-contract-final.log",
+      "source_mtime_utc": "2026-10-02T01:31:59.095509+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-r62-read-contract-final.log.gz",
+      "bytes": 101,
+      "sha256": "f191017141f415dc167d30bdc6a1662abc4e6efbcab8b7dc414b049423608cac",
+      "archive_bytes": 53,
+      "archive_sha256": "0f3eb4a174752090748d794ffb267976dd60499a5f40467a8d39fa716c49c6e0"
+    },
+    {
+      "source": ".tmp/stage9-r62-read-contract-final.xml",
+      "source_mtime_utc": "2026-10-02T01:31:58.740366+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-r62-read-contract-final.xml.gz",
+      "bytes": 522,
+      "sha256": "0451e6ee0fe23cda340eba957117e0a006fb478cae5ce64eb663a9b20653d21f",
+      "archive_bytes": 300,
+      "archive_sha256": "0663929a190982179527e36db0277a8d71eaac95f9928bd2f773d69aca4c749f"
+    },
+    {
+      "source": ".tmp/stage9-r62-read-contract-final.json",
+      "source_mtime_utc": "2026-10-02T01:31:59.835711+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-r62-read-contract-final.json.gz",
+      "bytes": 529,
+      "sha256": "a094a4351dff3cae6279caf177daa80d54760155a6c3104542876d48ce21db05",
+      "archive_bytes": 296,
+      "archive_sha256": "949a62a09803de6697295c60b2344d147b4c651915641732816dc169eabdb2c4"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r62-verified.json",
+      "source_mtime_utc": "2026-10-02T01:39:00.771960+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-owner-main12-r62-verified.json.gz",
+      "bytes": 9681,
+      "sha256": "e77b4024b2a3b8ac84f992252b422f83b977e57a4291e0fa441ab1e8b62324ef",
+      "archive_bytes": 2810,
+      "archive_sha256": "497fb4a9f1c94cd3f4b76e805e085788a50f0ca43915e6a0b096c3af6701cd9b"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r62-verified.log",
+      "source_mtime_utc": "2026-10-02T01:39:00.775924+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-owner-main12-r62-verified.log.gz",
+      "bytes": 81,
+      "sha256": "06ca36314cb95fa5ff58ca93abedb8cabbfa456cfeb440278cbe69f96d601781",
+      "archive_bytes": 98,
+      "archive_sha256": "346556bff690a5e871b7a68899a6a68bacf3e5aa68a1a69044b8ec3a4304eb4c"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r62.json",
+      "source_mtime_utc": "2026-10-02T01:41:54.628677+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-owner-main12-browser-r62.json.gz",
+      "bytes": 9001,
+      "sha256": "0d7413ed7c865fb6060801c429802a5fa06b50fefe5555819b0aa438c1460af0",
+      "archive_bytes": 2823,
+      "archive_sha256": "46fc8f9fe16761ded54fabfb2053267ce6ce1a048f93f664bb65e2a6982ef831"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r62.log",
+      "source_mtime_utc": "2026-10-02T01:41:54.632675+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-owner-main12-browser-r62.log.gz",
+      "bytes": 115,
+      "sha256": "386a44b8aae6e1b63f565779f1e1f4fe9d2abadd5c1a621cfad4d490334cca4b",
+      "archive_bytes": 126,
+      "archive_sha256": "d4329449fe9d6c30526ab4884196481eb2b5149d4bcecad8983afec0e84ec695"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-work-r62.log",
+      "source_mtime_utc": "2026-10-02T01:25:18.568090+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-work-r62.log.gz",
+      "bytes": 102,
+      "sha256": "148829e1f5e73534c407ddc1f9db8bccba882a7c09e901bc2e60d7b025e0fa81",
+      "archive_bytes": 55,
+      "archive_sha256": "39223dfac30d68aa92fbfde030ad4b323c4c04ae5e3259c5a3f5c9a09b89f5a4"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-work-r62.xml",
+      "source_mtime_utc": "2026-10-02T01:25:18.148317+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-work-r62.xml.gz",
+      "bytes": 5453,
+      "sha256": "7fb1e22124e3ff1c1e118c764f2b98c30e802ded9e11b031e74817eddfa4275a",
+      "archive_bytes": 1291,
+      "archive_sha256": "c44314d1f8250658aba2b57776cddc4357d3d26c4e39a251dac198fd88f76473"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-branches-r62.log",
+      "source_mtime_utc": "2026-10-02T01:27:57.226026+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-branches-r62.log.gz",
+      "bytes": 1719,
+      "sha256": "2cc9e6e2415e1db987b8f29f7617dc7282015b36bcd9c2553a8f25378eda5b8d",
+      "archive_bytes": 654,
+      "archive_sha256": "009f0b702a5965775e2ec4738c5631cb46e56df04c910d2025d770314aa18dae"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-branches-r62.xml",
+      "source_mtime_utc": "2026-10-02T01:27:56.831322+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-branches-r62.xml.gz",
+      "bytes": 2252,
+      "sha256": "d694e733167fe8dd2603ca4101aed5402b6b8ce5ef4fff36fe9f5934061be2a2",
+      "archive_bytes": 825,
+      "archive_sha256": "1be145fb402d6f93b8790432ca8e3287f05d99a6427bf13e5ff4ef8287513b69"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-noimpact-r62.log",
+      "source_mtime_utc": "2026-10-02T01:29:23.268079+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-noimpact-r62.log.gz",
+      "bytes": 100,
+      "sha256": "93cc9d1ebffae238a880e6f1f0cee1d36838fe23b99be927a5d79487bcda023d",
+      "archive_bytes": 51,
+      "archive_sha256": "a8a5d2eb7d280fb511933418e4ccd5fe8bdb28e84d65f496e25887894b4a96b0"
+    },
+    {
+      "source": ".tmp/stage9-funds-required-noimpact-r62.xml",
+      "source_mtime_utc": "2026-10-02T01:29:22.805747+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-funds-required-noimpact-r62.xml.gz",
+      "bytes": 406,
+      "sha256": "2f89520d47b1cf1df33c0e76e9f812f243640f2731920a59a946a057e4693be6",
+      "archive_bytes": 277,
+      "archive_sha256": "3761d90e875e2123742cb38b2a73e4628d590f7e9cce8290b835a2983e9179f5"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-before.log",
+      "source_mtime_utc": "2026-10-02T01:26:51.488588+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-before.log.gz",
+      "bytes": 6011,
+      "sha256": "6936852b1a8fe2a5f20f794502de9521f59d0c399004f01b229df157a27705c1",
+      "archive_bytes": 1384,
+      "archive_sha256": "23d0ab2a381ff37f9b1cff4bd49ac086e24025233d02f9d5246e2e9e2d274349"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-before.xml",
+      "source_mtime_utc": "2026-10-02T01:26:51.061597+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-before.xml.gz",
+      "bytes": 6558,
+      "sha256": "1c5fe448fb981fc06123aea19eb10e74c62a3a07b976754f9e299f74c726e1ba",
+      "archive_bytes": 1531,
+      "archive_sha256": "22b1511329c8d8cdcc745d31144799e21ae73640610c01f31acbbef598b7b811"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-selected.log",
+      "source_mtime_utc": "2026-10-02T01:27:49.375682+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-selected.log.gz",
+      "bytes": 102,
+      "sha256": "adc53755ed9a9418e688777d43224de3e37dd70f694f67b0132c1bdb9f6a1155",
+      "archive_bytes": 55,
+      "archive_sha256": "40d6b9ee0c4b1268bc34fdeff666ec0dd9cf75e9b34997c49c8c9dbf30f28509"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-selected.xml",
+      "source_mtime_utc": "2026-10-02T01:27:48.574420+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-selected.xml.gz",
+      "bytes": 2183,
+      "sha256": "a49271968edb23d5beb01e8d9cfcb7c38232d9a771389e6cbffd57bb929a82c7",
+      "archive_bytes": 522,
+      "archive_sha256": "1a835757581316341b9dfd294fd1b6b30a3f3565a3fc9068cd58e19d93cef317"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-final.log",
+      "source_mtime_utc": "2026-10-02T01:30:05.418968+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-final.log.gz",
+      "bytes": 112,
+      "sha256": "90259dd50becf49e12cb166976b14971547c59f8fea9165cf7be8dd05f2f1627",
+      "archive_bytes": 65,
+      "archive_sha256": "a32448af1bc99aa80496c362af38a1003e19d50e086926de40b00ff1386401f9"
+    },
+    {
+      "source": ".tmp/stage9-close-validation-r62-final.xml",
+      "source_mtime_utc": "2026-10-02T01:30:04.235351+00:00",
+      "archive": "owner-candidate-pure-r62-stage9-close-validation-r62-final.xml.gz",
+      "bytes": 3938,
+      "sha256": "bff9a35081e8b50146a2d97104a03254a1dc21111c9d0b278f5c4a55dc621d6d",
+      "archive_bytes": 931,
+      "archive_sha256": "98b87db2d9f5bc051bfb9b49883fa2752e03afa31ccf517de11d05e21c6bb714"
+    }
+  ]
+}

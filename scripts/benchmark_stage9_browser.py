@@ -15,6 +15,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 if __package__:
+    from . import snapshot_stage9_source as source_snapshot
+    from . import stage9_verified_open_preview as preview_tools
     from .stage9_source import (
         configure_source,
         require_source_module,
@@ -22,6 +24,8 @@ if __package__:
         workspace_root,
     )
 else:
+    import snapshot_stage9_source as source_snapshot
+    import stage9_verified_open_preview as preview_tools
     from stage9_source import (
         configure_source,
         require_source_module,
@@ -68,11 +72,23 @@ def validate_book_report(
         "name"
     ) != company_name:
         raise ValueError("Expected the completed synthetic company report")
-    if require_verified and (
-        book.get("integrity", {}).get("status") != "verified"
-        or book["integrity"].get("limitations")
-    ):
-        raise ValueError("Synthetic book integrity must be verified")
+    if require_verified:
+        integrity = book.get("integrity")
+        coverage = integrity.get("coverage") if isinstance(integrity, dict) else None
+        if (
+            not isinstance(integrity, dict)
+            or integrity.get("status") != "verified"
+            or integrity.get("limitations") != []
+            or not isinstance(coverage, dict)
+            or any(
+                coverage.get(section) != "verified"
+                for section in ("sources", "historical_adoption", "projections", "read_indexes")
+            )
+        ):
+            raise ValueError(
+                "Synthetic book integrity must be verified "
+                "with complete coverage and no limitations"
+            )
     months, snapshots = book.get("months"), book.get("snapshots")
     requested = book.get("requested_months")
     if not isinstance(months, list) or not isinstance(snapshots, dict):
@@ -177,7 +193,6 @@ def prepare_browser_service(root, static_runtime, static_startup_ms):
     app = LocalService(
         root,
         enable_read_pool=True,
-        enable_parallel_brief=True,
         _static_runtime=static_runtime,
     )
     return app, static_startup_ms + (time.perf_counter() - started) * 1000
@@ -209,6 +224,156 @@ def require_report_source(book, source):
         raise ValueError("Synthetic book source differs from selected Stage 9 source")
 
 
+def qualification_dimensions(book):
+    """Only explicit construction dimensions may enter current qualification."""
+    if type(book.get("requested_months")) is not int:
+        raise ValueError("Synthetic requested months must be an integer")
+    dimensions = {
+        "distribution": book["distribution"], "businesses": book["monthly_business_count"],
+        "month_stats": book["months"],
+    }
+    if book["distribution"] == "mixed_cumulative":
+        dimensions["employees_count"] = book["employee_count"]
+    elif book["distribution"] == "independent_local_pairs":
+        dimensions["objects_count"] = book["registered_object_count"]
+        dimensions["business_count"] = book["business_count"]
+    else:
+        raise ValueError("Qualification requires an explicitly constructed synthetic book")
+    if any(type(value) is not int or value < 1 for key, value in dimensions.items()
+           if key in {"businesses", "employees_count", "objects_count", "business_count"}):
+        raise ValueError("Synthetic sample dimensions must be positive integers")
+    return dimensions
+
+
+def qualification_source_files(source):
+    """Check the complete fixed inventory, including its required release assets."""
+    manifest_path = source / "source-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = source_snapshot._inventory(source)
+    if (
+        manifest.get("status") != "complete" or manifest.get("files") != files
+        or manifest.get("file_count") != len(files)
+        or manifest.get("sha256") != source_snapshot._digest(files)
+        or Path(manifest.get("target", "")).resolve() != source.resolve()
+    ):
+        raise ValueError("Qualification source differs from its complete fixed inventory")
+    return files, hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+
+def verified_browser_harness(source, harness_source, book):
+    """Repair measurement tooling without replacing qualified runtime bytes.
+
+    Only these browser-tool files may differ. Production code, generated
+    contracts, frontend sources, shipped assets and fixture constructors must
+    remain byte-identical to the independently qualified source.
+    """
+    source_files, source_manifest = qualification_source_files(source)
+    harness_files, harness_manifest = qualification_source_files(harness_source)
+    if book.get("qualification", {}).get("source_manifest_sha256") != source_manifest:
+        raise ValueError("Browser repair requires this exact independent qualification")
+    changed = sorted(
+        name for name in source_files.keys() | harness_files.keys()
+        if source_files.get(name) != harness_files.get(name)
+    )
+    allowed = {
+        "frontend/tests/browser-stage9-hot-refresh.cjs",
+        "scripts/benchmark_stage9_browser.py",
+        "tests/kernel/test_stage9_browser_report.py",
+        "tests/kernel/test_stage9_browser_harness_source.py",
+    }
+    if not set(changed) <= allowed:
+        raise ValueError("Browser harness repair changed qualified runtime or fixture bytes")
+    harness = harness_source / "frontend/tests/browser-stage9-hot-refresh.cjs"
+    return harness, {
+        "status": "qualified_runtime_bytes_unchanged",
+        "source": str(harness_source),
+        "qualified_source_manifest_sha256": source_manifest,
+        "harness_source_manifest_sha256": harness_manifest,
+        "harness_sha256": harness_files["frontend/tests/browser-stage9-hot-refresh.cjs"],
+        "changed_tool_files": changed,
+    }
+
+
+def qualify_book_report(
+    app, *, token, book, input_path, output_path, source, workspace, company_name, preparation_ms=0,
+):
+    """Fresh independent verification followed by one resident real preview dispatch."""
+    if output_path.resolve() == input_path.resolve():
+        raise ValueError("Qualification output must differ from its input")
+    # Exclusive reservation precedes verification; a failed attempt remains diagnosable.
+    with output_path.open("x", encoding="utf-8") as handle:
+        started = time.perf_counter()
+        input_sha = hashlib.sha256(input_path.read_bytes()).hexdigest()
+        result = {
+            "status": "qualification_failed", "source": str(source), "measurements": {},
+            "qualification": {"input_report_sha256": input_sha,
+                              "original_source": book.get("source"),
+                              "preparation_ms": preparation_ms,
+                              "tool_sha256": {
+                                  "benchmark_stage9_browser.py": hashlib.sha256(
+                                      Path(__file__).read_bytes()
+                                  ).hexdigest(),
+                                  "stage9_verified_open_preview.py": hashlib.sha256(
+                                      Path(preview_tools.__file__).read_bytes()
+                                  ).hexdigest(),
+                              }},
+        }
+        try:
+            synthetic_path(Path(book["root"]), workspace)
+            if not isinstance(book.get("source"), str) or not Path(book["source"]).is_absolute():
+                raise ValueError("Qualification input must record its original absolute source")
+            period = validate_book_report(book, company_name=company_name, require_verified=False)
+            dimensions = qualification_dimensions(book)
+            if json.loads(input_path.read_text(encoding="utf-8")) != book:
+                raise ValueError("Qualification input differs from its saved report")
+            files = qualification_source_files(source)
+            engine = app.engine(book["company"]["id"])
+            checkpoint_name = (
+                "stage9-independent-builder.json"
+                if book["distribution"] == "independent_local_pairs" else "stage9-builder.json"
+            )
+
+            def dispatch(selected_period, *, owner_confirmation):
+                return app.dispatch("preview_close", {
+                    "company_id": book["company"]["id"], "period": selected_period,
+                    "owner_confirmation": owner_confirmation,
+                }, session_token=token)
+
+            verified = preview_tools.verify_book_open_preview(
+                engine, checkpoint_path=Path(book["root"]) / checkpoint_name,
+                company=book["company"], snapshots=book["snapshots"], period=period,
+                source=source, dimensions=dimensions, preview_close=dispatch,
+            )
+            if hashlib.sha256(input_path.read_bytes()).hexdigest() != input_sha:
+                raise ValueError("Qualification input report bytes changed")
+            if qualification_source_files(source) != files:
+                raise ValueError("Qualification source changed during preparation")
+            # Only construction metadata is retained. Old proof and timings never qualify.
+            metadata = {key: book[key] for key in (
+                "root", "company", "distribution", "employee_count", "registered_object_count",
+                "monthly_business_count", "business_count", "requested_months", "months",
+                "snapshots", "construction_integrity", "default_page_limit",
+            ) if key in book}
+            metadata["requested_months"] = len(book["months"])
+            metadata["business_count"] = sum(month["business_count"] for month in book["months"])
+            result.update(metadata, **verified)
+            result["status"] = "complete"
+            result["qualification"].update(
+                checkpoint_sha256=verified["checkpoint_sha256"],
+                source_manifest_sha256=files[1],
+            )
+            validate_book_report(result, company_name=company_name)
+        except Exception as exc:
+            result["status"] = "qualification_failed"
+            result["error"] = {"type": type(exc).__name__, "message": str(exc)}
+            raise
+        finally:
+            result["qualification"]["milliseconds"] = (time.perf_counter() - started) * 1000
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--book-report", type=Path, required=True)
@@ -218,9 +383,17 @@ def main():
         help="second verified synthetic company in the same catalog",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--qualify-output", type=Path,
+        help="new current-source qualification report before resident preview/timing",
+    )
     parser.add_argument("--node", type=Path, required=True)
     parser.add_argument("--playwright-module", type=Path, required=True)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--harness-source", type=Path,
+        help="fixed browser-tool repair source; all qualified runtime bytes must match",
+    )
     parser.add_argument("--workspace", type=Path, help="workspace containing the synthetic .tmp")
     parser.add_argument("--browser-channel", default="msedge")
     parser.add_argument(
@@ -228,6 +401,8 @@ def main():
         help="serve shipped release assets; dist is an explicit diagnostic build",
     )
     parser.add_argument("--repeats", type=int, default=30)
+    parser.add_argument("--layout-only", action="store_true")
+    parser.add_argument("--screenshots", type=Path)
     parser.add_argument("--warmups", type=int, default=3)
     parser.add_argument("--timing-ready-file", type=Path)
     parser.add_argument("--timing-start-file", type=Path)
@@ -242,10 +417,21 @@ def main():
         help="diagnostic HTTP/dispatch timings; keep separate from acceptance timing",
     )
     args = parser.parse_args()
+    if args.harness_source is not None and args.qualify_output is not None:
+        parser.error("Browser-tool repair reuses an existing exact-source qualification")
+    preparation_started = time.perf_counter()
+    if args.qualify_output is not None and (
+        args.switch_book_report is not None or args.navigation_only == "switch"
+    ):
+        parser.error("Qualification mode does not support company switching")
     if (args.timing_ready_file is None) != (args.timing_start_file is None):
         parser.error("Both timing gate paths must be provided together")
     if args.navigation_only and args.instrument:
         parser.error("navigation-only measurements must not enable HTTP instrumentation")
+    if args.layout_only and (args.navigation_only or args.instrument):
+        parser.error("Layout checks must be separate from timing and instrumentation")
+    if args.screenshots is not None and not args.layout_only:
+        parser.error("Screenshots are only captured in layout checks")
     if args.navigation_only == "switch" and args.switch_book_report is None:
         parser.error("switch measurement requires --switch-book-report")
     try:
@@ -257,6 +443,24 @@ def main():
             else None
         )
         output = synthetic_path(args.output, workspace)
+        qualify_output = (
+            synthetic_path(args.qualify_output, workspace)
+            if args.qualify_output is not None else None
+        )
+        if qualify_output is not None and (
+            qualify_output in {book_report, output} or qualify_output.exists()
+            or qualify_output in {
+                path.resolve() for path in (args.timing_ready_file, args.timing_start_file)
+                if path is not None
+            }
+        ):
+            raise ValueError("Qualification output must be a distinct new synthetic file")
+        screenshots = (
+            synthetic_path(args.screenshots, workspace)
+            if args.screenshots is not None else None
+        )
+        if screenshots is not None:
+            screenshots.mkdir(exist_ok=False)
         gate_paths = [
             synthetic_path(path, workspace)
             for path in (args.timing_ready_file, args.timing_start_file) if path is not None
@@ -292,7 +496,8 @@ def main():
 
     static_runtime, static_startup_ms = prepare_browser_static_runtime()
     book = json.loads(book_report.read_text(encoding="utf-8"))
-    require_report_source(book, source)
+    if qualify_output is None:
+        require_report_source(book, source)
     root = Path(book["root"]).resolve()
     synthetic_path(root, workspace)
     expected_name = (
@@ -300,7 +505,26 @@ def main():
         if book.get("distribution") == "independent_local_pairs"
         else "阶段九合成规模企业"
     )
-    selected_period = validate_book_report(book, company_name=expected_name)
+    try:
+        selected_period = validate_book_report(
+            book, company_name=expected_name, require_verified=qualify_output is None
+        )
+        if qualify_output is not None:
+            qualification_dimensions(book)
+    except Exception as exc:
+        if qualify_output is not None:
+            with qualify_output.open("x", encoding="utf-8") as handle:
+                json.dump({
+                    "status": "qualification_failed", "source": str(source), "measurements": {},
+                    "qualification": {
+                        "input_report_sha256": hashlib.sha256(book_report.read_bytes()).hexdigest(),
+                        "original_source": book.get("source"),
+                        "preparation_ms": (time.perf_counter() - preparation_started) * 1000,
+                    },
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+        raise
     switch_book = None
     if switch_report is not None:
         switch_book = json.loads(switch_report.read_text(encoding="utf-8"))
@@ -312,6 +536,10 @@ def main():
         assert switch_book["primary_company_id"] == book["company"]["id"]
         assert switch_book["company"]["id"] != book["company"]["id"]
     static, harness = browser_source_paths(source, static_build=args.static_build)
+    harness_proof = None
+    if args.harness_source is not None:
+        harness_source = synthetic_path(args.harness_source, workspace)
+        harness, harness_proof = verified_browser_harness(source, harness_source, book)
     assert not output.exists(), "Preserve previous raw measurements"
 
     def build_hashes():
@@ -432,6 +660,19 @@ def main():
         token = store.load_session_token()
 
         def selected_company(current_book, current_company, period):
+            if qualify_output is not None:
+                qualified = qualify_book_report(
+                    app, token=token, book=current_book, input_path=book_report,
+                    output_path=qualify_output, source=source, company_name=expected_name,
+                    workspace=workspace,
+                    preparation_ms=(time.perf_counter() - preparation_started) * 1000,
+                )
+                current_book.clear()
+                current_book.update(qualified)
+                return {
+                    **current_company, "period": period, "state": "prepared",
+                    "preview_digest": qualified["verified_open_preview"]["digest"],
+                }
             snapshot = current_book["snapshots"][period]
             current = current_book["verified_open_preview"]
             assert snapshot["closed"] is False, "Selected benchmark month must remain open"
@@ -498,6 +739,8 @@ def main():
             "repeats": args.repeats,
             "warmups": args.warmups,
             "navigation_only": args.navigation_only,
+            "layout_only": args.layout_only,
+            "screenshot_directory": str(screenshots) if screenshots is not None else None,
         }
         phase[0] = "browser"
         browser_started_wall_ms = time.time() * 1000
@@ -540,6 +783,13 @@ def main():
             )
         phase[0] = "teardown"
         assert hashes == build_hashes(), "Build changed during timing"
+        if harness_proof is not None:
+            _, after = verified_browser_harness(source, harness_source, book)
+            assert after == harness_proof, "Browser-tool repair source changed during timing"
+        if qualify_output is not None:
+            assert qualification_source_files(source)[1] == book["qualification"][
+                "source_manifest_sha256"
+            ], "Fixed source changed during timing"
     finally:
         token = store.load_session_token()
         if token is not None:
@@ -553,13 +803,13 @@ def main():
             synthetic_root=str(root),
             source=str(source),
             measurement_mode=(
-                f"navigation_{args.navigation_only}"
+                "owner_layout" if args.layout_only else f"navigation_{args.navigation_only}"
                 if args.navigation_only
                 else "instrumented_diagnostic"
                 if args.instrument
                 else "page_timing"
             ),
-            sample_scope=measurement_scope(
+            sample_scope="owner_layout" if args.layout_only else measurement_scope(
                 book,
                 repeats=args.repeats,
                 warmups=args.warmups,
@@ -579,9 +829,14 @@ def main():
             business_count=book.get("business_count"),
             distribution=book.get("distribution"),
             month_count=len(book["snapshots"]),
-            default_page_limit=100,
+            default_page_limit=20,
             http_requests=http_requests,
             dispatch_calls=dispatch_calls,
+            qualification_report=(
+                str(qualify_output) if qualify_output is not None
+                else str(book_report) if "qualification" in book else None
+            ),
+            browser_harness_repair=harness_proof,
         )
         output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": result["status"], "output": str(output)}))

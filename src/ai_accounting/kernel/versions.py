@@ -318,7 +318,12 @@ def _execute_steps(
             )
         ):
             raise KernelError("migration_not_declared", "迁移步骤未形成同系统连续合同")
-    verify_source(connection)
+    from .runtime import verification_snapshot
+
+    # Keep the entire source callback, including its retained-history baseline,
+    # in one read snapshot. End only this owned read before FK changes/write lock.
+    with verification_snapshot(connection):
+        verify_source(connection)
     try:
         if any(step.requires_fk_off for step in steps):
             connection.execute("PRAGMA foreign_keys=OFF")

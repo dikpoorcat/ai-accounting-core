@@ -25,7 +25,7 @@ from .contracts import KernelError, NeedsInformation
 from .domains.payroll import PAYROLL_KINDS
 from .payroll_tax_declarations import PayrollDisbursementBasis, export_disbursement
 from .periods import Periods
-from .types import YearMonth, canonical, digest, sum_fen
+from .types import EvidenceDigest, YearMonth, canonical, digest, evidence_digest_bytes, sum_fen
 
 WORKBOOK_NAME = "银行批量代发.xlsx"
 MANIFEST_NAME = "代发核对.json"
@@ -111,7 +111,7 @@ class Exports:
         *,
         name: str,
         account: str,
-        evidence_digest: str,
+        evidence_digest: EvidenceDigest,
         expected_revision: int,
         request_id: str,
     ):
@@ -122,7 +122,7 @@ class Exports:
             raise ValueError("payee account must contain ASCII digits and preserve leading zeroes")
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("invalid expected payee revision")
-        evidence = _evidence_digest(evidence_digest)
+        evidence = evidence_digest_bytes(evidence_digest)
         request_hash = digest(
             ["payee", party_id, name, account, evidence_digest, expected_revision]
         )
@@ -165,7 +165,11 @@ class Exports:
         )
 
     def preview(
-        self, period: str, *, template_evidence_digest: str, source_ids: list[str] | None = None
+        self,
+        period: str,
+        *,
+        template_evidence_digest: EvidenceDigest,
+        source_ids: list[str] | None = None,
     ):
         plan, _ = self._prepare(
             period, template_evidence_digest=template_evidence_digest, source_ids=source_ids
@@ -183,7 +187,9 @@ class Exports:
             not requested or any(not isinstance(item, str) or not item for item in requested)
         ):
             raise ValueError("source_ids must contain at least one stable source identity")
-        template_digest = _evidence_digest(template_evidence_digest)
+        template_digest = evidence_digest_bytes(
+            template_evidence_digest, "template_evidence_digest"
+        )
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             epochs = self.store.epochs(connection)
@@ -215,7 +221,8 @@ class Exports:
             from .stored_json import load_outcome
 
             verify_sources(
-                self.engine, connection,
+                self.engine,
+                connection,
                 calculation_ids={row["id"] for row in calculations},
             )
             outcomes = {row["id"]: load_outcome(row["outcome"]) for row in calculations}
@@ -409,7 +416,7 @@ class Exports:
         self,
         period: str,
         *,
-        template_evidence_digest: str,
+        template_evidence_digest: EvidenceDigest,
         preview_digest: str,
         epochs: dict,
         output_directory: str,

@@ -28,6 +28,9 @@ def test_open_publication_probe_checks_exact_months_and_scales_with_month_count(
             "CREATE TABLE calculation_publication(posting_period INTEGER);"
             "CREATE INDEX publication_posting ON calculation_publication(posting_period);"
             "CREATE TABLE period_close(period INTEGER PRIMARY KEY);"
+            "CREATE TABLE voucher_version(id TEXT PRIMARY KEY,period INTEGER);"
+            "CREATE INDEX voucher_period ON voucher_version(period,id);"
+            "CREATE TABLE voucher_current(version_id TEXT UNIQUE);"
         )
         assert not _has_open_publication(connection, 10)
         connection.executemany(
@@ -273,6 +276,72 @@ def test_open_cash_profit_and_party_report_matches_full_source_resolution(book, 
     assert bool(bounded["fact_issues"]) is not classification
 
 
+@pytest.mark.parametrize("source,issues_only", [("open", False), ("open", True), ("closed", False)])
+def test_report_reuses_frozen_end_amounts_without_changing_complete_plan(book, source, issues_only):
+    from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.types import YearMonth
+
+    engine = book[0]
+    report = scenario(book)
+    for month in ("2026-01", "2026-02", *(() if source == "open" else ("2026-03",))):
+        book[3](month)
+    cutoff = YearMonth("2026-03").ordinal
+
+    def read(connection, reads):
+        statements = []
+        connection.set_trace_callback(statements.append)
+        try:
+            plan = report._report(
+                2026, 1, source=source, connection=connection, reads=reads,
+                _issues_only=issues_only,
+            )
+        finally:
+            connection.set_trace_callback(None)
+        # This is the shared totals reader's actual frozen-baseline SQL, not
+        # a mock of the conditional being optimized. Other cutoffs still read.
+        end_reads = [
+            sql for sql in statements
+            if sql.startswith("SELECT period,manifest,digest FROM period_close ")
+            and f"period<={cutoff} " in sql
+        ]
+        return plan, len(end_reads)
+
+    with QueryReads.snapshot(engine) as reads:
+        reused, owned_end_reads = read(reads.connection, reads)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        independent, unowned_end_reads = read(connection, QueryReads(engine, connection))
+    assert reused == independent
+    assert reused["status"] == "ready", reused["fact_issues"]
+    assert reused["statements"]["cash_flow_statement"]["22"]["current_fen"] == 40000
+    assert (owned_end_reads, unowned_end_reads) == (1, 2)
+
+
+def test_report_without_frozen_baseline_retains_both_end_amount_reads(book):
+    from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.types import YearMonth
+
+    engine = book[0]
+    report = scenario(book)
+    cutoff = YearMonth("2026-03").ordinal
+    statements = []
+    with QueryReads.snapshot(engine) as reads:
+        reads.connection.set_trace_callback(statements.append)
+        try:
+            owned = report._report(
+                2026, 1, source="open", connection=reads.connection, reads=reads,
+            )
+        finally:
+            reads.connection.set_trace_callback(None)
+    independent = report.report(2026, 1)
+    assert owned == independent
+    assert len([
+        sql for sql in statements
+        if sql.startswith("SELECT account,sum(debit-credit) amount FROM monthly_account ")
+        and f"period<={cutoff} " in sql
+    ]) == 2
+
+
 def test_readiness_issues_match_full_report_without_full_history_id_output(book):
     from ai_accounting.kernel.query_reads import QueryReads
     from ai_accounting.kernel.reports import check_report_readiness
@@ -509,6 +578,12 @@ def test_frozen_report_ignores_future_profile_and_live_projection(book):
 
 
 def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
+    import hashlib
+
+    from ai_accounting.kernel.business_queries import BusinessQueries
+    from ai_accounting.kernel.response_contracts import validate_response
+    from ai_accounting.kernel.workflow import Workflow
+
     report = scenario(book)
     close_quarter(book)
     plan = report.preview_export(2026, 1)
@@ -521,15 +596,44 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
         request_id="export",
     )
 
+    def projected(status):
+        workflow = Workflow(book[0]).query("2026-03", as_of="2026-04-01")
+        assert validate_response("workflow", workflow) == workflow
+        readiness = BusinessQueries(book[0]).period_readiness("2026-03", as_of="2026-04-01")
+        assert validate_response("period_readiness", readiness) == readiness
+        for jobs in (workflow["sections"]["files"]["jobs"],
+                     readiness["current_followups"]["file_jobs"]):
+            job = next(job for job in jobs if job["kind"] == "report_export")
+            assert job["status"] == status
+            assert job["period"] == {
+                "year": 2026, "quarter": 1, "quarter_start": "2026-01-01",
+                "quarter_end": "2026-03-31", "label": "2026 年第 1 季度",
+            }
+            assert job["verified_when_succeeded"] is (status == "succeeded")
+
+    projected("pending")
+
     def fault(stage, ident):
         if stage == "files_published":
             raise RuntimeError("simulated crash after durable files")
 
     failed = run_report_jobs(book[0], fault=fault)[0]
     assert failed["status"] == "failed" and failed["error_code"] == "job_failed"
+    projected("failed")
     assert book[0].jobs(job_id=failed["job_id"])[0]["error_code"] == "job_failed"
     manifest_before = (tmp_path / "export" / "manifest.json").read_bytes()
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"
+    projected("succeeded")
+    core_job = book[0].jobs(job_id=failed["job_id"])[0]
+    assert hashlib.sha256(Path(core_job["result"]["path"]).read_bytes()).hexdigest() == (
+        core_job["result"]["sha256"]
+    )
+    workbook = load_workbook(core_job["result"]["path"])
+    assert len(workbook.worksheets) == 3
+    workbook.close()
+    browser_job = report.browser_job_results([core_job])[0]
+    assert browser_job["report_source"]["year"] == 2026
+    assert browser_job["report_source"]["quarter"] == 1
     assert (tmp_path / "export" / "manifest.json").read_bytes() == manifest_before
     assert run_report_jobs(book[0]) == []
     with book[0].store.connection() as connection:

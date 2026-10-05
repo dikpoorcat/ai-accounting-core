@@ -24,7 +24,7 @@ from .key_membership_filter import (
     decode_keys_filter,
     may_contain,
 )
-from .types import YearMonth, canonical
+from .types import YearMonth, canonical, is_sha256_hex
 
 STORAGE_FORMAT = "ai-accounting-kernel/2/close-storage/3"
 BLOCK_SIZE = 128
@@ -84,6 +84,14 @@ class CloseAccountingSlice:
 
 
 @dataclass(frozen=True)
+class CloseAdoptedResultsSlice:
+    period: int
+    logical_digest: bytes
+    subjects: frozenset[str]
+    adopted_results: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
 class CloseMaterialSlice:
     period: int
     logical_digest: bytes
@@ -105,6 +113,23 @@ class CloseMaterialSourceSummary:
 _ACCOUNTING_BATCH_KEY = object()
 
 
+def _private_overlay(fresh, prior):
+    """Stage writes privately; retain leaf maps without nested lookup chains."""
+    if prior is None:
+        return fresh
+    maps = []
+    pending = [prior]
+    while pending:
+        mapping = pending.pop()
+        # Only flatten the standard ChainMap's known lookup semantics. Keep
+        # every map, including empty staging maps, in its original precedence.
+        if type(mapping) is ChainMap:
+            pending.extend(reversed(mapping.maps))
+        else:
+            maps.append(mapping)
+    return ChainMap(fresh, *maps)
+
+
 @dataclass(frozen=True)
 class _AccountingAuthorityBatch:
     key: object
@@ -113,12 +138,19 @@ class _AccountingAuthorityBatch:
     roots: dict[int, tuple[bytes, int]]
     publications: dict[int, dict[str, tuple[str, str]]]
     vouchers: dict[int, set[str]]
+    include_vouchers: bool = True
+    subjects_by_period: dict[int, frozenset[str]] | None = None
+    asset_owner_read_scopes: dict[int, frozenset[str]] | None = None
 
-    def for_close(self, connection, header, subjects):
+    def for_close(self, connection, header, subjects, *, include_vouchers=True):
         if (
             self.key is not _ACCOUNTING_BATCH_KEY
             or self.connection is not connection
-            or self.subjects != subjects
+            or (
+                self.subjects_by_period.get(header.period) if self.subjects_by_period is not None
+                else self.subjects
+            ) != subjects
+            or self.include_vouchers != include_vouchers
             or self.roots.get(header.period)
             != (header.storage_digest, header.root["small"]["publication_sequence"])
         ):
@@ -222,7 +254,7 @@ def _write_field(connection, period, field, groups):
     return descriptors
 
 
-def _material_summaries(connection, logical_manifest):
+def _material_summaries(connection, logical_manifest, *, _verified_material_versions=None):
     """Derive compact per-source facts from the complete logical material proof."""
     from .frozen_material import _KINDS, _PROOF_FIELDS, _frozen_versions
 
@@ -232,7 +264,17 @@ def _material_summaries(connection, logical_manifest):
         coverage[item["source_id"]].append(item)
     files = {item["source_id"]: item for item in proof["file_summaries"]}
     versions = {
-        label: _frozen_versions(connection, kind, table, proof[_PROOF_FIELDS[label]])
+        label: _frozen_versions(
+            connection,
+            kind,
+            table,
+            proof[_PROOF_FIELDS[label]],
+            **(
+                {"_verified_versions": _verified_material_versions}
+                if _verified_material_versions is not None
+                else {}
+            ),
+        )
         for label, (kind, table) in _KINDS.items()
     }
     all_sources = set(coverage) | set(files)
@@ -410,26 +452,42 @@ def write_close(
 
 def verified_header(connection, row, *, require_marker=True) -> CloseHeader:
     """Verify root SHA, logical digest, marker, and actual company identity."""
-    from .change_journal import CONTRACT as SOURCE_CHANGE_CONTRACT
-
     period = row["period"]
+    if require_marker and _owned_header_snapshot(connection):
+        cached = _cached_header(row)
+        if cached is not None:
+            return cached
     storage = connection.execute(
         "SELECT storage_digest FROM close_storage_root WHERE period=?", (period,)
     ).fetchone()
-    if storage is None or _sha(row["manifest"]) != bytes(storage[0]):
-        _invalid(period, "storage_root_digest_mismatch")
+    marker = None
     if require_marker:
         marker = connection.execute(
             "SELECT source_digest FROM read_index_source WHERE source_kind='close' AND source_id=?",
             (str(period),),
         ).fetchone()
-        if marker is None or bytes(marker[0]) != bytes(row["digest"]):
-            _invalid(period, "source_digest_or_marker_mismatch")
+    identity = connection.execute(
+        "SELECT company_id,database_id FROM identity WHERE id=1"
+    ).fetchone()
+    return _validate_header(
+        row, storage[0] if storage else None, marker[0] if marker else None,
+        identity, require_marker=require_marker,
+    )
+
+
+def _validate_header(row, storage_digest, marker_digest, identity, *, require_marker=True):
+    """Validate each immutable root against support read from the same snapshot."""
+    from .change_journal import CONTRACT as SOURCE_CHANGE_CONTRACT
+
+    period = row["period"]
+    if storage_digest is None or _sha(row["manifest"]) != bytes(storage_digest):
+        _invalid(period, "storage_root_digest_mismatch")
+    if require_marker and (
+        marker_digest is None or bytes(marker_digest) != bytes(row["digest"])
+    ):
+        _invalid(period, "source_digest_or_marker_mismatch")
     try:
         root = json.loads(row["manifest"])
-        identity = connection.execute(
-            "SELECT company_id,database_id FROM identity WHERE id=1"
-        ).fetchone()
         if (
             not isinstance(root, dict)
             or set(root)
@@ -453,9 +511,7 @@ def verified_header(connection, row, *, require_marker=True) -> CloseHeader:
             or root["source_changes"]["highwater"] < 0
             or root["period"] != period
             or root["logical_digest"] != bytes(row["digest"]).hex()
-            or not isinstance(root["preview_digest"], str)
-            or len(root["preview_digest"]) != 64
-            or any(char not in "0123456789abcdef" for char in root["preview_digest"])
+            or not is_sha256_hex(root["preview_digest"])
             or (
                 root["small"]["approval"] is not None
                 and root["preview_digest"] != root["small"]["approval"]["preview_digest"]
@@ -468,9 +524,7 @@ def verified_header(connection, row, *, require_marker=True) -> CloseHeader:
             or any(
                 not isinstance(name, str)
                 or not name
-                or not isinstance(value, str)
-                or len(value) != 64
-                or any(char not in "0123456789abcdef" for char in value)
+                or not is_sha256_hex(value)
                 for name, value in root["derived_roots"].items()
             )
             or root["small"]["period"] != str(YearMonth.from_ordinal(period))
@@ -480,7 +534,70 @@ def verified_header(connection, row, *, require_marker=True) -> CloseHeader:
             _invalid(period, "storage_root_identity_mismatch")
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         _invalid(period, "storage_root_contract_invalid")
-    return CloseHeader(period, bytes(row["digest"]), bytes(storage[0]), root)
+    return CloseHeader(period, bytes(row["digest"]), bytes(storage_digest), root)
+
+
+def _owned_header_snapshot(connection):
+    from .query_reads import _owns_current_selector_snapshot
+    from .storage import _active_fact_reads
+
+    return _owns_current_selector_snapshot(_active_fact_reads.get(), connection)
+
+
+def _cached_header(row):
+    """Consume an exact marker-checked header only after the owned snapshot guard."""
+    from .storage import _active_fact_reads
+
+    period = row["period"]
+    if type(period) is not int:
+        return None
+    # Each caller still checks its committed family and requested source content.
+    cached = _active_fact_reads.get()._close_headers.get(period)
+    if (
+        isinstance(cached, CloseHeader)
+        and cached.period == period
+        and isinstance(row["digest"], (bytes, bytearray, memoryview))
+        and cached.logical_digest == bytes(row["digest"])
+        and isinstance(row["manifest"], str)
+        and cached.storage_digest == _sha(row["manifest"])
+    ):
+        return cached
+    return None
+
+
+def verified_headers(connection, rows):
+    """Batch support only for current roots in an owned read transaction.
+
+    Every root retains its original digest, marker, identity and contract checks.
+    This helper publishes no cache entries, including on a late failure.
+    """
+    from .content_history_context import close_reader
+
+    rows = tuple(rows)
+    if not _owned_header_snapshot(connection):
+        return tuple(close_reader().verified_header(connection, row) for row in rows)
+    periods = [row["period"] for row in rows]
+    if any(type(period) is not int for period in periods) or len(set(periods)) != len(periods):
+        raise ValueError("header periods must be distinct integer ordinals")
+    if not rows:
+        return ()
+    checked = [_cached_header(row) for row in rows]
+    missing = [index for index, header in enumerate(checked) if header is None]
+    if not missing:
+        return tuple(checked)
+    support = connection.execute(
+        "SELECT r.storage_digest,m.source_digest FROM json_each(?) requested "
+        "LEFT JOIN close_storage_root r ON r.period=CAST(requested.value AS INTEGER) "
+        "LEFT JOIN read_index_source m ON m.source_kind='close' "
+        "AND m.source_id=CAST(requested.value AS TEXT) ORDER BY CAST(requested.key AS INTEGER)",
+        (json.dumps([periods[index] for index in missing]),),
+    ).fetchall()
+    identity = connection.execute(
+        "SELECT company_id,database_id FROM identity WHERE id=1"
+    ).fetchone()
+    for index, raw in zip(missing, support, strict=True):
+        checked[index] = _validate_header(rows[index], raw[0], raw[1], identity)
+    return tuple(checked)
 
 
 def derived_root(header: CloseHeader, name: str) -> bytes | None:
@@ -494,6 +611,10 @@ def _family(connection, header: CloseHeader, family: str):
         "SELECT content,digest FROM close_storage_subroot WHERE period=? AND family=?",
         (header.period, family),
     ).fetchone()
+    return _decode_family(header, family, row)
+
+
+def _decode_family(header, family, row):
     expected = header.root["subroots"].get(family)
     if (
         row is None
@@ -507,6 +628,20 @@ def _family(connection, header: CloseHeader, family: str):
         _invalid(header.period, "storage_subroot_invalid")
 
 
+def _families_many(connection, headers, family):
+    """Fetch exact missing subroots; retain each header's committed digest check."""
+    rows = connection.execute(
+        "SELECT s.content,s.digest FROM json_each(?) requested "
+        "LEFT JOIN close_storage_subroot s ON s.period=requested.value AND s.family=? "
+        "ORDER BY CAST(requested.key AS INTEGER)",
+        (canonical([header.period for header in headers]), family),
+    ).fetchall()
+    return tuple(
+        _decode_family(header, family, row if row["content"] is not None else None)
+        for header, row in zip(headers, rows, strict=True)
+    )
+
+
 def _family_once(connection, header, family, subroots):
     if subroots is None:
         return _family(connection, header, family)
@@ -515,9 +650,13 @@ def _family_once(connection, header, family, subroots):
     return subroots[family]
 
 
-def _bucket_rows(connection, header, subroot, field, bucket, *, _stored=None):
-    descriptors = subroot["directories"][field]
-    expected = next((entry for entry in descriptors if entry[0] == bucket), None)
+def _bucket_rows(connection, header, subroot, field, bucket, *, _stored=None, _expected=...):
+    # Group reads select this exact descriptor from the same authenticated
+    # subroot; None means absent, while direct reads retain their own lookup.
+    expected = _expected
+    if expected is ...:
+        descriptors = subroot["directories"][field]
+        expected = next((entry for entry in descriptors if entry[0] == bucket), None)
     if expected is None:
         return []
     directory = (
@@ -587,8 +726,10 @@ def _buckets_rows(connection, header, subroot, field, buckets):
     buckets = sorted(set(buckets))
     if not buckets:
         return {}
-    present = {entry[0] for entry in subroot["directories"][field]}
-    wanted = [bucket for bucket in buckets if bucket in present]
+    descriptors = {}
+    for entry in subroot["directories"][field]:
+        descriptors.setdefault(entry[0], entry)
+    wanted = [bucket for bucket in buckets if bucket in descriptors]
     if not wanted:
         return {bucket: [] for bucket in buckets}
     parameters = (canonical(wanted), header.period, field)
@@ -617,6 +758,7 @@ def _buckets_rows(connection, header, subroot, field, buckets):
             field,
             bucket,
             _stored=(directories.get(bucket), blocks.get(bucket, {})),
+            _expected=descriptors.get(bucket),
         )
         for bucket in buckets
     }
@@ -630,6 +772,113 @@ def _prime_buckets(connection, header, subroot, field, buckets, parts):
         if len(by_position) != len(values):
             _invalid(header.period, "storage_reference_position_missing")
         parts[*prefix, bucket] = by_position
+
+
+def _buckets_rows_many(connection, groups, *, _descriptor_indexes=None):
+    """Fetch only committed requested buckets across periods and fields."""
+    wanted = []
+    selected = []
+    for header, subroot, field, buckets in groups:
+        key = (header.period, header.storage_digest, "descriptor_iteration", field,
+               id(subroot["directories"][field]))
+        descriptors = (_descriptor_indexes or {}).get(key)
+        if descriptors is None:
+            descriptors = {}
+            for entry in subroot["directories"][field]:
+                descriptors.setdefault(entry[0], entry)
+        for bucket in sorted(set(buckets)):
+            selected.append((header, subroot, field, bucket, descriptors.get(bucket)))
+            if bucket in descriptors:
+                wanted.append((header.period, field, bucket))
+    directories, blocks = {}, defaultdict(dict)
+    if wanted:
+        parameters = (canonical(wanted),)
+        for index, row in enumerate(connection.execute(
+            "SELECT d.content,d.digest FROM json_each(?) requested "
+            "LEFT JOIN close_storage_directory d "
+            "ON d.period=json_extract(requested.value,'$[0]') "
+            "AND d.field=json_extract(requested.value,'$[1]') "
+            "AND d.bucket=json_extract(requested.value,'$[2]') "
+            "ORDER BY CAST(requested.key AS INTEGER)",
+            parameters,
+        )):
+            directories[wanted[index]] = row if row["content"] is not None else None
+        for row in connection.execute(
+            "SELECT CAST(requested.key AS INTEGER) group_no,b.part,b.content,b.digest "
+            "FROM json_each(?) requested CROSS JOIN close_storage_block b "
+            "ON b.period=json_extract(requested.value,'$[0]') "
+            "AND b.field=json_extract(requested.value,'$[1]') "
+            "AND b.bucket=json_extract(requested.value,'$[2]')",
+            parameters,
+        ):
+            blocks[wanted[row["group_no"]]][row["part"]] = row
+    return tuple(
+        (header, field, bucket, _bucket_rows(
+            connection, header, subroot, field, bucket,
+            _stored=(directories.get((header.period, field, bucket)),
+                     blocks.get((header.period, field, bucket), {})),
+            _expected=expected,
+        ))
+        for header, subroot, field, bucket, expected in selected
+    )
+
+
+@dataclass(frozen=True)
+class _DescriptorIteration:
+    """A completed descriptor walk in one exact owned read snapshot."""
+
+    snapshot_token: object
+    descriptors: list
+    by_bucket: dict
+
+
+def _prime_buckets_many(connection, groups, parts):
+    from .query_reads import _owns_current_selector_snapshot
+    from .storage import _active_fact_reads
+
+    reads = _active_fact_reads.get()
+    owned = _owns_current_selector_snapshot(reads, connection)
+    missing = []
+    iterations = {}
+    indexes = {}
+    for header, subroot, field, buckets in groups:
+        prefix = (header.period, header.storage_digest, "bucket", field)
+        selected = [
+            bucket for bucket in buckets if (*prefix, bucket) not in parts
+        ]
+        if owned:
+            # Access the actual field even on a cache hit. Only a completed
+            # earlier walk of this same authenticated list can omit the walk;
+            # first-time negative selections retain all original errors.
+            descriptors = subroot["directories"][field]
+            key = (header.period, header.storage_digest, "descriptor_iteration", field)
+            prior = iterations.get(key, parts.get(key))
+            if (isinstance(prior, _DescriptorIteration)
+                    and prior.snapshot_token is reads._snapshot_token
+                    and prior.descriptors is descriptors):
+                if not selected:
+                    continue
+                indexes[*key, id(descriptors)] = prior.by_bucket
+            elif isinstance(descriptors, list):
+                by_bucket = {}
+                for entry in descriptors:
+                    by_bucket.setdefault(entry[0], entry)
+                iterations[key] = _DescriptorIteration(
+                    reads._snapshot_token, descriptors, by_bucket,
+                )
+                indexes[*key, id(descriptors)] = by_bucket
+        missing.append((header, subroot, field, selected))
+    checked = {}
+    for header, field, bucket, values in _buckets_rows_many(
+        connection, missing, _descriptor_indexes=indexes,
+    ):
+        by_position = dict(values)
+        if len(by_position) != len(values):
+            _invalid(header.period, "storage_reference_position_missing")
+        checked[header.period, header.storage_digest, "bucket", field, bucket] = by_position
+    # The physical batch and every position check must succeed before any new
+    # walk marker or bucket enters the caller's private staging map.
+    parts.update(checked | iterations)
 
 
 def _field_values(connection, header, subroot, field):
@@ -647,6 +896,10 @@ def _field_values(connection, header, subroot, field):
 
 def _management_subroot(connection, header, *, _subroots=None):
     subroot = _family_once(connection, header, "management", _subroots)
+    return _validate_management_subroot(header, subroot)
+
+
+def _validate_management_subroot(header, subroot):
     if not isinstance(subroot, dict) or set(subroot) != {"directories"}:
         _invalid(header.period, "storage_management_contract_invalid")
     directories = subroot["directories"]
@@ -691,6 +944,36 @@ def read_readiness_check(connection, header: CloseHeader, name: str):
     return _management_value(connection, header, subroot, section)
 
 
+def read_readiness_checks_many(connection, headers, name):
+    """Read one checker across an owned current group, with no partial publication."""
+    headers = tuple(headers)
+    if type(name) is not str or not name:
+        raise ValueError("readiness checker name must be nonempty")
+    if len(headers) < 2 or not _owned_header_snapshot(connection):
+        return tuple(read_readiness_check(connection, header, name) for header in headers)
+    periods = [header.period for header in headers]
+    if len(set(periods)) != len(periods) or any(type(period) is not int for period in periods):
+        raise ValueError("header periods must be distinct integer ordinals")
+    subroots = tuple(
+        _validate_management_subroot(header, subroot)
+        for header, subroot in zip(
+            headers, _families_many(connection, headers, "management"), strict=True
+        )
+    )
+    section = "readiness:" + name
+    groups = [
+        (header, subroot, section, [0])
+        for header, subroot in zip(headers, subroots, strict=True)
+        if section in subroot["directories"]
+    ]
+    values = {}
+    for header, _, _, entries in _buckets_rows_many(connection, groups):
+        if len(entries) != 1 or entries[0][0] != 0:
+            _invalid(header.period, "storage_management_section_invalid")
+        values[header.period] = entries[0][1]
+    return tuple(values.get(header.period, {}) for header in headers)
+
+
 def _may_contain_with_positions(value, key, positions_cache):
     """Reuse only pure key positions; each authenticated filter still checks its bits."""
     if not isinstance(value, DecodedKeysFilter):
@@ -699,26 +982,129 @@ def _may_contain_with_positions(value, key, positions_cache):
     positions = positions_cache.get(cache_key)
     if positions is None:
         positions = positions_cache[cache_key] = tuple(_positions(key, value.bit_count))
-    return all(
-        value.bits[position >> 3] & (1 << (position & 7)) for position in positions
+    for position in positions:
+        if not value.bits[position >> 3] & (1 << (position & 7)):
+            return False
+    return True
+
+
+def _accounting_subject_buckets(header, subroot, subjects, parts, positions):
+    selection_key = (
+        header.period, header.storage_digest, "accounting_subject_buckets", subjects
     )
+    if selection_key in parts:
+        return parts[selection_key]
+    filter_key = (header.period, header.storage_digest, "accounting_subject_filter")
+    if filter_key not in parts:
+        parts[filter_key] = _accounting_subject_filter(subroot, header.period)
+    subject_filter = parts[filter_key]
+    try:
+        # Only the committed filter may exclude a subject, including subjects
+        # absent from the mutable publication candidates and false positives.
+        return {
+            _bucket(subject) for subject in subjects
+            if (
+                may_contain(subject_filter, subject) if positions is None
+                else _may_contain_with_positions(subject_filter, subject, positions)
+            )
+        }
+    except ValueError:
+        _invalid(header.period, "storage_accounting_filter_invalid")
+
+
+def _prime_accounting_many(connection, headers, authority, parts, positions):
+    selected = [
+        (header, authority.asset_owner_read_scopes[header.period]
+         if authority.asset_owner_read_scopes is not None
+         else authority.subjects if authority.include_vouchers
+         or authority.subjects_by_period is None
+         else authority.subjects_by_period[header.period])
+        for header in headers
+    ]
+    selected = [(header, subjects) for header, subjects in selected if subjects]
+    missing = [
+        header for header, _ in selected
+        if (header.period, header.storage_digest, "family", "accounting") not in parts
+    ]
+    if missing:
+        for header, subroot in zip(
+            missing, _families_many(connection, missing, "accounting"), strict=True
+        ):
+            parts[header.period, header.storage_digest, "family", "accounting"] = subroot
+    groups = []
+    selection_keys = []
+    fields = ACCOUNTING_FIELDS if authority.include_vouchers else ("adopted_results",)
+    for header, subjects in selected:
+        subroot = parts[header.period, header.storage_digest, "family", "accounting"]
+        buckets = _accounting_subject_buckets(header, subroot, subjects, parts, positions)
+        selection_key = (
+            header.period, header.storage_digest, "accounting_subject_buckets", subjects
+        )
+        parts[selection_key] = buckets
+        selection_keys.append(selection_key)
+        groups.extend((header, subroot, field, buckets) for field in fields)
+    _prime_buckets_many(connection, groups, parts)
+    return selection_keys
 
 
 def read_accounting(
     connection, header: CloseHeader, subjects, *, _verified_parts=None, _positions_cache=None,
     _authority: _AccountingAuthorityBatch | None = None,
 ) -> CloseAccountingSlice:
-    """Read only committed subject buckets; publication rows decide existence."""
+    """Read committed result and voucher buckets with both authority checks."""
+    return _read_accounting(
+        connection, header, subjects, _verified_parts=_verified_parts,
+        _positions_cache=_positions_cache, _authority=_authority,
+    )
+
+
+def read_adopted_results(
+    connection, header: CloseHeader, subjects, *, _verified_parts=None, _positions_cache=None,
+    _authority: _AccountingAuthorityBatch | None = None,
+) -> CloseAdoptedResultsSlice:
+    """Authenticate adopted result leaves without requesting voucher membership."""
+    return _read_accounting(
+        connection, header, subjects, _verified_parts=_verified_parts,
+        _positions_cache=_positions_cache, _authority=_authority, include_vouchers=False,
+    )
+
+
+def _read_accounting(
+    connection, header, subjects, *, _verified_parts=None, _positions_cache=None,
+    _authority=None, include_vouchers=True,
+):
+    """Locate requested frozen leaves independently, then compare source authority."""
     subjects = frozenset(subjects)
-    if not subjects:
-        return CloseAccountingSlice(header.period, header.logical_digest, subjects, (), ())
+    candidate_subjects = subjects
+    complete_subjects = (
+        _authority.subjects if _authority is not None and include_vouchers else subjects
+    )
+    asset_owner_scope = (
+        _authority.asset_owner_read_scopes[header.period]
+        if _authority is not None and _authority.asset_owner_read_scopes is not None
+        else None
+    )
+    if not complete_subjects or asset_owner_scope == frozenset():
+        if _authority is not None:
+            expected, expected_vouchers = _authority.for_close(
+                connection, header, subjects, include_vouchers=include_vouchers
+            )
+            if expected:
+                _invalid(header.period, "storage_adoption_publication_mismatch")
+            if expected_vouchers:
+                _invalid(header.period, "storage_voucher_source_mismatch")
+        return (
+            CloseAccountingSlice(header.period, header.logical_digest, subjects, (), ())
+            if include_vouchers else
+            CloseAdoptedResultsSlice(header.period, header.logical_digest, subjects, ())
+        )
     # Keep newly verified blocks private until the entire slice succeeds. A
     # full copy of the snapshot cache here grows quadratically across closes.
     fresh = {}
-    parts = ChainMap(fresh, _verified_parts) if _verified_parts is not None else fresh
+    parts = _private_overlay(fresh, _verified_parts)
     fresh_positions = {}
     positions = (
-        ChainMap(fresh_positions, _positions_cache)
+        _private_overlay(fresh_positions, _positions_cache)
         if _positions_cache is not None else None
     )
     prefix = (header.period, header.storage_digest)
@@ -726,27 +1112,22 @@ def read_accounting(
     if family_key not in parts:
         parts[family_key] = _family(connection, header, "accounting")
     subroot = parts[family_key]
-    filter_key = (*prefix, "accounting_subject_filter")
-    if filter_key not in parts:
-        parts[filter_key] = _accounting_subject_filter(subroot, header.period)
-    subject_filter = parts[filter_key]
     adopted, vouchers = [], []
-    try:
-        subject_buckets = {
-            _bucket(subject)
-            for subject in subjects
-            if (
-                may_contain(subject_filter, subject)
-                if positions is None
-                else _may_contain_with_positions(subject_filter, subject, positions)
-            )
-        }
-    except ValueError:
-        _invalid(header.period, "storage_accounting_filter_invalid")
-    for field in ("adopted_results", "vouchers"):
+    subjects = complete_subjects
+    bucket_subjects = (
+        asset_owner_scope if asset_owner_scope is not None
+        else subjects
+    )
+    subject_buckets = _accounting_subject_buckets(
+        header, subroot, bucket_subjects, parts, positions
+    )
+    selected_fields = (("adopted_results", adopted),)
+    if include_vouchers:
+        selected_fields += (("vouchers", vouchers),)
+    for field, _target in selected_fields:
         _prime_buckets(connection, header, subroot, field, subject_buckets, parts)
     for bucket in sorted(subject_buckets):
-        for field, target in (("adopted_results", adopted), ("vouchers", vouchers)):
+        for field, target in selected_fields:
             key = (*prefix, "bucket", field, bucket)
             target.extend(parts[key].items())
     selected = [(position, item) for position, item in adopted if item["subject_id"] in subjects]
@@ -781,13 +1162,15 @@ def read_accounting(
             )
         }
     else:
-        expected, _ = _authority.for_close(connection, header, subjects)
+        expected, _ = _authority.for_close(
+            connection, header, candidate_subjects, include_vouchers=include_vouchers
+        )
     actual = {
         item["subject_id"]: (item["publication_id"], item["calculation_id"]) for _, item in selected
     }
     if actual != expected:
         _invalid(header.period, "storage_adoption_publication_mismatch")
-    if _authority is None:
+    if include_vouchers and _authority is None:
         expected_vouchers = {
             row["id"]
             for row in connection.execute(
@@ -801,14 +1184,19 @@ def read_accounting(
                 (canonical(sorted(subjects)), header.period),
             )
         }
-    else:
-        _, expected_vouchers = _authority.for_close(connection, header, subjects)
-    if {item["id"] for _, item in chosen_vouchers} != expected_vouchers:
+    elif include_vouchers:
+        _, expected_vouchers = _authority.for_close(connection, header, candidate_subjects)
+    if include_vouchers and {item["id"] for _, item in chosen_vouchers} != expected_vouchers:
         _invalid(header.period, "storage_voucher_source_mismatch")
     if _verified_parts is not None:
         _verified_parts.update(fresh)
     if _positions_cache is not None:
         _positions_cache.update(fresh_positions)
+    if not include_vouchers:
+        return CloseAdoptedResultsSlice(
+            header.period, header.logical_digest, subjects,
+            tuple(item for _, item in sorted(selected)),
+        )
     return CloseAccountingSlice(
         header.period,
         header.logical_digest,
@@ -818,7 +1206,10 @@ def read_accounting(
     )
 
 
-def _accounting_authority(connection, headers, subjects) -> _AccountingAuthorityBatch:
+def _accounting_authority(
+    connection, headers, subjects, *, include_vouchers=True, subjects_by_period=None,
+    _asset_owner_scopes=None,
+) -> _AccountingAuthorityBatch:
     """Select the exact publication and voucher authority for one close group."""
     if len({header.period for header in headers}) != len(headers):
         _invalid(headers[0].period, "storage_accounting_authority_period_duplicate")
@@ -831,29 +1222,54 @@ def _accounting_authority(connection, headers, subjects) -> _AccountingAuthority
         roots[header.period] = (header.storage_digest, highwater)
         limits.append([header.period, highwater])
     encoded_subjects = canonical(sorted(subjects))
+    # A complete slice must still compare with all requested subjects' actual
+    # authority. Per-period scopes only narrow bucket reads; they cannot hide a
+    # publication or an old/reversal voucher by omitting its subject.
+    publication_scopes = None if include_vouchers else subjects_by_period
+    requested = (
+        "json_each(?)"
+        if publication_scopes is None else
+        "(SELECT json_extract(value,'$[1]') subject_id,"
+        "CAST(json_extract(value,'$[0]') AS INTEGER) period FROM json_each(?))"
+    )
+    subject_column = "requested.value" if publication_scopes is None else "requested.subject_id"
+    period_clause = "" if publication_scopes is None else "AND requested.period=p.posting_period "
+    encoded_requested = (
+        encoded_subjects if publication_scopes is None else canonical([
+            [period, subject] for period, scope in sorted(publication_scopes.items())
+            for subject in sorted(scope)
+        ])
+    )
     publications = {header.period: {} for header in headers}
     for row in connection.execute(
         "WITH limits(period,highwater) AS MATERIALIZED ("
         "SELECT CAST(json_extract(value,'$[0]') AS INTEGER),"
         "CAST(json_extract(value,'$[1]') AS INTEGER) FROM json_each(?)) "
         "SELECT p.posting_period,p.subject_id,p.id,p.calculation_id "
-        "FROM json_each(?) requested "
+        "FROM " + requested + " requested "
         "CROSS JOIN calculation_publication p INDEXED BY publication_subject "
-        "ON p.subject_id=requested.value JOIN limits l ON l.period=p.posting_period "
+        "ON p.subject_id=" + subject_column + " JOIN limits l ON l.period=p.posting_period "
         "WHERE p.sequence<=l.highwater AND p.calculation_id IS NOT NULL "
+        + period_clause +
         "AND NOT EXISTS(SELECT 1 FROM calculation_publication later "
         "WHERE later.previous_publication_id=p.id AND later.sequence<=l.highwater)",
-        (canonical(limits), encoded_subjects),
+        (canonical(limits), encoded_requested),
     ):
         expected = publications[row["posting_period"]]
         if row["subject_id"] in expected:
             _invalid(row["posting_period"], "storage_adoption_publication_mismatch")
         expected[row["subject_id"]] = (row["id"], row["calculation_id"])
     vouchers = {header.period: set() for header in headers}
-    for row in connection.execute(
+    owner_scopes = (
+        {period: set(scope) | publications[period].keys()
+         for period, scope in _asset_owner_scopes.items()}
+        if _asset_owner_scopes is not None else None
+    )
+    for row in (connection.execute(
         "WITH wanted(period) AS MATERIALIZED ("
         "SELECT CAST(value AS INTEGER) FROM json_each(?)) "
-        "SELECT v.period,v.id FROM json_each(?) requested "
+        "SELECT v.period,v.id" + (",c.subject_id" if owner_scopes is not None else "")
+        + " FROM json_each(?) requested "
         "CROSS JOIN calculation c INDEXED BY calculation_subject "
         "ON c.subject_id=requested.value "
         "CROSS JOIN voucher_version v INDEXED BY voucher_calculation "
@@ -861,44 +1277,162 @@ def _accounting_authority(connection, headers, subjects) -> _AccountingAuthority
         "CROSS JOIN voucher_current h ON h.version_id=v.id "
         "JOIN wanted w ON w.period=v.period",
         (canonical([header.period for header in headers]), encoded_subjects),
-    ):
+    ) if include_vouchers else ()):
         vouchers[row["period"]].add(row["id"])
+        if owner_scopes is not None:
+            owner_scopes[row["period"]].add(row["subject_id"])
     return _AccountingAuthorityBatch(
-        _ACCOUNTING_BATCH_KEY, connection, subjects, roots, publications, vouchers
+        _ACCOUNTING_BATCH_KEY, connection, subjects, roots, publications, vouchers,
+        include_vouchers, subjects_by_period,
+        ({period: frozenset(scope) for period, scope in owner_scopes.items()}
+         if owner_scopes is not None else None),
+    )
+
+
+def _frozen_asset_owner_subjects(connection, headers, subjects):
+    """Use complete frozen declarations, never mutable kind, to locate owners."""
+    declared, source_periods = {}, {}
+    for header in headers:
+        owners = set()
+        values = header.root["small"].get("asset_batch_adoptions")
+        if not isinstance(values, list):
+            _invalid(header.period, "storage_asset_owner_declaration_invalid")
+        for item in values:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"owner_calculation_id", "membership_digest"}
+                or not isinstance(item["owner_calculation_id"], str)
+                or not item["owner_calculation_id"]
+                or not is_sha256_hex(item["membership_digest"])
+                or item["owner_calculation_id"] in owners
+            ):
+                _invalid(header.period, "storage_asset_owner_declaration_invalid")
+            ident = item["owner_calculation_id"]
+            owners.add(ident)
+            source_periods.setdefault(ident, header.period)
+        declared[header.period] = owners
+    sources = {}
+    if source_periods:
+        for row in connection.execute(
+            "SELECT ids.value id,c.subject_id,c.kind,c.period,f.subject_id fact_subject,"
+            "f.period fact_period,s.kind fact_kind,"
+            "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) cs,"
+            "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=f.id) fs "
+            "FROM json_each(?) ids LEFT JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+            "LEFT JOIN subject s ON s.id=f.subject_id",
+            (canonical(sorted(source_periods)),),
+        ):
+            if (
+                row["subject_id"] not in subjects
+                or row["kind"] not in {"asset_activation_batch", "asset_consumption_month"}
+                or (row["subject_id"], row["kind"], row["period"])
+                != (row["fact_subject"], row["fact_kind"], row["fact_period"])
+                or not row["cs"] or not row["fs"]
+            ):
+                _invalid(source_periods[row["id"]], "storage_asset_owner_source_mismatch")
+            sources[row["id"]] = row["subject_id"]
+    return {
+        period: frozenset(sources[ident] for ident in owners)
+        for period, owners in declared.items()
+    }
+
+
+def read_asset_owner_accounting_many(
+    connection, headers, subjects, *, _verified_parts=None, _positions_cache=None,
+) -> tuple[CloseAccountingSlice, ...]:
+    """Prove complete owner slices with independently frozen monthly read scopes.
+
+    The normal close writer and complete verifier bind the full declaration to
+    all asset_batch_owner adoptions. Its negative scope survives missing mutable
+    publications and vouchers. Actual authority for the entire requested owner
+    universe adds every live publication and voucher month before reading buckets.
+    This only narrows physical reads; output and both comparisons stay complete.
+    """
+    headers, subjects = tuple(headers), frozenset(subjects)
+    if not headers or not _owned_header_snapshot(connection):
+        return read_accounting_many(
+            connection, headers, subjects, _verified_parts=_verified_parts,
+            _positions_cache=_positions_cache,
+        )
+    scopes = _frozen_asset_owner_subjects(connection, headers, subjects)
+    return _read_accounting_many(
+        connection, headers, subjects, _verified_parts=_verified_parts,
+        _positions_cache=_positions_cache, _asset_owner_scopes=scopes,
     )
 
 
 def read_accounting_many(
-    connection, headers, subjects, *, _verified_parts=None, _positions_cache=None
+    connection, headers, subjects, *, _verified_parts=None, _positions_cache=None,
+    subjects_by_period=None,
 ) -> tuple[CloseAccountingSlice, ...]:
+    """Read complete accounting slices while sharing their authority queries."""
+    return _read_accounting_many(
+        connection, headers, subjects, _verified_parts=_verified_parts,
+        _positions_cache=_positions_cache, subjects_by_period=subjects_by_period,
+    )
+
+
+def read_adopted_results_many(
+    connection, headers, subjects, *, _verified_parts=None, _positions_cache=None,
+    subjects_by_period=None,
+) -> tuple[CloseAdoptedResultsSlice, ...]:
+    return _read_accounting_many(
+        connection, headers, subjects, _verified_parts=_verified_parts,
+        _positions_cache=_positions_cache, include_vouchers=False,
+        subjects_by_period=subjects_by_period,
+    )
+
+
+def _read_accounting_many(
+    connection, headers, subjects, *, _verified_parts=None, _positions_cache=None,
+    include_vouchers=True, subjects_by_period=None, _asset_owner_scopes=None,
+):
     """Verify one scoped group while sharing only its two authority selections."""
     headers = tuple(headers)
     subjects = frozenset(subjects)
     if not headers:
         return ()
+    if subjects_by_period is not None:
+        subjects_by_period = {
+            period: frozenset(scope) for period, scope in subjects_by_period.items()
+        }
+        if set(subjects_by_period) != {h.period for h in headers} or any(
+            not scope <= subjects for scope in subjects_by_period.values()
+        ):
+            _invalid(headers[0].period, "storage_accounting_authority_scope_mismatch")
     if not subjects:
         return tuple(
-            CloseAccountingSlice(header.period, header.logical_digest, subjects, (), ())
+            (CloseAccountingSlice(header.period, header.logical_digest, subjects, (), ())
+             if include_vouchers else
+             CloseAdoptedResultsSlice(header.period, header.logical_digest, subjects, ()))
             for header in headers
         )
-    authority = _accounting_authority(connection, headers, subjects)
+    authority = _accounting_authority(
+        connection, headers, subjects, include_vouchers=include_vouchers,
+        subjects_by_period=subjects_by_period, _asset_owner_scopes=_asset_owner_scopes,
+    )
     # ChainMap writes into these new maps, while successfully read prior blocks
     # remain available. Publish nothing until every month has passed its normal
     # read_accounting comparisons.
     new_parts = {}
     new_positions = {}
-    parts = ChainMap(new_parts, _verified_parts) if _verified_parts is not None else new_parts
-    positions = (
-        ChainMap(new_positions, _positions_cache)
-        if _positions_cache is not None else new_positions
-    )
+    parts = _private_overlay(new_parts, _verified_parts)
+    positions = _private_overlay(new_positions, _positions_cache)
+    selection_keys = []
+    if len(headers) > 1 and _owned_header_snapshot(connection):
+        selection_keys = _prime_accounting_many(connection, headers, authority, parts, positions)
     result = tuple(
-        read_accounting(
-            connection, header, subjects, _verified_parts=parts,
+        (read_accounting if include_vouchers else read_adopted_results)(
+            connection, header,
+            subjects if subjects_by_period is None else subjects_by_period[header.period],
+            _verified_parts=parts,
             _positions_cache=positions, _authority=authority,
         )
         for header in headers
     )
+    for key in selection_keys:
+        del new_parts[key]
     if _verified_parts is not None:
         _verified_parts.update(new_parts)
     if _positions_cache is not None:
@@ -962,12 +1496,7 @@ def material_source_summaries(
     return found
 
 
-def reference_leaves(connection, header: CloseHeader, references, *, parts):
-    """Batch source locations and reuse checked blocks within a caller's snapshot.
-
-    The caller publishes ``parts`` to its snapshot cache only after every leaf
-    comparison succeeds. No result or failure survives a new transaction.
-    """
+def _reference_source_ids(references):
     source_ids = defaultdict(set)
     for path, _, ident in references:
         if path.startswith("adopted_results[*]."):
@@ -975,6 +1504,17 @@ def reference_leaves(connection, header: CloseHeader, references, *, parts):
             source_ids[table].add(ident)
         elif path.startswith("vouchers[*]."):
             source_ids["voucher_version" if path.endswith(".id") else "calculation"].add(ident)
+    return source_ids
+
+
+def _prime_reference_subjects(connection, groups, parts):
+    source_ids = defaultdict(set)
+    source_periods = {}
+    for header, references in groups:
+        for table, identifiers in _reference_source_ids(references).items():
+            source_ids[table].update(identifiers)
+            for ident in identifiers:
+                source_periods.setdefault((table, ident), header.period)
     for table, identifiers in source_ids.items():
         missing = [ident for ident in identifiers if ("subject", table, ident) not in parts]
         if not missing:
@@ -988,8 +1528,12 @@ def reference_leaves(connection, header: CloseHeader, references, *, parts):
         )
         for row in connection.execute(sql, (canonical(sorted(missing)),)):
             parts["subject", table, row["id"]] = row["subject_id"]
-        if any(("subject", table, ident) not in parts for ident in missing):
-            _invalid(header.period, "storage_reference_source_missing")
+        for ident in missing:
+            if ("subject", table, ident) not in parts:
+                _invalid(source_periods[table, ident], "storage_reference_source_missing")
+
+
+def _reference_requested_buckets(references, parts):
     requested = defaultdict(set)
     for path, _, ident in references:
         if path.startswith("adopted_results[*]."):
@@ -1000,6 +1544,17 @@ def reference_leaves(connection, header: CloseHeader, references, *, parts):
             requested["vouchers"].add(_bucket(parts["subject", table, ident]))
         elif path == "material_coverage.fact_ids[*]":
             requested["material_coverage.fact_ids"].add(_bucket(ident))
+    return requested
+
+
+def reference_leaves(connection, header: CloseHeader, references, *, parts):
+    """Batch source locations and reuse checked blocks within a caller's snapshot.
+
+    The caller publishes ``parts`` to its snapshot cache only after every leaf
+    comparison succeeds. No result or failure survives a new transaction.
+    """
+    _prime_reference_subjects(connection, ((header, references),), parts)
+    requested = _reference_requested_buckets(references, parts)
     prefix = (header.period, header.storage_digest)
     for field, buckets in requested.items():
         family = "material" if field.startswith("material_") else "accounting"
@@ -1011,6 +1566,79 @@ def reference_leaves(connection, header: CloseHeader, references, *, parts):
         reference_leaf(connection, header, path, index, ident, _parts=parts)
         for path, index, ident in references
     ]
+
+
+def reference_leaves_many(connection, groups, *, parts):
+    """Batch exact physical leaf inputs, never replace reference comparisons."""
+    groups = tuple((header, tuple(references)) for header, references in groups)
+    periods = [header.period for header, _ in groups]
+    if (
+        len(groups) < 2 or not _owned_header_snapshot(connection)
+        or any(type(period) is not int for period in periods)
+        or len(set(periods)) != len(periods)
+    ):
+        return tuple(
+            reference_leaves(connection, header, references, parts=parts)
+            for header, references in groups
+        )
+    fresh = {}
+    staged = _private_overlay(fresh, parts)
+    _prime_reference_subjects(connection, groups, staged)
+    requested = [
+        (header, _reference_requested_buckets(references, staged))
+        for header, references in groups
+    ]
+    families = defaultdict(dict)
+    for header, fields in requested:
+        for field in fields:
+            family = "material" if field.startswith("material_") else "accounting"
+            key = (header.period, header.storage_digest, "family", family)
+            if key not in staged:
+                families[family][key] = header
+    for family, missing in families.items():
+        for key, subroot in zip(
+            missing, _families_many(connection, tuple(missing.values()), family), strict=True
+        ):
+            staged[key] = subroot
+    buckets = []
+    for header, fields in requested:
+        for field, selected in fields.items():
+            family = "material" if field.startswith("material_") else "accounting"
+            subroot = staged[header.period, header.storage_digest, "family", family]
+            buckets.append((header, subroot, field, selected))
+    _prime_buckets_many(connection, buckets, staged)
+    result = tuple(
+        [reference_leaf(connection, header, path, index, ident, _parts=staged)
+         for path, index, ident in references]
+        for header, references in groups
+    )
+    parts.update(fresh)
+    return result
+
+
+def voucher_reference_headers(connection, groups, *, parts):
+    """Return complete authenticated voucher records at exact reference positions.
+
+    The caller still verifies every matched mirror reference. This does not
+    infer an adoption from a live voucher, or turn a bucket into a full close.
+    """
+    groups = tuple((header, tuple(references)) for header, references in groups)
+    reference_leaves_many(connection, groups, parts=parts)
+    result = {}
+    for header, references in groups:
+        for path, position, ident in references:
+            if path != "vouchers[*].id":
+                _invalid(header.period, "storage_reference_voucher_path_mismatch")
+            subject = parts["subject", "voucher_version", ident]
+            key = (header.period, header.storage_digest, "bucket", "vouchers", _bucket(subject))
+            item = parts[key][position]
+            if item["id"] != ident:
+                _invalid(header.period, "storage_reference_voucher_identity_mismatch")
+            identity = header.period, ident
+            if identity in result and result[identity] != item:
+                _invalid(header.period, "storage_reference_voucher_identity_mismatch")
+            result[identity] = item
+    return result
 
 
 def reference_leaf(
@@ -1152,7 +1780,7 @@ def _read_section(
     raise ValueError(f"unsupported close section: {name}")
 
 
-def decode_close(connection, row, *, require_marker=True) -> dict:
+def decode_close(connection, row, *, require_marker=True, _verified_material_versions=None) -> dict:
     """Fully reconstruct and verify the logical v4 object and entire directory."""
     header = verified_header(connection, row, require_marker=require_marker)
     manifest = copy.deepcopy(header.root["small"])
@@ -1174,9 +1802,7 @@ def decode_close(connection, row, *, require_marker=True) -> dict:
         )
     accounting_subroot = _family_once(connection, header, "accounting", subroots)
     _accounting_subject_filter(accounting_subroot, header.period)
-    expected_filter = build_keys_filter(
-        item["subject_id"] for item in manifest["adopted_results"]
-    )
+    expected_filter = build_keys_filter(item["subject_id"] for item in manifest["adopted_results"])
     if accounting_subroot["subject_filter"] != expected_filter:
         _invalid(header.period, "storage_accounting_filter_mismatch")
     expected_directories = set()
@@ -1215,6 +1841,10 @@ def decode_close(connection, row, *, require_marker=True) -> dict:
         _invalid(header.period, "storage_preview_digest_mismatch")
     material_subroot = _family_once(connection, header, "material", subroots)
     stored_summaries = _field_values(connection, header, material_subroot, MATERIAL_SUMMARIES_FIELD)
-    if canonical(stored_summaries) != canonical(_material_summaries(connection, manifest)):
+    if canonical(stored_summaries) != canonical(
+        _material_summaries(
+            connection, manifest, _verified_material_versions=_verified_material_versions
+        )
+    ):
         _invalid(header.period, "storage_material_summary_mismatch")
     return require_close_contract(manifest)

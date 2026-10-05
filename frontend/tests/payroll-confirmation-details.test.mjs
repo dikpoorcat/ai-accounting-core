@@ -8,41 +8,12 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-const fixtures = JSON.parse(
-  readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"),
-);
+const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 
-test("business detail renders current and frozen payroll confirmation evidence", async () => {
-  const data = structuredClone(fixtures["business-status"].data);
-  const current = {
-    mode: "monthly_plan",
-    confirmation_fact_id: "fact-plan-exact",
-    confirmation_subject_id: "employee-a-plan-2026-01",
-    confirmation_revision: 2,
-    confirmation_kind: "payroll_plan_v2",
-    evidence: ["plan-evidence-digest"],
-  };
-  const frozen = {
-    mode: "explicit_no_change",
-    confirmation_fact_id: "fact-no-change-exact",
-    confirmation_subject_id: "payroll-no-change-2026-01",
-    confirmation_revision: 1,
-    confirmation_kind: "payroll_no_change_v2",
-    evidence: ["no-change-evidence-digest"],
-  };
-  data.current_business_result = {
-    status: "published",
-    payroll_confirmation: current,
-  };
-  data.frozen_adoption = {
-    close_period: "2026-01",
-    publication_id: "publication-frozen",
-    calculation_id: "calculation-frozen",
-    result_digest: "result-frozen",
-    role: "direct",
-    selection_proof: { basis: "direct_adoption" },
-    payroll_confirmation: frozen,
-  };
+test("business detail renders owner amounts without payroll confirmation evidence", async () => {
+  const data = structuredClone(samples.business_status.response.data);
+  data.current_business_result = { posting_period: "2026-02", amount_label: "工资金额", amount_fen: "12500" };
+  data.frozen_adoption = { close_period: "2026-01", amount_label: "已确认工资", amount_fen: "12345" };
   globalThis.payrollConfirmationBusinessDetail = data;
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)),
@@ -80,13 +51,29 @@ test("business detail renders current and frozen payroll confirmation evidence",
     app.use(router);
     const html = await renderToString(app);
 
-    assert.equal((html.match(/查看工资确认依据/g) ?? []).length, 2);
-    assert.match(html, /负责人确认本月工资方案/);
-    assert.match(html, /负责人确认全员无变化/);
-    assert.match(html, /fact-plan-exact/);
-    assert.match(html, /plan-evidence-digest/);
-    assert.match(html, /fact-no-change-exact/);
-    assert.match(html, /no-change-evidence-digest/);
+    assert.match(html, /已确认工资/);
+    assert.match(html, /关账时已确认工资/);
+    assert.match(html, /关账月份/);
+    assert.match(html, /123\.45/);
+    const frozenAmount = html.match(/<dl class="business-amounts"[\s\S]*?<\/dl>/)?.[0];
+    assert(frozenAmount);
+    assert.doesNotMatch(frozenAmount, /125\.00/);
+    assert.doesNotMatch(html, /工资确认依据|负责人确认本月工资方案|fact-plan-exact|plan-evidence-digest|calculation_id|selection_proof|<pre/);
+
+    data.frozen_adoption = null;
+    const currentApp = createSSRApp(component, {
+      subjectId: data.identity.subject_id, period: "2026-02", snapshotVersion: "fixture",
+    });
+    currentApp.use(router);
+    const currentHtml = await renderToString(currentApp);
+    assert.match(currentHtml, /当前工资金额/);
+    assert.match(currentHtml, /125\.00/);
+    assert.match(currentHtml, /该金额入账月/);
+    assert.match(currentHtml, /以上是当前业务结果/);
+    const currentAmount = currentHtml.match(/<dl class="business-amounts"[\s\S]*?<\/dl>/)?.[0];
+    assert(currentAmount);
+    assert.doesNotMatch(currentAmount, /关账时已确认工资|123\.45/);
+
   } finally {
     await server.close();
     delete globalThis.payrollConfirmationBusinessDetail;

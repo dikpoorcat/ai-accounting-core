@@ -4,26 +4,16 @@ import type { DashboardBriefContract, DashboardBriefResponse } from "./generated
 import { validateDashboardBriefResponse } from "./generated/dashboardBrief.js";
 
 export type BriefResponse = DashboardBriefResponse;
-export type DeferredBriefResponse = DashboardBriefResponse;
 export type BriefData = DashboardBriefContract.BriefData;
-export type BriefVoucher = DashboardBriefContract.BriefVoucher;
-export type BriefVoucherLine = DashboardBriefContract.VoucherLine;
-export type BriefComponent = DashboardBriefContract.VoucherComponent;
-export type BriefFundMovement = DashboardBriefContract.VoucherFundMovement;
-export type BriefSettlement = DashboardBriefContract.VoucherSettlement;
-export type BriefAssetReference = DashboardBriefContract.AssetReference;
 export type BriefActivityGroup = DashboardBriefContract.BriefActivityGroup;
 export type BriefActivityRow = DashboardBriefContract.BriefActivityRow;
-export type BriefOpenItems = DashboardBriefContract.BriefOpenItems;
-export type BriefOpenCategory = DashboardBriefContract.OpenCategory;
-export type BriefOpenItem = DashboardBriefContract.OpenItem;
-export type BriefPosition = DashboardBriefContract.BriefPosition;
-export type BriefWorkforceCost = DashboardBriefContract.WorkforceCost;
-export type BriefValidation = DashboardBriefContract.BriefValidation;
-export type BriefValidationItem = DashboardBriefContract.ValidationItem;
+export type BriefOpenItems = DashboardBriefContract.BriefOpenSummary;
+export type BriefOpenCategory = DashboardBriefContract.BriefOpenCategory;
+export type BriefOpenItem = DashboardBriefContract.BriefOpenItem;
+export type BriefVoucher = DashboardBriefContract.OwnerBriefVoucher;
 
 export interface BriefQuery extends DashboardPageQuery {
-  section?: "vouchers" | "businesses" | "open_items" | "settlement_events" | "external_followups" | "file_jobs";
+  section?: "activity" | "open_items" | "vouchers";
   voucher_version_id?: string;
   voucher_number?: number;
 }
@@ -40,18 +30,10 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
     && (section === null || (response.data !== null && section in response.data.collections));
 }
 
-function fetchBrief(companyId: string, period: string | null, preparation: "complete" | "deferred", signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
-  const query = new URLSearchParams({ company_id: companyId, preparation, ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
-  pageQuery(query, options);
+export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
+  const query = new URLSearchParams({ company_id: companyId, ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
+  pageQuery(query, { ...options, limit: options.limit ?? 20 });
   if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
   if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
   return requestGeneratedJson(`/api/dashboard/brief?${query}`, "/api/dashboard/brief", validateDashboardBriefResponse, matchesRequest, { signal });
-}
-
-export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
-  return fetchBrief(companyId, period, "deferred", signal, expectedVersion, options);
-}
-
-export function fetchCompleteBrief(companyId: string, period: string | null, signal?: AbortSignal, options: BriefQuery = {}) {
-  return fetchBrief(companyId, period, "complete", signal, undefined, options);
 }

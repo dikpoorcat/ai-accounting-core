@@ -1,0 +1,87 @@
+{
+  "status": "six_inspected_texts_archived",
+  "current_source_sha256": "1836585b091d79999bce32980a42ed919246449d7f493593633cf4cbd0768459",
+  "withdrawn_source_sha256": "c4fd1cb6a845626204805901f5fe59c4f5ef5db654b16f9ba1155b799788a93a",
+  "old_source_sha256": "24b9b8b65723cee8c6982b1f41235dce380e62788db33f100176f92c714571fc",
+  "no_databases_services_tests_or_performance_run": true,
+  "artifacts": [
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-work-result-20261004.json",
+      "original_sha256": "5591fd4ca92c176850a3233045fd2aaba3d39eeaa61059ee0e4309594d7fb795",
+      "original_bytes": 560473,
+      "archive": "stage9-three-group-work-result-20261004.json.gz",
+      "archive_sha256": "205f0b128ec057a396f808e6f2f138806987b1e2b37272f36e7cff8daa060fa5",
+      "archive_bytes": 73901,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-work-retained-result-20261004.json",
+      "original_sha256": "b233defc6c0aa7870a6a443acff7a3c84c1682ca7c502efa0791501eaba7662d",
+      "original_bytes": 557558,
+      "archive": "stage9-three-group-work-retained-result-20261004.json.gz",
+      "archive_sha256": "90977d1730811edada0071dc6cced29fb546a9b34b5d3bb53536d748a84929d1",
+      "archive_bytes": 73334,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-month-header-carrier-withdrawal-diagnostic-20261004.json",
+      "original_sha256": "469f37185ce73bc5d153732c4de437d0ecf2cbf35b459f3e9f21d96f97050b93",
+      "original_bytes": 3353,
+      "archive": "stage9-open-month-header-carrier-withdrawal-diagnostic-20261004.json.gz",
+      "archive_sha256": "afc5551efefcdc3a158cc6f9b2b691f31c0833a30a79d3819cba8ee48daf7038",
+      "archive_bytes": 1082,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-open-month-header-carrier-withdrawal-final-20261004.json",
+      "original_sha256": "08ec4dcffae1ad8c4948aa11fa7a6e047a4d4def4646808dce0f6410545679b7",
+      "original_bytes": 3745,
+      "archive": "stage9-open-month-header-carrier-withdrawal-final-20261004.json.gz",
+      "archive_sha256": "3ece039c09ce597e40aa9f27ca104e1ea3f9714edcfb67e7a6c9545ef548e4b8",
+      "archive_bytes": 1705,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-independent-review-20261004.md",
+      "original_sha256": "cd73fe2e113c8749049c979207cea5fa9496bc140be6651de47345bca98f714f",
+      "original_bytes": 20060,
+      "archive": "stage9-three-group-independent-review-20261004.md.gz",
+      "archive_sha256": "b87532c16d52d2a070bcce1787e58f9749681b7733fe924c955c1a1db42c5d9d",
+      "archive_bytes": 9787,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-settlement-group-representation-audit-20261004.md",
+      "original_sha256": "8fee12c3244b8b38dc1c70431298e20e1dcac26c881d642b37106d61c41000ae",
+      "original_bytes": 8545,
+      "archive": "stage9-settlement-group-representation-audit-20261004.md.gz",
+      "archive_sha256": "f4c621d786dd637125f6cca3e05db9f3bb2863e025899d4816c82ac97a8dde25",
+      "archive_bytes": 4820,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true,
+      "safety_review": "Text reviewed individually. No password, private approval/capability/token values, SID/SDDL, process IDs, database/ZIP bytes or source originals. Function names, boolean guards, SQL text, source hashes and local synthetic company IDs retained."
+    }
+  ]
+}

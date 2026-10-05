@@ -587,16 +587,13 @@ def _summary_scope(connection, period, *, subject_ids, current, reads):
     # Current knowledge must cover later publications even when a damaged
     # projection has omitted their only settlement change for a scoped key.
     # The projection itself cannot decide the range of its completeness check.
-    period_limit = "" if current else " WHERE posting_period<=?"
-    periods = {
-        row[0]
-        for row in connection.execute(
-            "SELECT posting_period FROM calculation_publication" + period_limit
-            + " UNION SELECT posting_period FROM settlement_projection_seal" + period_limit
-            + " UNION SELECT posting_period FROM settlement_change" + period_limit,
-            () if current else (through, through, through),
-        )
-    }
+    from .posting_period_reads import posting_periods
+
+    periods = posting_periods(
+        connection,
+        ("calculation_publication", "settlement_projection_seal", "settlement_change"),
+        through=None if current else through,
+    )
     if reads is None:
         verify_settlement_periods(connection, periods)
     else:
@@ -870,7 +867,9 @@ def settlement_dashboard_open(
     }
 
 
-def settlement_summary(connection, period, *, subject_ids=None, current=False, reads=None):
+def settlement_summary(
+    connection, period, *, subject_ids=None, current=False, reads=None, include_history_counts=True
+):
     """Aggregate obligations through a posting cutoff from normalized rows."""
 
     if subject_ids is not None:
@@ -878,6 +877,7 @@ def settlement_summary(connection, period, *, subject_ids=None, current=False, r
 
         frozen = frozen_subject_summary(
             connection, period, subject_ids=set(subject_ids), current=current, reads=reads,
+            include_history_counts=include_history_counts,
         )
         if frozen is not None:
             return frozen
@@ -887,7 +887,10 @@ def settlement_summary(connection, period, *, subject_ids=None, current=False, r
         if reads is not None and getattr(reads, "_snapshot_active", False)
         else None
     )
-    history_key = (str(YearMonth(period)), None if subject_ids is None else frozenset(subject_ids))
+    history_key = (
+        str(YearMonth(period)), None if subject_ids is None else frozenset(subject_ids),
+        include_history_counts,
+    )
     cutoff, through, source_keys, scope_parameters = _summary_scope(
         connection, period, subject_ids=subject_ids, current=current, reads=reads
     )
@@ -922,7 +925,7 @@ def settlement_summary(connection, period, *, subject_ids=None, current=False, r
         "LEFT JOIN scoped_keys k USING(obligation_key) WHERE s.posting_period<=? "
         "AND s.change_kind!='source' AND (k.obligation_key IS NOT NULL" + subject_scope + ")",
         [*scope_parameters, through, *outer_parameters],
-    ).fetchone()[0]
+    ).fetchone()[0] if include_history_counts else None
     scoped_unresolved = connection.execute(
         "WITH scoped_keys AS ("
         + source_keys
@@ -939,7 +942,7 @@ def settlement_summary(connection, period, *, subject_ids=None, current=False, r
         "LEFT JOIN scoped_keys k USING(obligation_key) WHERE s.posting_period<=? "
         "AND (k.obligation_key IS NOT NULL" + subject_scope + ")",
         [*scope_parameters, through, *outer_parameters],
-    ).fetchone()[0]
+    ).fetchone()[0] if include_history_counts else None
     result = {
         "cutoff_period": str(YearMonth.from_ordinal(through)),
         "status": (
@@ -952,9 +955,8 @@ def settlement_summary(connection, period, *, subject_ids=None, current=False, r
         "issues": (
             [{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unresolved else []
         ),
-        "business_count": business_count,
-        "movement_count": movement_count,
-        "line_relation_count": 0,
+        **({"business_count": business_count, "movement_count": movement_count,
+            "line_relation_count": 0} if include_history_counts else {}),
         "unestablished_state_selections": [],
         "complete": not unresolved,
         **(

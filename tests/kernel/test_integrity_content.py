@@ -92,9 +92,14 @@ def test_full_verification_passes_authenticated_closes_to_read_index_check(engin
     decoded = []
     original_decode = close_storage.decode_close
 
-    def counted_decode(connection, row, *, require_marker=True):
+    def counted_decode(
+        connection, row, *, require_marker=True, _verified_material_versions=None
+    ):
         decoded.append(row["period"])
-        return original_decode(connection, row, require_marker=require_marker)
+        return original_decode(
+            connection, row, require_marker=require_marker,
+            _verified_material_versions=_verified_material_versions,
+        )
 
     monkeypatch.setattr(close_storage, "decode_close", counted_decode)
     with monkeypatch.context() as patch:

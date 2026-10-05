@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -7,20 +7,15 @@ import {
   fetchEmployeesDashboard,
   type EstablishedEmployeeItem,
   type EmployeesDashboardResponse,
-  type PersonalLaborItem,
-  type PayrollSource,
   type EmployeesQuery,
 } from "../api/employees";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
-import DashboardSourceHistory from "../components/DashboardSourceHistory.vue";
-import DashboardBusinessRecords from "../components/DashboardBusinessRecords.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
-import type { DashboardCollection } from "../api/dashboardContracts";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { fen, formatFen, formatPositiveFen } from "../utils/money";
+import { fen, formatFen } from "../utils/money";
 
 type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
 
@@ -33,10 +28,9 @@ const error = ref("");
 const filter = computed<EmployeeFilter>({
   get: () => ["all", "in_period", "payroll", "no_payroll", "ended", "unknown"].includes(String(route.query.employee_filter))
     ? route.query.employee_filter as EmployeeFilter : "all",
-  set: value => { void router.push({ query: { ...route.query, employee_filter: value === "all" ? undefined : value } }); },
+  set: value => { void router.push({ query: { ...route.query, employee_filter: value === "all" ? undefined : value, employee_id: undefined } }); },
 });
-const employeeDisplayMode = ref<"cards" | "list">("cards");
-const laborDisplayMode = ref<"cards" | "list">("cards");
+const focusedEmployeeId = computed(() => typeof route.query.employee_id === "string" ? route.query.employee_id : "");
 let controller: AbortController | null = null;
 let initialized = false;
 let mounted = true;
@@ -44,12 +38,11 @@ let requestGeneration = 0;
 const pageLoading = ref<Record<string, boolean>>({});
 const pageErrors = ref<Record<string, string>>({});
 const pageControllers = new Map<string, AbortController>();
-const payrollCollections = ref<Record<string, DashboardCollection<PayrollSource>>>({});
 const updateNotice = ref("");
-function pageKey(section: string, employeeId?: string) { return `${section}:${employeeId ?? ""}`; }
+function pageKey(section: string) { return `${section}:`; }
 function clearPageRequests() {
   pageControllers.forEach(request => request.abort());
-  pageControllers.clear(); pageLoading.value = {}; pageErrors.value = {}; payrollCollections.value = {};
+  pageControllers.clear(); pageLoading.value = {}; pageErrors.value = {};
 }
 
 const employees = computed(() => response.value?.data?.employees ?? null);
@@ -60,9 +53,6 @@ const sectionLinks = computed(() => {
   if (!employees.value || !response.value?.selected_period) return [];
   return [
     { id: "employees-overview", label: "概览" },
-    ...(!employees.value.breakdown_available || !employees.value.detail_reconciled
-      ? [{ id: "employees-readiness", label: "薪酬核对" }]
-      : []),
     { id: "employee-list-title", label: "员工明细" },
     ...(personalLaborItems.value.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
   ];
@@ -72,81 +62,9 @@ const periodOptions = computed(() => context.value?.periods ?? []);
 const selectedPeriodKey = computed(
   () => response.value?.selected_period?.key ?? routePeriod() ?? "",
 );
-const employerContribution = computed(() =>
-  employees.value
-    ? employees.value.employer_social_insurance_fen === null || employees.value.employer_housing_fund_fen === null ? null : fen(employees.value.employer_social_insurance_fen) +
-      fen(employees.value.employer_housing_fund_fen)
-    : null,
-);
-const reconciliationDifference = computed(() =>
-  employees.value
-    ? [employees.value.ledger_cost_fen, employees.value.controlled_cost_fen, employees.value.settlement_adjustment_fen].some(value => value === null) ? null : fen(employees.value.ledger_cost_fen) -
-      fen(employees.value.controlled_cost_fen) -
-      fen(employees.value.settlement_adjustment_fen)
-    : null,
-);
-const costNote = computed(() => {
-  const data = employees.value;
-  if (!data) return "";
-  if (!data.breakdown_available) {
-    return data.breakdown_reason || "账面成本暂时无法按员工维度拆分";
-  }
-  if (reconciliationDifference.value === null) return "现有来源尚不能完整核对逐人明细与账面成本";
-  if (!data.detail_reconciled) {
-    return `逐人明细与账面成本相差 ${formatPositiveFen(reconciliationDifference.value)}`;
-  }
-  if (fen(data.settlement_adjustment_fen) !== 0n) {
-    return "含结算调整 · 明细与账面一致";
-  }
-  return "明细与账面一致";
-});
-const attentionItems = computed(() => {
-  const data = employees.value;
-  if (!data) return [];
-  const items: string[] = [];
-  if (!data.breakdown_available) {
-    items.push(data.breakdown_reason || "员工薪酬成本暂时不能完整拆分到每个人。");
-  } else if (!data.detail_reconciled) {
-    items.push(
-      `逐人薪酬明细及成本调整与账面记录相差 ${formatPositiveFen(reconciliationDifference.value)}。`,
-    );
-  }
-  return items;
-});
 const filteredEmployees = computed(() => data.value?.collections.employees?.items ?? []);
-const employeeListColumns = [
-  { key: "salary", label: "应发工资", amount: (item: EstablishedEmployeeItem) => item.gross_salary_fen === null ? null : fen(item.gross_salary_fen) },
-  { key: "bonus", label: "全年一次性奖金", amount: (item: EstablishedEmployeeItem) => item.annual_bonus_fen === null ? null : fen(item.annual_bonus_fen) },
-  { key: "company-insurance", label: "公司社保", amount: (item: EstablishedEmployeeItem) => item.employer_social_insurance_fen === null ? null : fen(item.employer_social_insurance_fen) },
-  { key: "company-fund", label: "公司公积金", amount: (item: EstablishedEmployeeItem) => item.employer_housing_fund_fen === null ? null : fen(item.employer_housing_fund_fen) },
-  {
-    key: "personal-contribution",
-    label: "个人社保公积金",
-    amount: (item: EstablishedEmployeeItem) => item.employee_social_insurance_fen === null || item.employee_housing_fund_fen === null ? null : fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen),
-  },
-  { key: "tax", label: "工资扣税（入账）", amount: (item: EstablishedEmployeeItem) => item.individual_income_tax_fen === null ? null : fen(item.individual_income_tax_fen) },
-  { key: "deductions", label: "个人扣减合计", amount: (item: EstablishedEmployeeItem) => item.personal_deduction_fen === null ? null : fen(item.personal_deduction_fen) },
-  { key: "net", label: "应付净薪", amount: (item: EstablishedEmployeeItem) => item.net_salary_fen === null ? null : fen(item.net_salary_fen) },
-];
-const visibleListColumns = computed(() => employeeListColumns);
-const laborListColumns = [
-  { key: "gross", label: "劳务报酬", amount: (item: PersonalLaborItem) => item.gross_fen === null ? null : fen(item.gross_fen) },
-  { key: "tax", label: "扣税（入账）", amount: (item: PersonalLaborItem) => item.booked_tax_fen === null ? null : fen(item.booked_tax_fen) },
-  { key: "net", label: "应付净额", amount: (item: PersonalLaborItem) => item.net_fen === null ? null : fen(item.net_fen) },
-];
-const visibleLaborListColumns = computed(() => laborListColumns);
-function detailListStyle(columnCount: number) {
-  return {
-    "--employee-list-columns": columnCount
-    ? `minmax(104px, 1.1fr) repeat(${columnCount}, minmax(96px, 1fr)) 16px`
-    : "minmax(104px, 1fr) 16px",
-    "--employee-list-min-width": `${220 + columnCount * 100}px`,
-  };
-}
-const employeeListStyle = computed(() => detailListStyle(visibleListColumns.value.length));
-const laborListStyle = computed(() => detailListStyle(visibleLaborListColumns.value.length));
 const filterLabel = computed(
-  () =>
+  () => focusedEmployeeId.value ? "已定位员工" :
     ({
       all: "全部已登记员工",
       in_period: "已确认在册",
@@ -166,16 +84,22 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
   const selection = selectionKey();
   controller?.abort();
   clearPageRequests();
-  response.value = null;
+  if (!contextGate) response.value = null;
   controller = new AbortController();
   const activeController = controller;
   loading.value = true;
   error.value = "";
   try {
-    const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: filter.value });
+    const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: focusedEmployeeId.value ? "all" : filter.value, employee_id: focusedEmployeeId.value || undefined });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || controller !== activeController) return;
     response.value = result;
+    loading.value = false;
+    await nextTick();
+    if (isCurrent(generation, selection) && focusedEmployeeId.value) {
+      document.getElementById("employee-card-target")?.focus({ preventScroll: true });
+      document.getElementById("employee-card-target")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
     updateNotice.value = "";
     const resolvedPeriod = result.selected_period?.key ?? null;
     if (resolvedPeriod && routePeriod() !== resolvedPeriod) {
@@ -183,6 +107,7 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
     }
   } catch (caught: unknown) {
     if (!isCurrent(generation, selection) || controller !== activeController) return;
+    response.value = null;
     const message = dashboardErrorMessage(caught);
     if (message) error.value = message;
   } finally {
@@ -209,8 +134,14 @@ function selectPeriod(value: string) {
   void router.push({ query: { company_id: route.query.company_id, period: value } });
 }
 
-async function refresh() {
-  invalidateRequests();
+function refresh() { return refreshCurrent(true); }
+function refreshChanged() {
+  updateNotice.value = "资料已更新，正在重新读取。";
+  return refreshCurrent(false);
+}
+async function refreshCurrent(keepContent: boolean) {
+  invalidateRequests(keepContent);
+  loading.value = true;
   const generation = requestGeneration, selection = selectionKey();
   try {
     const period = routePeriod();
@@ -227,32 +158,33 @@ async function refresh() {
       if (isCurrent(generation, selection)) await loadPeriod(routePeriod());
     }
   } catch (caught: unknown) {
-    if (isCurrent(generation, selection)) error.value = dashboardErrorMessage(caught);
+    if (isCurrent(generation, selection)) { response.value = null; loading.value = false; error.value = dashboardErrorMessage(caught); }
   }
 }
 
-function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value]); }
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value, focusedEmployeeId.value]); }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selection === selectionKey(); }
-function invalidateRequests() {
+function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   controller?.abort(); controller = null;
   clearPageRequests();
-  response.value = null; loading.value = false;
+  if (!keepContent) response.value = null;
+  loading.value = keepContent;
 }
 
-async function loadMore(section: EmployeesQuery["section"] = "employees", employeeId?: string) {
+async function loadMore(section: EmployeesQuery["section"] = "employees") {
   section = section ?? "employees";
-  const key = pageKey(section, employeeId);
+  const key = pageKey(section);
+  if (section === "employees" && pageErrors.value[key] && !filteredEmployees.value.length) return loadEmployeeList();
   const current = response.value;
-  if (section === "payroll_sources") return;
   const page = current?.data?.collections[section]?.page;
   if (!current?.data || !page?.has_more || !page.next_cursor || pageLoading.value[key]) return;
   const generation = requestGeneration, selection = selectionKey();
   const request = new AbortController(); pageControllers.set(key, request); pageLoading.value[key] = true; pageErrors.value[key] = "";
   try {
-    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, { section, employee_id: employeeId, employee_filter: filter.value, cursor: page.next_cursor, expected_version: current.snapshot_version });
+    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, { section, employee_id: focusedEmployeeId.value || undefined, employee_filter: focusedEmployeeId.value ? "all" : filter.value, cursor: page.next_cursor, expected_version: current.snapshot_version });
     if (!isCurrent(generation, selection) || pageControllers.get(key) !== request || !next.data || response.value?.snapshot_version !== current.snapshot_version) return;
-    if (next.snapshot_version !== current.snapshot_version) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); return; }
+    if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
     const latest = response.value;
     if (!latest.data) return;
     const collection = next.data.collections[section!];
@@ -261,45 +193,35 @@ async function loadMore(section: EmployeesQuery["section"] = "employees", employ
     response.value = { ...latest, data: { ...latest.data, collections } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(key) !== request) return;
-    if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
+    if (isDashboardSnapshotChanged(caught)) { await refreshChanged(); }
     else pageErrors.value[key] = dashboardErrorMessage(caught);
   } finally { if (isCurrent(generation, selection) && pageControllers.get(key) === request) { pageLoading.value[key] = false; pageControllers.delete(key); } }
 }
 
-async function loadPayrollSources(employeeId: string, more = false) {
-  const key = pageKey("payroll_sources", employeeId);
+async function loadEmployeeList() {
   const current = response.value;
-  const existing = payrollCollections.value[employeeId];
-  if (!current?.data || pageLoading.value[key] || (more && !existing?.page.next_cursor)) return;
-  const generation = requestGeneration, selection = selectionKey();
+  if (!current?.data || loading.value) return;
+  const key = pageKey("employees"), generation = requestGeneration, selection = selectionKey();
+  pageControllers.get(key)?.abort();
   const request = new AbortController(); pageControllers.set(key, request);
   pageLoading.value[key] = true; pageErrors.value[key] = "";
+  const collection = current.data.collections.employees;
+  if (collection) response.value = { ...current, data: { ...current.data,
+    collections: { ...current.data.collections, employees: { ...collection, items: [] } } } };
+  const valid = () => isCurrent(generation, selection) && pageControllers.get(key) === request && response.value?.snapshot_version === current.snapshot_version;
   try {
-    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, {
-      section: "payroll_sources", employee_id: employeeId, employee_filter: filter.value,
-      cursor: more ? existing?.page.next_cursor ?? undefined : undefined,
-      expected_version: current.snapshot_version ?? undefined,
-    });
-    if (!isCurrent(generation, selection) || pageControllers.get(key) !== request || !next.data || response.value?.snapshot_version !== current.snapshot_version) return;
-    const collection = next.data.collections.payroll_sources;
-    if (!collection) return;
-    payrollCollections.value = {
-      ...payrollCollections.value,
-      [employeeId]: { ...collection, items: [...(more ? existing?.items ?? [] : []), ...collection.items] },
-    };
+    const next = await fetchEmployeesDashboard(routePeriod(), request.signal,
+      { section: "employees", employee_filter: filter.value, expected_version: current.snapshot_version });
+    if (!valid() || !next.data || !response.value?.data || !next.data.collections.employees) return;
+    if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
+    const latest = response.value;
+    response.value = { ...latest, data: { ...latest.data!, employee_filter: next.data.employee_filter,
+      collections: { ...latest.data!.collections, employees: next.data.collections.employees } } };
   } catch (caught) {
-    if (!isCurrent(generation, selection) || pageControllers.get(key) !== request) return;
-    if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
+    if (!valid()) return;
+    if (isDashboardSnapshotChanged(caught)) await refreshChanged();
     else pageErrors.value[key] = dashboardErrorMessage(caught);
-  } finally {
-    if (isCurrent(generation, selection) && pageControllers.get(key) === request) {
-      pageLoading.value[key] = false; pageControllers.delete(key);
-    }
-  }
-}
-
-function openEmployee(event: Event, employeeId: string) {
-  if ((event.target as HTMLDetailsElement).open && !payrollCollections.value[employeeId]) void loadPayrollSources(employeeId);
+  } finally { if (valid()) { pageLoading.value[key] = false; pageControllers.delete(key); } }
 }
 
 function companyContribution(item: EstablishedEmployeeItem) {
@@ -312,37 +234,32 @@ function obligationLabel(name: string) {
   return ({ net: "个人应付净额", primary: "期初应付款", tax: "应缴个税", withheld_tax: "已扣个税", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" } as Record<string, string>)[name] ?? "其他应付款";
 }
 
-function payrollObligationLabel(source: PayrollSource, name: string) {
-  return obligationLabel(name === "primary" && source.component ? source.component : name);
-}
-
 function precisionLabel(value: string | null) {
   return value ? `${value}${value.length === 7 ? "（按月确认）" : ""}` : "未提供";
 }
 
-function participationLabel(
-  participating: boolean | null,
-  base: string | null,
-  participatingText: string,
-  absentText: string,
-) {
-  if (participating === null) return "未设置";
-  return participating ? `${participatingText} · 基数 ${formatFen(base)}` : absentText;
-}
 
 watch(
-  () => [route.query.company_id, route.query.period, filter.value],
+  () => [route.query.company_id, route.query.period, filter.value, focusedEmployeeId.value],
   (value, previous) => {
     if (value.every((item, index) => item === previous[index])) return;
-    invalidateRequests();
+    const listOnly = value[0] === previous[0] && value[1] === previous[1] && value[3] === previous[3]
+      && !value[3] && response.value !== null && !loading.value;
+    if (listOnly) {
+      requestGeneration += 1; controller?.abort(); controller = null; clearPageRequests();
+    } else invalidateRequests();
   },
   { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period, filter.value] as const,
-  ([orgId, period, selectedFilter], previous) => {
-    if (previous && orgId === previous[0] && period === previous[1] && selectedFilter === previous[2]) return;
-    if (initialized && orgId && orgId === route.query.company_id) void loadPeriod(routePeriod());
+  () => [context.value?.current_company?.company_id, route.query.period, filter.value, focusedEmployeeId.value] as const,
+  ([orgId, period, selectedFilter, employeeId], previous) => {
+    if (previous && orgId === previous[0] && period === previous[1] && selectedFilter === previous[2] && employeeId === previous[3]) return;
+    if (initialized && orgId && orgId === route.query.company_id) {
+      if (previous && orgId === previous[0] && period === previous[1] && employeeId === previous[3]
+        && !employeeId && response.value && !loading.value) void loadEmployeeList();
+      else void loadPeriod(routePeriod());
+    }
   },
 );
 
@@ -352,1114 +269,104 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 
 <template>
   <section class="employees-page">
-    <DashboardModuleHeader
-      title="员工与薪酬概览"
-      :options="periodOptions"
-      :selected="selectedPeriodKey"
-      :loading="loading"
-      select-label="员工查看月份"
-      @change="selectPeriod"
-      @refresh="refresh"
-    >
-        <template #navigation>
-          <DashboardSectionNav
-      v-if="sectionLinks.length"
-      :items="sectionLinks"
-      :active="activeSection"
-      label="员工内容导航"
-
-      @select="focusSection"
-    />
-        </template>
-      </DashboardModuleHeader>
-
-
-
-    <p v-if="updateNotice" class="muted" role="status">{{ updateNotice }}</p>
-    <div v-if="loading && !response" class="state-panel" role="status">
-      <strong>正在加载员工与薪酬数据…</strong>
-      <span>正在读取所选月份的工资记录。</span>
-    </div>
-
-    <div v-else-if="error" class="state-panel error" role="alert">
-      <strong>员工数据加载失败</strong>
-      <span>{{ error }}</span>
-      <button type="button" @click="refresh">重试</button>
-    </div>
-
-    <div v-else-if="response && !response.data" class="state-panel">
-      <strong>还没有可查看的员工月份</strong>
-      <span>开始记账后，可在这里按月查看员工与薪酬信息。</span>
-    </div>
-
-    <template v-else-if="employees && response?.selected_period">
-      <section id="employees-overview" class="people-hero" aria-labelledby="people-headcount-label" tabindex="-1">
-        <p class="dashboard-hero-eyebrow">
-          {{ response.selected_period.label }}期末 · 全公司
-        </p>
-        <div class="people-cost">
-          <span>本月员工薪酬成本</span>
-          <strong>{{ formatFen(employees.ledger_cost_fen) }}</strong>
-          <small>{{ costNote }}</small>
-          <details v-if="employees.settlement_adjustment_fen === null || fen(employees.settlement_adjustment_fen) !== 0n" class="cost-details">
-            <summary>查看成本组成</summary>
-            <p>逐人薪酬 {{ formatFen(employees.controlled_cost_fen) }} · 结算产生的成本调整 {{ formatFen(employees.settlement_adjustment_fen) }}</p>
-          </details>
-        </div>
-        <div>
-          <span id="people-headcount-label">本月有工资记录</span>
-          <strong class="people-headcount">{{ employees.payroll_count }}<small>人</small></strong>
-          <p class="muted">
-            已登记 {{ employees.registered_count }} 人 · {{ employees.in_period_count === null ? "在册人数未提供" : `已确认在册 ${employees.in_period_count} 人` }}
-            <span v-if="employees.unknown_period_count"> · 在册状态未确认 {{ employees.unknown_period_count }} 人</span>
-          </p>
-        </div>
-        <section class="people-kpi-grid" aria-label="员工薪酬核心指标">
-          <article class="people-kpi">
-            <span>本月应发工资</span>
-            <strong>{{ formatFen(employees.gross_salary_fen) }}</strong>
-            <small v-if="employees.annual_bonus_fen === null || fen(employees.annual_bonus_fen)">
-              另有全年一次性奖金 {{ formatFen(employees.annual_bonus_fen) }}
-            </small>
-          </article>
-          <article class="people-kpi">
-            <span>公司承担社保公积金</span>
-            <strong>{{ formatFen(employerContribution) }}</strong>
-          </article>
-          <article class="people-kpi">
-            <span>个人社保公积金及个税</span>
-            <strong>{{ formatFen(employees.personal_deduction_fen) }}</strong>
-            <small>其中入账个税 {{ formatFen(employees.individual_income_tax_fen) }}</small>
-          </article>
-          <article class="people-kpi">
-            <span>工资应付净额</span>
-            <strong>{{ formatFen(employees.net_salary_fen) }}</strong>
-          </article>
+    <DashboardModuleHeader title="员工与薪酬概览" :options="periodOptions" :selected="selectedPeriodKey" :loading="loading" select-label="员工查看月份" @change="selectPeriod" @refresh="refresh">
+      <template #navigation><DashboardSectionNav v-if="sectionLinks.length" v-show="!loading" :items="sectionLinks" :active="activeSection" label="员工内容导航" @select="focusSection" /></template>
+    </DashboardModuleHeader>
+    <div class="employees-content">
+      <p v-if="updateNotice" class="muted" role="status">{{ updateNotice }}</p>
+      <div v-if="loading" class="state-panel" role="status">正在加载员工与薪酬数据…</div>
+      <div v-else-if="error" class="state-panel" role="alert"><strong>员工数据加载失败</strong><p>{{ error }}</p><button class="control" type="button" @click="refresh">重试</button></div>
+      <div v-else-if="response && !response.data" class="state-panel">还没有可查看的员工月份</div>
+      <div v-if="employees && response?.selected_period" v-show="!loading && !error" class="employee-result">
+        <section id="employees-overview" class="people-hero" tabindex="-1">
+          <p class="dashboard-hero-eyebrow">{{ response.selected_period.label }} · 全公司</p>
+          <div class="people-kpi-grid">
+            <article><span>本月员工薪酬成本</span><strong>{{ formatFen(employees.ledger_cost_fen) }}</strong></article>
+            <article><span>本月公司实际支付工资</span><strong>{{ formatFen(employees.direct_net_payments_fen) }}</strong></article>
+            <article><span>截至月末未付工资</span><strong>{{ formatFen(employees.outstanding_net_fen) }}</strong></article>
+          </div>
+          <p class="muted">本月应付净薪 {{ formatFen(employees.net_salary_fen) }} · 本月代付、抵销等 {{ formatFen(employees.other_net_settlements_fen) }}</p>
+          <p class="muted">本月付款可包含以前月份工资；月末未付按各月份款项汇总。</p>
+          <p class="muted">已登记 {{ employees.registered_count }} 人 · 已确认在册 {{ employees.in_period_count }} 人 · 本月有工资 {{ employees.payroll_count }} 人<span v-if="employees.unknown_period_count"> · 在册状态未确认 {{ employees.unknown_period_count }} 人</span></p>
+          <p v-if="employees.checking" class="muted" role="status">部分薪酬资料由 AI 会计核对中，相关未知金额保留。</p>
         </section>
-      </section>
-
-      <section
-        v-if="attentionItems.length"
-        id="employees-readiness"
-        class="panel attention-panel"
-        aria-labelledby="attention-title"
-        tabindex="-1"
-      >
-        <div class="section-heading">
-          <h2 id="attention-title">薪酬核对事项</h2>
-          <span class="attention-count">{{ attentionItems.length }} 项</span>
-        </div>
-        <ul>
-          <li v-for="item in attentionItems" :key="item">{{ item }}</li>
-        </ul>
-      </section>
-
-      <section class="panel employee-section" aria-labelledby="employee-list-title">
-        <div class="section-heading">
-          <div>
-            <h2 id="employee-list-title" tabindex="-1">员工明细</h2>
-            <p class="list-caption">{{ employees.registered_count }} 人已登记 · {{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p>
+        <section class="panel">
+          <div class="section-heading"><div><h2 id="employee-list-title" tabindex="-1">人员业务清单</h2><p class="muted">{{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p></div>
+            <select v-model="filter" class="control" aria-label="筛选员工"><option value="all">全部员工</option><option value="in_period">已确认在册</option><option value="payroll">本月有工资</option><option value="no_payroll">本月暂无工资</option><option value="ended">已确认不在册</option><option value="unknown">在册状态未确认</option></select>
           </div>
-          <div class="employee-toolbar">
-            <div class="employee-toolbar-controls">
-              <select v-model="filter" class="control" aria-label="筛选员工">
-                <option value="unknown">在册状态未确认</option>
-                <option value="in_period">已确认在册</option>
-                <option value="payroll">本月有工资记录</option>
-                <option value="no_payroll">本月暂无工资记录</option>
-                <option value="ended">已确认不在册</option>
-                <option value="all">全部已登记员工</option>
-              </select>
-              <div class="display-mode-switch" role="group" aria-label="员工明细显示模式">
-                <button type="button" :aria-pressed="employeeDisplayMode === 'cards'" @click="employeeDisplayMode = 'cards'">
-                  卡片
-                </button>
-                <button type="button" :aria-pressed="employeeDisplayMode === 'list'" @click="employeeDisplayMode = 'list'">
-                  列表
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <p v-if="employees.unestablished_count" class="muted">完整范围内 {{ employees.unestablished_count }} 项员工来源的冻结采用未建立，相关金额保持未知。</p>
-
-        <div v-if="!filteredEmployees.length" class="empty-result">
-          {{ filter === 'all' ? '本月没有已登记的员工记录。' : '当前筛选条件下没有员工记录。' }}
-          <button v-if="filter !== 'all'" type="button" class="control" @click="filter = 'all'">查看全部员工</button>
-        </div>
-        <div v-else class="employee-results" :class="{ 'list-results': employeeDisplayMode === 'list' }"
-          :tabindex="employeeDisplayMode === 'list' ? 0 : undefined" aria-label="员工明细记录">
-          <div class="employee-grid" :class="{ 'employee-list': employeeDisplayMode === 'list' }"
-            :style="employeeDisplayMode === 'list' ? employeeListStyle : undefined">
-            <div v-if="employeeDisplayMode === 'list'" class="employee-list-header">
-              <span>员工</span>
-              <span v-for="column in visibleListColumns" :id="`employee-column-${column.key}`" :key="column.key">
-                {{ column.label }}
-              </span>
-              <span aria-hidden="true"></span>
-            </div>
+          <p v-if="employees.unestablished_count" class="muted">{{ employees.unestablished_count }} 项人员资料由 AI 会计核对中；金额暂无法确定。</p>
+          <p v-if="pageLoading[pageKey('employees')] && !filteredEmployees.length" class="muted" role="status">正在读取所选员工清单…</p>
+          <p v-else-if="!filteredEmployees.length && !pageErrors[pageKey('employees')]" class="muted">{{ focusedEmployeeId ? '该员工暂无可展示记录。' : '当前范围没有员工记录。' }}</p>
+          <div class="employee-grid">
             <template v-for="item in filteredEmployees" :key="item.employee_id">
-            <article v-if="item.selection_status === 'unestablished'" class="employee-card dashboard-record-card">
-              <div v-if="employeeDisplayMode === 'list'" class="employee-list-summary">
-                <div><h3>{{ item.name || '姓名未提供' }}</h3><span>冻结采用未建立</span></div>
-                <strong v-for="column in visibleListColumns" :key="column.key" :data-label="column.label">未建立</strong>
-                <span aria-hidden="true"></span>
-              </div>
-              <DashboardBusinessRecords :items="[item]" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" :show-business="false" />
-            </article>
-            <details v-else class="employee-card dashboard-record-card" @toggle="openEmployee($event, item.employee_id)">
-              <summary class="employee-card-summary dashboard-record-card-summary">
-                <div v-if="employeeDisplayMode === 'list'" class="employee-list-summary">
-                  <div class="employee-list-identity">
-                    <span
-                      class="employee-status"
-                      :class="item.wage_tax_scope"
-                      role="img"
-                      :aria-label="`核算情形：${item.wage_tax_scope_label}`"
-                      :title="`核算情形：${item.wage_tax_scope_label}`"
-                    ></span>
-                    <div class="employee-name">
-                      <span>{{ item.code }}</span>
-                      <h3>{{ item.name }}</h3>
-                    </div>
-                  </div>
-                  <div v-for="column in visibleListColumns" :key="column.key" :data-label="column.label" :aria-describedby="`employee-column-${column.key}`">
-                    <strong>{{ formatFen(column.amount(item)) }}</strong>
-                  </div>
-                  <span class="employee-list-expand" aria-hidden="true">⌄</span>
+              <article v-if="item.selection_status === 'unestablished'" :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" class="employee-card dashboard-record-card" tabindex="-1"><h3>{{ item.name }}</h3><p class="muted">AI 会计核对中 · 金额暂无法确定</p></article>
+              <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" tabindex="-1">
+                <summary class="employee-card-summary dashboard-record-card-summary">
+                  <div class="section-heading"><h3>{{ item.name }}</h3><strong>{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
+                  <p class="muted">{{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
+                  <div class="amount-grid"><div><span>本月应付净薪</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong>{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong>{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
+                  <p class="muted">{{ item.has_payroll_activity ? item.payroll_periods.join('、') + ' 工资' : '本月暂无工资记录' }} · 展开查看本月薪酬</p>
+                </summary>
+                <div class="employee-detail">
+                  <h3>本月薪酬</h3>
+                  <dl class="amount-grid"><div><dt>应发工资</dt><dd>{{ formatFen(item.gross_salary_fen) }}</dd></div><div v-if="fen(item.annual_bonus_fen)"><dt>全年一次性奖金</dt><dd>{{ formatFen(item.annual_bonus_fen) }}</dd></div><div><dt>公司社保公积金</dt><dd>{{ formatFen(companyContribution(item)) }}</dd></div><div><dt>个人社保</dt><dd>{{ formatFen(item.employee_social_insurance_fen) }}</dd></div><div><dt>个人公积金</dt><dd>{{ formatFen(item.employee_housing_fund_fen) }}</dd></div><div><dt>已扣个税</dt><dd>{{ formatFen(item.individual_income_tax_fen) }}</dd></div><div><dt>本月代付、抵销等</dt><dd>{{ formatFen(item.other_net_settlements_fen) }}</dd></div></dl>
                 </div>
-                <template v-else>
-                  <div class="employee-card-head">
-                    <div class="employee-name">
-                      <span>{{ item.code }}</span>
-                      <h3>{{ item.name }}</h3>
-                    </div>
-                    <div class="employee-amount">
-                      <span>本月公司成本</span>
-                      <strong>{{ formatFen(item.company_cost_fen) }}</strong>
-                    </div>
-                  </div>
-
-                  <div class="employee-meta">
-                    <span>{{ item.period_state_label }}</span>
-                    <span v-if="item.employment_start_date">入职 {{ precisionLabel(item.employment_start_date) }}</span>
-                    <span v-if="item.employment_end_date">离职 {{ precisionLabel(item.employment_end_date) }}</span>
-                    <span v-if="item.has_payroll_activity">
-                      {{ item.batch_count }} 笔工资记录<span v-if="item.payroll_periods.length">
-                        · 归属期 {{ item.payroll_periods.join("、") }}</span
-                      >
-                    </span>
-                    <span v-else>本月暂无工资记录</span>
-                  </div>
-
-                  <div class="employee-pay-grid">
-                    <div><span>应发工资</span><strong>{{ formatFen(item.gross_salary_fen) }}</strong></div>
-                    <div v-if="item.annual_bonus_fen === null || fen(item.annual_bonus_fen)"><span>全年一次性奖金</span><strong>{{ formatFen(item.annual_bonus_fen) }}</strong></div>
-                    <div><span>公司社保公积金</span><strong>{{ formatFen(companyContribution(item)) }}</strong></div>
-                    <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
-                    <div><span>应付净薪</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
-                  </div>
-
-                  <div class="employee-status-row">
-                    <span class="employee-status" :class="[item.period_state, item.wage_tax_scope]">
-                      {{ item.wage_tax_scope_label }}
-                    </span>
-                    <span>展开查看付款和薪酬明细</span>
-                  </div>
-                </template>
-              </summary>
-
-              <div class="employee-profile">
-                <h3>本月付款概况</h3>
-                <dl class="employee-profile-grid">
-                  <div><dt>本月公司实际支付工资</dt><dd>{{ formatFen(item.direct_net_payments_fen) }}</dd></div>
-                  <div><dt>本月代付、抵销等</dt><dd>{{ formatFen(item.other_net_settlements_fen) }}</dd></div>
-                  <div><dt>本月已处理应付工资合计</dt><dd>{{ formatFen(item.recorded_net_payments_fen) }}</dd></div>
-                </dl>
-                <p class="muted">本月支付可包含以前月份的工资，各月份余额见下方详情。</p>
-                <h3>按工资来源期查看款项</h3>
-                <p class="scope-label">来源期款项 · 截至所选月末</p>
-                <p v-if="pageLoading[pageKey('payroll_sources', item.employee_id)] && !payrollCollections[item.employee_id]" class="muted">正在读取工资来源…</p>
-                <p v-if="pageErrors[pageKey('payroll_sources', item.employee_id)] && !payrollCollections[item.employee_id]" class="source-issue">{{ pageErrors[pageKey('payroll_sources', item.employee_id)] }} <button type="button" @click="loadPayrollSources(item.employee_id)">重新读取</button></p>
-                <details v-for="source in payrollCollections[item.employee_id]?.items ?? []" :key="source.source_id" class="tax-details">
-                  <summary>{{ source.period }} · {{ source.label }} · 查看月末款项</summary>
-                  <p v-for="(issue, issueIndex) in source.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本来源款项尚需核对，请查看精确依据。' }}</p>
-                  <p v-if="source.opening_period" class="muted">期初接续月份 {{ source.opening_period }} · {{ obligationLabel(source.component ?? "primary") }}</p>
-                  <dl v-for="obligation in source.obligations" :key="obligation.key" class="employee-profile-grid">
-                    <div><dt>{{ payrollObligationLabel(source, obligation.name) }}</dt><dd>{{ formatFen(obligation.amount_fen) }}</dd></div>
-                    <div><dt>公司已付款</dt><dd>{{ formatFen(obligation.paid_fen) }}</dd></div>
-                    <div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div>
-                    <div><dt>月末未结金额</dt><dd>{{ formatFen(obligation.remaining_fen) }}</dd></div>
-                  </dl>
-                  <p class="muted">含关联来源明细；本来源金额见上方汇总。逐笔清偿记录请在下方按员工查看。</p>
-                  <details v-if="source.kind === 'payroll' || source.kind === 'payroll_bounded'" class="tax-details">
-                    <summary>查看实际申报记录</summary>
-                    <p class="muted">申报记录与工资实际扣税、税款缴纳分别查看。</p>
-                    <p v-if="!source.declarations.length" class="muted">暂无该税期的申报记录，不能据此判断是否已经申报。</p>
-                    <p v-if="source.declarations.length > 1" class="muted">该税期有多份申报记录，逐项展示供核对。</p>
-                    <div v-for="declaration in source.declarations" :key="declaration.fact_id"><p>{{ declaration.tax_period }} 税期已申报 {{ formatFen(declaration.declared_tax_fen) }} · {{ declaration.date || `${declaration.recording_period} 登记` }}{{ declaration.recorded_later ? "（所选月份之后补充）" : "" }}</p><details><summary>查看采用的申报记录</summary><p>数据库现有记录，第 {{ declaration.revision }} 版 · {{ declaration.fact_id }}</p></details></div>
-                  </details>
-                  <details v-if="source.kind === 'payroll' || source.kind === 'payroll_bounded'" class="tax-details">
-                    <summary>查看代发依据</summary>
-                    <p v-if="!source.disbursements.length" class="muted">本来源没有已记录的代发方案。</p>
-                    <dl v-for="basis in source.disbursements" :key="basis.calculation_id" class="employee-profile-grid">
-                      <div><dt>代发方案登记月份</dt><dd>{{ basis.recording_period }}{{ basis.needs_review ? " · 方案依据需复核" : " · 已确认方案" }}</dd></div>
-                      <div v-if="!basis.matches_displayed_wage"><dt>工资来源说明</dt><dd>方案采用的工资来源与本页展示来源不同，请核对各自依据。</dd></div>
-                      <div><dt>代发目标净薪</dt><dd>{{ formatFen(basis.target_net_fen) }}</dd></div>
-                      <div><dt>暂缓发放</dt><dd>{{ formatFen(basis.held_fen) }}</dd></div>
-                      <div><dt>实际申报个税</dt><dd>{{ formatFen(basis.declared_tax_fen) }}</dd></div>
-                      <div><dt>实际扣缴记录</dt><dd>{{ basis.withholding_recorded ? "已登记" : "尚未登记" }}</dd></div>
-                    </dl>
-                    <p v-if="source.disbursements.length" class="muted">代发方案表示拟发金额，实际付款以上方记录为准。</p>
-                  </details>
-                </details>
-                <DashboardPagination v-if="payrollCollections[item.employee_id]" :page="payrollCollections[item.employee_id].page" :loaded="payrollCollections[item.employee_id].items.length" :loading="pageLoading[pageKey('payroll_sources', item.employee_id)]" :error="pageErrors[pageKey('payroll_sources', item.employee_id)]" @more="loadPayrollSources(item.employee_id, true)" @retry="loadPayrollSources(item.employee_id, true)" />
-                <DashboardSourceHistory v-if="response.snapshot_version" endpoint="employees" section="settlement_events" :entity-id="item.employee_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" title="当前后续事项 · 查看精确关联的清偿事件" @changed="refresh" />
-                <details class="tax-details">
-                  <summary>查看薪酬构成</summary>
-                  <dl class="employee-profile-grid">
-                    <div><dt>公司社保</dt><dd>{{ formatFen(item.employer_social_insurance_fen) }}</dd></div>
-                    <div><dt>公司公积金</dt><dd>{{ formatFen(item.employer_housing_fund_fen) }}</dd></div>
-                    <div><dt>个人社保</dt><dd>{{ formatFen(item.employee_social_insurance_fen) }}</dd></div>
-                    <div><dt>个人公积金</dt><dd>{{ formatFen(item.employee_housing_fund_fen) }}</dd></div>
-                    <div><dt>工资扣税（入账金额）</dt><dd>{{ formatFen(item.individual_income_tax_fen) }}</dd></div>
-                    <div><dt>个人扣减合计</dt><dd>{{ formatFen(item.personal_deduction_fen) }}</dd></div>
-                  </dl>
-                </details>
-                <details v-if="item.tax_details?.length" class="tax-details">
-                  <summary>查看工资扣税依据</summary>
-                  <p class="muted">分别显示规则计算、已有实际扣税记录和工资入账采用的金额。</p>
-                  <dl class="employee-profile-grid">
-                    <div><dt>工资核算使用的报税工资</dt><dd>{{ formatFen(item.tax_reported_salary_fen) }}</dd></div>
-                  </dl>
-                  <div v-for="detail in item.tax_details" :key="detail.calculation_id" class="tax-detail">
-                    <p>{{ detail.period }}{{ detail.reversal ? " · 冲正" : "" }}</p>
-                    <dl class="employee-profile-grid">
-                      <div><dt>按规则计算个税</dt><dd>{{ formatFen(detail.calculated_tax_fen) }}</dd></div>
-                      <div><dt>实际扣税记录</dt><dd>{{ formatFen(detail.actual_withholding_tax_fen) }}</dd></div>
-                      <div><dt>工资入账采用的个税</dt><dd>{{ formatFen(detail.booked_tax_fen) }}</dd></div>
-                    </dl>
-                    <details><summary>查看记录标识</summary><p>{{ detail.calculation_id }} · {{ detail.actual_withholding_fact_id || "暂无实际扣税记录" }}</p></details>
-                  </div>
-                </details>
-                <details class="tax-details">
-                  <summary>查看人员资料与工资设置</summary>
-                  <template v-if="employeeDisplayMode === 'list'">
-                    <div class="employee-meta">
-                      <span>{{ item.period_state_label }}</span>
-                      <span v-if="item.employment_start_date">入职 {{ precisionLabel(item.employment_start_date) }}</span>
-                      <span v-if="item.employment_end_date">离职 {{ precisionLabel(item.employment_end_date) }}</span>
-                      <span v-if="item.has_payroll_activity">
-                        {{ item.batch_count }} 笔工资记录<span v-if="item.payroll_periods.length"> · 归属期 {{ item.payroll_periods.join("、") }}</span>
-                      </span>
-                      <span v-else>本月暂无工资记录</span>
-                    </div>
-                    <dl class="employee-profile-grid employee-list-facts">
-                      <div><dt>本月公司成本</dt><dd>{{ formatFen(item.company_cost_fen) }}</dd></div>
-                      <div class="employee-declaration-detail"><dt>所得适用范围</dt><dd>{{ item.wage_tax_scope_label }}</dd></div>
-                    </dl>
-                  </template>
-                  <p v-if="item.period_state === 'unknown'" class="muted">已有资料尚不能确认本月是否在册，工资记录单独展示。</p>
-                  <dl v-if="item.profile_available" class="employee-profile-grid">
-                    <div>
-                      <dt>社保</dt>
-                      <dd>{{ participationLabel(item.social_insurance_participating, item.social_insurance_base_fen, "参保", "未参保") }}</dd>
-                    </div>
-                    <div>
-                      <dt>住房公积金</dt>
-                      <dd>{{ participationLabel(item.housing_fund_participating, item.housing_fund_base_fen, "参缴", "未参缴") }}</dd>
-                    </div>
-                    <div><dt>个税扣缴起点</dt><dd>{{ precisionLabel(item.tax_withholding_start_date) }}</dd></div>
-                    <div><dt>费用归属</dt><dd>{{ item.expense_areas.join("、") || "未设置" }}</dd></div>
-                    <div><dt>员工档案状态</dt><dd>{{ item.record_status === "active" ? "启用" : item.record_status === "inactive" ? "停用" : "未提供" }}</dd></div>
-                  </dl>
-                  <p v-else class="muted">
-                    暂无本月有效的工资设置资料，已有工资金额仍按记账记录展示。
-                  </p>
-                  <p v-if="!item.profile_available && item.expense_areas.length" class="muted">费用归属：{{ item.expense_areas.join("、") }}</p>
-                </details>
-              </div>
-            </details>
+              </details>
             </template>
           </div>
-        </div>
-      </section>
-
-      <DashboardPagination :page="data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
-
-      <section v-if="personalLaborItems.length" id="labor-sources" class="panel employee-section">
-        <div class="section-heading">
-          <div>
-            <h2 id="labor-title" tabindex="-1">个人劳务</h2>
-            <p class="list-caption">已加载 {{ personalLaborItems.length }} 笔 · 本月费用 {{ formatFen(workforce?.personal_labor.total_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }}</p>
-          </div>
-          <div class="employee-toolbar">
-            <div class="display-mode-switch" role="group" aria-label="个人劳务明细显示模式">
-              <button type="button" :aria-pressed="laborDisplayMode === 'cards'" @click="laborDisplayMode = 'cards'">卡片</button>
-              <button type="button" :aria-pressed="laborDisplayMode === 'list'" @click="laborDisplayMode = 'list'">列表</button>
-            </div>
-          </div>
-        </div>
-        <div class="employee-results" :class="{ 'list-results': laborDisplayMode === 'list' }" :tabindex="laborDisplayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
-          <div class="employee-grid" :class="{ 'employee-list': laborDisplayMode === 'list' }" :style="laborDisplayMode === 'list' ? laborListStyle : undefined">
-            <div v-if="laborDisplayMode === 'list'" class="employee-list-header">
-              <span>劳务对象</span>
-              <span v-for="column in visibleLaborListColumns" :id="`labor-column-${column.key}`" :key="column.key">{{ column.label }}</span>
-              <span aria-hidden="true"></span>
-            </div>
-            <details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card">
-              <summary class="employee-card-summary dashboard-record-card-summary">
-                <div v-if="laborDisplayMode === 'list'" class="employee-list-summary">
-                  <div class="employee-list-identity">
-                    <span class="employee-status" role="img" aria-label="个人劳务"></span>
-                    <div class="employee-name"><span>{{ labor.period }}</span><h3>{{ labor.name }}</h3></div>
-                  </div>
-                  <div v-for="column in visibleLaborListColumns" :key="column.key" :data-label="column.label" :aria-describedby="`labor-column-${column.key}`"><strong>{{ formatFen(column.amount(labor)) }}</strong></div>
-                  <span class="employee-list-expand" aria-hidden="true">⌄</span>
-                </div>
-                <template v-else>
-                  <div class="employee-card-head">
-                    <div class="employee-name"><span>{{ labor.period }}</span><h3>{{ labor.name }}</h3></div>
-                    <div class="employee-amount"><span>劳务报酬</span><strong>{{ formatFen(labor.gross_fen) }}</strong></div>
-                  </div>
-                  <div class="employee-meta"><span>{{ labor.capitalized ? "计入资产或项目" : "计入本月费用" }}</span><span>{{ labor.withholding_label }}</span></div>
-                  <div class="employee-pay-grid">
-                    <div><span>劳务报酬</span><strong>{{ formatFen(labor.gross_fen) }}</strong></div>
-                    <div><span>入账扣税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div>
-                    <div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div>
-                    <div><span>归集</span><strong>{{ labor.capitalized ? "资产或项目" : "本月费用" }}</strong></div>
-                  </div>
-                  <div class="employee-status-row"><span class="employee-status">{{ labor.withholding_label }}</span><span>展开查看清偿和扣税明细</span></div>
-                </template>
-              </summary>
-              <div class="employee-profile">
-                <p v-for="(issue, issueIndex) in labor.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本来源款项尚需核对，请查看精确依据。' }}</p>
-                <dl v-for="obligation in labor.obligations" :key="obligation.key" class="employee-profile-grid">
-                  <div><dt>{{ obligationLabel(obligation.name) }}</dt><dd>{{ formatFen(obligation.amount_fen) }}</dd></div>
-                  <div><dt>公司已付款</dt><dd>{{ formatFen(obligation.paid_fen) }}</dd></div>
-                  <div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div>
-                  <div><dt>月末未结金额</dt><dd>{{ formatFen(obligation.remaining_fen) }}</dd></div>
-                </dl>
-                <p class="muted">含关联来源明细；本来源金额见上方汇总。</p>
-                <BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看精确关联的清偿事件" @changed="refresh" />
-                <details class="tax-details">
-                  <summary>查看劳务扣税依据</summary>
-                  <p>{{ labor.withholding_label }}</p>
-                  <dl class="employee-profile-grid">
-                    <div><dt>按规则计算税额</dt><dd>{{ labor.theoretical_tax_fen === null ? "暂无测算记录" : formatFen(labor.theoretical_tax_fen) }}</dd></div>
-                    <div><dt>入账采用的扣税额</dt><dd>{{ formatFen(labor.booked_tax_fen) }}</dd></div>
-                  </dl>
-                </details>
-              </div>
-            </details>
-          </div>
-        </div>
-        <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
-      </section>
-
-      <details class="panel identity-note">
-        <summary>查看人员与金额说明</summary>
-        <p>{{ employees.identity_note }}</p>
-        <p v-if="employees.profile_missing_count">{{ employees.profile_missing_count }} 名已确认在册人员暂无本月有效的工资设置资料。</p>
-        <p>本月金额按入账月份汇总，可能包含以前月份的工资调整，所属月份可在员工详情中查看。</p>
-        <p>工资应付净额与实际付款分别展示；个人劳务中计入资产或项目的金额，不重复计入本月人员费用。</p>
-      </details>
-    </template>
+          <DashboardPagination :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
+        </section>
+        <section v-if="personalLaborItems.length" class="panel">
+          <h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }} · 已加载 {{ personalLaborItems.length }} 笔</p>
+          <div class="employee-grid"><details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card"><summary class="employee-card-summary dashboard-record-card-summary"><div class="section-heading"><h3>{{ labor.name }}</h3><strong>{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p></summary><div class="employee-detail"><p v-if="labor.checking" class="muted">AI 会计核对中</p><div v-for="obligation in labor.obligations" :key="obligation.key"><strong>{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }}</strong><p class="muted">公司已付 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未付 {{ formatFen(obligation.remaining_fen) }}</p></div><BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看收付款事项" @changed="refreshChanged" /></div></details></div>
+          <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
+        </section>
+      </div>
+    </div>
   </section>
 </template>
 
 <style scoped>
-summary:focus-visible,
-.employee-results:focus-visible,
-[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-[id] { scroll-margin-top: var(--dashboard-section-offset, 72px); }
-.scope-label { margin: 10px 0; color: var(--muted); font-size: 12px; }
-.source-issue { color: var(--warning); }
-.employee-profile h3 { margin: 16px 0 10px; font-size: 14px; }
-.employee-profile-grid dd, .employee-pay-grid strong, .people-cost strong, .people-kpi strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.employees-page {
-  width: min(calc(100% - 48px), 1320px);
-  min-height: 100%;
-  margin: 0 auto;
-  padding: 25px 0 46px;
-}
-
-.muted,
-small {
-  color: var(--muted);
-}
-
-.panel,
-.state-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--surface);
-
-}
-
-.state-panel {
-  display: grid;
-  gap: 7px;
-  padding: 28px;
-  border-radius: var(--radius-panel);
-}
-
-.state-panel span {
-  color: var(--muted);
-}
-
-.state-panel.error {
-  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
-}
-
-.state-panel button,
-.control {
-  min-height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-
-.state-panel button {
-  width: max-content;
-  margin-top: 5px;
-  padding: 0 14px;
-  border: 0;
-  background: var(--accent);
-  color: var(--surface);
-  cursor: pointer;
-}
-
-.people-hero {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px 40px;
-  padding: 25px 28px;
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%),
-    linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));
-
-}
-
-.people-hero > .dashboard-hero-eyebrow {
-  grid-column: 1 / -1;
-  margin: 0 0 -12px;
-}
-
-.people-hero > div,
-.employee-name,
-.employee-results,
-.employee-profile-grid > div {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.people-hero p {
-  margin-block: 7px 0;
-  font-size: 12px;
-}
-
-/* 摘要卡左右两列的标题：成本块与人数据块，统一为 --muted / 12px / 750。 */
-.people-hero > div > span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.people-headcount {
-  display: block;
-  margin: 7px 0 3px;
-  color: var(--accent);
-  font-size: clamp(28px, 3.2vw, 42px);
-  line-height: 1.15;
-  letter-spacing: -0.04em;
-}
-
-.people-headcount small {
-  margin-left: 8px;
-  font-size: 16px;
-  letter-spacing: 0;
-}
-
-.people-cost {
-  display: grid;
-  align-content: start;
-  align-self: stretch;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.people-cost span,
-.people-cost small,
-.people-kpi span,
-.people-kpi small {
-  display: block;
-}
-
-.people-cost span,
-.people-kpi span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.people-cost small,
-.people-kpi small {
-  font-size: 11px;
-}
-
-.people-cost strong {
-  display: block;
-  margin: 7px 0;
-  color: var(--accent);
-  font-size: clamp(28px, 3.2vw, 42px);
-
-  line-height: 1.15;
-}
-
-.people-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px 28px;
-  margin-top: 8px;
-
-  overflow: visible;
-
-  border: 0;
-
-  border-radius: 0;
-
-  background: transparent;
-
-  grid-column: 1 / -1;
-}
-
-.people-kpi {
-  grid-template-rows: auto auto 1fr;
-  position: relative;
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  align-content: start;
-  gap: 6px;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-
-
-  border-left: 0;
-}
-
-.people-kpi strong {
-  grid-row: 2;
-  align-self: start;
-  display: block;
-  margin: 4px 0;
-  color: var(--text);
-  font-size: clamp(20px, 2vw, 26px);
-  line-height: 1.15;
-  letter-spacing: -0.025em;
-
-  font-variant-numeric: tabular-nums;
-
-  overflow-wrap: anywhere;
-}
-
-.attention-panel,
-.employee-section,
-.identity-note {
-  margin-top: 12px;
-  padding: 18px;
-}
-
-.attention-panel {
-  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
-}
-
-.attention-panel ul {
-  display: grid;
-  gap: 8px;
-  margin: 16px 0 0;
-  padding-left: 22px;
-}
-
-.section-heading,
-.employee-toolbar,
-.employee-card-head,
-.employee-status-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.section-heading h2,
-.employee-name h3 {
-  margin: 0;
-}
-
-.section-heading h2 {
-  font-size: 20px;
-}
-
-.section-heading > strong {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.attention-count {
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-/* 与资金页标题下那行小字同一套：13px / --muted / 行高 1.5。 */
-.list-caption {
-  margin: 3px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-/* 与小字同组的标题行：下对齐，并与下方记录保持 16px 间距。 */
-.section-heading:has(.list-caption) {
-  align-items: flex-end;
-  margin-bottom: 16px;
-}
-
-/* 标题行内：左列标题+小字，右侧筛选与显示方式，同一行对齐。 */
-.employee-toolbar {
-  align-items: center;
-  margin: 0;
-}
-
-.employee-toolbar p {
-  margin: 0;
-}
-
-.employee-toolbar select {
-  min-width: 230px;
-  padding: 0 12px;
-}
-
-.employee-toolbar-controls,
-.display-mode-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.display-mode-switch {
-  display: grid;
-  flex-shrink: 0;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface-soft);
-}
-
-.display-mode-switch button {
-  min-height: 34px;
-  padding: 0 13px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.display-mode-switch button[aria-pressed="true"] {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.display-mode-switch button:focus-visible,
-.employee-card-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.employee-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 10px;
-}
-
-.employee-grid.employee-list {
-  grid-template-columns: minmax(0, 1fr);
-  min-width: var(--employee-list-min-width);
-  gap: 0;
-}
-
-.list-results {
-  overflow-x: auto;
-}
-
-.employee-list-header,
-.employee-list-summary {
-  display: grid;
-  grid-template-columns: var(--employee-list-columns);
-  align-items: center;
-  gap: 10px;
-}
-
-.employee-list-header {
-  padding: 10px 17px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.employee-list .employee-card {
-  border-radius: 0;
-  border-width: 0 0 1px;
-  background: var(--surface);
-}
-
-.employee-list .employee-card-summary {
-  padding: 12px 17px;
-}
-
-.employee-list > article > .employee-list-summary {
-  padding: 12px 17px;
-}
-
-.employee-list .employee-profile-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.employee-list .employee-list-facts {
-  margin-bottom: 16px;
-}
-
-.employee-list-summary > div {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-  overflow-wrap: anywhere;
-}
-
-.employee-list-summary > .employee-list-identity {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.employee-list-header > span:not(:first-child):not(:last-child),
-.employee-list-summary > div:not(:first-child),
-.employee-list-summary > strong {
-  text-align: right;
-}
-
-.employee-list .employee-declaration-detail {
-  grid-column: span 3;
-}
-
-.employee-list .employee-status.not_applicable::before {
-  background: var(--muted);
-}
-
-.employee-list .employee-status.mixed::before {
-  background: var(--info);
-}
-
-.employee-list-summary strong,
-.employee-list-summary h3 {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.employee-list-expand {
-  color: var(--muted);
-  font-size: 20px;
-}
-
-.employee-list .employee-card[open] .employee-list-expand {
-  transform: rotate(180deg);
-}
-
-.employee-card > summary:not(.employee-card-summary) {
-  padding: 16px;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-
-.employee-name,
-.employee-amount {
-  display: grid;
-  gap: 3px;
-}
-
-.employee-name span,
-.employee-amount span,
-.employee-meta,
-.employee-status-row {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.employee-amount {
-  min-width: 0;
-  justify-items: end;
-  overflow-wrap: anywhere;
-}
-
-.employee-amount strong {
-  font-size: 21px;
-}
-
-.employee-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin: 12px 0;
-}
-
-.employee-pay-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  overflow: hidden;
-  padding: 0;
-  border-radius: 9px;
-  background: var(--surface-soft);
-}
-
-.employee-pay-grid > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-  padding: 10px;
-  background: transparent;
-}
-
-.employee-pay-grid span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.employee-pay-grid strong {
-  overflow-wrap: anywhere;
-  font-size: 14px;
-}
-
-.employee-status-row {
-  align-items: center;
-  margin-top: 12px;
-}
-
-.employee-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.employee-status::before {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--accent);
-  content: "";
-}
-
-.employee-status.not_started::before,
-.employee-status.ended::before,
-.employee-status.none::before {
-  background: var(--muted);
-}
-
-.employee-status.contributions_only::before {
-  background: var(--warning);
-}
-
-.employee-profile {
-  margin: 0 16px 16px;
-  padding-top: 12px;
-  border-top: 0;
-
-  padding: 14px;
-
-  border-radius: var(--radius-control);
-
-  background: var(--surface-soft);
-}
-
-.employee-profile-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 14px;
-  margin: 0;
-}
-
-.employee-profile > p {
-  margin: 0;
-}
-
-.employee-profile-grid div {
-  display: grid;
-  gap: 2px;
-}
-
-.employee-profile-grid dt {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.employee-profile-grid dd {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.tax-details {
-  min-width: 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  overflow-wrap: anywhere;
-}
-
-.tax-details > summary,
-.identity-note > summary,
-.cost-details > summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.tax-details > .employee-profile-grid {
-  margin-top: 12px;
-}
-
-.cost-details {
-  margin-top: 8px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.empty-result,
-.identity-note {
-  color: var(--muted);
-}
-
-.empty-result {
-  padding: 24px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface-soft);
-  text-align: center;
-}
-
-.identity-note {
-  font-size: 13px;
-}
-
-@media (max-width: 1080px) {
-  .people-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .employee-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 1020px) {
-  .employee-grid.employee-list { min-width: 0; }
-  .employee-list-header { display: none; }
-  .employee-list-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .employee-list-summary > .employee-list-identity, .employee-list-summary > div:first-child { grid-column: 1 / -1; }
-  .employee-list-summary > div[data-label]::before, .employee-list-summary > strong[data-label]::before { display: block; content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: normal; }
-  .employee-list-summary > div[data-label]::before, .employee-list-summary > strong[data-label]::before { text-align: left; }
-  .employee-list .employee-profile { margin-inline: 12px; }
-  .employee-list .employee-card { border: 1px solid var(--line); border-radius: var(--radius-control); margin-bottom: 8px; }
-}
-
-@media (max-width: 720px) {
-  .employees-page {
-    width: min(calc(100% - 24px), 1320px);
-    padding: 16px 0 24px;
-  }
-
-  .people-hero,
-  .people-kpi-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .people-hero {
-    gap: 13px;
-    padding: 19px;
-    border-radius: 17px;
-  }
-
-  .employee-toolbar,
-  .employee-card-head,
-  .employee-status-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .employee-toolbar select {
-    width: 100%;
-    min-width: 0;
-    min-height: 44px;
-  }
-
-  .employee-toolbar-controls {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .display-mode-switch button {
-    min-height: 44px;
-  }
-
-  .employee-amount {
-    justify-items: start;
-    white-space: normal;
-  }
-
-  .employee-list .employee-profile-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .employee-list .employee-declaration-detail {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 520px) {
-  .employee-pay-grid,
-  .employee-profile-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.employee-section { margin-top: 40px; padding: 0; border: 0; background: transparent; }
-.employee-results.list-results { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
-.people-hero .people-kpi-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
-.people-hero .people-kpi-grid strong { font-variant-numeric: tabular-nums; }
-@media (max-width: 760px) {
-  .people-hero .people-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-}
+.employee-result { display: contents; }
+.employees-page { width: min(calc(100% - 48px), 1320px); min-height: 100%; margin: 0 auto; padding: 25px 0 46px; }
+.employees-content { min-width: 0; }
+.people-hero { display: grid; gap: 24px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); }
+.people-hero > .dashboard-hero-eyebrow { margin: 0 0 -12px; }
+.people-hero > p.muted { margin: -16px 0 0; font-size: 12px; }
+.people-kpi-grid, .amount-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+.people-kpi-grid { gap: 20px 28px; margin-top: 8px; align-items: start; }
+.people-kpi-grid article, .amount-grid > div { display: grid; min-width: 0; gap: 6px; }
+.people-kpi-grid span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.people-kpi-grid strong { margin: 4px 0; font-size: clamp(20px,2vw,26px); line-height: 1.15; letter-spacing: -.025em; color: var(--text); }
+.people-kpi-grid article:first-child strong { color: var(--accent); font-size: clamp(28px,3.2vw,42px); }
+.muted, .amount-grid span, dt, small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.panel { min-width: 0; margin-top: 40px; }
+.panel > h2, .section-heading h2 { font-size: 20px; }
+.section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.section-heading h2, .section-heading h3 { margin: 0; }
+.section-heading strong { display: grid; gap: 4px; }
+.employee-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 16px; align-items: start; }
+.employee-card { min-width: 0; }
+.employee-card-summary, article.employee-card { padding: 16px; cursor: pointer; }
+.employee-card-summary h3 { font-size: 16px; }
+.employee-card-summary > .section-heading > strong { min-width: 0; max-width: 100%; font-size: 21px; text-align: right; }
+.employee-card-summary > .section-heading small { font-size: 11px; font-weight: 400; }
+.employee-card-summary > p { margin: 12px 0; }
+.employee-card-summary > p:last-child { margin-bottom: 0; }
+.amount-grid { gap: 8px; padding: 0; border-radius: 9px; background: var(--surface-soft); }
+.amount-grid > div { gap: 3px; padding: 10px; }
+.amount-grid span, .amount-grid dt { font-size: 11px; }
+.amount-grid strong, .amount-grid dd { font-size: 14px; }
+.employee-detail { border-top: 1px solid var(--line); padding: 16px; }
+.employee-detail h3 { font-size: 15px; }
+dd { margin: 0; }
+.control { min-height: 44px; padding: 0 12px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+strong, p, h3, dd { overflow-wrap: anywhere; }
+strong, dd { font-variant-numeric: tabular-nums; }
+[tabindex="-1"] { scroll-margin-top: 76px; }
+#employee-card-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 900px) { .employee-grid { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .employees-page { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .people-hero { padding: 19px; border-radius: 17px; } .people-kpi-grid, .amount-grid { grid-template-columns: 1fr; } .section-heading { flex-direction: column; } .employee-card-summary > .section-heading > strong { text-align: left; } .control { width: 100%; } }
 </style>

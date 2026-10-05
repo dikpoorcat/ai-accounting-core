@@ -9,9 +9,11 @@ from dataclasses import dataclass
 
 import pytest
 from close_storage_fixture import replace_stored_manifest
+from draft_bundle_fixture import synthetic_draft_bundle
 from test_integrity_content import damage
 from test_new_company_reports import profile, zero_tax
 
+from ai_accounting.kernel import schema_bundle
 from ai_accounting.kernel.backup import run_backup_jobs, verify_portable
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.opening import CATEGORIES
@@ -67,7 +69,11 @@ class ReplayBook:
 
 
 @pytest.fixture
-def replay_book(tmp_path):
+def replay_book(tmp_path, monkeypatch):
+    bundle = synthetic_draft_bundle(tmp_path / "replay-draft-contracts")
+    # Keep the explicit test-only replay capability on a draft company through
+    # every service restart, regardless of the installed production release.
+    monkeypatch.setattr(schema_bundle, "production_bundle", lambda: bundle)
     root = tmp_path / "synthetic-replay-only"
     bootstrap = LocalService(root)
     bootstrap.security.provision("owner", PASSWORD)

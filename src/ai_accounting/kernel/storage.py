@@ -304,6 +304,26 @@ class Store:
             raise KernelError("company_mismatch", "database does not match bound company")
 
     @contextmanager
+    def _snapshot_connection(self):
+        """Borrow the current reader's private resident snapshot connection."""
+        from . import close_storage, publication
+        from .content_history_context import close_reader, publication_reader
+
+        if (
+            self.read_pool is not None
+            and getattr(self.registry, "content_version", None) != 1
+            and close_reader() is close_storage
+            and publication_reader() is publication
+        ):
+            if not self.path.is_file():
+                raise KernelError("company_missing", "company database is missing")
+            with self.read_pool.borrow(self, _owned_snapshot=True) as connection:
+                yield connection
+        else:
+            with self.connection(read_only=True) as connection:
+                yield connection
+
+    @contextmanager
     def connection(self, *, read_only=False):
         if not self.path.is_file():
             raise KernelError("company_missing", "company database is missing")
@@ -375,6 +395,14 @@ class Store:
         )
         if len(rows) != len(identifiers):
             raise KernelError("unknown_fact", "fact revision does not exist")
+        return self._fact_data_many_from_headers(connection, rows)
+
+    def _fact_data_many_from_headers(self, connection, rows) -> dict[str, dict]:
+        """Decode current typed storage using this batch's exact source headers.
+
+        Internal callers already selected and checked the requested fact set.
+        Released storage retains its separate fact_data_many reader.
+        """
         by_kind = {}
         for row in rows:
             by_kind.setdefault(row["kind"], []).append(row["id"])
@@ -404,7 +432,7 @@ class Store:
                     result[row["revision_id"]][name].append(
                         decode_fields(item, {key: row[key] for key in item.model_fields})
                     )
-        if len(result) != len(identifiers):
+        if len(result) != len(rows):
             raise KernelError("unknown_fact", "typed fact data does not exist")
         return result
 
@@ -584,6 +612,20 @@ class Store:
         sync_discovery_fact(connection, version.id)
 
     @staticmethod
+    def _verify_calculation_identity(row):
+        """Check consumed scalar headers against their original fact identity."""
+        if (
+            row["id"] is None
+            or row["subject_id"] != row["original_subject_id"]
+            or row["kind"] != row["original_kind"]
+            or row["period"] != row["original_period"]
+        ):
+            raise KernelError(
+                "content_integrity_failed", "核算来源身份与原始事实不匹配",
+                component="calculation", record_id=row["id"],
+            )
+
+    @staticmethod
     def calculation(row):
         try:
             values = loads_unique(row["outcome"])["values"]
@@ -652,26 +694,76 @@ class Store:
                     "CROSS JOIN fact_revision f ON f.id=ids.id ORDER BY ids.slot,f.subject_id"
                 )
             else:
+                # Authenticate candidate headers before any kind/cutoff can
+                # hide a damaged exact reference or current scope owner. Only
+                # scalar identities are read here; result bodies remain in
+                # the existing filtered selection below.
+                header_query = query[:-len(", ids AS (")] + (
+                    " SELECT c.id,c.subject_id,c.kind,c.period,"
+                    "f.subject_id original_subject_id,s.kind original_kind,"
+                    "f.period original_period,selected.head_subject_id "
+                    "FROM (SELECT c.id,NULL head_subject_id,1 exact_reference FROM requests q "
+                    "CROSS JOIN calculation c ON c.id=substr(q.key,2) "
+                    "WHERE substr(q.key,1,1)='#' UNION ALL "
+                    "SELECT a.calculation_id,a.subject_id,0 FROM requests q "
+                    "CROSS JOIN subject own ON own.kind=q.kind "
+                    "CROSS JOIN calculation_current a ON a.subject_id=own.id "
+                    "WHERE q.key='*' UNION ALL "
+                    "SELECT a.calculation_id,a.subject_id,0 FROM requests q "
+                    "CROSS JOIN calculation_scope x "
+                    "ON x.kind=q.kind AND x.scope_key=q.key "
+                    "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
+                    "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' AND q.kind<>'*' UNION ALL "
+                    "SELECT a.calculation_id,a.subject_id,0 FROM requests q "
+                    "CROSS JOIN calculation_scope x ON x.scope_key=q.key "
+                    "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
+                    "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' AND q.kind='*') selected "
+                    "LEFT JOIN calculation c ON c.id=selected.id "
+                    "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+                    "LEFT JOIN subject s ON s.id=f.subject_id "
+                    "WHERE selected.exact_reference OR NOT EXISTS("
+                    "SELECT 1 FROM identity_correction_item i "
+                    "WHERE i.subject_id=selected.head_subject_id AND i.action='supersede' "
+                    "AND i.rowid=(SELECT max(j.rowid) FROM identity_correction_item j "
+                    "WHERE j.subject_id=i.subject_id))"
+                )
+                for header in connection.execute(header_query, (canonical(specifications),)):
+                    self._verify_calculation_identity(header)
+                    if (header["head_subject_id"] is not None
+                            and header["subject_id"] != header["head_subject_id"]):
+                        raise KernelError(
+                            "content_integrity_failed", "当前核算头与业务身份不匹配",
+                            component="calculation", record_id=header["id"],
+                        )
                 query += (
                     "SELECT q.slot,c.id FROM requests q CROSS JOIN calculation c "
-                    "ON c.id=substr(q.key,2) CROSS JOIN calculation_seal z "
+                    "ON c.id=substr(q.key,2) CROSS JOIN fact_revision f ON f.id=c.fact_id "
+                    "CROSS JOIN subject s ON s.id=f.subject_id CROSS JOIN calculation_seal z "
                     "ON z.calculation_id=c.id WHERE substr(q.key,1,1)='#' "
-                    "AND (q.kind='*' OR q.kind=c.kind) AND c.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,c.id FROM requests q CROSS JOIN calculation c ON c.kind=q.kind "
-                    "CROSS JOIN calculation_current a ON a.calculation_id=c.id "
-                    "WHERE q.key='*' AND c.period<q.cutoff UNION ALL "
+                    "AND (q.kind='*' OR q.kind=s.kind) AND f.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,c.id FROM requests q CROSS JOIN subject s ON s.kind=q.kind "
+                    "CROSS JOIN calculation_current a ON a.subject_id=s.id "
+                    "CROSS JOIN calculation c ON c.id=a.calculation_id "
+                    "CROSS JOIN fact_revision f ON f.id=c.fact_id "
+                    "WHERE q.key='*' AND f.period<q.cutoff UNION ALL "
                     "SELECT q.slot,c.id FROM requests q "
                     "CROSS JOIN calculation_scope x ON x.kind=q.kind AND x.scope_key=q.key "
                     "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
-                    "CROSS JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
+                    "CROSS JOIN calculation c ON c.id=a.calculation_id "
+                    "CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE q.key<>'*' "
                     "AND substr(q.key,1,1)<>'#' AND q.kind<>'*' "
-                    "AND c.period<q.cutoff UNION ALL SELECT q.slot,c.id FROM requests q "
+                    "AND f.period<q.cutoff UNION ALL SELECT q.slot,c.id FROM requests q "
                     "CROSS JOIN calculation_scope x ON x.scope_key=q.key "
                     "CROSS JOIN calculation_current a ON a.calculation_id=x.calculation_id "
-                    "CROSS JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
+                    "CROSS JOIN calculation c ON c.id=a.calculation_id "
+                    "CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE q.key<>'*' "
                     "AND substr(q.key,1,1)<>'#' AND q.kind='*' "
-                    "AND c.period<q.cutoff) SELECT ids.slot,c.* FROM ids "
+                    "AND f.period<q.cutoff) SELECT ids.slot,c.*,"
+                    "f.subject_id original_subject_id,s.kind original_kind,"
+                    "f.period original_period FROM ids "
                     "CROSS JOIN calculation c ON c.id=ids.id "
+                    "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+                    "LEFT JOIN subject s ON s.id=f.subject_id "
                     "ORDER BY ids.slot,c.period,c.subject_id"
                 )
             rows = list(connection.execute(query, (canonical(specifications),)))
@@ -699,6 +791,10 @@ class Store:
                     else self.facts(connection, identifiers)
                 )
             else:
+                # Authenticate the whole selected batch before exposing any
+                # Calculation values, including named-scope/member reads.
+                for row in rows:
+                    self._verify_calculation_identity(row)
                 objects = {row["id"]: self.calculation(row) for row in rows}
             grouped = [[] for _ in group]
             for row in rows:

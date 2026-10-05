@@ -194,7 +194,14 @@ class AdoptedSourceFact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     subject_id: str = Field(min_length=1)
     fact_id: str = Field(min_length=1)
-    kind: str = Field(min_length=1)
+    kind: str = Field(
+        min_length=1,
+        description=(
+            "实际申报资料的事实类型：个税使用payroll_tax_declaration_actual，"
+            "社保使用含已申报明细的payroll_contribution_actual；"
+            "工资等正式核算结果应引用accepted_calculations，不放入source_facts"
+        ),
+    )
 
 
 class ExternalCompletion(Fact):
@@ -208,8 +215,17 @@ class ExternalCompletion(Fact):
     obligation_kind: ObligationKind
     start_period: YearMonth
     end_period: YearMonth
-    source_facts: tuple[AdoptedSourceFact, ...] = ()
-    accepted_calculations: tuple[AcceptedCalculation, ...] = ()
+    source_facts: tuple[AdoptedSourceFact, ...] = Field(
+        default=(),
+        description=(
+            "实际采用的申报资料事实版本；个税只接受payroll_tax_declaration_actual，"
+            "社保只接受已申报的payroll_contribution_actual，其余义务此项为空。"
+            "实际提交原件另由adopted_evidence_digests引用"
+        ),
+    )
+    accepted_calculations: tuple[AcceptedCalculation, ...] = Field(
+        default=(), description="实际办理时确实采用的正式核算精确版本，例如已发布工资；不补造计算"
+    )
     adopted_evidence_digests: tuple[str, ...] = Field(
         default=(),
         description="原提交资料的不可变凭据摘要；须包含在本次事实的证据中",
@@ -517,8 +533,12 @@ class ExternalBasisReview(Fact):
     obligation_kind: ObligationKind
     start_period: YearMonth
     end_period: YearMonth
-    source_facts: tuple[AdoptedSourceFact, ...] = ()
-    adopted_calculations: tuple[AcceptedCalculation, ...] = ()
+    source_facts: tuple[AdoptedSourceFact, ...] = Field(
+        default=(), description="须与本次精确completion_fact_id的source_facts完全相同"
+    )
+    adopted_calculations: tuple[AcceptedCalculation, ...] = Field(
+        default=(), description="须与本次精确completion_fact_id的accepted_calculations完全相同"
+    )
     reviewed_calculations: tuple[AcceptedCalculation, ...]
     review_result: Literal["matched", "difference_identified", "unestablished"]
 

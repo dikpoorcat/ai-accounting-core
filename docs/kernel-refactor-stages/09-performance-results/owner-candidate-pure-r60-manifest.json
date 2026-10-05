@@ -1,0 +1,74 @@
+{
+  "kind": "raw_synthetic_receipts",
+  "scope": "Sealed isolated released r60 candidate provenance/inventory, main-12 full verification and pure browser timing with 30 successful refreshes per page.",
+  "limitations": [
+    "Isolated candidate is not repository released-v1 delivery. Overall pure timing remains over_target: brief 10/30 at or above 500 ms.",
+    "Private r60 overlays are separate diagnostic evidence and are not represented as sealed-candidate acceptance.",
+    "These receipts cover main-12 only; larger-scale and final delivery gates remain unverified."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-candidate-owner-r60.log",
+      "source_mtime_utc": "2026-10-01T23:39:33.005412+00:00",
+      "archive": "owner-candidate-pure-r60-stage9-candidate-owner-r60.log.gz",
+      "bytes": 1145,
+      "sha256": "8bb87c0a9a5a3504f20daeae3af430de797b2d537fb371484937306df59248db",
+      "archive_bytes": 603,
+      "archive_sha256": "a7cfb3080169f6e2156da46db76b09adaef121579b1a634291b407898cac73b0"
+    },
+    {
+      "source": ".tmp/stage9-build-candidate-owner-r60/candidate-provenance.json",
+      "source_mtime_utc": "2026-10-01T23:39:32.997711+00:00",
+      "archive": "owner-candidate-pure-r60-candidate-provenance.json.gz",
+      "bytes": 72441,
+      "sha256": "4ce02e3d4cb330680ff50bd6b2fae51f8e27387c5eceddffae4a531f2ef1c903",
+      "archive_bytes": 29690,
+      "archive_sha256": "59c59d1676b7b64563660d4b27b2e33d0fed1d298ec2d972d50e85ed3995d4d0"
+    },
+    {
+      "source": ".tmp/stage9-build-source-owner-r60-release/source-manifest.json",
+      "source_mtime_utc": "2026-10-01T23:39:32.978714+00:00",
+      "archive": "owner-candidate-pure-r60-source-manifest.json.gz",
+      "bytes": 71286,
+      "sha256": "849fe661ae57afe4e7741f4871e171166b0dac6171d490069c5c2e59bea8883d",
+      "archive_bytes": 29200,
+      "archive_sha256": "33e35d4a010a0546e975ff8ea838052cc5f05a17290e28c0e22a8d0bb58f983d"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r60-verified.json",
+      "source_mtime_utc": "2026-10-01T23:42:24.708614+00:00",
+      "archive": "owner-candidate-pure-r60-stage9-owner-main12-r60-verified.json.gz",
+      "bytes": 9681,
+      "sha256": "3536ac2823a942a0fea30c634b87882fcfdb6e426fcafd51d8b3b73b9e3d6871",
+      "archive_bytes": 2810,
+      "archive_sha256": "e882cc5acb09d10bc3ddf5e4f2a05f163615d5a2cf762a97993a4a46374854d0"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-r60-verified.log",
+      "source_mtime_utc": "2026-10-01T23:42:24.713618+00:00",
+      "archive": "owner-candidate-pure-r60-stage9-owner-main12-r60-verified.log.gz",
+      "bytes": 81,
+      "sha256": "30fa24c64df62eb54f916d89b65d0123bfd6ecf7b876bca4cedf611bc7d3bc5d",
+      "archive_bytes": 98,
+      "archive_sha256": "7840fe7ebb059a396d9dbf9bd4e9b6d5583a5fce85adbd2aaa70b5ff22a32049"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r60.json",
+      "source_mtime_utc": "2026-10-01T23:46:01.127595+00:00",
+      "archive": "owner-candidate-pure-r60-stage9-owner-main12-browser-r60.json.gz",
+      "bytes": 9090,
+      "sha256": "3e0d6afa80216d241f750cacfb81ac63f0bca5b1bd86bcf76ad0f30b3047daf4",
+      "archive_bytes": 2844,
+      "archive_sha256": "8c085efca2d3a297f862c3186066bfb53dea112ed37ff99e87682be27ef562c4"
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-browser-r60.log",
+      "source_mtime_utc": "2026-10-01T23:46:01.132595+00:00",
+      "archive": "owner-candidate-pure-r60-stage9-owner-main12-browser-r60.log.gz",
+      "bytes": 115,
+      "sha256": "2b9d6d6753a8673207d7063732291fdaad01ee83bb4ab0ab5784c708b6b2824f",
+      "archive_bytes": 126,
+      "archive_sha256": "2e4c9305823a0ef7f623690e53ca962ec552399968f0935958110ba42f5967a3"
+    }
+  ]
+}

@@ -71,7 +71,7 @@ class Records(Mapping):
                 "employee": ("person",),
                 "counterparty": ("person", "organization"),
                 "fund_account": ("fund_account",),
-                "asset": ("asset",),
+                "asset": ("asset", "project", "fund_product"),
             }[self.kind]
             query += " AND e.kind IN(SELECT value FROM json_each(?))"
             parameters.append(canonical(kinds))
@@ -130,7 +130,9 @@ class Records(Mapping):
         return query, parameters
 
     def prime(self, identifiers):
-        missing = set(identifiers) - self.cache.keys() - self.missing
+        missing = {
+            ident for ident in identifiers if ident not in self.cache and ident not in self.missing
+        }
         if not missing:
             return
         query, parameters = self._query(records=True, identifiers=missing)
@@ -150,7 +152,7 @@ class Records(Mapping):
             elif self.record_type == "profile":
                 record = Display._record(record)
             self.cache[row[self.identity]] = record
-        self.missing.update(missing - self.cache.keys())
+        self.missing.update(ident for ident in missing if ident not in self.cache)
 
     def __getitem__(self, key):
         self.prime((key,))
@@ -255,7 +257,7 @@ class Management(Mapping):
         self.cache = {}
 
     def prime(self, identifiers):
-        missing = set(identifiers) - self.cache.keys()
+        missing = {ident for ident in identifiers if ident not in self.cache}
         self.selected.prime(missing)
         self.current.prime(missing)
         for ident in missing:
@@ -303,7 +305,9 @@ class TaxIdentityCandidates(Mapping):
         self.available = "tax_import_identity_v2" in snapshot.store.registry.models
 
     def prime(self, employee_ids):
-        missing = set(employee_ids) - self.cache.keys() - self.missing
+        missing = {
+            ident for ident in employee_ids if ident not in self.cache and ident not in self.missing
+        }
         if not missing:
             return
         if not self.available:
@@ -322,7 +326,7 @@ class TaxIdentityCandidates(Mapping):
         facts = self.snapshot.reads.facts(row["id"] for row in rows)
         for row in rows:
             self.cache.setdefault(row["employee_id"], []).append(facts[row["id"]])
-        self.missing.update(missing - self.cache.keys())
+        self.missing.update(ident for ident in missing if ident not in self.cache)
 
     def __getitem__(self, key):
         self.prime((key,))

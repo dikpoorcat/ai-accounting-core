@@ -1091,13 +1091,16 @@ def build_owner_review(
         {"account": row["account"], "amount": row["debit"] - row["credit"]}
         for row in manifest["trial_balance"]
     ]
-    position = (
-        position_v1(
-            PositionInputsV1(engine, connection, manifest, _verified_closes=_verified_closes)
+    if _frozen_position is None:
+        inputs = PositionInputsV1(
+            engine, connection, manifest, _verified_closes=_verified_closes
         )
-        if _frozen_position is None
-        else _frozen_position
-    )
+        try:
+            position = position_v1(inputs)
+        finally:
+            inputs.release()
+    else:
+        position = _frozen_position
     movement = defaultdict(int)
     for row in line_rows:
         movement[row["account"]] += row["debit"] - row["credit"]

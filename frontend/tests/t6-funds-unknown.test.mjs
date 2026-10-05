@@ -8,10 +8,11 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-test("T6 funds keeps historical source warnings without the company-wide followup panel", async () => {
-  const fixtures = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"));
+test("owner funds keep unknown balances and AI review state without technical candidates", async () => {
+  const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
+  const fixtures = { context: samples.company_with_period.response, funds: samples.cash_funds.response };
   const previousWindow = globalThis.window, previousFetch = globalThis.fetch;
-  globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
+  globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${fixtures.context.current_company.company_id}` } };
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "t6-funds-historical-unknown", enforce: "pre", transform(code, id) {
@@ -19,7 +20,7 @@ test("T6 funds keeps historical source warnings without the company-wide followu
       if (path.endsWith("/src/views/FundsView.vue")) return code
         .replace("const funds = ref<FundsData | null>(null)", "const funds = ref(globalThis.t6FundsData)")
         .replace("const initializing = ref(true)", "const initializing = ref(false)")
-        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-11")')
+        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")')
         .replaceAll("{ immediate: true }", "{ immediate: false }");
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
@@ -36,29 +37,17 @@ test("T6 funds keeps historical source warnings without the company-wide followu
         data.collections.accounts.items[0].closing_fen = null;
         data.collections.accounts.items[0].negative_balance = false;
       }
-      data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [
-        { calculation_id: "t6-frozen-candidate-a", amount_fen: "987654321" },
-        { calculation_id: "t6-frozen-candidate-b", amount_fen: "987654321" },
-      ] }];
+      data.bank_statement.review_state = "pending";
       globalThis.t6FundsData = data;
       const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/funds", name: "funds", component: {} }, { path: "/", name: "brief", component: {} }] });
-      await router.push("/funds?company_id=co&period=2026-11");
+      await router.push(`/funds?company_id=${fixtures.context.current_company.company_id}&period=2026-01`);
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app), visible = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "");
-      assert.match(visible, /1 组历史资金依据需要核对/);
-      assert.match(visible, /具体金额与流水核对状态分别见对应区块/);
-      assert.match(visible, /与当前跟进状态分别列示/);
-      assert.doesNotMatch(visible, /款项：已结清|所选月末核算后/);
-      if (total === null) {
-        assert.match(visible, /余额待确认/);
-        assert.match(visible, /所选月末账面余额[\s\S]*暂无法确定/);
-      } else {
-        assert.match(visible, /123\.45/);
-        assert.match(visible, /余额需要核查/);
-      }
-      assert.doesNotMatch(visible, /9,876,543\.21/);
-      assert.match(html, /t6-frozen-candidate-a/); assert.match(html, /t6-frozen-candidate-b/);
-      assert.match(html, /source_digest_mismatch/);
+      assert.match(visible, /AI 会计核对中/);
+      if (total === null) assert.match(visible, /暂无法确定|待确认/);
+      else assert.match(visible, /123\.45/);
+      assert.doesNotMatch(html, /frozen-candidate|source_digest_mismatch|历史资金依据|查看.*证明|<pre/);
+
     }
   } finally {
     await server.close();

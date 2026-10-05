@@ -16,6 +16,26 @@ from .types import YearMonth, canonical, checked
 FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 SECTIONS = {"accounts", "movements", "statements", "investment_products", "investment_events"}
 
+# Each actual fact drives its own complete role lookup. The role-only index
+# would scan all matching roles for each candidate; keep every path for this
+# fact so malformed or duplicate bank roles still trigger the full fallback.
+_BANK_IDENTITY_SCALARS_SQL = (
+    "SELECT c.id,c.period,CASE c.kind WHEN 'bank_statement' THEN b.bank_account_id "
+    "WHEN 'bank_opening' THEN o.bank_account_id ELSE x.bank_account_id END bank_id,"
+    "CASE c.kind WHEN 'bank_statement' THEN b.period "
+    "WHEN 'bank_opening' THEN o.period ELSE x.period END scalar_period,"
+    "r.path,r.role,r.entity_id,r.kind,r.period role_period,"
+    "r.source_digest role_digest,f.digest fact_digest "
+    "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+    "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+    "LEFT JOIN fact_bank_statement b ON b.revision_id=c.fact_id "
+    "LEFT JOIN fact_bank_reconciliation x ON x.revision_id=c.fact_id "
+    "LEFT JOIN fact_bank_opening o ON o.revision_id=c.fact_id "
+    "LEFT JOIN entity_reference_recorded r "
+    "INDEXED BY sqlite_autoindex_entity_reference_recorded_1 ON r.fact_id=c.fact_id "
+    "AND r.role='bank_account'"
+)
+
 
 def _sum(rows, field):
     values = [row[field] for row in rows]
@@ -77,26 +97,205 @@ def _sql_summary_page(
     return [dict(zip(summary_columns, values, strict=True)) for values in summary], rows, page
 
 
-class FundsRead:
-    def __init__(self, snap):
-        self.snap, self.connection = snap, snap.connection
-        self.selected = snap.queries._selected_accounting(
-            self.connection,
-            None,
-            snap.period,
-            include_vouchers=False,
-            kinds={
-                "opening_package",
-                "bank_opening",
-                "opening_bank",
-                "opening_cash",
-                "bank_statement",
-                "bank_reconciliation",
-            },
+def _bank_identity_witness_heads(snap):
+    """Bound unused frozen bank states only after positive account coverage.
+
+    Actual headers, scalar roles and registration locate every candidate; they
+    are not body/adoption proofs. The ordinary selector still authenticates the
+    chosen exact witnesses, all open/month states and independent openings.
+    Missing roles never establish absence: an incomplete guard uses full scope.
+    """
+    from . import close_storage, publication
+    from .content_history_context import close_reader, publication_reader
+    from .dashboard_reads import _adopted_heads_sql, verified_adopted_head_identities
+    from .storage import _active_fact_reads
+
+    reads, connection = snap.reads, snap.connection
+    if (not reads._snapshot_active or not connection.in_transaction
+            or _active_fact_reads.get() is not reads
+            or close_reader() is not close_storage or publication_reader() is not publication
+            or getattr(snap.store.registry, "content_version", None) == 1):
+        return None
+    # Corrections can reassign frozen identities or opening bindings. Until
+    # their exact bank scope is independently established, keep full selection.
+    if connection.execute("SELECT 1 FROM identity_correction LIMIT 1").fetchone():
+        return None
+    # Genuine monetary openings and their uncertainty retain full selection.
+    # A bank start is different: it has no balance effect, but its own exact
+    # independently adopted source must still be consumed by the funds page.
+    if connection.execute(
+        "SELECT 1 FROM subject WHERE kind IN "
+        "('opening_package','opening_bank','opening_cash') LIMIT 1"
+    ).fetchone():
+        return None
+    kinds = {"bank_opening", "bank_statement", "bank_reconciliation"}
+    # A redirected current pointer can exclude its true terminal from the
+    # locator. The existing independent guard checks every open bank terminal,
+    # including those whose registered account already has a frozen witness.
+    verified_adopted_head_identities(snap, [], kinds=kinds)
+    query, parameters = _adopted_heads_sql(snap, kinds)
+    # Keep every posting tranche, including damaged frozen/current locators.
+    # A latest-subject rank would erase a former account after a correction.
+    if connection.execute(
+        query + "SELECT 1 FROM eligible WHERE mode='withdrawn' LIMIT 1", parameters
+    ).fetchone():
+        return None
+    heads = {}
+    for row in connection.execute(
+        query + "SELECT subject_id,calculation_id id,posting_period,fact_id,kind,period,"
+        "current_missing FROM heads", parameters,
+    ):
+        head = dict(row)
+        if head["current_missing"]:
+            raise KernelError("content_integrity_failed", "银行采用来源缺少正式发布")
+        previous = heads.get(head["id"])
+        if previous is not None and previous != head:
+            return None
+        heads[head["id"]] = head
+    if not heads:
+        return None
+    posting_by_subject = {}
+    for head in heads.values():
+        posting_by_subject.setdefault(head["subject_id"], set()).add(head["posting_period"])
+    if any(len(periods) > 1 for periods in posting_by_subject.values()):
+        # Continuous closed corrections need all precise adopted tranches.
+        return None
+    headers = reads.calculation_identity_headers(heads)
+    reads.verify_publication_records(headers.values())
+    for ident, head in heads.items():
+        header = headers[ident]
+        if (not header["cs"] or not header["fs"] or (
+                header["source_subject"], header["source_fact_id"],
+                header["source_kind"], header["source_period"], header["posting_period"]
+            ) != (head["subject_id"], head["fact_id"], head["kind"], head["period"],
+                  head["posting_period"])):
+            raise KernelError("content_integrity_failed", "银行采用来源的精确身份不一致")
+    registered = {row[0] for row in connection.execute(
+        "SELECT id FROM entity WHERE kind='fund_account' AND account_type='bank'"
+    )}
+    identities = {}
+    for row in connection.execute(
+        _BANK_IDENTITY_SCALARS_SQL,
+        (canonical(sorted(heads)),),
+    ):
+        if (row["id"] in identities or row["path"] != "bank_account_id"
+                or row["bank_id"] not in registered or row["entity_id"] != row["bank_id"]
+                or row["scalar_period"] != row["period"]
+                or row["role_period"] != row["period"]
+                or row["role_digest"] != row["fact_digest"]
+                or row["kind"] != heads[row["id"]]["kind"]):
+            return None
+        identities[row["id"]] = row["bank_id"]
+    if identities.keys() != heads.keys() or set(identities.values()) != registered:
+        # Registered drafts are not formal accounts. Requiring positive cover
+        # makes them a full-scope fallback, never a fabricated page account.
+        return None
+    closed = {row[0] for row in connection.execute(
+        "SELECT period FROM period_close WHERE period<=?", (snap.month,)
+    )}
+    selected = {
+        head["id"] for head in heads.values()
+        if head["posting_period"] not in closed or head["posting_period"] == snap.month
+        or head["period"] == snap.month or head["kind"] == "bank_opening"
+    }
+    witnessed = set()
+    for head in sorted(heads.values(), key=lambda item: (
+        item["posting_period"], item["kind"] != "bank_statement", item["id"]
+    )):
+        bank = identities[head["id"]]
+        if bank not in witnessed:
+            selected.add(head["id"])
+            witnessed.add(bank)
+    return [head for ident, head in heads.items() if ident in selected]
+
+
+def _bank_identity_states(snap, *, outcomes):
+    """Prove positive witnesses at their exact adopted posting nodes.
+
+    These precise consumers prove presence, not absence from every later close.
+    The ordinary selector checks full accounting nodes and result identities;
+    bank starts/open/current-month consumers retain their complete source path.
+    """
+    heads = _bank_identity_witness_heads(snap)
+    if heads is None:
+        return None
+    by_period = {}
+    for head in heads:
+        by_period.setdefault(head["posting_period"], []).append(head)
+    states = []
+    for period, group in sorted(by_period.items()):
+        selected = snap.queries._selected_accounting(
+            snap.connection, {head["subject_id"] for head in group}, snap.period,
+            kinds={head["kind"] for head in group}, include_vouchers=False,
+            posting_period=str(YearMonth.from_ordinal(period)),
+            **({"_owner_outcomes": outcomes} if outcomes is not None else {}),
         )["through_period"]
+        if selected["unestablished_state_selections"]:
+            return None
+        actual = {state["calculation_id"]: state for state in selected["state_results"]}
+        if len(actual) != len(selected["state_results"]) or actual.keys() != {
+            head["id"] for head in group
+        } or any(
+            (actual[head["id"]]["fact_id"], actual[head["id"]]["kind"],
+             actual[head["id"]]["calculation_period"], actual[head["id"]]["posting_period"])
+            != (head["fact_id"], head["kind"], str(YearMonth.from_ordinal(head["period"])),
+                str(YearMonth.from_ordinal(head["posting_period"])))
+            for head in group
+        ):
+            raise KernelError("content_integrity_failed", "银行账户见证缺少精确独立采用")
+        states.extend(actual.values())
+    states.sort(key=lambda state: (state["posting_period"], state["calculation_id"]))
+    return {"status": "established" if states else "not_established",
+            "voucher_events": [], "state_results": states, "unestablished_state_selections": []}
+
+
+class FundsRead:
+    def __init__(self, snap, *, amounts_only=False):
+        self.snap, self.connection = snap, snap.connection
+        from . import close_storage
+        from .content_history_context import close_reader
+        from .storage import _active_fact_reads
+
+        # The brief consumes money, not a complete zero-account directory.
+        # Bank starts/statements/reconciliations have no accounting effect;
+        # their state identities are still needed by the full funds page.
+        # Corrections retain that full route until their exact identity scope
+        # can be separated from monetary opening uncertainty independently.
+        self.amounts_only = (
+            amounts_only and snap.reads._snapshot_active
+            and self.connection.in_transaction
+            and _active_fact_reads.get() is snap.reads
+            and close_reader() is close_storage
+            and getattr(snap.store.registry, "content_version", None) != 1
+            and self.connection.execute("SELECT 1 FROM identity_correction LIMIT 1").fetchone()
+            is None
+        )
+
+        # Carry exact selected state bodies locally; scope candidates never
+        # become content proofs. Incomplete guards retain the full selector.
+        state_outcomes = (
+            {} if snap.reads._snapshot_active and self.connection.in_transaction
+            and close_reader() is close_storage
+            and getattr(snap.store.registry, "content_version", None) != 1 else None
+        )
+        self.selected = (
+            None if self.amounts_only else _bank_identity_states(snap, outcomes=state_outcomes)
+        )
+        if self.selected is None:
+            self.selected = snap.queries._selected_accounting(
+                self.connection, None, snap.period, include_vouchers=False,
+                kinds={"opening_package", "opening_bank", "opening_cash"} | (
+                    set() if self.amounts_only
+                    else {"bank_opening", "bank_statement", "bank_reconciliation"}
+                ),
+                **({"_owner_outcomes": state_outcomes} if state_outcomes is not None else {}),
+            )["through_period"]
+        self._state_outcomes = state_outcomes
         self.states = snap.reads.metadata(
             item["calculation_id"] for item in self.selected["state_results"]
         )
+        # Internal adoption metadata still proves frozen statement sources;
+        # removing owner-facing proof payload must not remove this check.
         self.state_selections = {
             item["calculation_id"]: item for item in self.selected["state_results"]
         }
@@ -107,9 +306,100 @@ class FundsRead:
         self.product_rows = {}
         self.profiles = {}
         self.event_queries = {}
+        self._money_event_rows = None
         self.bank_match_calculations = {}
         self.investment_registered = None
         self.shared_pages = {}
+
+    def _verify_event_sources(self, identifiers, frozen_periods):
+        """Prove consumed bodies and bind frozen bases to their independent adoption."""
+        identifiers = set(identifiers)
+        if not identifiers:
+            return
+        reads = self.snap.reads
+        metadata = reads.metadata(identifiers, state=False)
+        if frozen_periods:
+            closes = reads.authoritative_close_rows(
+                periods=set(frozen_periods.values()), through_period=self.snap.month
+            )
+            selections = reads.close_accounting_many(
+                closes, subjects={metadata[ident]["subject_id"] for ident in frozen_periods}
+            )
+            adopted = {
+                (close["period"], item["calculation_id"]): item
+                for close, selection in zip(closes, selections, strict=True)
+                for item in selection.adopted_results
+            }
+            owners = {
+                (close["period"], item["calculation_id"])
+                for close, selection in zip(closes, selections, strict=True)
+                for item in selection.vouchers
+            }
+            saved_owners = set()
+            for ident, period in frozen_periods.items():
+                item, calc = adopted.get((period, ident)), metadata[ident]
+                if item is None:
+                    # A pre-close no-impact review adopts a newer result while
+                    # retaining the voucher's original owner. Its exact owner
+                    # ID is anchored by the frozen voucher, and its own saved
+                    # input digest proves the consumed old body independently.
+                    if (period, ident) not in owners:
+                        raise KernelError("content_integrity_failed", "冻结资金来源缺少独立采用")
+                    saved_owners.add(ident)
+                    continue
+                if any(
+                    item[adopted_field] != calc[field]
+                    for adopted_field, field in (
+                        ("publication_id", "publication_id"),
+                        ("subject_id", "subject_id"),
+                        ("fact_id", "fact_id"),
+                        ("source_period", "period"),
+                        ("posting_period", "posting_period"),
+                        ("result_digest", "result_digest"),
+                    )
+                ):
+                    raise KernelError("content_integrity_failed", "冻结资金来源与独立采用不一致")
+            reads.verify_saved_input_identity(saved_owners)
+        reads.verify_selected_content(identifiers)
+
+    def _frozen_state_periods(self, identifiers):
+        return {
+            ident: YearMonth(
+                self.state_selections[ident]["selection_proof"]["close_period"]
+            ).ordinal
+            for ident in identifiers
+            if self.state_selections[ident]["selection_source"] == "close_manifest"
+        }
+
+    def _verified_current_event_rows(self, *, current, accounts, subjects):
+        """Filter already authenticated month headers by their actual posted lines."""
+        from . import close_storage, publication
+        from .content_history_context import close_reader, publication_reader
+        from .storage import _active_fact_reads
+
+        reads = self.snap.reads
+        if (
+            not current
+            or subjects is not None
+            or self.snap.close is not None
+            or not reads._snapshot_active
+            or not self.connection.in_transaction
+            or reads.connection is not self.connection
+            or self.snap.queries.reads is not reads
+            or _active_fact_reads.get() is not reads
+            or close_reader() is not close_storage
+            or publication_reader() is not publication
+            or getattr(self.snap.store.registry, "content_version", None) == 1
+        ):
+            return None
+        rows = self.snap.month_journal.verified_rows()
+        if rows is None:
+            return None
+        lines = reads.voucher_lines({row["id"] for row in rows})
+        return [
+            row for row in rows
+            if any(line["account"] in accounts for line in lines[row["id"]])
+        ]
 
     def events(self, *, current=False, accounts=None, subjects=None):
         accounts = {"1001", "1002", "1012", "1101"} if accounts is None else accounts
@@ -122,20 +412,50 @@ class FundsRead:
             query, parameters = self.event_queries[cache_key]
             return query, list(parameters)
         journal = self.snap.month_journal if current else self.snap.journal
-        query, parameters = journal.select(accounts=accounts, subjects=subjects).sql()
-        self.snap.reads.verify_sql_outcomes(
-            row[0]
-            for row in self.connection.execute(
-                "SELECT DISTINCT basis_calculation_id FROM (" + query + ")",
-                parameters,
-            )
+        verified = self._verified_current_event_rows(
+            current=current, accounts=accounts, subjects=subjects,
         )
-        references = self.connection.execute(
-            f"SELECT r.* FROM ({query}) j JOIN close_reference r ON r.reference_id=j.id "
-            "AND r.reference_type='voucher' AND r.close_period=j.close_period",
-            parameters,
-        ).fetchall()
-        self.snap.reads.verify_close_references(references)
+        if verified is not None:
+            # The full month proof already selected these exact headers and
+            # authenticated their actual posted lines. Keep a SQL consumer's
+            # scope identical, including an empty account selection, without
+            # repeating the account-to-voucher locator.
+            query, parameters = journal.sql()
+            query += " AND j.id IN (SELECT value FROM json_each(?))"
+            parameters.append(canonical(sorted(row["id"] for row in verified)))
+        else:
+            query, parameters = journal.select(accounts=accounts, subjects=subjects).sql()
+        sources = (
+            verified if verified is not None else self.connection.execute(
+                "SELECT DISTINCT id,basis_calculation_id,close_period,reverses_id FROM ("
+                + query + ")", parameters,
+            ).fetchall()
+        )
+        self.snap.reads.verify_selected_voucher_adoptions(sources, through_period=self.snap.month)
+        identifiers = {row["basis_calculation_id"] for row in sources}
+        frozen = {
+            row["basis_calculation_id"]: row["close_period"]
+            for row in sources
+            if row["close_period"] is not None and row["reverses_id"] is None
+        }
+        originals = self.snap.reads.vouchers(
+            row["reverses_id"] for row in sources if row["reverses_id"] is not None
+        )
+        frozen.update(
+            (row["basis_calculation_id"], originals[row["reverses_id"]]["period"])
+            for row in sources
+            if row["reverses_id"] is not None
+        )
+        if not current:
+            identifiers.update(self.opening_ids)
+            frozen.update(self._frozen_state_periods(self.opening_ids))
+        self._verify_event_sources(identifiers, frozen)
+        self.snap.reads.verify_sql_outcomes(identifiers)
+        # Share this physical selection only after all event proofs succeed.
+        # It is neither a caller-supplied witness nor another body cache.
+        if (current and subjects is None
+                and accounts == {"1001", "1002", "1012", "1101"}):
+            self._money_event_rows = verified
         source = (
             "WITH journal AS MATERIALIZED (" + query + "), events AS MATERIALIZED ("
             "SELECT j.period,j.id event_id,j.number,j.basis_calculation_id calculation_id,"
@@ -159,21 +479,147 @@ class FundsRead:
         self.event_queries[cache_key] = source, tuple(parameters)
         return source, parameters
 
+    def _verified_money_effects(self):
+        """Carry only current money fields from exact, already proved bodies.
+
+        Headers establish the posted scope; they cannot stand in for a decoded
+        body. Do not load bodies to make this path eligible. Frozen months and
+        unusual saved shapes retain their existing SQL consumption/diagnostics.
+        """
+        from . import close_storage, publication
+        from .content_history_context import close_reader, publication_reader
+        from .storage import _active_fact_reads
+
+        if (self.snap.close is not None or _active_fact_reads.get() is not self.snap.reads
+                or close_reader() is not close_storage or publication_reader() is not publication
+                or getattr(self.snap.store.registry, "content_version", None) == 1):
+            return None
+        headers = self._money_event_rows
+        if headers is None:
+            return None
+        contents = self.snap.reads._verified_source_contents
+        effects = []
+        for header in headers:
+            ident = header["basis_calculation_id"]
+            if ident not in contents:
+                return None
+            outcome = contents[ident]
+            balances, values = outcome.get("balances"), outcome.get("values")
+            if type(balances) is not list or type(values) is not dict:
+                return None
+            actual_date = values.get("actual_date")
+            if actual_date is not None and type(actual_date) is not str:
+                return None
+            for index, balance in enumerate(balances):
+                if (type(balance) is not dict
+                        or type(balance.get("category")) is not str
+                        or type(balance.get("key")) is not str
+                        or type(balance.get("amount")) is not int
+                        or not -(1 << 63) <= balance["amount"] < (1 << 63)):
+                    return None
+                if balance["category"] in {"bank", "cash", "platform"} and balance["amount"]:
+                    effects.append([
+                        header["period"], header["id"], header["number"], ident,
+                        header["basis_kind"], -1 if header["reverses_id"] is not None else 1,
+                        index, balance["category"], balance["key"], balance["amount"], actual_date,
+                    ])
+        return effects
+
     def movements(self):
+        # Keep selection, adoption, saved body and reference checks in events,
+        # including the original frozen source of a current-period reversal.
         source, parameters = self.events(current=True)
+        effects = self._verified_money_effects()
+        actual_date = "json_extract(m.outcome,'$.values.actual_date')"
+        if effects is not None:
+            columns = (
+                "period", "event_id", "number", "calculation_id", "kind", "sign",
+                "effect_index", "category", "balance_key", "amount", "actual_date",
+            )
+            source = "WITH effects AS (SELECT " + ",".join(
+                f"json_extract(value,'$[{index}]') {column}"
+                for index, column in enumerate(columns)
+            ) + " FROM json_each(?)) "
+            parameters = [canonical(effects)]
+            actual_date = "m.actual_date"
         source = source.rstrip() + (
             ", money AS (SELECT *,row_number() OVER(PARTITION BY event_id ORDER BY effect_index)-1 "
             "local_index FROM effects WHERE category IN ('bank','cash','platform') AND amount!=0),"
             "transfers AS (SELECT event_id,count(DISTINCT category||char(0)||balance_key)>1 "
             "AND sum(amount)=0 internal FROM money GROUP BY event_id) "
             "SELECT m.event_id,m.number,m.calculation_id,m.kind,m.sign,m.category,m.balance_key,"
-            "m.sign*m.amount signed_amount,json_extract(m.outcome,'$.values.actual_date') "
+            "m.sign*m.amount signed_amount," + actual_date + " "
             "actual_date,"
             "printf('%012d:%s:%06d',m.number,m.calculation_id,m.local_index) page_key,"
             "(m.kind IN ('funds_transfer','cash_bank_transfer','bank_platform_transfer') "
             "AND t.internal) internal_transfer FROM money m JOIN transfers t USING(event_id)"
         )
         return source, parameters
+
+    def _verified_money_summary(self):
+        """Consume proved effects without building the unused movement page.
+
+        Only ordinary, bounded integer sums use this consumer. Possible SQLite
+        intermediate overflow retains the original SQL and its error semantics.
+        This is neither a source proof nor another result cache.
+        """
+        effects = self._verified_money_effects()
+        if effects is None:
+            return None
+        magnitude = 0
+        events = {}
+        for row in effects:
+            magnitude += abs(row[9])
+            if magnitude >= 1 << 63:
+                return None
+            try:
+                for value in (row[7], row[8], row[10]):
+                    if value is not None:
+                        value.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
+            # Only transfer kinds can be internal. Ordinary receipts/payments
+            # do not need an unused per-event account set for the summary.
+            if row[4] in {"funds_transfer", "cash_bank_transfer", "bank_platform_transfer"}:
+                event = events.get(row[1])
+                if event is None:
+                    event = events[row[1]] = {"accounts": set(), "amount": 0}
+                event["accounts"].add(row[7] + "\0" + row[8])
+                event["amount"] += row[9]
+        summaries = {}
+        for row in effects:
+            _, event_id, _, _, kind, sign, _, category, key, amount, actual_date = row
+            entry = summaries.get((category, key))
+            if entry is None:
+                entry = summaries[category, key] = {
+                    "category": category,
+                    "balance_key": key,
+                    "inflow_fen": 0,
+                    "outflow_fen": 0,
+                    "external_inflow_fen": 0,
+                    "external_outflow_fen": 0,
+                    "internal_outflow_fen": 0,
+                }
+                if not self.amounts_only:
+                    entry.update(movement_count=0, last_activity_date=None)
+            inflow, outflow = sign * max(amount, 0), sign * max(-amount, 0)
+            event = events.get(event_id)
+            internal = (kind in {"funds_transfer", "cash_bank_transfer", "bank_platform_transfer"}
+                        and len(event["accounts"]) > 1 and event["amount"] == 0)
+            entry["inflow_fen"] += inflow
+            entry["outflow_fen"] += outflow
+            if not self.amounts_only:
+                entry["movement_count"] += 1
+                if actual_date is not None:
+                    previous = entry["last_activity_date"]
+                    if previous is None or actual_date > previous:
+                        entry["last_activity_date"] = actual_date
+            if internal:
+                entry["internal_outflow_fen"] += outflow
+            else:
+                entry["external_inflow_fen"] += inflow
+                entry["external_outflow_fen"] += outflow
+        return [summaries[key] for key in sorted(summaries)]
 
     def base_account(self, category, ident):
         return self.account_rows.setdefault(
@@ -185,11 +631,10 @@ class FundsRead:
                 "inflow_fen": 0,
                 "outflow_fen": 0,
                 "net_change_fen": 0,
-                "attribution_adjustment_fen": 0,
                 "closing_fen": 0,
-                "movement_count": 0,
-                "last_activity_date": None,
-                "negative_balance": False,
+                **({"attribution_adjustment_fen": 0, "movement_count": 0,
+                    "last_activity_date": None, "negative_balance": False}
+                   if not self.amounts_only else {}),
             },
         )
 
@@ -206,86 +651,65 @@ class FundsRead:
             },
         )
 
-    def account_summary(self, *, page_request=None):
-        from .period_balances import balance_movements, balance_totals
+    def _can_share_first_page(self):
+        """Only current owned snapshots can select first before the summary is consumed."""
+        from . import close_storage, publication
+        from .content_history_context import close_reader, publication_reader
+        from .storage import _active_fact_reads
 
-        categories = ("bank", "cash", "platform")
-        projected_closing = {}
-        for row in balance_totals(
-            self.connection, self.snap.month, categories, reads=self.snap.reads
-        ):
-            if row["category"] in categories:
-                self.base_account(row["category"], row["key"])
-                projected_closing[row["category"], row["key"]] = row["amount"]
-        current_activity = {}
-        for row in balance_movements(
-            self.connection, self.snap.month, categories, reads=self.snap.reads
-        ):
-            if row["category"] in categories:
-                current_activity[row["category"], row["key"]] = row["amount"]
-        for key, amount in projected_closing.items():
-            self.base_account(*key)["opening_fen"] = checked(amount - current_activity.get(key, 0))
-        source, parameters = self.movements()
-        summary_columns = (
-            "category",
-            "balance_key",
-            "inflow_fen",
-            "outflow_fen",
-            "movement_count",
-            "last_activity_date",
-            "external_inflow_fen",
-            "external_outflow_fen",
-            "internal_outflow_fen",
+        return (
+            not self.amounts_only and self.snap.reads._snapshot_active
+            and self.connection.in_transaction and _active_fact_reads.get() is self.snap.reads
+            and close_reader() is close_storage and publication_reader() is publication
+            and getattr(self.snap.store.registry, "content_version", None) != 1
+            # Retired opening identities depend on final movement amounts/counts.
+            # Keep their established summary-then-selection order in its entirety.
+            and self.connection.execute("SELECT 1 FROM identity_correction LIMIT 1").fetchone()
+            is None
         )
-        summary_select = (
-            "SELECT category,balance_key,sum(max(signed_amount,0)) inflow_fen,"
-            "sum(max(-signed_amount,0)) outflow_fen,count(*) movement_count,"
-            "max(actual_date) last_activity_date,"
-            "sum(CASE WHEN NOT internal_transfer THEN max(signed_amount,0) "
-            "ELSE 0 END) external_inflow_fen,"
-            "sum(CASE WHEN NOT internal_transfer THEN max(-signed_amount,0) "
-            "ELSE 0 END) external_outflow_fen,"
-            "sum(CASE WHEN internal_transfer THEN max(-signed_amount,0) "
-            "ELSE 0 END) internal_outflow_fen"
-        )
-        grouping = " GROUP BY category,balance_key"
-        if page_request is None:
-            summaries = self.connection.execute(
-                summary_select + f" FROM ({source})" + grouping, parameters
-            )
-        else:
-            summaries, rows, page = _sql_summary_page(
-                self.connection,
-                source,
-                parameters,
-                summary_select + " FROM source_rows" + grouping,
-                summary_columns,
-                **page_request,
-            )
-            self.shared_pages["movements"] = rows, page
-        movement_totals = {
-            "inflow_fen": 0,
-            "outflow_fen": 0,
-            "internal_transfer_fen": 0,
-            "movement_count": 0,
-        }
-        for row in summaries:
-            self.base_account(row["category"], row["balance_key"]).update(
-                {
-                    key: row[key]
-                    for key in ("inflow_fen", "outflow_fen", "movement_count", "last_activity_date")
-                }
-            )
-            movement_totals["inflow_fen"] += row["external_inflow_fen"]
-            movement_totals["outflow_fen"] += row["external_outflow_fen"]
-            movement_totals["internal_transfer_fen"] += row["internal_outflow_fen"]
-            movement_totals["movement_count"] += row["movement_count"]
+
+    def _prepare_account_identities(self):
+        """Prove every state and unknown opening identity, including zero-activity accounts."""
         # Scalar established starts and statements keep explicitly opened zero accounts.
+        # These no-voucher identities are consumed by the whole account list,
+        # even when their result has no opening accounting effect.
+        frozen_states = self._frozen_state_periods(self.states)
+        from . import close_storage
+        from .content_history_context import close_reader
+
+        historical_bank = (
+            {
+                ident: period
+                for ident, period in frozen_states.items()
+                if self.states[ident]["kind"] in {"bank_statement", "bank_reconciliation"}
+                and YearMonth(self.states[ident]["period"]).ordinal < self.snap.month
+            }
+            if close_reader() is close_storage
+            else {}
+        )
+        historical_accounts = (
+            self.snap.reads.frozen_bank_account_identities(
+                historical_bank, through_period=self.snap.month,
+                _decoded_outcomes=self._state_outcomes,
+            )
+            if historical_bank
+            else {}
+        )
+        for account in historical_accounts.values():
+            self.base_account("bank", account)
+        complete_states = self.states.keys() - historical_bank.keys()
+        self._verify_event_sources(
+            complete_states,
+            {ident: period for ident, period in frozen_states.items() if ident in complete_states},
+        )
+        # Zero-amount state values have no period-balance digest anchor. Prove
+        # their precise saved input identity before consuming account/match data.
+        self.snap.reads.verify_saved_input_identity(complete_states - frozen_states.keys())
         for row in self.connection.execute(
             "SELECT c.kind,json_extract(c.outcome,'$.values.bank_account_id') bank_id,"
             "json_extract(c.outcome,'$.values.cash_account_id') cash_id FROM json_each(?) ids "
             "JOIN calculation c ON c.id=ids.value",
-            (canonical(sorted(self.states)),),
+            (canonical(sorted(complete_states)),),
         ):
             if row["bank_id"] is not None:
                 self.base_account("bank", row["bank_id"])
@@ -310,6 +734,7 @@ class FundsRead:
             for candidate in issue["candidates"]
             if candidate["kind"] == "opening_package"
         ]
+        self.snap.reads.verify_saved_input_identity(unknown)
         self.snap.reads.verify_sql_outcomes(unknown)
         for row in self.connection.execute(
             "SELECT DISTINCT json_extract(b.value,'$.category') category,"
@@ -319,12 +744,124 @@ class FundsRead:
             (canonical(unknown),),
         ):
             self.base_account(row["category"], row["balance_key"])["opening_fen"] = None
+
+    def account_summary(self, *, page_request=None, first_page_request=None):
+        from .period_balances import balance_movements, balance_totals
+
+        categories = ("bank", "cash", "platform")
+        projected_closing = {}
+        for row in balance_totals(
+            self.connection, self.snap.month, categories, reads=self.snap.reads
+        ):
+            if row["category"] in categories:
+                self.base_account(row["category"], row["key"])
+                projected_closing[row["category"], row["key"]] = row["amount"]
+        current_activity = {}
+        for row in balance_movements(
+            self.connection, self.snap.month, categories, reads=self.snap.reads
+        ):
+            if row["category"] in categories:
+                current_activity[row["category"], row["key"]] = row["amount"]
+        for key, amount in projected_closing.items():
+            self.base_account(*key)["opening_fen"] = checked(amount - current_activity.get(key, 0))
+        summary_columns = (
+            "category",
+            "balance_key",
+            "inflow_fen",
+            "outflow_fen",
+            *(() if self.amounts_only else ("movement_count", "last_activity_date")),
+            "external_inflow_fen",
+            "external_outflow_fen",
+            "internal_outflow_fen",
+        )
+        summary_select = (
+            "SELECT category,balance_key,sum(sign*max(sign*signed_amount,0)) inflow_fen,"
+            "sum(sign*max(-sign*signed_amount,0)) outflow_fen,"
+            + ("" if self.amounts_only else
+               "count(*) movement_count,max(actual_date) last_activity_date,")
+            + "sum(CASE WHEN NOT internal_transfer THEN sign*max(sign*signed_amount,0) "
+            "ELSE 0 END) external_inflow_fen,"
+            "sum(CASE WHEN NOT internal_transfer THEN sign*max(-sign*signed_amount,0) "
+            "ELSE 0 END) external_outflow_fen,"
+            "sum(CASE WHEN internal_transfer THEN sign*max(-sign*signed_amount,0) "
+            "ELSE 0 END) internal_outflow_fen"
+        )
+        grouping = " GROUP BY category,balance_key"
+        identities_prepared = False
+        if first_page_request is not None and self._can_share_first_page():
+            self._prepare_account_identities()
+            identities_prepared = True
+            keys = list(self.account_rows)
+            supported = all(type(category) is str and type(key) is str for category, key in keys)
+            if supported:
+                try:
+                    for category, key in keys:
+                        category.encode("utf-8")
+                        key.encode("utf-8")
+                except UnicodeEncodeError:
+                    supported = False
+            if supported:
+                # summary_rows covers every actual movement account; prepared
+                # identities contribute accounts with no movements. Filtering
+                # happens after whole-event transfers and the complete summary.
+                page_request = dict(first_page_request) | {
+                    "where": "(category,balance_key)=(SELECT category,balance_key FROM ("
+                    "SELECT category,balance_key FROM summary_rows UNION "
+                    "SELECT json_extract(value,'$[0]') category,"
+                    "json_extract(value,'$[1]') balance_key FROM json_each(?)) "
+                    "ORDER BY category,balance_key LIMIT 1)",
+                    "filters": (canonical(sorted(keys)),),
+                }
+        if page_request is None:
+            self.events(current=True)
+            summaries = self._verified_money_summary()
+            if summaries is None:
+                source, parameters = self.movements()
+                summaries = self.connection.execute(
+                    summary_select + f" FROM ({source})" + grouping, parameters
+                )
+        else:
+            source, parameters = self.movements()
+            summaries, rows, page = _sql_summary_page(
+                self.connection,
+                source,
+                parameters,
+                summary_select + " FROM source_rows" + grouping,
+                summary_columns,
+                **page_request,
+            )
+            self.shared_pages["movements"] = rows, page
+        movement_totals = {
+            "inflow_fen": 0,
+            "outflow_fen": 0,
+            "internal_transfer_fen": 0,
+            **({} if self.amounts_only else {"movement_count": 0}),
+        }
+        for row in summaries:
+            self.base_account(row["category"], row["balance_key"]).update(
+                {
+                    key: row[key]
+                    for key in (
+                        ("inflow_fen", "outflow_fen") if self.amounts_only else
+                        ("inflow_fen", "outflow_fen", "movement_count", "last_activity_date")
+                    )
+                }
+            )
+            movement_totals["inflow_fen"] += row["external_inflow_fen"]
+            movement_totals["outflow_fen"] += row["external_outflow_fen"]
+            movement_totals["internal_transfer_fen"] += row["internal_outflow_fen"]
+            if not self.amounts_only:
+                movement_totals["movement_count"] += row["movement_count"]
+        if not identities_prepared:
+            self._prepare_account_identities()
         for index, (key, item) in enumerate(sorted(self.account_rows.items()), 1):
-            item["fallback_code"] = f"账户 {index}"
             item["net_change_fen"] = item["inflow_fen"] - item["outflow_fen"]
             item["closing_fen"] = (
                 projected_closing.get(key, 0) if item["opening_fen"] is not None else None
             )
+            if self.amounts_only:
+                continue
+            item["fallback_code"] = f"账户 {index}"
             item["attribution_adjustment_fen"] = (
                 checked(item["closing_fen"] - item["opening_fen"] - item["net_change_fen"])
                 if item["closing_fen"] is not None and item["opening_fen"] is not None
@@ -345,7 +882,8 @@ class FundsRead:
                 "state": "pending" if key[0] == "bank" else "not_applicable",
                 "label": "本月尚未完成银行对账" if key[0] == "bank" else "不适用银行对账",
             }
-        self._omit_retired_opening_accounts()
+        if not self.amounts_only:
+            self._omit_retired_opening_accounts()
         return movement_totals
 
     def _omit_retired_opening_accounts(self):
@@ -401,8 +939,6 @@ class FundsRead:
         return self.profiles[key]
 
     def account_display(self, category, ident):
-        from .dashboard import _display_sources
-
         item = self.account_rows.get((category, ident))
         profile = self.profile("fund_account", ident)
         return {
@@ -410,9 +946,6 @@ class FundsRead:
             or (item["fallback_code"] if item else "未确认账户"),
             "name": profile.get("display_name") or "未提供账户名称",
             "active": profile.get("active"),
-            "field_sources": _display_sources(
-                profile, code="display_number", name="display_name", active="active"
-            ),
         }
 
     def account_item(self, key):
@@ -423,6 +956,13 @@ class FundsRead:
         item["statement"] = item["statement"] | {
             "account_code": display["code"],
             "account_name": display["name"],
+        }
+        for field in ("matched_count", "unmatched_count", "needs_review_count"):
+            item["statement"].pop(field)
+        item["reconciliation"] = {
+            key: value
+            for key, value in item["reconciliation"].items()
+            if key in {"state", "label", "difference_fen"}
         }
         return item
 
@@ -442,17 +982,14 @@ class FundsRead:
         parties.update(
             item["recipient_id"] for item in data.get("allocations", ()) if item.get("recipient_id")
         )
-        party_sources = [
-            {"party_id": ident, **self.snap.party_details(ident)} for ident in sorted(parties)
-        ]
         party = (
-            "、".join(dict.fromkeys(item["name"] for item in party_sources))
+            "、".join(dict.fromkeys(self.snap.party(ident) for ident in sorted(parties)))
             if parties
             else "公司账户内部划转"
             if internal_transfer
             else "未提供往来对象"
         )
-        return party, party_sources
+        return party
 
     def movement_item(self, row):
         from .dashboard import _name
@@ -460,37 +997,28 @@ class FundsRead:
         calc = self.snap.calculation(row["calculation_id"])
         data = calc["fact"]["data"]
         account = self.account_display(row["category"], row["balance_key"])
-        party, party_sources = self.money_parties(
+        party = self.money_parties(
             calc, row["sign"], internal_transfer=bool(row["internal_transfer"])
         )
-        short, label, sources = self.snap.business_summary(calc, row["sign"], include_sources=True)
+        short, label = self.snap.business_summary(calc, row["sign"])
         amount = row["signed_amount"]
         return {
             "id": row["page_key"],
+            "subject_id": calc["subject_id"],
             "date": data.get("actual_date"),
             "account_id": row["balance_key"],
             "account_code": account["code"],
             "account_name": account["name"],
             "account_type": FUND_TYPES[row["category"]],
-            "direction": "inflow" if amount > 0 else "outflow",
+            "direction": "inflow" if amount * row["sign"] > 0 else "outflow",
+            "correction": row["sign"] < 0,
             "amount_fen": abs(amount),
             "signed_amount_fen": amount,
-            "reference": str(row["number"]),
-            "calculation_id": row["calculation_id"],
             "type": _name(row["kind"]),
-            "summary": label,
             "display_summary": label,
             "list_summary": short,
-            "field_sources": sources
-            | {
-                "account_" + key: value
-                for key, value in account["field_sources"].items()
-                if key in {"code", "name"}
-            },
-            "party_sources": party_sources,
             "party": party,
             "internal_transfer": bool(row["internal_transfer"]),
-            "component_kinds": [row["kind"]],
         }
 
     def prepare_calculation_items(self, identifiers):
@@ -736,7 +1264,6 @@ class FundsRead:
                 for ident, identifiers in parent_ids.items()
             }
         provided, confirmed_accounts, headers = set(), set(), []
-        self.bank_source_checks = {}
         for statement in statements:
             ident = statement["bank_account_id"]
             provided.add(ident)
@@ -794,59 +1321,6 @@ class FundsRead:
                 or len(matches) > 1
                 or (reconciliation and not valid)
             )
-            selection = self.state_selections[result["id"]] if result else None
-            source_check = {
-                "state": "confirmed" if confirmed else "unestablished",
-                "message": "流水来源已确认。",
-                "statement_confirmed": confirmed,
-                "reconciliation_valid": valid,
-                "statement_calculation_id": source["id"] if source else None,
-                "selected_statement_calculation_ids": [item["id"] for item in statement_results],
-                "statement_fact_id": statement["revision_id"],
-                "reconciliation_calculation_id": result["id"] if result else None,
-                "reconciliation_fact_id": reconciliation["revision_id"] if reconciliation else None,
-                "selection_source": selection["selection_source"] if selection else None,
-                "selection_proof": selection["selection_proof"] if selection else None,
-                "proof_method": (
-                    "frozen_reconciliation_direct_statement"
-                    if self.snap.close and valid
-                    else "independent_statement_selection"
-                    if confirmed
-                    else None
-                ),
-            }
-            if (
-                not unique_statement
-                or not unique_reconciliation
-                or len(matches) > 1
-                or len(results) > 1
-            ):
-                source_check.update(
-                    state="conflict", message="同一账户的流水或对账采用关系不唯一，需核对来源。"
-                )
-            elif source_error:
-                source_check.update(state=source_error_state, message=source_error)
-            elif not confirmed:
-                source_check.update(
-                    state="unestablished" if self.snap.close else "needs_review",
-                    message="历史流水来源的采用尚不能证明，匹配状态待核对。"
-                    if self.snap.close
-                    else "当前流水资料尚待确认或复核，匹配状态待核对。",
-                )
-            elif valid:
-                source_check["message"] = (
-                    "所选关账对账已采用此精确流水来源，流水匹配已确认。"
-                    if self.snap.close
-                    else "当前流水来源与银行对账匹配已确认。"
-                )
-            elif reconciliation:
-                source_check.update(
-                    state="needs_review",
-                    message="流水来源已确认；对应对账的采用或有效性尚需核对。",
-                )
-            else:
-                source_check["message"] = "流水来源已确认，尚无本期已确认的银行对账匹配。"
-            self.bank_source_checks[statement["revision_id"]] = source_check
             if confirmed:
                 confirmed_accounts.add(ident)
             headers.append(
@@ -866,11 +1340,7 @@ class FundsRead:
                 item["statement"]["coverage_state"] = "complete" if confirmed else "partial"
                 item["reconciliation"] = {
                     "state": "complete" if valid else "attention",
-                    "label": "已完成银行对账" if valid else "流水匹配状态待核对",
-                    "source_check": source_check,
-                    "version": reconciliation["revision"] if reconciliation else None,
-                    "statement_closing_fen": statement["closing_fen"],
-                    "book_closing_fen": item["closing_fen"],
+                    "label": "本月银行流水已核对" if valid else "AI 会计核对中",
                     "difference_fen": statement["closing_fen"] - item["closing_fen"]
                     if item["closing_fen"] is not None
                     else None,
@@ -881,7 +1351,7 @@ class FundsRead:
                 sorted({item["reconciliation_id"] for item in headers if item["reconciliation_id"]})
             ),
         ]
-        self.bank_source = (
+        bank_columns = (
             "SELECT printf('%s:%012d',json_extract(h.value,'$.subject_id'),e.item_no) page_key,"
             "json_extract(h.value,'$.account_id') account_id,"
             "json_extract(h.value,'$.reconciliation_calculation_id') "
@@ -889,13 +1359,18 @@ class FundsRead:
             "CASE WHEN m.match_count=1 THEN m.source_kind END source_kind,"
             "CASE WHEN m.match_count=1 THEN m.source_id END source_id,"
             "m.matched_sources,"
+        )
+        bank_detail_columns = (
             "CASE WHEN m.match_count>1 THEN 1 ELSE count(*) OVER (PARTITION BY "
             "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
             "END source_row_count,"
             "CASE WHEN m.match_count>1 THEN abs(e.signed_fen) ELSE "
             "sum(abs(e.signed_fen)) OVER (PARTITION BY "
             "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
-            "END source_rows_total_fen,e.*,CASE WHEN "
+            "END source_rows_total_fen,"
+        )
+        bank_rows = (
+            "e.*,CASE WHEN "
             "json_extract(h.value,'$.valid') "
             "AND m.match_count>0 THEN "
             "'matched' "
@@ -910,6 +1385,11 @@ class FundsRead:
             "ON m.revision_id="
             "json_extract(h.value,'$.reconciliation_id') AND m.reference=e.reference"
         )
+        self.bank_source = bank_columns + bank_detail_columns + bank_rows
+        # Only displayed bank rows need source batch counts and totals. The
+        # complete account summary keeps the same match/state source, without
+        # sorting all entries for two otherwise unused detail windows.
+        bank_summary_source = bank_columns + bank_rows
         if not headers:
             self.bank_parameters = []
             self.bank_source = (
@@ -919,6 +1399,7 @@ class FundsRead:
                 "NULL source_rows_total_fen,"
                 "NULL reference,NULL state WHERE 0"
             )
+            bank_summary_source = self.bank_source
         sums = (
             "count(*) transaction_count,coalesce(sum(max(signed_fen,0)),0) inflow_fen,"
             "coalesce(sum(max(-signed_fen,0)),0) outflow_fen,coalesce(sum(state='matched'),0) "
@@ -961,7 +1442,7 @@ class FundsRead:
         )
         if page_request is None:
             summaries = self.connection.execute(
-                summary_select + f" FROM ({self.bank_source}) GROUP BY account_id",
+                summary_select + f" FROM ({bank_summary_source}) GROUP BY account_id",
                 self.bank_parameters,
             )
         else:
@@ -1076,16 +1557,15 @@ class FundsRead:
         data = calc["fact"]["data"]
         allocations = data.get("allocations", ())
         if data.get("payment_method") != "bank_batch" or not allocations:
-            return None, None, []
+            return None, None
 
-        items, party_sources, seen_parties = [], [], set()
+        items, seen_parties = [], set()
         for allocation in allocations:
             recipient_id = allocation.get("recipient_id")
             details = self.snap.party_details(recipient_id)
             name = details["name"] if details.get("source") else "收款人名称未提供"
             items.append({"party": name, "amount_fen": allocation["amount_fen"]})
-            if recipient_id and recipient_id not in seen_parties:
-                party_sources.append({"party_id": recipient_id, **details})
+            if recipient_id:
                 seen_parties.add(recipient_id)
 
         reserve_expense_fen = data.get("reserve_expense_fen")
@@ -1112,29 +1592,23 @@ class FundsRead:
                 "total_fen": row["source_rows_total_fen"] or data["amount_fen"],
                 "items": items,
             },
-            party_sources,
         )
 
     def bank_item(self, row):
-        from .dashboard import _display_sources
-
         account = self.account_display("bank", row["account_id"])
-        profile = self.profile("fund_account", row["account_id"])
         amount = row["signed_fen"]
         calculations = self.bank_match_calculations.get(row["page_key"], ())
         calc = calculations[0] if len(calculations) == 1 else None
-        batch_party, batch, batch_party_sources = (
-            self.bank_batch_presentation(calc, row) if calc else (None, None, [])
-        )
+        batch_party, batch = self.bank_batch_presentation(calc, row) if calc else (None, None)
         if len(calculations) > 1:
-            parts, all_parties = [], {}
+            parts = []
             for source in calculations:
                 data = source["fact"]["data"]
                 source_amount = data[
                     "principal_fen" if source["kind"] == "loan_drawdown" else "amount_fen"
                 ]
                 short, _ = self.snap.business_summary(source, 1)
-                source_party, source_parties = self.money_parties(
+                source_party = self.money_parties(
                     source, 1, internal_transfer=self.calculation_is_internal_transfer(source)
                 )
                 label = (
@@ -1143,40 +1617,31 @@ class FundsRead:
                     else f"{short} · {source_party}"
                 )
                 parts.append({"party": label, "amount_fen": source_amount})
-                all_parties.update((item["party_id"], item) for item in source_parties)
             if sum(part["amount_fen"] for part in parts) != abs(amount):
                 raise KernelError("dashboard_bank_match_difference", "银行原行的组合来源金额不一致")
             party = f"组合{'收款' if amount > 0 else '付款'} · {len(parts)} 项"
-            party_sources = list(all_parties.values())
             batch = {"bank_row_count": 1, "total_fen": abs(amount), "items": parts}
         elif batch:
-            party, party_sources = batch_party, batch_party_sources
+            party = batch_party
         elif calc:
-            party, party_sources = self.money_parties(
+            party = self.money_parties(
                 calc,
                 1,
                 internal_transfer=self.calculation_is_internal_transfer(calc),
             )
         else:
-            party, party_sources = "未提供", []
+            party = "未提供"
         item = {
             "id": row["page_key"],
             "date": row["actual_date"],
-            "reference": row["reference"],
             "account_id": row["account_id"],
             "account_code": account["code"],
             "account_name": account["name"],
-            "field_sources": _display_sources(
-                profile, account_code="display_number", account_name="display_name"
-            ),
             "direction": "inflow" if amount > 0 else "outflow",
             "amount_fen": abs(amount),
             "signed_amount_fen": amount,
             "party": party,
-            "party_sources": party_sources,
             "memo": row["description"] or "",
-            "state": row["state"],
-            "source_check": self.bank_source_checks[row["revision_id"]],
         }
         if batch:
             item["batch_payment"] = batch
@@ -1220,19 +1685,27 @@ class FundsRead:
         source_ids = {
             row[0]
             for row in self.connection.execute(
-                source + "SELECT DISTINCT c.id FROM events e,"
+                source + "SELECT DISTINCT json_extract(s.value,'$.source_calculation') "
+                "FROM events e,"
                 "json_each(e.outcome,'$.values.settlements') s "
-                "JOIN calculation c ON c.id=json_extract(s.value,'$.source_calculation') "
-                "WHERE c.kind IN ('money_fund_subscription','money_fund_redemption') "
-                "AND EXISTS(SELECT 1 FROM effects b WHERE b.event_id=e.event_id "
+                # Every direct source kind participates in investment selection.
+                # Authenticate before filtering so damaged/missing headers
+                # cannot silently remove actual settlements from the summary.
+                "WHERE EXISTS(SELECT 1 FROM effects b WHERE b.event_id=e.event_id "
                 "AND b.category IN ('bank','cash','platform'))",
                 parameters,
             )
         }
+        # The exact saved source named by a settlement can precede a valid
+        # no-impact review. Authenticate its own input identity; do not claim
+        # that it was the later independently adopted close head.
+        self.snap.reads.verify_saved_input_identity(source_ids)
         self.snap.reads.verify_sql_outcomes(source_ids)
         query = source + (
             "SELECT printf('%012d:%s:confirmation',number,calculation_id) "
-            "page_key,number,sign,kind,fund_id,"
+            "page_key,(SELECT f.subject_id FROM calculation ic JOIN fact_revision f "
+            "ON f.id=ic.fact_id WHERE ic.id=investments.calculation_id) subject_id,"
+            "number,sign,kind,fund_id,"
             "json_extract(outcome,'$.values.confirmation_date') "
             "actual_date,sign*json_extract(outcome,'$.values.cost_fen') cost_fen,"
             "sign*json_extract(outcome,'$.values.net_proceeds_fen') net_proceeds_fen,"
@@ -1240,11 +1713,12 @@ class FundsRead:
             "sign*coalesce(json_extract(outcome,'$.values.investment_income_fen'),0) END "
             "investment_income_fen,NULL settlement_fen,0 settlement FROM investments UNION ALL "
             "SELECT printf('%012d:%s:settlement:%06d',e.number,e.calculation_id,CAST(s.key AS "
-            "INTEGER)),e.number,e.sign,c.kind,"
+            "INTEGER)),(SELECT f.subject_id FROM calculation ec JOIN fact_revision f "
+            "ON f.id=ec.fact_id WHERE ec.id=e.calculation_id),e.number,e.sign,c.kind,"
             "json_extract(c.outcome,'$.values.fund_id'),json_extract(e.outcome,'$.values.actual_date'),NULL,NULL,NULL,"
             "e.sign*json_extract(s.value,'$.amount_fen'),1 FROM events "
             "e,json_each(e.outcome,'$.values.settlements') s "
-            "JOIN calculation c ON c.id=json_extract(s.value,'$.source_calculation') "
+            "CROSS JOIN calculation c ON c.id=json_extract(s.value,'$.source_calculation') "
             "WHERE c.kind IN ('money_fund_subscription','money_fund_redemption') AND "
             "EXISTS(SELECT 1 FROM effects b "
             "WHERE b.event_id=e.event_id AND b.category IN ('bank','cash','platform'))"
@@ -1277,6 +1751,7 @@ class FundsRead:
             for candidate in issue["candidates"]
             if candidate["kind"] == "opening_package"
         ]
+        self.snap.reads.verify_saved_input_identity(unknown)
         self.snap.reads.verify_sql_outcomes(unknown)
         for row in self.connection.execute(
             "SELECT DISTINCT json_extract(m.value,'$.values.fund_id') fund_id FROM json_each(?) "
@@ -1341,12 +1816,9 @@ class FundsRead:
         return totals
 
     def product_display(self, ident):
-        from .dashboard import _display_sources
-
         profile = self.profile("asset", ident)
         return {
             "name": profile.get("display_name") or "未提供基金名称",
-            "field_sources": _display_sources(profile, name="display_name"),
         }
 
     def investment_item(self, row):
@@ -1358,12 +1830,12 @@ class FundsRead:
         )
         return {
             "id": row["page_key"],
+            "subject_id": row["subject_id"],
             "date": row["actual_date"],
             "period": self.snap.period,
             "fund_id": row["fund_id"],
             "name": self.product_display(row["fund_id"])["name"],
-            "type": ("冲正：" if row["sign"] < 0 else "") + label,
-            "reference": str(row["number"]),
+            "type": ("更正原业务：" if row["sign"] < 0 else "") + label,
             **{
                 key: row[key]
                 for key in (
@@ -1376,15 +1848,17 @@ class FundsRead:
         }
 
 
-def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary_only=False):
+def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_only=False,
+          select_first_account=False):
     if type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError("每页数量必须为 1 至 500")
     sections = set() if summary_only else SECTIONS if sections is None else set(sections)
     if sections - SECTIONS:
         raise ValueError("未知资金明细集合")
-    cursors, filters = cursors or {}, filters or {}
+    cursors = cursors or {}
+    filters = {} if filters is None else filters
     page_requests = {}
-    if "movements" in sections:
+    if "movements" in sections and not select_first_account:
         where, values = "1=1", []
         if filters.get("movement_account_type"):
             category = next(
@@ -1419,44 +1893,83 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
             "after": cursors.get("investment_events"),
             "limit": limit,
         }
-    read = FundsRead(snap)
-    movement_totals = (
-        read.account_summary(page_request=page_requests["movements"])
-        if "movements" in page_requests
-        else read.account_summary()
-    )
+    read = FundsRead(snap, amounts_only=summary_only)
+    if "movements" in page_requests:
+        movement_totals = read.account_summary(page_request=page_requests["movements"])
+    elif select_first_account:
+        movement_totals = read.account_summary(first_page_request={"after": None, "limit": limit})
+    else:
+        movement_totals = read.account_summary()
+    if summary_only:
+        # The owner brief consumes money amounts. account_summary has already
+        # proved the full money scope and independent monetary opening states.
+        accounts = [*read.account_rows.values(), *read.omitted_account_rows.values()]
+        return {
+            "total_fen": _sum(accounts, "closing_fen"),
+            "net_change_fen": _sum(accounts, "net_change_fen"),
+            **{
+                FUND_TYPES[category] + "_fen": _sum(
+                    [item for item in accounts if item["type"] == FUND_TYPES[category]],
+                    "closing_fen",
+                )
+                for category in FUND_TYPES
+            },
+            **{
+                key: movement_totals[key]
+                for key in ("inflow_fen", "outflow_fen", "internal_transfer_fen")
+            },
+        }
+    if select_first_account:
+        # Selection uses the proved visible account set, including zero-activity
+        # openings, and excludes identities retired by opening corrections.
+        first = next(iter(sorted(read.account_rows)), None)
+        if first is not None:
+            category, ident = first
+            filters["movement_account_type"] = FUND_TYPES[category]
+            filters["movement_account_id"] = ident
+            where, values = "category=? AND balance_key=?", (category, ident)
+        else:
+            where, values = "0=1", ()
+        if "movements" not in read.shared_pages:
+            source, parameters = read.movements()
+            # The company summary is already proved. Reuse the bounded SQL page
+            # primitive with an empty summary instead of computing it a second time.
+            _, rows, page = _sql_summary_page(
+                read.connection, source, parameters,
+                "SELECT NULL unused WHERE 0", ("unused",),
+                after=None, limit=limit, where=where, filters=values,
+            )
+            read.shared_pages["movements"] = rows, page
     bank = (
         read.bank_summary(page_request=page_requests["statements"])
         if "statements" in page_requests
         else read.bank_summary()
     )
-    # Brief does not display investment cost or events. If authoritative
-    # subjects prove none exist, and no unresolved opening package could
-    # contain one, avoid building an unused full investment aggregation.
-    # The funds page and any established or uncertain investment still run
-    # the original source checks.
-    investment_possible = read.has_investment_sources() or any(
-        candidate["kind"] == "opening_package"
-        for issue in read.issues
-        for candidate in issue["candidates"]
-    )
+    if not summary_only:
+        bank = {
+            key: value
+            for key, value in bank.items()
+            if key
+            not in {"matched_count", "unmatched_count", "needs_review_count", "unmatched_totals"}
+        } | {
+            "review_state": "pending"
+            if any(
+                item["reconciliation"]["state"] in {"attention", "pending"}
+                for item in read.account_rows.values()
+                if item["type"] == "bank"
+            )
+            else "complete"
+        }
+    # Detailed funds retain bank coverage, product cost and investment events.
+    # The amount proof above includes investment-related money and opening states.
     investments = (
         (
             read.investment_summary(page_request=page_requests["investment_events"])
             if "investment_events" in page_requests
             else read.investment_summary()
         )
-        if not summary_only or investment_possible
-        else {
-            "opening_cost_fen": 0,
-            "subscription_cost_fen": 0,
-            "redemption_cost_fen": 0,
-            "closing_cost_fen": 0,
-            "investment_income_fen": 0,
-            "event_count": 0,
-            "actual_payments_fen": 0,
-            "actual_receipts_fen": 0,
-        }
+        if not summary_only
+        else None
     )
     accounts = list(read.account_rows.values())
     complete_accounts = [*accounts, *read.omitted_account_rows.values()]
@@ -1478,6 +1991,10 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 for category in FUND_TYPES
             },
             "account_count": len(accounts),
+            "selected_movement_account": {
+                "type": filters["movement_account_type"],
+                "account_id": filters["movement_account_id"],
+            } if filters.get("movement_account_type") else None,
             **{
                 FUND_TYPES[category] + "_account_count": sum(
                     item["type"] == FUND_TYPES[category] for item in accounts
@@ -1490,10 +2007,9 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 or item["reconciliation"]["state"] in {"attention", "pending"}
                 for item in accounts
             ),
-            "investments": investments,
+            **({"investments": investments} if not summary_only else {}),
             "bank_statement": bank,
             "collections": {},
-            "fact_issues": read.issues,
         }
     )
     for section in sorted(sections):

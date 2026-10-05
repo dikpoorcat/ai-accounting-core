@@ -1,0 +1,403 @@
+{
+  "scope": "Four current read groups: SHA format, asset open owner lower bound, subject settlement tail, first funds shared source; first failures retained. Unified 289 pass/1 fail/2 record_property warnings; separate existing-voucher assertion repair 1 pass XML only, no fabricated log or 290-all-pass claim. 4d diagnostics are old-source work evidence, not new qualification or latency gain.",
+  "qualification_verified": false,
+  "private_data_archived": false,
+  "mtime": 0,
+  "source_count": 39,
+  "raw_bytes": 3012747,
+  "raw_guard_bytes": 4194304,
+  "gzip_bytes": 277036,
+  "gzip_budget_bytes": 524288,
+  "files": [
+    {
+      "source": ".tmp/stage9-sha256-format-validation-scope-20261003.md",
+      "archive": "01-stage9-sha256-format-validation-scope-20261003.md.gz",
+      "bytes": 2290,
+      "sha256": "bfd5985c56d3fb5ef4a03d64be0f160f9fa53489809b1b45480ef426dee04bea",
+      "source_sha256_after": "bfd5985c56d3fb5ef4a03d64be0f160f9fa53489809b1b45480ef426dee04bea",
+      "gzip_bytes": 1504,
+      "gzip_sha256": "41e1e1eadbf6c637cf3cb63201fb3661ddb5fa069f716b6ce3a44709dcb0677f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-4d-native-work-and-open-owner-range-decision-20261003.md",
+      "archive": "02-stage9-owner-4d-native-work-and-open-owner-range-decision-20261003.md.gz",
+      "bytes": 8191,
+      "sha256": "28ff8d12ab7654359b08935a5002997c14c3265cf32355d0e4ea589137670318",
+      "source_sha256_after": "28ff8d12ab7654359b08935a5002997c14c3265cf32355d0e4ea589137670318",
+      "gzip_bytes": 4715,
+      "gzip_sha256": "123f53e517d89daddae2cec8fa793bd877a3642cda57697769c07d5416630b38",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-scope-20261003.md",
+      "archive": "03-stage9-settlement-subject-tail-scope-20261003.md.gz",
+      "bytes": 15021,
+      "sha256": "afd974b09e93a299e9fb86cedf029b9f205b283d1efae461f0e854125d6c8a67",
+      "source_sha256_after": "afd974b09e93a299e9fb86cedf029b9f205b283d1efae461f0e854125d6c8a67",
+      "gzip_bytes": 7195,
+      "gzip_sha256": "552b7d0479c6c75375e8a8b7e63080b848267f29c095bdecb47e768ccd162381",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-funds-first-shared-source-implementation-20261003.md",
+      "archive": "04-stage9-owner-funds-first-shared-source-implementation-20261003.md.gz",
+      "bytes": 5955,
+      "sha256": "044b57f15fed88c00219384409a7a998ad345d9815519ed2f04f71613a6cf595",
+      "source_sha256_after": "044b57f15fed88c00219384409a7a998ad345d9815519ed2f04f71613a6cf595",
+      "gzip_bytes": 3397,
+      "gzip_sha256": "1a6e97aa144505a06766588ab4db9f515780eea8b9608f5d491decb1c3a18ff9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-funds-first-account-repeated-movements-scope-20261003.md",
+      "archive": "05-stage9-owner-funds-first-account-repeated-movements-scope-20261003.md.gz",
+      "bytes": 8075,
+      "sha256": "490b46a390f81acf502c008a5f46ef8a6b51606a265bb659b1d6882b3047d9e7",
+      "source_sha256_after": "490b46a390f81acf502c008a5f46ef8a6b51606a265bb659b1d6882b3047d9e7",
+      "gzip_bytes": 4234,
+      "gzip_sha256": "1b45c76aa4ebb44956122b7682b275f0145a02b1132f21e2c0cc0e8ced08e2a7",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-sha256-format-directed-first-20261003.xml",
+      "archive": "06-stage9-sha256-format-directed-first-20261003.xml.gz",
+      "bytes": 6343,
+      "sha256": "108bdbf50b01ba2faf9fcdca6c6845f8b0fdc64852c624cb77e5812d503c09ed",
+      "source_sha256_after": "108bdbf50b01ba2faf9fcdca6c6845f8b0fdc64852c624cb77e5812d503c09ed",
+      "gzip_bytes": 526,
+      "gzip_sha256": "9afa0a1aa1864e9a54f23cb9545272c19622bb1c33a584f045e22b909033da22",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-sha256-format-directed-first-20261003.log",
+      "archive": "07-stage9-sha256-format-directed-first-20261003.log.gz",
+      "bytes": 101,
+      "sha256": "d86f1969607f0ca854322ff958d6904e2d1df6a7acdf4db53b91ac7503201f18",
+      "source_sha256_after": "d86f1969607f0ca854322ff958d6904e2d1df6a7acdf4db53b91ac7503201f18",
+      "gzip_bytes": 54,
+      "gzip_sha256": "e6f802cf6508ebd4b6502c3b9b28e0099e08f8b8227c900848065ca97a9257af",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-asset-open-owner-range-first-20261003.xml",
+      "archive": "08-stage9-asset-open-owner-range-first-20261003.xml.gz",
+      "bytes": 1208,
+      "sha256": "16e6888140b5d396b63dbaf895c7cd2fb0888bf505446859673675f13f92b0e3",
+      "source_sha256_after": "16e6888140b5d396b63dbaf895c7cd2fb0888bf505446859673675f13f92b0e3",
+      "gzip_bytes": 480,
+      "gzip_sha256": "978508a68da9b6daf24e7b9df9c27d686bf94198b7208a4075f9c4c4e04495d9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-asset-open-owner-range-first-20261003.log",
+      "archive": "09-stage9-asset-open-owner-range-first-20261003.log.gz",
+      "bytes": 719,
+      "sha256": "fa728f914ceebe6b8667caba3ee543ea2b56c881a699119026d36c34041b09f2",
+      "source_sha256_after": "fa728f914ceebe6b8667caba3ee543ea2b56c881a699119026d36c34041b09f2",
+      "gzip_bytes": 370,
+      "gzip_sha256": "b0e240138a93ede13462109ae093ee7d9c1c078c520f8d17eab6e945f6e58ff2",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-first-20261003.xml",
+      "archive": "10-stage9-settlement-subject-tail-first-20261003.xml.gz",
+      "bytes": 1244,
+      "sha256": "0802b467e8239c1f0321012085815c7fa0018ad00efd6dd714d2fae935c36302",
+      "source_sha256_after": "0802b467e8239c1f0321012085815c7fa0018ad00efd6dd714d2fae935c36302",
+      "gzip_bytes": 462,
+      "gzip_sha256": "07323f72c5424d74df3d4561a6b2dbf9ab82d0d78e34eee8dd735dc1a780b445",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-first-20261003.log",
+      "archive": "11-stage9-settlement-subject-tail-first-20261003.log.gz",
+      "bytes": 1038,
+      "sha256": "12f3467d71265a7bfdc8cd345b5ecc6c3eb5c38f48aaa682c539a0543fc8863d",
+      "source_sha256_after": "12f3467d71265a7bfdc8cd345b5ecc6c3eb5c38f48aaa682c539a0543fc8863d",
+      "gzip_bytes": 515,
+      "gzip_sha256": "e2f99b37fb1ddd1d8bef3c603b4cba80137ceb0d80224e97cdedd357cf9293ff",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundaries-first-20261003.xml",
+      "archive": "12-stage9-settlement-subject-tail-boundaries-first-20261003.xml.gz",
+      "bytes": 3413,
+      "sha256": "62ca852b8d9cc0f8ae5951a4dba1c3c7744d41912d09bc2af79f9add1521fc62",
+      "source_sha256_after": "62ca852b8d9cc0f8ae5951a4dba1c3c7744d41912d09bc2af79f9add1521fc62",
+      "gzip_bytes": 978,
+      "gzip_sha256": "ec084881aca7c559c8dd2372cd7b8e8357a16ef097e1ed4185736cb23315d804",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundaries-first-20261003.log",
+      "archive": "13-stage9-settlement-subject-tail-boundaries-first-20261003.log.gz",
+      "bytes": 3352,
+      "sha256": "7b513f1bd9f0f8145ff6a6d6134537184c8152ac60e5136d39b87bbef921a8f1",
+      "source_sha256_after": "7b513f1bd9f0f8145ff6a6d6134537184c8152ac60e5136d39b87bbef921a8f1",
+      "gzip_bytes": 1029,
+      "gzip_sha256": "2a36d718fbbecc66fd16241d0aff150e5e7b9f046d3e57e017c59d22ae7a8d69",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundary-fixture-fix-20261003.xml",
+      "archive": "14-stage9-settlement-subject-tail-boundary-fixture-fix-20261003.xml.gz",
+      "bytes": 3272,
+      "sha256": "0316b6e5f8b7d23fed4fe839a3f5c2265d7f4fffcb1627642b5aed21e0d80e36",
+      "source_sha256_after": "0316b6e5f8b7d23fed4fe839a3f5c2265d7f4fffcb1627642b5aed21e0d80e36",
+      "gzip_bytes": 998,
+      "gzip_sha256": "bf74357524ff8565365db2d072da5408d97b7384487f5251c0e2ae7eb0292f2f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundary-fixture-fix-20261003.log",
+      "archive": "15-stage9-settlement-subject-tail-boundary-fixture-fix-20261003.log.gz",
+      "bytes": 3733,
+      "sha256": "b0c0aaedc895f612a9d5a1ff4bdec0e216a2a96aa82f6011e0fe33b70b0d04c0",
+      "source_sha256_after": "b0c0aaedc895f612a9d5a1ff4bdec0e216a2a96aa82f6011e0fe33b70b0d04c0",
+      "gzip_bytes": 1121,
+      "gzip_sha256": "fbb6acfc59e68bedda228fd3654cf10d252794a216b13af0804c505fa3edcd2c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundary-fixture-fix2-20261003.xml",
+      "archive": "16-stage9-settlement-subject-tail-boundary-fixture-fix2-20261003.xml.gz",
+      "bytes": 392,
+      "sha256": "6f7a5fa7f2bb7b4f4f673d5a4f4b9f59817e9704fa5ea35229d202602b925578",
+      "source_sha256_after": "6f7a5fa7f2bb7b4f4f673d5a4f4b9f59817e9704fa5ea35229d202602b925578",
+      "gzip_bytes": 266,
+      "gzip_sha256": "92878070ee3d34d75cb83718099668a5a04ce98894b8cee820cb145388223ed3",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-boundary-fixture-fix2-20261003.log",
+      "archive": "17-stage9-settlement-subject-tail-boundary-fixture-fix2-20261003.log.gz",
+      "bytes": 573,
+      "sha256": "1c5336cc22251d616e3d6a4c991e4ba0faa7c4fd9231e37e2f4efea5f594afee",
+      "source_sha256_after": "1c5336cc22251d616e3d6a4c991e4ba0faa7c4fd9231e37e2f4efea5f594afee",
+      "gzip_bytes": 325,
+      "gzip_sha256": "99ee0190c5f89b3fc03fe33aa4875fa79679481d5bbeffd5647f4640723a444d",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-root-block-before-20261003.xml",
+      "archive": "18-stage9-settlement-subject-tail-root-block-before-20261003.xml.gz",
+      "bytes": 2960,
+      "sha256": "7297000da4049ec7d6c9c3f7b857682fdacde6d78322ea2213019b25713c661a",
+      "source_sha256_after": "7297000da4049ec7d6c9c3f7b857682fdacde6d78322ea2213019b25713c661a",
+      "gzip_bytes": 1119,
+      "gzip_sha256": "0415a15e7579388802aae2d7ca7a99edd0eaee4ea0517939df50f2cfb4b97f4c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-root-block-before-20261003.log",
+      "archive": "19-stage9-settlement-subject-tail-root-block-before-20261003.log.gz",
+      "bytes": 3104,
+      "sha256": "73709c2ad1255780f8cb78341de02335e45cd227f11431dff34c3834f8fe53f5",
+      "source_sha256_after": "73709c2ad1255780f8cb78341de02335e45cd227f11431dff34c3834f8fe53f5",
+      "gzip_bytes": 1173,
+      "gzip_sha256": "bff80bdd8e2896b9ddbb3fc193d1f1e12ae2a6e252883725dd247d4174963c6f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-root-block-fix-20261003.xml",
+      "archive": "20-stage9-settlement-subject-tail-root-block-fix-20261003.xml.gz",
+      "bytes": 640,
+      "sha256": "c05fb4e4174e524a8556e95e1b57815e528558bc031973190b6365378264f1af",
+      "source_sha256_after": "c05fb4e4174e524a8556e95e1b57815e528558bc031973190b6365378264f1af",
+      "gzip_bytes": 335,
+      "gzip_sha256": "505056ee764ae54ba739c0c0a848eda5f666692b7af8e52d584434baa6c4fe37",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-settlement-subject-tail-root-block-fix-20261003.log",
+      "archive": "21-stage9-settlement-subject-tail-root-block-fix-20261003.log.gz",
+      "bytes": 566,
+      "sha256": "5b5fc79c5433ec47027a774fb180de038fb7a9496fffe99b0f04d6396397f5e7",
+      "source_sha256_after": "5b5fc79c5433ec47027a774fb180de038fb7a9496fffe99b0f04d6396397f5e7",
+      "gzip_bytes": 321,
+      "gzip_sha256": "a636f86fc32fbaaa34867fc5d7dc816ec67fe55fc8d2d3cd365996960dbb722f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-funds-first-shared-source-first-20261003.xml",
+      "archive": "22-stage9-funds-first-shared-source-first-20261003.xml.gz",
+      "bytes": 11983,
+      "sha256": "e30e3bd2c0393b22886a1a76bf811cf6ceb1df72fa8f2b7e1b277d9e22e7cb51",
+      "source_sha256_after": "e30e3bd2c0393b22886a1a76bf811cf6ceb1df72fa8f2b7e1b277d9e22e7cb51",
+      "gzip_bytes": 3353,
+      "gzip_sha256": "4f2ea9df425b62947a731b9592e152e96239854dcf0298b3ca76fd1ceef72a6b",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-funds-first-shared-source-first-20261003.log",
+      "archive": "23-stage9-funds-first-shared-source-first-20261003.log.gz",
+      "bytes": 10659,
+      "sha256": "858eaa58e6a1d2333a213b8ef5f13a86b61d85c9c680690a9f27e0c24128512d",
+      "source_sha256_after": "858eaa58e6a1d2333a213b8ef5f13a86b61d85c9c680690a9f27e0c24128512d",
+      "gzip_bytes": 3152,
+      "gzip_sha256": "06dd79da23ce99404044e2fc90a9150701b5cdabc9792ea37720a4ea938f8a0a",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-funds-first-shared-source-corrected-20261003.xml",
+      "archive": "24-stage9-funds-first-shared-source-corrected-20261003.xml.gz",
+      "bytes": 1379,
+      "sha256": "9cb75e3011cb6d891b649c925aca82ee73e1844cb7d01536585ed5ebc4b774a6",
+      "source_sha256_after": "9cb75e3011cb6d891b649c925aca82ee73e1844cb7d01536585ed5ebc4b774a6",
+      "gzip_bytes": 449,
+      "gzip_sha256": "db1f42196aa99ab8c640558d237c9cb6a55e50f84245a57c6a775d6ea322ef91",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-funds-first-shared-source-corrected-20261003.log",
+      "archive": "25-stage9-funds-first-shared-source-corrected-20261003.log.gz",
+      "bytes": 645,
+      "sha256": "17c57bb6ef423efedd6cf283518d57d6c386f3797421925b223958d4989138b5",
+      "source_sha256_after": "17c57bb6ef423efedd6cf283518d57d6c386f3797421925b223958d4989138b5",
+      "gzip_bytes": 346,
+      "gzip_sha256": "38a00386da63288081f67790b57623d63edc33830992a53e47b1b6ffc1f4bfe9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-work-4d-20261003.py",
+      "archive": "26-stage9-owner-authority-read-groups-work-4d-20261003.py.gz",
+      "bytes": 16005,
+      "sha256": "1c017f7f19d95331ad0b58528c4c4acb5c57a4f1d29e77484ef263fc10b8a1a9",
+      "source_sha256_after": "1c017f7f19d95331ad0b58528c4c4acb5c57a4f1d29e77484ef263fc10b8a1a9",
+      "gzip_bytes": 5031,
+      "gzip_sha256": "cfc145a10b8c0d9fe31773dc740c71b8c9af96bb6281f9cd92ac3234e222f905",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-work-4d-20261003.json",
+      "archive": "27-stage9-owner-authority-read-groups-work-4d-20261003.json.gz",
+      "bytes": 2724066,
+      "sha256": "c3ce2a01fad1f3547adbf4b816e197362e5c80037cf776105388996d02b836a0",
+      "source_sha256_after": "c3ce2a01fad1f3547adbf4b816e197362e5c80037cf776105388996d02b836a0",
+      "gzip_bytes": 200655,
+      "gzip_sha256": "a32e25e326db9fbcad98de6cd765c0222fca324ec657eb74b7e87d38a81b0cb6",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-work-4d-20261003.log",
+      "archive": "28-stage9-owner-authority-read-groups-work-4d-20261003.log.gz",
+      "bytes": 615,
+      "sha256": "5840f3002880a0f9afd438f28a758556537dd570c02a1ab1d92853940c0082c4",
+      "source_sha256_after": "5840f3002880a0f9afd438f28a758556537dd570c02a1ab1d92853940c0082c4",
+      "gzip_bytes": 233,
+      "gzip_sha256": "82abb98428b97bd9adb4a51bf5a1f59a86ec04fc112dd327054e8ce358b3b62c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-work-4d-20261003.gate.json",
+      "archive": "29-stage9-owner-authority-read-groups-work-4d-20261003.gate.json.gz",
+      "bytes": 1286,
+      "sha256": "e8a7d1275b40fd95a7d81b6a9146bfceda205f2759ce5120b0153ec4ca156725",
+      "source_sha256_after": "e8a7d1275b40fd95a7d81b6a9146bfceda205f2759ce5120b0153ec4ca156725",
+      "gzip_bytes": 748,
+      "gzip_sha256": "c055112f32f70c327dcb8d40236cd11539b3cffc71806ebd4f07846412bd1bfa",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-work-4d-20261003-comparison.json",
+      "archive": "30-stage9-owner-authority-read-groups-work-4d-20261003-comparison.json.gz",
+      "bytes": 80643,
+      "sha256": "06438b5907ad9af2138cff22ffa7c0d4569c6fd68eb6c6da318011585ff098a1",
+      "source_sha256_after": "06438b5907ad9af2138cff22ffa7c0d4569c6fd68eb6c6da318011585ff098a1",
+      "gzip_bytes": 10239,
+      "gzip_sha256": "efc866e8974a6d9fc8addcae98fac449703c4c1276329d6cec715270ad889849",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-asset-open-owner-ranges-4d-20261003.py",
+      "archive": "31-stage9-owner-asset-open-owner-ranges-4d-20261003.py.gz",
+      "bytes": 10947,
+      "sha256": "b0f978c6cbc807eb2a7ed61b36e47d9be80fae35ababd6e49563114539a9df95",
+      "source_sha256_after": "b0f978c6cbc807eb2a7ed61b36e47d9be80fae35ababd6e49563114539a9df95",
+      "gzip_bytes": 3750,
+      "gzip_sha256": "655581933295a947429bd01feffc1457b4385daefc2957e644a4fc61b6d52453",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-asset-open-owner-ranges-4d-20261003.json",
+      "archive": "32-stage9-owner-asset-open-owner-ranges-4d-20261003.json.gz",
+      "bytes": 9138,
+      "sha256": "2991b3c8b4da97c1d672bf3a9926cc473f3d6aeae5e44247f78d98b3ab2fe203",
+      "source_sha256_after": "2991b3c8b4da97c1d672bf3a9926cc473f3d6aeae5e44247f78d98b3ab2fe203",
+      "gzip_bytes": 1822,
+      "gzip_sha256": "3084a0e1af7de24fde1a03f3d68e338d9a9dc4d7b59197cb387aca38f4486ebf",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-asset-open-owner-ranges-4d-20261003.log",
+      "archive": "33-stage9-owner-asset-open-owner-ranges-4d-20261003.log.gz",
+      "bytes": 3677,
+      "sha256": "bde6c02f33401506a98b00caba16d13ef6d8fe5a926487cfbcb21561ec64cb9d",
+      "source_sha256_after": "bde6c02f33401506a98b00caba16d13ef6d8fe5a926487cfbcb21561ec64cb9d",
+      "gzip_bytes": 848,
+      "gzip_sha256": "42549c291c79cbb6e40e1948865755e67f2d296a036b3d032815e824fe5a8919",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-asset-open-owner-ranges-4d-20261003.gate.json",
+      "archive": "34-stage9-owner-asset-open-owner-ranges-4d-20261003.gate.json.gz",
+      "bytes": 1247,
+      "sha256": "5be9701e35210ad8b67964a351aa0882ae31e49d33fb4e7f86ff35bbb0e90af4",
+      "source_sha256_after": "5be9701e35210ad8b67964a351aa0882ae31e49d33fb4e7f86ff35bbb0e90af4",
+      "gzip_bytes": 714,
+      "gzip_sha256": "b50feae61958bb5c6fd26f452a5136472c44d7d4a2c5b1620c71ecae806ee158",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-four-read-groups-regression-20261003.py",
+      "archive": "35-stage9-four-read-groups-regression-20261003.py.gz",
+      "bytes": 5467,
+      "sha256": "caf384609e37a003dfd4418642eb4b9676fe2aedbb1f17d194e2c989d66758e6",
+      "source_sha256_after": "caf384609e37a003dfd4418642eb4b9676fe2aedbb1f17d194e2c989d66758e6",
+      "gzip_bytes": 2058,
+      "gzip_sha256": "2c8329375a96b87913c32ce529fb7a718119d896e858c7a8d3c9f11be1c356b1",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-four-read-groups-regression-20261003.json",
+      "archive": "36-stage9-four-read-groups-regression-20261003.json.gz",
+      "bytes": 8155,
+      "sha256": "50faab4b10fefa4ac53809b17981a2d9757c3b5c22bd253348ebc8682c50aa62",
+      "source_sha256_after": "50faab4b10fefa4ac53809b17981a2d9757c3b5c22bd253348ebc8682c50aa62",
+      "gzip_bytes": 2740,
+      "gzip_sha256": "2d3a670130ed5e823d3a2edeb5966424f3f693e0aeba56975f7794236deea66e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-four-read-groups-regression-20261003.xml",
+      "archive": "37-stage9-four-read-groups-regression-20261003.xml.gz",
+      "bytes": 49277,
+      "sha256": "c012f91bd6c7737916dea9a89c3158fd86c36f4c3cf46b416a0cd33103965ddd",
+      "source_sha256_after": "c012f91bd6c7737916dea9a89c3158fd86c36f4c3cf46b416a0cd33103965ddd",
+      "gzip_bytes": 7945,
+      "gzip_sha256": "38f93868bc2a3fe36ab099de4ff7bb22e0ddbfea04a698e1c7d67b9dbed21794",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-four-read-groups-regression-20261003.log",
+      "archive": "38-stage9-four-read-groups-regression-20261003.log.gz",
+      "bytes": 4969,
+      "sha256": "cd89c7a57b3f543cbbbff5215b587ca77a2fac9dd438a0cb786c474c0481794d",
+      "source_sha256_after": "cd89c7a57b3f543cbbbff5215b587ca77a2fac9dd438a0cb786c474c0481794d",
+      "gzip_bytes": 1571,
+      "gzip_sha256": "f3b1654581a8bdf25849899483c62d927ffc7e3d6da44f203c85fbd3444f5d82",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-restored-owner-voucher-assertion-fix-20261003.xml",
+      "archive": "39-stage9-restored-owner-voucher-assertion-fix-20261003.xml.gz",
+      "bytes": 399,
+      "sha256": "d7af796d778482505a0ce95dc959db5c39fa2d161369b2e3d1573e7ee5eb7462",
+      "source_sha256_after": "d7af796d778482505a0ce95dc959db5c39fa2d161369b2e3d1573e7ee5eb7462",
+      "gzip_bytes": 265,
+      "gzip_sha256": "555d53bb87cd6f0c06b3ed6d9d4d0210a8626a6cc9cf65fb015596d81abd68bb",
+      "decompressed_bytes_equal": true
+    }
+  ]
+}

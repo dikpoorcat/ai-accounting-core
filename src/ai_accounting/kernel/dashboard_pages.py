@@ -12,20 +12,17 @@ from .types import canonical
 SECTIONS = {
     "brief": frozenset(
         {
+            "activity",
             "vouchers",
-            "businesses",
             "open_items",
-            "settlement_events",
-            "external_followups",
-            "file_jobs",
         }
     ),
     "funds": frozenset(
         {"accounts", "movements", "statements", "investment_products", "investment_events"}
     ),
-    "employees": frozenset({"employees", "payroll_sources", "labor_sources", "settlement_events"}),
-    "assets": frozenset({"assets", "projects", "source_history", "settlement_events"}),
-    "business-status": frozenset({"events", "settlement_events", "source_history", "file_jobs"}),
+    "employees": frozenset({"employees", "labor_sources"}),
+    "assets": frozenset({"assets", "projects"}),
+    "business-status": frozenset({"settlement_events"}),
 }
 
 

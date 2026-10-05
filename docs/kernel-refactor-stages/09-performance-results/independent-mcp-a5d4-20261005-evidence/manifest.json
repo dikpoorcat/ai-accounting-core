@@ -1,0 +1,105 @@
+{
+  "format": "stage9-public-mcp-receipt-analysis/1",
+  "source_sha256": "a5d4e1ac7d41814bb7a74d30410e0dbe45e6a691c85bd69f71deff10f57bd1d1",
+  "package_manifest_sha256": "bd802ceb8d370151ad3a36366f734eced7700dbd80e547cc06451666cd58cc49",
+  "original_record_count": 1162,
+  "originals": [
+    {
+      "path": ".tmp/stage9-final-draft-agent-a5d4-20261005/operator-acceptance-report.txt",
+      "sha256": "4151eb6fc422e617677d94bac4a306c13ed4772e77bf72c816b88f10958b5903",
+      "bytes": 5659,
+      "contents_published": false
+    },
+    {
+      "path": ".tmp/stage9-final-draft-agent-a5d4-20261005/operator-acceptance-summary.json",
+      "sha256": "30244c41c6aba65972af50df0a5ffaf7c12606b1fd7e1933ec7c8d16e5432010",
+      "bytes": 3249263,
+      "contents_published": false
+    },
+    {
+      "path": ".tmp/stage9-final-draft-agent-a5d4-restore-20261005/operator-restore-receipts.json",
+      "sha256": "0591338a732464a727ad212ea5b3dabb6e7e2141ecb06aa0569bd20ee605031c",
+      "bytes": 3027603,
+      "contents_published": false
+    },
+    {
+      "path": ".tmp/stage9-final-draft-agent-a5d4-restore-20261005/operator-restore-run-20261005.log",
+      "sha256": "d1e03ffb1b29cab821a58686bef989c1aadc13b37f0ec6c4c9206d9923806c7c",
+      "bytes": 2641,
+      "contents_published": false
+    },
+    {
+      "path": ".tmp/stage9-final-draft-agent-a5d4-acceptance-records-20261005.zip",
+      "sha256": "d8d0826ea0d8d9996bcbd9ca543156131611a2b9276e92b6bc8637f13cb35c94",
+      "bytes": 3445622,
+      "contents_published": false
+    }
+  ],
+  "published": [
+    {
+      "file": "acceptance-analysis.json.gz",
+      "representation": "derived receipt analysis",
+      "content_sha256": "2978272b8e5291edcf52eb2928201a350e587dc7a18c06949ff2c0faff94b82f",
+      "gzip_sha256": "b5a385f2d55a7c2625f64ab24b995566f92e774cfdddfdd8655b40f36dc5e2ee",
+      "content_bytes": 6136,
+      "gzip_bytes": 2102,
+      "original_path": ".tmp/stage9-final-draft-agent-a5d4-20261005/operator-acceptance-summary.json",
+      "original_sha256": "30244c41c6aba65972af50df0a5ffaf7c12606b1fd7e1933ec7c8d16e5432010",
+      "original_bytes": 3249263
+    },
+    {
+      "file": "A-original-integrity.json.gz",
+      "representation": "unchanged original MCP response",
+      "content_sha256": "0492c710045b55776abce5619778ea3211164d618b3bc56c3c604a48afd493d7",
+      "gzip_sha256": "501005fd8bf6dbc91ceff4d8447e933a707ac52c18e1c3702d05a86765707115",
+      "content_bytes": 358,
+      "gzip_bytes": 191,
+      "original_path": ".tmp/stage9-final-draft-agent-a5d4-20261005/responses/551199788f1e403cbb438676f679b667.json",
+      "original_sha256": "0492c710045b55776abce5619778ea3211164d618b3bc56c3c604a48afd493d7",
+      "original_bytes": 358
+    },
+    {
+      "file": "B-original-integrity.json.gz",
+      "representation": "unchanged original MCP response",
+      "content_sha256": "81d38c833bc94501d7419a4a6693f98cb877cba5dc5bcf8e1b9c8dfd6580ecb0",
+      "gzip_sha256": "e70fe8a88994169e88cc0fcc9e7452f083257e8fee5438ff41a87287069f993e",
+      "content_bytes": 355,
+      "gzip_bytes": 192,
+      "original_path": ".tmp/stage9-final-draft-agent-a5d4-20261005/responses/feab8a9bf267491ea59c505dd1019eb2.json",
+      "original_sha256": "81d38c833bc94501d7419a4a6693f98cb877cba5dc5bcf8e1b9c8dfd6580ecb0",
+      "original_bytes": 355
+    },
+    {
+      "file": "A-restored-integrity.json.gz",
+      "representation": "unchanged original MCP response",
+      "content_sha256": "0492c710045b55776abce5619778ea3211164d618b3bc56c3c604a48afd493d7",
+      "gzip_sha256": "501005fd8bf6dbc91ceff4d8447e933a707ac52c18e1c3702d05a86765707115",
+      "content_bytes": 358,
+      "gzip_bytes": 191,
+      "original_path": ".tmp/stage9-final-draft-agent-a5d4-restore-20261005/responses/b9a0d31f63bb464c957ac15d135a526f.json",
+      "original_sha256": "0492c710045b55776abce5619778ea3211164d618b3bc56c3c604a48afd493d7",
+      "original_bytes": 358
+    },
+    {
+      "file": "B-restored-integrity.json.gz",
+      "representation": "unchanged original MCP response",
+      "content_sha256": "81d38c833bc94501d7419a4a6693f98cb877cba5dc5bcf8e1b9c8dfd6580ecb0",
+      "gzip_sha256": "e70fe8a88994169e88cc0fcc9e7452f083257e8fee5438ff41a87287069f993e",
+      "content_bytes": 355,
+      "gzip_bytes": 192,
+      "original_path": ".tmp/stage9-final-draft-agent-a5d4-restore-20261005/responses/125283dba0a141e084e0f0b9b0375ca4.json",
+      "original_sha256": "81d38c833bc94501d7419a4a6693f98cb877cba5dc5bcf8e1b9c8dfd6580ecb0",
+      "original_bytes": 355
+    },
+    {
+      "file": "private-original-index.json.gz",
+      "representation": "derived receipt analysis",
+      "content_sha256": "407e2bb688612043b3122cc9fcc426a6a8ed7dbaf0e8a8238d1a1e70f78e3903",
+      "gzip_sha256": "3a8c00b2c26b125b96a53de0f832ec08aed93d628ee144bfb0ddfde640fd193a",
+      "content_bytes": 235721,
+      "gzip_bytes": 56737
+    }
+  ],
+  "privacy": "No databases, portable ZIP contents, credentials, service capabilities, source materials, owner verbatim answers, helper code or complete business payloads published. Derived fields explicitly marked; four unchanged integrity responses contain only status/coverage/counts/revision.",
+  "verification": "Saved receipt equality and archived SHA/length; no new MCP/database/service execution."
+}

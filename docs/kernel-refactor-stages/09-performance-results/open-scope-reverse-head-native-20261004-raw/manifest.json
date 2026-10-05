@@ -1,0 +1,79 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "Sequential native kernel timing diagnostic; all 30 samples per entry retained; uncontrolled OS load, no stable or causal latency conclusion and no browser qualification",
+  "files": [
+    {
+      "source": ".tmp/stage9-open-scope-native-prepare-20261004.py",
+      "archive": "stage9-open-scope-native-prepare-20261004.py.gz",
+      "raw_bytes": 3020,
+      "gzip_bytes": 1145,
+      "source_sha256": "b25b62e01267dae84cf698d53d59d7dc711d700dd45864540f57d03e4d63e3f2",
+      "gzip_sha256": "9cf7922c9583a561541f8a73fb73da3c7888b5a047a777d7e686294d264876ff",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_script_only"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-native-20261004.py",
+      "archive": "stage9-open-scope-native-20261004.py.gz",
+      "raw_bytes": 10573,
+      "gzip_bytes": 3505,
+      "source_sha256": "a0aba72b6fdb727c4a2e27fa147de1aaeb816c14f3fe45678403559c738a67c7",
+      "gzip_sha256": "24f72f6c72c61ad2891101d122164f30cb198f2fb1e0e7515eff8d0b1bba34a3",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_script_only"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-native-before-20261004.json",
+      "archive": "stage9-open-scope-native-before-20261004.json.gz",
+      "raw_bytes": 11187,
+      "gzip_bytes": 3195,
+      "source_sha256": "bd3a8ceb954ecfde5174f228107f1a40bbd32afdbf07f8c4fbde70438a7ec7b9",
+      "gzip_sha256": "7a03c6dc0581c05ac3a01273e208b75396898428d7e96afc20ab45ecf6195db7",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_native_sample_summary_or_original_synthetic_guards"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-native-after-20261004.json",
+      "archive": "stage9-open-scope-native-after-20261004.json.gz",
+      "raw_bytes": 11210,
+      "gzip_bytes": 3241,
+      "source_sha256": "1d31bf5ae4cf109749f75051938da9eaa8904393890d5ddaabce6f3086c2843f",
+      "gzip_sha256": "8ccd59f83186af68db652fb353d87a68c6cab2f879269047d90ff4daf948170d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_native_sample_summary_or_original_synthetic_guards"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-native-comparison-20261004.py",
+      "archive": "stage9-open-scope-native-comparison-20261004.py.gz",
+      "raw_bytes": 3010,
+      "gzip_bytes": 1381,
+      "source_sha256": "f4caaa3ce7bf192d90b9016d20f4db98a149d7a16337909054e90c49519615d4",
+      "gzip_sha256": "c7cd4805a0191a9f8f5535b197cb3d432d38e2ee50fc11071303a8ab67b7547f",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_script_only"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-native-comparison-20261004.json",
+      "archive": "stage9-open-scope-native-comparison-20261004.json.gz",
+      "raw_bytes": 4003,
+      "gzip_bytes": 1348,
+      "source_sha256": "1ea98feca2898ca3595e5ac45bc6eecb23d407ad5b00724557bbf3a45a8f3a23",
+      "gzip_sha256": "c295bb76ed7794ac83b03439967cb4f0de4b66413a16c9c609bbb2982d2621cc",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_native_sample_summary_or_original_synthetic_guards"
+    }
+  ],
+  "raw_bytes": 43003,
+  "gzip_bytes": 13815,
+  "native_timed_calls_each_source": 180,
+  "warmup_calls_each_source": 18,
+  "post_window_CPU_observation": "Only actual tool stdout exists; no persistent interval CPU receipt and none synthesized. No PID or CPU process contents included.",
+  "content_review": "Actual sample numeric arrays and summary calculations, business SHA, synthetic path and row-hash guards reviewed; scripts parsed and inspected. No response payload, credentials, auth token, PID, real private data, or DB bytes.",
+  "production_frozen": false
+}

@@ -61,6 +61,11 @@ def bank_scopes(period, *bank_accounts):
     )
 
 
+def obligation_key(kind: str, subject_id: str, name: str) -> str:
+    """The shared identity of one named obligation of a typed business."""
+    return f"{kind}:{subject_id}:{name}"
+
+
 def obligation(
     version: FactVersion,
     *,
@@ -74,7 +79,7 @@ def obligation(
 ) -> dict:
     return {
         "name": name,
-        "key": f"{version.fact.kind}:{version.subject_id}:{name}",
+        "key": obligation_key(version.fact.kind, version.subject_id, name),
         "amount_fen": amount,
         "account": account,
         "normal": normal,

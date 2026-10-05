@@ -12,7 +12,7 @@ from typing import Literal
 from .contracts import KernelError, NeedsInformation
 from .publication import verify_record as verify_publication_record
 from .read_state import repair_revision
-from .types import YearMonth, canonical, digest
+from .types import EvidenceDigest, YearMonth, canonical, digest, evidence_digest_bytes
 from .versions import database_format
 
 DISCOVERY_DDL = """
@@ -64,15 +64,13 @@ class Discovery:
         *,
         expected_revision: int,
         request_id: str,
-        evidence_digest: str | None = None,
+        evidence_digest: EvidenceDigest | None = None,
     ):
         if not isinstance(text, str) or len(text) > 50000:
             raise ValueError("company note must be text of at most 50000 characters")
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a nonnegative integer")
-        evidence = bytes.fromhex(evidence_digest) if evidence_digest is not None else None
-        if evidence is not None and len(evidence) != 32:
-            raise ValueError("evidence digest must be 32 bytes")
+        evidence = evidence_digest_bytes(evidence_digest) if evidence_digest is not None else None
         content_digest = hashlib.sha256(text.encode("utf-8")).digest()
 
         def operation(connection):

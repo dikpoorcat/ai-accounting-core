@@ -8,10 +8,11 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-test("historical UI separates source uncertainty, missing materials, identity and confirmed state counts", async (t) => {
-  const fixtures = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"));
+test("owner history preserves business uncertainty and batch amounts without source diagnostics", async (t) => {
+  const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
+  const fixtures = { context: samples.company_with_period.response, brief: samples.brief.response, funds: samples.cash_funds.response, employees: samples.employees.response, assets: samples.assets.response, reports: samples.quarterly_report.response };
   const previousWindow = globalThis.window, previousFetch = globalThis.fetch;
-  globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
+  globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${fixtures.context.current_company.company_id}` } };
   globalThis.historicalUi = structuredClone(fixtures);
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
@@ -21,7 +22,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
       const key = match[1].toLowerCase(), refName = key === "funds" ? "funds" : key === "reports" ? "report" : "response";
       code = code.replace(new RegExp(`const ${refName} = (?:ref|shallowRef)<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(globalThis.historicalUi.${key}${key === "funds" ? ".data" : ""})`);
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
-        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-11")').replaceAll("{ immediate: true }", "{ immediate: false }");
+        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")').replaceAll("{ immediate: true }", "{ immediate: false }");
       return code;
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
@@ -29,7 +30,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
     const router = createRouter({ history: createMemoryHistory(), routes: [
       { path: "/", name: "brief", component: {} }, ...["funds", "employees", "assets", "reports"].map(name => ({ path: `/${name}`, name, component: {} })),
     ] });
-    await router.push(`/${name === "Brief" ? "" : name.toLowerCase()}?company_id=co&period=2026-11&quarter=2026-Q4${extraQuery}`);
+    await router.push(`/${name === "Brief" ? "" : name.toLowerCase()}?company_id=${fixtures.context.current_company.company_id}&period=2026-01&quarter=2026-Q1${extraQuery}`);
     const { default: component } = await server.ssrLoadModule(`/src/views/${name}View.vue`);
     const app = createSSRApp(component); app.use(router);
     return renderToString(app);
@@ -39,42 +40,14 @@ test("historical UI separates source uncertainty, missing materials, identity an
     globalThis.fetch = async () => new Response(JSON.stringify(fixtures.context));
     const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
     await useDashboardContext().load(true);
-    await t.test("partial coverage does not imply missing materials or changed matching facts", async () => {
-      const data = globalThis.historicalUi.brief.data;
-      Object.assign(data.cash, { coverage_state: "partial", missing_account_count: 0, needs_review_count: 2, unmatched_count: 1 });
-      data.unmatched_bank_activity.count = 3;
-      const html = visible(await render("Brief"));
-      assert.match(html, /银行流水覆盖尚不能完整确认/);
-      assert.match(html, /3 笔匹配状态待核对/);
-      assert.match(html, /1 笔流水待识别/);
-      assert.match(html, /2 笔流水匹配需复核/);
-      assert.doesNotMatch(html, /原匹配依据已发生变化|银行流水资料尚不完整|3 笔流水待处理|仅列已提供部分/);
-      data.cash.missing_account_count = 1;
-      assert.match(visible(await render("Brief")), /1 个银行账户尚未提供本月流水/);
-    });
-    await t.test("owner fund cards and bank rows omit technical source proof", async () => {
+    await t.test("AI review remains distinct from a missing bank statement", async () => {
       const data = globalThis.historicalUi.funds.data;
-      const check = { state: "confirmed", message: "流水已由封存对账精确采用为来源。", statement_calculation_id: "exact-statement", reconciliation_calculation_id: "exact-reconciliation", statement_fact_id: "exact-statement-fact", reconciliation_fact_id: "exact-reconciliation-fact", selection_source: "close_manifest", selection_proof: { manifest: "exact-manifest" }, proof_method: "reconciliation_dependency" };
-      Object.assign(data.bank_statement, { coverage_state: "partial", missing_account_count: 0, needs_review_count: 1, unmatched_count: 0 });
-      data.collections.accounts.items[0].reconciliation.source_check = check;
-      data.collections.statements.items = [
-        { id: "synthetic-confirmed", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "12345", signed_amount_fen: "12345", party: "测试来源", memo: "测试流水", state: "matched", source_check: check },
-        { id: "synthetic-unknown", date: "2026-11-01", account_id: "synthetic-bank", account_name: "测试账户", account_code: "测试", direction: "inflow", amount_fen: "100", signed_amount_fen: "100", party: "另一来源", memo: "另一流水", state: "needs_review", source_check: { ...check, state: "unestablished", message: "该来源的历史采用尚不能确认。", proof_method: null } },
-      ];
-      data.collections.statements.page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
-      data.fact_issues = [{ reason: "source_digest_mismatch", candidates: [{ calculation_id: "preserved-candidate" }] }];
-      const html = await render("Funds", "&funds_view=bank"), text = visible(html);
-      assert.match(text, /本月实际收款/);
-      assert.match(text, /本月实际付款/);
-      assert.match(text, /期末 · 全公司/);
-      assert.match(text, /实际收付款不含公司账户间互转/);
-      assert.match(text, /另一来源.*需复核/s);
-      assert.doesNotMatch(text, /查看账户来源引用与证明|查看流水来源引用与证明|流水已由封存对账精确采用为来源/);
-      assert.match(text, /核对说明.*该来源的历史采用尚不能确认/s);
-      assert.match(text, /历史资金依据需要核对/);
-      assert.doesNotMatch(text, /相关金额暂无法完整确定|exact-statement|exact-manifest|reconciliation_dependency/);
-      for (const id of ["exact-statement", "exact-reconciliation", "exact-manifest"]) assert.doesNotMatch(html, new RegExp(id));
-      assert.match(html, /preserved-candidate/);
+      Object.assign(data.bank_statement, { coverage_state: "partial", missing_account_count: 0, review_state: "pending" });
+      const html = await render("Funds");
+      assert.match(html, /AI 会计核对中/);
+      assert.doesNotMatch(html, /source_digest_mismatch|selection_proof|查看.*来源证明|<pre/);
+      data.bank_statement.missing_account_count = 1;
+      assert.match(await render("Funds"), /1 个银行账户未提供本月流水/);
     });
     await t.test("bank rows stay distinct while a shared payment batch shows every recipient", async () => {
       const data = globalThis.historicalUi.funds.data;
@@ -86,8 +59,8 @@ test("historical UI separates source uncertainty, missing materials, identity an
       const html = visible(await render("Funds", "&funds_view=bank"));
       assert.equal((html.match(/class="bank-activity-item"/g) ?? []).length, 2);
       assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 4);
-      assert.match(html, /20260710042541917000001/);
-      assert.match(html, /20260710042542175500001/);
+      assert.doesNotMatch(html, /20260710042541917000001/);
+      assert.doesNotMatch(html, /20260710042542175500001/);
       assert.match(html, /−¥39,066\.17/);
       assert.match(html, /−¥23,841\.39/);
       assert.match(html, /整批付款明细/);
@@ -96,17 +69,11 @@ test("historical UI separates source uncertainty, missing materials, identity an
       assert.match(html, /不能据此把某位收款人归到本条/);
       assert.doesNotMatch(html, /张三、李四/);
     });
-    await t.test("employee differing source IDs do not invent temporal changes", async () => {
-      const employee = globalThis.historicalUi.employees.data.collections.employees.items[0];
-      assert.ok(employee);
-      employee.has_payroll_activity = true;
-      const source = { source_id: "synthetic-wage", kind: "payroll", period: "2026-11", label: "测试工资来源", obligations: [], movements: [], declarations: [] };
-      employee.payroll_sources = [source];
-      source.disbursements = [{ calculation_id: "different-basis", recording_period: "2026-11", needs_review: true, matches_displayed_wage: false, target_net_fen: "100", held_fen: "0" }];
-      const html = visible(await render("Employees"));
-      assert.match(html, /按工资来源期查看款项/);
-      assert.doesNotMatch(html, /后来更新的工资|依据变化，需复核/);
-      assert.doesNotMatch(html, /different-basis/);
+    await t.test("employee uncertainty keeps unknown amounts and AI responsibility", async () => {
+      globalThis.historicalUi.employees.data.employees.checking = true;
+      const html = await render("Employees");
+      assert.match(html, /AI 会计核对中/);
+      assert.doesNotMatch(html, /calculation_id|selection_proof|查看工资确认依据|<pre/);
     });
     await t.test("company-wide unknown asset counts stay qualified on a filtered page with no unknown rows", async () => {
       const data = globalThis.historicalUi.assets.data;
@@ -121,17 +88,12 @@ test("historical UI separates source uncertainty, missing materials, identity an
       assert.match(html, /已确认 .* 项资产/);
       assert.match(html, /完整总计 8 项 · 筛选总计 0 项 · 已加载 0 项/);
     });
-    await t.test("reports use report readiness without repeating company-wide month followups", async () => {
-      const prep = globalThis.historicalUi.reports.period_preparations[0];
-      prep.current_followups.file_jobs.issue_count = 1;
-      prep.current_followups.materials.issues = [{ message: "来源采用尚不能确认" }];
-      const html = visible(await render("Reports"));
-      assert.match(html, /role="tooltip"[^>]*>.*相关月份.*报表资料/s);
-      assert.match(html, /负债合计/);
-      assert.doesNotMatch(html, /与负债和所有者权益合计一致/);
-      assert.doesNotMatch(html, /可生成下载|暂不可下载|查看报表准备详情/);
-      assert.doesNotMatch(html, /文件任务结果或引用依据待核对|来源采用尚不能确认|所选月末核算后/);
+    await t.test("reports omit repeated preparation and technical selectors", async () => {
+      const html = await render("Reports");
+      assert.match(html, /季度财务报表/);
+      assert.doesNotMatch(html, /查看报表准备详情|采用来源|selected_fact_id|calculation_id|<pre/);
     });
+
   } finally {
     await server.close();
     globalThis.window = previousWindow; globalThis.fetch = previousFetch;

@@ -10,17 +10,27 @@ from contextlib import closing
 from dataclasses import replace
 from types import MappingProxyType
 
-from .backup import _retained_history_digest, _verify_connection, create_portable, verify_file
+from .backup import (
+    _retained_history_digest, _verify_connection, copy_to_unpublished_database,
+    create_portable, verify_file,
+)
 from .contracts import KernelError
 from .development_contracts import get_contract_sha
 from .migration_contracts import diff_contracts
 from .offline_upgrade import _catalog_retained_digest, _catalog_rows
 from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
-from .runtime import connect, private_file_lock
+from .runtime import connect, private_file_lock, verification_snapshot
 from .schema_bundle import production_bundle
 from .versions import fingerprint, objects, verify_schema
 
 SOURCE_FINGERPRINT = "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+INDEX_SOURCE_FINGERPRINT = "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+INDEX_TARGET_FINGERPRINT = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
+_DIRECT_ADOPTION_SQL = (
+    "CREATE INDEX close_reference_direct_adoption ON close_reference(\n"
+    " reference_type,reference_id,path,close_period,position)\n"
+    " WHERE path='adopted_results[*].fact_id' OR path='adopted_results[*].calculation_id'"
+)
 _REPLACEMENTS = {"fact_payment": "counterparty_id", "fact_pass_through": "beneficiary_id"}
 _ADDED_TABLES = {"schema_draft_history", "fact_managed_reserve_internal_movement"}
 _ADDED_TRIGGERS = {
@@ -40,13 +50,14 @@ def _quote(name):
 def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
     """Decode the preserved exact source with the unchanged existing fact types."""
     source = get_contract_sha(bundle, "company", source_fingerprint)
-    if source is None or source_fingerprint != SOURCE_FINGERPRINT:
+    if source is None or source_fingerprint not in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT):
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
     registry = copy.copy(bundle.registry)
     registry.models = dict(registry.models)
     registry.evaluators = dict(registry.evaluators)
-    registry.models.pop("managed_reserve_internal_movement", None)
-    registry.evaluators.pop("managed_reserve_internal_movement", None)
+    if source_fingerprint == SOURCE_FINGERPRINT:
+        registry.models.pop("managed_reserve_internal_movement", None)
+        registry.evaluators.pop("managed_reserve_internal_movement", None)
     return replace(
         bundle,
         registry=registry,
@@ -61,14 +72,19 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
 
 def _declared_changes(bundle):
     source = get_contract_sha(bundle, "company", SOURCE_FINGERPRINT)
+    intermediate = get_contract_sha(bundle, "company", INDEX_SOURCE_FINGERPRINT)
     target = bundle.current("company")
+    transitions = ((SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT),
+                   (INDEX_SOURCE_FINGERPRINT, INDEX_TARGET_FINGERPRINT))
     if (
         bundle.status != "draft"
         or source is None
-        or (SOURCE_FINGERPRINT, target["sha256"]) not in bundle.draft_transitions.get("company", ())
+        or intermediate is None
+        or target["sha256"] != INDEX_TARGET_FINGERPRINT
+        or set(transitions) != bundle.draft_transitions.get("company", frozenset())
     ):
         raise KernelError("migration_not_declared", "开发结构变化缺少明确来源和目标声明")
-    differences = diff_contracts(source, target)
+    differences = diff_contracts(source, intermediate)
     expected = {
         *(("table", name) for name in _REPLACEMENTS),
         *(("table", name) for name in _ADDED_TABLES),
@@ -96,7 +112,13 @@ def _declared_changes(bundle):
                 raise KernelError("migration_not_declared", "类型封存迁移超出新类型声明")
         elif item["old_sql"] is not None or item["new_sql"] is None:
             raise KernelError("migration_not_declared", "开发迁移只能添加明确的新对象")
-    return source, target, differences
+    index_differences = diff_contracts(intermediate, target)
+    if index_differences != [{
+        "type": "index", "name": "close_reference_direct_adoption",
+        "old_sql": None, "new_sql": _DIRECT_ADOPTION_SQL,
+    }]:
+        raise KernelError("migration_not_declared", "直接采用索引迁移与精确声明不一致")
+    return ((source, intermediate, differences), (intermediate, target, index_differences))
 
 
 def _all_existing_rows(connection, source_contract):
@@ -160,58 +182,100 @@ def _replace_table(connection, name, target_objects, *, fault=None):
         connection.execute(sql)
 
 
-def upgrade_company(connection, bundle, *, fault=None):
+def _apply_first_step(connection, target, differences, *, fault=None):
+    """The original declared nullable-party/internal-reserve table adjustment."""
+    target_objects = {(item["type"], item["name"]): item["sql"] for item in target["objects"]}
+    for name in _REPLACEMENTS:
+        _replace_table(connection, name, target_objects, fault=fault)
+    for item in differences:
+        if item["name"] in _ADDED_TABLES:
+            connection.execute(item["new_sql"])
+    connection.execute("DROP TRIGGER fact_seal_shape")
+    connection.execute(target_objects[("trigger", "fact_seal_shape")])
+    for item in differences:
+        if item["name"] in _ADDED_TRIGGERS:
+            connection.execute(item["new_sql"])
+
+
+def upgrade_company(
+    connection, bundle, *, fault=None, expected_source_fingerprint=None,
+    expected_company_id=None, expected_database_id=None, expected_taxpayer_id=None,
+):
     """Atomic explicit source-to-target DDL; no accounting facts are changed."""
     if connection.in_transaction:
         raise KernelError("migration_transaction_active", "开发升级须从无事务连接开始")
-    source, target, differences = _declared_changes(bundle)
-    previous = source_bundle(bundle)
-    verify_schema(connection, bundle=previous)
-    _verify_connection(connection, previous, allow_previous=False)
+    declared = _declared_changes(bundle)
+    identity_checks = {
+        "expected_company_id": expected_company_id,
+        "expected_database_id": expected_database_id,
+        "expected_taxpayer_id": expected_taxpayer_id,
+    }
+    with verification_snapshot(connection):
+        previous = _company_bundle(connection, bundle)
+        if (expected_source_fingerprint is not None
+                and previous.current("company")["sha256"] != expected_source_fingerprint):
+            raise KernelError("schema_fingerprint_mismatch", "开发升级来源在备份后发生变化")
+        verify_schema(connection, bundle=previous)
+        initial = _verify_connection(connection, previous, allow_previous=False, **identity_checks)
+    # Bind standalone calls too: taking the write lock cannot silently adopt
+    # another identity with the exact same source structure.
+    identity_checks = {"expected_" + key: value for key, value in initial["identity"].items()}
+    if previous is bundle:
+        return {"status": "verified_skip"}
+    source = previous.current("company")
+    target = bundle.current("company")
+    steps = declared if source["sha256"] == SOURCE_FINGERPRINT else declared[1:]
+    replace_tables = source["sha256"] == SOURCE_FINGERPRINT
     try:
-        connection.execute("PRAGMA foreign_keys=OFF")
-        if connection.execute("PRAGMA foreign_keys").fetchone()[0]:
-            raise KernelError("migration_integrity_failed", "无法关闭迁移外键检查")
+        if replace_tables:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            if connection.execute("PRAGMA foreign_keys").fetchone()[0]:
+                raise KernelError("migration_integrity_failed", "无法关闭迁移外键检查")
+        if fault:
+            fault("before_begin")
         connection.execute("BEGIN IMMEDIATE")
         verify_schema(connection, bundle=previous)
-        _verify_connection(connection, previous, allow_previous=False)
+        _verify_connection(connection, previous, allow_previous=False, **identity_checks)
         original_rows = _all_existing_rows(connection, source)
         retained = _retained_history_digest(connection)
-        target_objects = {(item["type"], item["name"]): item["sql"] for item in target["objects"]}
-        for name in _REPLACEMENTS:
-            _replace_table(connection, name, target_objects, fault=fault)
-        for item in differences:
-            if item["name"] in _ADDED_TABLES:
-                connection.execute(item["new_sql"])
-        connection.execute("DROP TRIGGER fact_seal_shape")
-        connection.execute(target_objects[("trigger", "fact_seal_shape")])
-        for item in differences:
-            if item["name"] in _ADDED_TRIGGERS:
-                connection.execute(item["new_sql"])
-        if fault:
-            fault("after_ddl")
-        if (
-            objects(connection) != target["objects"]
-            or fingerprint(objects(connection)).hex() != target["sha256"]
-        ):
-            raise KernelError("schema_fingerprint_mismatch", "开发升级未生成精确目标结构")
-        connection.execute(
-            "INSERT INTO schema_draft_history(sequence,source_fingerprint,target_fingerprint,"
-            "retained_history_digest) VALUES(1,?,?,?)",
-            (
-                bytes.fromhex(source["sha256"]),
-                bytes.fromhex(target["sha256"]),
-                bytes.fromhex(retained),
-            ),
-        )
+        applied = []
+        for step_index, (step_source, step_target, differences) in enumerate(steps):
+            # Includes existing draft-history rows. Compare before appending the
+            # new receipt so every original value remains bound by this hash.
+            # The first source is still the exact same locked snapshot as the
+            # original receipt baseline; subsequent steps include new receipts.
+            step_rows = (original_rows if step_index == 0 else
+                         _all_existing_rows(connection, step_source))
+            if step_source["sha256"] == SOURCE_FINGERPRINT:
+                _apply_first_step(connection, step_target, differences, fault=fault)
+            else:
+                connection.execute(differences[0]["new_sql"])
+            if fault:
+                fault("after_ddl" if step_source["sha256"] == SOURCE_FINGERPRINT
+                      else "after_index_ddl")
+            if (objects(connection) != step_target["objects"]
+                    or fingerprint(objects(connection)).hex() != step_target["sha256"]):
+                raise KernelError("schema_fingerprint_mismatch", "开发升级未生成精确目标结构")
+            if (_all_existing_rows(connection, step_source) != step_rows
+                    or _retained_history_digest(connection) != retained):
+                raise KernelError("migration_integrity_failed", "开发升级改变了原始数据或保留历史")
+            sequence = connection.execute(
+                "SELECT coalesce(max(sequence),0)+1 FROM schema_draft_history"
+            ).fetchone()[0]
+            connection.execute(
+                "INSERT INTO schema_draft_history(sequence,source_fingerprint,target_fingerprint,"
+                "retained_history_digest) VALUES(?,?,?,?)",
+                (sequence, bytes.fromhex(step_source["sha256"]),
+                 bytes.fromhex(step_target["sha256"]), bytes.fromhex(retained)),
+            )
+            step_bundle = (bundle if step_target is target else
+                           source_bundle(bundle, step_target["sha256"]))
+            verify_schema(connection, bundle=step_bundle)
+            applied.append({"sequence": sequence, "source_fingerprint": step_source["sha256"],
+                            "target_fingerprint": step_target["sha256"]})
         if connection.execute("PRAGMA foreign_key_check").fetchone():
             raise KernelError("migration_integrity_failed", "开发升级后引用核验失败")
-        if (
-            _all_existing_rows(connection, source) != original_rows
-            or _retained_history_digest(connection) != retained
-        ):
-            raise KernelError("migration_integrity_failed", "开发升级改变了原始数据或保留历史")
-        result = _verify_connection(connection, bundle, allow_previous=False)
+        result = _verify_connection(connection, bundle, allow_previous=False, **identity_checks)
         if result["verification"]["status"] != "verified" or result["verification"]["limitations"]:
             raise KernelError("migration_integrity_failed", "开发升级目标内容未完整核验")
         if fault:
@@ -224,6 +288,7 @@ def upgrade_company(connection, bundle, *, fault=None):
             "retained_history_digest": retained,
             "original_rows_digest": original_rows[0],
             "original_table_count": len(original_rows[1]),
+            "steps": applied,
             "verification": result["verification"],
         }
     except BaseException:
@@ -244,8 +309,8 @@ def _company_bundle(connection, bundle):
     if actual == bundle.current("company")["sha256"]:
         verify_schema(connection, bundle=bundle)
         return bundle
-    if actual == SOURCE_FINGERPRINT:
-        previous = source_bundle(bundle)
+    if actual in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT):
+        previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)
         return previous
     raise KernelError("schema_fingerprint_mismatch", "当前库不属于本次开发升级的精确来源或目标")
@@ -288,7 +353,7 @@ def upgrade_root(root, *, bundle=None, fault=None):
         catalog_copy = create_private_file(backup / "catalog.sqlite")
         with closing(connect(root / "catalog.sqlite", read_only=True)) as current:
             with closing(connect(catalog_copy)) as saved:
-                current.backup(saved)
+                copy_to_unpublished_database(current, saved)
                 verify_schema(saved, bundle=bundle, kind="catalog")
                 if _catalog_retained_digest(saved) != catalog_digest:
                     raise KernelError("migration_integrity_failed", "目录身份备份核验失败")
@@ -301,11 +366,14 @@ def upgrade_root(root, *, bundle=None, fault=None):
         results = []
         for row in rows:
             try:
-                if sources[row["id"]] is bundle:
-                    result = {"status": "verified_skip"}
-                else:
-                    with closing(connect(row["path"])) as connection:
-                        result = upgrade_company(connection, bundle, fault=fault)
+                with closing(connect(row["path"])) as connection:
+                    result = upgrade_company(
+                        connection, bundle, fault=fault,
+                        expected_source_fingerprint=sources[row["id"]].current("company")["sha256"],
+                        expected_company_id=row["id"],
+                        expected_database_id=row["database_id"],
+                        expected_taxpayer_id=row["taxpayer_id"],
+                    )
             except Exception as exc:
                 from .diagnostics import error_response
 

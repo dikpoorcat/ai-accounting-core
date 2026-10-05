@@ -155,23 +155,9 @@ def copy_dependencies(output: Path):
 def selected_contract_files(bundle, directory: Path):
     """Copy the active draft or the declared released history, never stale drafts."""
 
-    selected = []
-    for kind in ("company", "catalog"):
-        for version, item in sorted(bundle.contracts[kind].items()):
-            if bundle.status == "released" and item["status"] != "released":
-                continue
-            if bundle.status == "draft" and version != bundle.current_versions[kind]:
-                continue
-            filename = "draft.json" if item["status"] == "draft" else f"v{version}.json"
-            selected.append(directory / kind / filename)
-    if bundle.status == "released":
-        if 1 not in bundle.contracts["company"]:
-            raise ValueError("Released runtime is missing its v1 company contract")
-        selected.append(directory / "content-v1.json")
-    for path in selected:
-        if not path.is_file():
-            raise ValueError(f"Required runtime contract is missing: {path}")
-    return tuple(selected)
+    from ai_accounting.kernel.contract_files import contract_file_names, contract_files
+
+    return contract_files(directory, contract_file_names(bundle))
 
 
 def copy_application(output: Path):
@@ -226,7 +212,10 @@ def copy_application(output: Path):
     return sorted(path.relative_to(source_package).as_posix() for path in selected)
 
 
-def bundle_manifest(output, dependencies, modules):
+def bundle_manifest(output, dependencies, modules, *, source_build_id=None):
+    from ai_accounting.kernel.build import calculator_build_id
+
+    expected_build_id = source_build_id or calculator_build_id()
     probe = subprocess.run(
         [
             str(output / "runtime/python.exe"),
@@ -250,6 +239,8 @@ def bundle_manifest(output, dependencies, modules):
         encoding="utf-8",
     )
     runtime = json.loads(probe.stdout)
+    if runtime["build_id"] != expected_build_id or calculator_build_id() != expected_build_id:
+        raise ValueError("Packaged build identity differs from its source build")
     if runtime["python"] != "3.12.13" or runtime["sqlite"] != "3.53.1" or runtime["isolated"] != 1:
         raise ValueError("Packaged interpreter does not match the controlled runtime")
     files = {
@@ -264,11 +255,46 @@ def bundle_manifest(output, dependencies, modules):
         "platform": platform.platform(),
         "architecture": platform.machine(),
         "runtime": runtime,
+        "source_build_id": expected_build_id,
         "dependencies": dependencies,
         "application_modules": modules,
         "files": files,
         "data_policy": "software only; company data and credentials are excluded",
     }
+
+
+def write_launchers(output: Path, bundle) -> None:
+    """Choose a new package's default data path from its active contract."""
+    if bundle.status not in {"draft", "released"}:
+        raise ValueError("Package bundle status must be draft or released")
+    directory = "kernel-" + bundle.status
+    (output / "finance-local.cmd").write_text(
+        "@echo off\nsetlocal\nif not defined FINANCE_DATA_ROOT "
+        f'set "FINANCE_DATA_ROOT=%~dp0data\\{directory}"\n'
+        '"%~dp0runtime\\python.exe" -I -X utf8 '
+        "-m ai_accounting.kernel.cli %*\nexit /b %errorlevel%\n",
+        encoding="ascii",
+    )
+    (output / "finance-local.ps1").write_text(
+        "if (-not $env:FINANCE_DATA_ROOT) { "
+        f'$env:FINANCE_DATA_ROOT = Join-Path $PSScriptRoot "data/{directory}" }}\n'
+        '& (Join-Path $PSScriptRoot "runtime/python.exe") -I -X utf8 '
+        "-m ai_accounting.kernel.cli @args\nexit $LASTEXITCODE\n",
+        encoding="utf-8",
+    )
+    (output / "使用说明.txt").write_text(
+        "本地会计内核运行包（Windows x64）\n\n"
+        "不需要安装 Python、SQLite、PostgreSQL 或 Node.js。\n"
+        "所有命令通过包内 finance-local.cmd 或 finance-local.ps1 运行。\n"
+        f"默认资料目录：包内 data\\{directory}。\n"
+        "示例：finance-local.cmd serve\n"
+        "MCP：finance-local.cmd mcp\n"
+        "另选资料目录：finance-local.cmd --root D:\\会计资料 serve\n"
+        "命令说明：finance-local.cmd --help\n"
+        "初始运行包中没有任何公司账务和登录凭据。\n"
+        "不要直接复制活动 SQLite 文件作为备份，请使用内核 backup 命令。\n",
+        encoding="utf-8",
+    )
 
 
 def main():
@@ -285,43 +311,23 @@ def main():
     output = args.output.resolve()
     archive_path = output.with_name(output.name + ".zip")
     relocated = output.with_name(output.name + "-relocated")
-    if output.exists() or archive_path.exists() or relocated.exists():
+    verification_path = output.with_name(output.name + "-verification.json")
+    if any(path.exists() for path in (output, archive_path, relocated, verification_path)):
         raise SystemExit("Packaging targets must be absent; existing builds are never overwritten")
+    from ai_accounting.kernel.build import calculator_build_id
+
+    source_build_id = calculator_build_id()
     output.mkdir(parents=True)
     copy_runtime(output)
     dependencies = copy_dependencies(output)
     modules = copy_application(output)
-    (output / "finance-local.cmd").write_text(
-        '@echo off\nsetlocal\nif not defined FINANCE_DATA_ROOT '
-        'set "FINANCE_DATA_ROOT=%~dp0data\\kernel-released"\n'
-        '"%~dp0runtime\\python.exe" -I -X utf8 '
-        "-m ai_accounting.kernel.cli %*\nexit /b %errorlevel%\n",
-        encoding="ascii",
-    )
-    (output / "finance-local.ps1").write_text(
-        'if (-not $env:FINANCE_DATA_ROOT) { '
-        '$env:FINANCE_DATA_ROOT = Join-Path $PSScriptRoot "data/kernel-released" }\n'
-        '& (Join-Path $PSScriptRoot "runtime/python.exe") -I -X utf8 '
-        "-m ai_accounting.kernel.cli @args\nexit $LASTEXITCODE\n",
-        encoding="utf-8",
-    )
+    from ai_accounting.kernel.schema_bundle import production_bundle
+
+    write_launchers(output, production_bundle())
     copy_file(
         REPOSITORY / "scripts/verify_local_package.py", output / "tools/verify_local_package.py"
     )
-    (output / "使用说明.txt").write_text(
-        "本地会计内核运行包（Windows x64）\n\n"
-        "不需要安装 Python、SQLite、PostgreSQL 或 Node.js。\n"
-        "所有命令通过包内 finance-local.cmd 或 finance-local.ps1 运行。\n"
-        "默认资料目录：包内 data\\kernel-released。\n"
-        "示例：finance-local.cmd serve\n"
-        "MCP：finance-local.cmd mcp\n"
-        "另选资料目录：finance-local.cmd --root D:\\会计资料 serve\n"
-        "命令说明：finance-local.cmd --help\n"
-        "初始运行包中没有任何公司账务和登录凭据。\n"
-        "不要直接复制活动 SQLite 文件作为备份，请使用内核 backup 命令。\n",
-        encoding="utf-8",
-    )
-    manifest = bundle_manifest(output, dependencies, modules)
+    manifest = bundle_manifest(output, dependencies, modules, source_build_id=source_build_id)
     (output / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -365,9 +371,8 @@ def main():
         if result.returncode:
             raise RuntimeError("Relocated runtime verification failed:\n" + result.stderr)
         validation = json.loads(result.stdout)
-        (output.parent / (output.name + "-verification.json")).write_text(
-            json.dumps(validation, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        with verification_path.open("x", encoding="utf-8") as report:
+            report.write(json.dumps(validation, ensure_ascii=False, indent=2))
     print(
         json.dumps(
             {

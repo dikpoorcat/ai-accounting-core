@@ -1,0 +1,50 @@
+{
+  "status": "completed_synthetic_native_diagnostic_archived",
+  "artifact_count": 3,
+  "source_sha256": "1c37c576cb0026b0b39c199b74672a60890c43a7d9e2b944416179fe2bf398e9",
+  "qualification_sha256": "066dff5d70b1ae0a37d6f8f615c4242af2c0f6a6269c507f062a4a7bb739fa58",
+  "scope": "Same complete read scope versus fe3; brief work decreases; other five paths counters and response sizes identical",
+  "instrumented_wall_time_is_not_browser_acceptance": true,
+  "excluded": [
+    "databases",
+    "credentials",
+    "original checkpoints",
+    "real data"
+  ],
+  "executor_sha256": "1e25f2e1a055e62c0d7c5d9424458580f3621f05343576bab8abf168752712ae",
+  "artifacts": [
+    {
+      "source": ".tmp/stage9-owner-month-reads-native-work.py",
+      "archive": "owner-month-reads-native-main12-20261003-01-stage9-owner-month-reads-native-work.py.gz",
+      "bytes": 13768,
+      "sha256": "1b16b0a94c070ee8ce7d908443dc24e3babe931fdfcce6d296c5144c399ab443",
+      "archive_bytes": 4244,
+      "archive_sha256": "06350a2e004dc7f74cd4acc828518556b0809c3d46dae4efc0f785775fd65906",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-month-reads-native-work.json",
+      "archive": "owner-month-reads-native-main12-20261003-02-stage9-owner-main12-month-reads-native-work.json.gz",
+      "bytes": 599168,
+      "sha256": "9cddf2b502a744e63bcd223f275efca6d7e0082f77214b8431844e2fb5e4dd4f",
+      "archive_bytes": 75897,
+      "archive_sha256": "2b3aa39770e621c0fda1ba110e003daaf1e58c43fbfc2ac256842634f041d408",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-owner-main12-month-reads-native-work.log",
+      "archive": "owner-month-reads-native-main12-20261003-03-stage9-owner-main12-month-reads-native-work.log.gz",
+      "bytes": 135,
+      "sha256": "0f75208f7d5aaefae823c7fd94a33b67595004ee7866ff67e65f89b647171d8d",
+      "archive_bytes": 137,
+      "archive_sha256": "26cfa6d0038d0c9a0313cc3f9585ff39730e6bf0afab4582f5ab7f6357cb547f",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    }
+  ]
+}

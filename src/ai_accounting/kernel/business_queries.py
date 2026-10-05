@@ -7,7 +7,6 @@ are reported separately so a later review never rewrites the selected history.
 from __future__ import annotations
 
 import json
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from .contracts import KernelError, Read
@@ -15,14 +14,14 @@ from .diagnostics import job_error_message, public_job_code
 from .display import _KINDS, Display
 from .periods import Periods
 from .provenance import recorded_times
-from .query_reads import QueryReads, selected_voucher_sql
+from .query_reads import QueryReads, selected_voucher_sql, verify_current_publication_voucher_heads
 from .query_semantics import (
     SETTLEMENT_SOURCE_SLOTS,
     project_settlement_followup,
     resolve_calculation_relations,
 )
 from .stored_json import verify_outcome_bytes
-from .types import ActualDate, YearMonth, digest
+from .types import ActualDate, YearMonth, digest, is_sha256_hex
 from .workflow import NON_ACCOUNTING_CALCULATIONS, Workflow, _basis_state
 
 _CHINA = timezone(timedelta(hours=8))
@@ -120,38 +119,22 @@ def _plain(value):
     return value
 
 
+def _file_job_period(value):
+    """Project the stored report period into the labeled public read contract."""
+    period = _plain(value)
+    if (
+        isinstance(period, dict)
+        and type(period.get("year")) is int
+        and type(period.get("quarter")) is int
+        and 1 <= period["year"] <= 9999
+        and 1 <= period["quarter"] <= 4
+    ):
+        period["label"] = f"{period['year']} 年第 {period['quarter']} 季度"
+    return period
+
+
 def _missing_profile_value(field, value):
     return value is None or (field not in {"employment_start", "employment_end"} and value == "")
-
-
-def _selected_accounting_references(connection, frozen_vouchers):
-    """Seek exact hits for every stored type, including damaged type values."""
-    from .read_indexes import CLOSE_VOUCHERS
-
-    multiplicity = Counter((ident, period) for ident, period in frozen_vouchers)
-    if not multiplicity:
-        return []
-    # The lookup index starts with type. Enumerate its distinct prefixes with
-    # index seeks, rather than scanning every voucher in the selected months.
-    # Do not use the valid-type enum: a damaged type must reach leaf validation.
-    matches = connection.execute(
-        "WITH RECURSIVE types(value) AS ("
-        "SELECT min(reference_type) FROM close_reference "
-        "UNION ALL SELECT (SELECT min(reference_type) FROM close_reference "
-        "WHERE reference_type>types.value) FROM types WHERE types.value IS NOT NULL"
-        "), wanted(id,close_period) AS MATERIALIZED ("
-        "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?)"
-        ") SELECT r.* FROM types CROSS JOIN wanted "
-        "CROSS JOIN close_reference r INDEXED BY close_reference_lookup "
-        "ON r.reference_type=types.value AND r.reference_id=wanted.id "
-        "AND r.close_period=wanted.close_period WHERE r.path=?",
-        (json.dumps(list(multiplicity)), CLOSE_VOUCHERS),
-    ).fetchall()
-    return [
-        row
-        for row in matches
-        for _ in range(multiplicity[row["reference_id"], row["close_period"]])
-    ]
 
 
 class BusinessQueries:
@@ -269,7 +252,7 @@ class BusinessQueries:
     def _parents(self, connection, calculation_id):
         return self._reads(connection).parents(calculation_id)
 
-    def _profiles(self, connection, subject_id, period):
+    def _profiles(self, connection, subject_id, period, *, include_sources=True):
         current_profiles = {kind: {} for kind in _KINDS}
         for row in connection.execute(
             "SELECT p.* FROM json_each(?) kinds JOIN display_profile_revision p "
@@ -312,6 +295,8 @@ class BusinessQueries:
                 selected[field] = value
                 if _missing_profile_value(field, value):
                     continue
+                if not include_sources:
+                    continue
                 basis = (
                     "frozen"
                     if closed and record is frozen
@@ -338,7 +323,7 @@ class BusinessQueries:
                 "values": selected,
                 "field_sources": sources,
             }
-        times = recorded_times(connection, references)
+        times = recorded_times(connection, references) if include_sources else {}
         for profile in result.values():
             for source in profile["field_sources"].values():
                 source["recorded_at"] = times.get((source["source_type"], str(source["id"])))
@@ -412,6 +397,7 @@ class BusinessQueries:
         include_vouchers=True,
         include_lines=True,
         posting_period=None,
+        _owner_outcomes=None,
     ):
         """Select exact metadata first; payloads are loaded only by consumers.
 
@@ -433,7 +419,50 @@ class BusinessQueries:
                 parameters.append(json.dumps(sorted(subjects)))
             subjects = {row[0] for row in connection.execute(query, parameters)}
         proof_periods = (YearMonth(posting_period).ordinal,) if posting_period else None
-        if proof_periods is None and subjects is not None:
+        from . import close_storage
+        from .content_history_context import close_reader
+
+        subjects_by_period = None
+        if (
+            subjects is not None and close_reader() is close_storage
+            and getattr(self.store.registry, "content_version", None) != 1
+        ):
+            # Publication periods locate possible adoptions, including reviews
+            # and withdrawn terminals. Independently include physical current
+            # voucher owners: their original/reversal month need not be the
+            # latest adopted calculation's publication month. The complete
+            # reader still checks both authorities against the full subjects.
+            subjects_by_period = {}
+            month_clause = " AND p.posting_period=?" if posting_period else ""
+            voucher_month_clause = " AND v.period=?" if posting_period else ""
+            encoded_subjects = json.dumps(sorted(subjects))
+            publication_parameters = (
+                encoded_subjects, cutoff.ordinal,
+                *((YearMonth(posting_period).ordinal,) if posting_period else ()),
+            )
+            for row in connection.execute(
+                "SELECT p.posting_period,p.subject_id FROM json_each(?) requested "
+                "CROSS JOIN calculation_publication p INDEXED BY publication_subject "
+                "ON p.subject_id=requested.value WHERE p.posting_period<=?" + month_clause
+                + " UNION SELECT v.period,c.subject_id FROM json_each(?) requested "
+                "CROSS JOIN calculation c INDEXED BY calculation_subject "
+                "ON c.subject_id=requested.value "
+                "CROSS JOIN voucher_version v INDEXED BY voucher_calculation "
+                "ON v.calculation_id=c.id "
+                "CROSS JOIN voucher_current h ON h.version_id=v.id "
+                "WHERE v.period<=?" + voucher_month_clause,
+                publication_parameters * 2,
+            ):
+                subjects_by_period.setdefault(row[0], set()).add(row[1])
+            if proof_periods is None:
+                # A missing publication must not also remove its frozen month
+                # from the proof. Scoped accounting uses the authenticated
+                # subject filter to rule out all other requested subjects.
+                proof_periods = tuple(row[0] for row in connection.execute(
+                    "SELECT period FROM period_close WHERE period<=? ORDER BY period",
+                    (cutoff.ordinal,),
+                ))
+        elif proof_periods is None and subjects is not None:
             # A later manifest may repeat this subject only as a dependency.
             # State adoption is defined at its immutable publication period, so
             # those later manifests cannot contribute a state proof for it.
@@ -450,10 +479,8 @@ class BusinessQueries:
         if subjects == set():
             selections = []
         else:
-            # For a scoped selection, official publications already give the
-            # complete posting-period candidate set. Reading those closes by
-            # period avoids treating an omittable reverse-index row as proof
-            # that a published adoption does not exist.
+            # Current scoped readers independently locate frozen leaves;
+            # released readers retain their original publication-period rule.
             selected_periods = proof_periods
             if selected_periods is None:
                 selected_periods = tuple(
@@ -468,7 +495,15 @@ class BusinessQueries:
             )
             selections = []
             if subjects is not None:
-                selected_slices = reads.close_accounting_many(close_rows, subjects=subjects)
+                selected_slices = reads.close_accounting_many(
+                    close_rows, subjects=subjects,
+                    **(
+                        {"subjects_by_period": {
+                            row["period"]: subjects_by_period.get(row["period"], set())
+                            for row in close_rows
+                        }} if subjects_by_period is not None else {}
+                    ),
+                )
             else:
                 selected_slices = (None for _ in close_rows)
             for row, selected_close in zip(close_rows, selected_slices, strict=True):
@@ -506,14 +541,15 @@ class BusinessQueries:
             authoritative_vouchers=authoritative_vouchers,
         )
         selected_rows = list(connection.execute(sql, parameters))
-        frozen_vouchers = [
-            [row["id"], row["close_period"]]
-            for row in selected_rows
+        if close_reader() is close_storage and {
+            (row["close_period"], row["id"]) for row in selected_rows
             if row["close_period"] is not None
-        ]
-        if frozen_vouchers:
-            references = _selected_accounting_references(connection, frozen_vouchers)
-            reads.verify_close_references(references)
+        } != {
+            (close_period, ident) for close_period, vouchers in voucher_by_period.items()
+            for ident in vouchers
+        }:
+            raise KernelError("content_integrity_failed", "所选冻结凭证集合与独立采用不一致")
+        reads.verify_selected_voucher_adoptions(selected_rows, through_period=cutoff.ordinal)
         represented.update(row["basis_calculation_id"] for row in selected_rows)
         state_adoptions = [
             (close_period, adopted)
@@ -522,16 +558,25 @@ class BusinessQueries:
             if adopted["role"] != "journal_basis"
             and (subjects is None or adopted["subject_id"] in subjects)
         ]
-        metadata = reads.metadata({adopted["calculation_id"] for _, adopted in state_adoptions})
+        metadata = reads.metadata(
+            {adopted["calculation_id"] for _, adopted in state_adoptions},
+            _decoded_outcomes=_owner_outcomes,
+        )
         if include_vouchers:
+            voucher_adoptions = {
+                voucher_by_period[row["close_period"]][row["id"]]["adopted_calculation_id"]
+                for row in selected_rows
+                if row["close_period"] is not None
+                and row["id"] in voucher_by_period[row["close_period"]]
+            }
+            if _owner_outcomes is not None:
+                # The preceding exact state metadata batch already checked
+                # these bodies in this call; a voucher can adopt the same owner.
+                voucher_adoptions.difference_update(metadata)
             reads.metadata(
-                {
-                    voucher_by_period[row["close_period"]][row["id"]]["adopted_calculation_id"]
-                    for row in selected_rows
-                    if row["close_period"] is not None
-                    and row["id"] in voucher_by_period[row["close_period"]]
-                },
-                state=False,
+                voucher_adoptions,
+                state=_owner_outcomes is not None,
+                _decoded_outcomes=_owner_outcomes,
             )
             lines = reads.voucher_lines(row["id"] for row in selected_rows) if include_lines else {}
             for row in selected_rows:
@@ -641,23 +686,33 @@ class BusinessQueries:
                         },
                     )
                 )
-        query = (
-            "SELECT c.id,c.subject_id FROM calculation_current a "
-            "JOIN calculation c ON c.id=a.calculation_id "
-            "JOIN calculation_publication p ON p.calculation_id=c.id "
-            "WHERE p.posting_period<=?"
-        )
-        parameters = [cutoff.ordinal]
-        if posting_period is not None:
-            query += " AND p.posting_period=?"
-            parameters.append(YearMonth(posting_period).ordinal)
-        if not current_heads:
-            query += " AND NOT EXISTS(SELECT 1 FROM period_close z WHERE z.period=p.posting_period)"
-        if subjects is not None:
-            query += " AND c.subject_id IN (SELECT value FROM json_each(?))"
-            parameters.append(json.dumps(sorted(subjects)))
-        currents = list(connection.execute(query, parameters))
-        metadata.update(reads.metadata({row["id"] for row in currents}))
+        if (close_reader() is close_storage
+                and getattr(self.store.registry, "content_version", None) != 1):
+            currents = self._current_accounting_heads(
+                connection, subjects, cutoff=cutoff.ordinal, current_heads=current_heads,
+                posting_period=YearMonth(posting_period).ordinal if posting_period else None,
+            )
+        else:
+            query = (
+                "SELECT c.id,c.subject_id FROM calculation_current a "
+                "JOIN calculation c ON c.id=a.calculation_id "
+                "JOIN calculation_publication p ON p.calculation_id=c.id "
+                "WHERE p.posting_period<=?"
+            )
+            parameters = [cutoff.ordinal]
+            if posting_period is not None:
+                query += " AND p.posting_period=?"
+                parameters.append(YearMonth(posting_period).ordinal)
+            if not current_heads:
+                query += (" AND NOT EXISTS(SELECT 1 FROM period_close z "
+                          "WHERE z.period=p.posting_period)")
+            if subjects is not None:
+                query += " AND c.subject_id IN (SELECT value FROM json_each(?))"
+                parameters.append(json.dumps(sorted(subjects)))
+            currents = list(connection.execute(query, parameters))
+        metadata.update(reads.metadata(
+            {row["id"] for row in currents}, _decoded_outcomes=_owner_outcomes,
+        ))
         state_results = {}
         for row in currents:
             calc = metadata[row["id"]]
@@ -701,6 +756,203 @@ class BusinessQueries:
             },
         }
 
+    def _current_accounting_heads(
+        self, connection, subjects=None, *, cutoff=None, posting_period=None,
+        current_heads=True, include_members=False,
+    ):
+        """Locate current identities before missing publications can filter them.
+
+        Closed snapshots consume their independent frozen heads. Existing later
+        publications bound irrelevant current sources before body hydration;
+        member calculations retain their separate exact owner adoption.
+        """
+        reads = self._reads(connection)
+        if subjects is not None and not subjects:
+            return []
+        latest_close = connection.execute("SELECT max(period) FROM period_close").fetchone()[0]
+        if (not current_heads and cutoff is not None and latest_close is not None
+                and cutoff <= latest_close):
+            return []
+        query = (
+            "SELECT a.subject_id requested_subject,a.calculation_id requested_id,"
+            "c.id,c.subject_id,c.fact_id,c.kind,c.period,c.digest,f.subject_id fact_subject,"
+            "f.period fact_period,s.kind fact_kind,p.id publication_id,p.posting_period,"
+            "EXISTS(SELECT 1 FROM period_close z WHERE z.period=p.posting_period) closed "
+            "FROM calculation_current a LEFT JOIN calculation c ON c.id=a.calculation_id "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id LEFT JOIN subject s ON s.id=f.subject_id "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=a.calculation_id"
+        )
+        parameters = []
+        if subjects is not None:
+            query += " WHERE a.subject_id IN (SELECT value FROM json_each(?))"
+            parameters.append(json.dumps(sorted(subjects)))
+        candidates = list(connection.execute(query, parameters))
+        from .content_history_context import publication_reader
+
+        publications = {
+            row["id"]: row for row in connection.execute(
+                "SELECT p.* FROM json_each(?) ids "
+                "JOIN calculation_publication p ON p.id=ids.value",
+                (json.dumps(sorted({row["publication_id"] for row in candidates
+                                    if row["publication_id"] is not None})),),
+            )
+        }
+        terminal_query = (
+            "SELECT p.*,a.calculation_id current_id,c.id calculation_exists "
+            "FROM calculation_publication p "
+            "LEFT JOIN calculation_current a ON a.subject_id=p.subject_id "
+            "LEFT JOIN calculation c ON c.id=p.calculation_id "
+            "WHERE NOT EXISTS(SELECT 1 FROM calculation_publication n "
+            "WHERE n.previous_publication_id=p.id)"
+        )
+        terminal_parameters = []
+        if subjects is not None:
+            terminal_query += " AND p.subject_id IN (SELECT value FROM json_each(?))"
+            terminal_parameters.append(json.dumps(sorted(subjects)))
+        if cutoff is not None:
+            terminal_query += " AND p.posting_period<=?"
+            terminal_parameters.append(cutoff)
+        if posting_period is not None:
+            terminal_query += " AND p.posting_period=?"
+            terminal_parameters.append(posting_period)
+        if not current_heads:
+            terminal_query += (" AND NOT EXISTS(SELECT 1 FROM period_close z "
+                               "WHERE z.period=p.posting_period)")
+        for terminal in connection.execute(terminal_query, terminal_parameters):
+            publication_reader().verify_record(terminal)
+            if terminal["mode"] == "withdrawn":
+                if (terminal["calculation_id"] is not None or terminal["voucher_id"] is not None
+                        or terminal["current_id"] is not None):
+                    raise KernelError("content_integrity_failed", "撤去发布与当前业务头不一致")
+            elif (terminal["calculation_exists"] is None
+                  or terminal["current_id"] != terminal["calculation_id"]):
+                raise KernelError("content_integrity_failed", "正式发布缺少精确当前核算头")
+        result = []
+        unpublished_members = {}
+        for row in candidates:
+            # A real later publication keeps this current source out of an
+            # older query. Authenticate its period before using that boundary.
+            if row["publication_id"] is not None:
+                publication = publications[row["publication_id"]]
+                publication_reader().verify_record(publication)
+                if publication["subject_id"] != row["requested_subject"]:
+                    raise KernelError("content_integrity_failed", "当前发布与请求业务身份不一致")
+                if ((cutoff is not None and row["posting_period"] > cutoff)
+                        or posting_period is not None and row["posting_period"] != posting_period
+                        or not current_heads and row["closed"]):
+                    continue
+            if row["id"] is None or (
+                row["subject_id"], row["kind"], row["period"]
+            ) != (row["fact_subject"], row["fact_kind"], row["fact_period"]) or (
+                row["requested_subject"] != row["subject_id"]
+            ):
+                raise KernelError("content_integrity_failed", "当前核算头缺失或来源身份不一致")
+            if row["publication_id"] is None:
+                # A genuinely future source is not consumed by this cutoff.
+                if cutoff is not None and row["period"] > cutoff:
+                    continue
+                if row["kind"] not in {"asset_activation", "asset_consumption"}:
+                    raise KernelError("content_integrity_failed", "当前核算头缺少正式发布")
+                unpublished_members[row["id"]] = row
+            else:
+                result.append(row)
+        verify_current_publication_voucher_heads(
+            connection,
+            (publications[row["publication_id"]] for row in result if not row["closed"]),
+        )
+        if unpublished_members:
+            owners_by_member = {ident: set() for ident in unpublished_members}
+            selected_members = set()
+            selected_owners = set()
+            selected_owner_members = {}
+            open_owner_publications = {}
+            for owner in connection.execute(
+                "SELECT m.member_calculation_id,m.owner_calculation_id,"
+                "c.id owner_exists,c.kind owner_kind,c.subject_id owner_subject,"
+                "a.subject_id current_subject,p.*,"
+                "EXISTS(SELECT 1 FROM period_close z "
+                "WHERE z.period=p.posting_period) owner_closed "
+                "FROM json_each(?) ids JOIN asset_batch_member m "
+                "ON m.member_calculation_id=ids.value "
+                "JOIN calculation_current a ON a.calculation_id=m.owner_calculation_id "
+                "LEFT JOIN calculation c ON c.id=m.owner_calculation_id "
+                "LEFT JOIN calculation_publication p ON p.calculation_id=m.owner_calculation_id",
+                (json.dumps(sorted(unpublished_members)),),
+            ):
+                if (owner["owner_exists"] is None or owner["id"] is None
+                        or owner["owner_kind"] not in {
+                            "asset_activation_batch", "asset_consumption_month",
+                        } or owner["owner_subject"] != owner["current_subject"]
+                        or owner["subject_id"] != owner["current_subject"]):
+                    raise KernelError("content_integrity_failed", "当前资产所有者缺少精确正式发布")
+                publication_reader().verify_record(owner)
+                ident = owner["member_calculation_id"]
+                owners_by_member[ident].add(owner["owner_calculation_id"])
+                if not (
+                    cutoff is not None and owner["posting_period"] > cutoff
+                    or posting_period is not None and owner["posting_period"] != posting_period
+                    or not current_heads and owner["owner_closed"]
+                ):
+                    selected_members.add(ident)
+                    selected_owners.add(owner["owner_calculation_id"])
+                    selected_owner_members.setdefault(
+                        (owner["owner_calculation_id"], owner["posting_period"]), set(),
+                    ).add(ident)
+                    if not owner["owner_closed"]:
+                        open_owner_publications[owner["id"]] = owner
+            if any(not owners for owners in owners_by_member.values()):
+                raise KernelError("content_integrity_failed", "当前资产成员缺少精确所有者采用")
+            verify_current_publication_voucher_heads(connection, open_owner_publications.values())
+            # Card identity has already checked each complete frozen activation
+            # directory. Reuse only exact current members of that same adopted
+            # owner, after the independent current/publication guards above.
+            # A reviewed current owner can differ from the selected voucher
+            # basis; unmatched owners retain the ordinary complete-body guard.
+            from . import asset_batches
+            from .content_history_context import asset_membership_reader
+            from .query_reads import _owns_current_selector_snapshot
+
+            if (
+                current_heads and not include_members and posting_period is None
+                and cutoff is not None
+                and _owns_current_selector_snapshot(reads, connection)
+                and asset_membership_reader() is asset_batches
+            ):
+                cached_events = reads._report_snapshot_cache.get(
+                    ("asset_activation_identity_events", cutoff),
+                )
+                selection = reads._report_snapshot_cache.get(
+                    ("asset_owner_identity_selection", cutoff),
+                )
+                if cached_events is not None and selection is not None:
+                    _, owners, membership, _ = selection
+                    proofs = {
+                        (
+                            event["owner_calculation_id"],
+                            YearMonth(event["adoption_period"]).ordinal,
+                            event["subject_id"], event["calculation_id"],
+                            event["fact_id"], event["kind"],
+                            YearMonth(event["calculation_period"]).ordinal,
+                            event["result_digest"],
+                        )
+                        for event in cached_events
+                        if event["frozen_identity"] and event["direction"] == 1
+                        and event["owner_calculation_id"] in membership
+                        and owners[event["owner_calculation_id"]]["kind"]
+                        == "asset_activation_batch"
+                    }
+                    for (owner_id, owner_period), member_ids in selected_owner_members.items():
+                        current_rows = (unpublished_members[ident] for ident in member_ids)
+                        if all((
+                            owner_id, owner_period, row["subject_id"], row["id"],
+                            row["fact_id"], row["kind"], row["period"], row["digest"].hex(),
+                        ) in proofs for row in current_rows):
+                            selected_owners.discard(owner_id)
+            reads.asset_members_many(selected_owners)
+            if include_members:
+                result.extend(unpublished_members[ident] for ident in sorted(selected_members))
+        return result
+
     def _selected_asset_members(
         self, connection, period, *, kinds=None, subjects=None, asset_ids=None, current_heads=False
     ):
@@ -721,8 +973,14 @@ class BusinessQueries:
         subjects = {subjects} if isinstance(subjects, str) else subjects
         asset_ids = {asset_ids} if isinstance(asset_ids, str) else asset_ids
         reads = self._reads(connection)
+        from .query_reads import _owns_current_selector_snapshot
+
+        retained = reads._report_snapshot_cache.get(
+            ("asset_owner_identity_selection", YearMonth(period).ordinal)
+        ) if _owns_current_selector_snapshot(reads, connection) else None
         members_by_owner = reads.asset_members_many(
-            event["calculation_id"] for event in events
+            (event["calculation_id"] for event in events),
+            _decoded_owners=retained[3] if retained is not None else None,
         )
         member_ids = {
             member["member_calculation_id"]
@@ -780,6 +1038,7 @@ class BusinessQueries:
     def _selected_asset_owner_events(
         self, connection, period, *, kinds=None, subjects=None, asset_ids=None,
         current_heads=False, complete_owners=False,
+        _owner_outcomes=None,
     ):
         member_kinds = {"asset_activation", "asset_consumption"}
         kinds = member_kinds if kinds is None else member_kinds & set(kinds)
@@ -789,7 +1048,30 @@ class BusinessQueries:
         asset_ids = {asset_ids} if isinstance(asset_ids, str) else asset_ids
         if asset_ids is not None and not asset_ids:
             return ()
-        if complete_owners:
+        from . import close_storage
+        from .content_history_context import close_reader
+
+        reads = self._reads(connection)
+        independent_scope = (
+            reads._snapshot_active and connection.in_transaction
+            and close_reader() is close_storage
+            and getattr(self.store.registry, "content_version", None) != 1
+        )
+        if independent_scope:
+            owner_kinds = {
+                "asset_activation_batch"
+                if kind == "asset_activation" else "asset_consumption_month"
+                for kind in kinds
+            }
+            # A missing owner or member row must not erase a required history
+            # before its independent current/frozen authority is inspected.
+            query = (
+                "SELECT id FROM subject WHERE kind IN (SELECT value FROM json_each(?)) "
+                "UNION SELECT subject_id FROM calculation "
+                "WHERE kind IN (SELECT value FROM json_each(?))"
+            )
+            parameters = [json.dumps(sorted(owner_kinds))] * 2
+        elif complete_owners:
             query = (
                 "SELECT id FROM subject WHERE kind IN "
                 "('asset_activation_batch','asset_consumption_month')"
@@ -799,7 +1081,7 @@ class BusinessQueries:
             query = (
                 "SELECT DISTINCT owner.subject_id FROM asset_batch_member m "
                 "JOIN calculation owner ON owner.id=m.owner_calculation_id "
-                "JOIN calculation member ON member.id=m.member_calculation_id "
+                "JOIN subject member ON member.id=m.member_subject_id "
                 "WHERE member.kind IN (SELECT value FROM json_each(?))"
             )
             parameters = [json.dumps(sorted(kinds))]
@@ -810,6 +1092,14 @@ class BusinessQueries:
                 query += " AND m.asset_id IN (SELECT value FROM json_each(?))"
                 parameters.append(json.dumps(sorted(asset_ids)))
         owners = {row[0] for row in connection.execute(query, parameters)}
+        if independent_scope:
+            _, _, _, frozen_headers = self._frozen_asset_owner_sources(
+                connection, YearMonth(period),
+            )
+            owners.update(
+                header["source_subject"] for header in frozen_headers.values()
+                if header["source_kind"] in owner_kinds
+            )
         if not owners:
             return ()
         selected = self._selected_accounting(
@@ -817,35 +1107,377 @@ class BusinessQueries:
             owners,
             period,
             current_heads=current_heads,
-            kinds={"asset_activation_batch", "asset_consumption_month"},
+            kinds=(
+                None if independent_scope
+                else {"asset_activation_batch", "asset_consumption_month"}
+            ),
             include_lines=False,
+            _owner_outcomes=_owner_outcomes,
         )["through_period"]
         return (*selected["voucher_events"], *selected["state_results"])
 
-    def _selected_asset_member_heads(self, connection, period, *, asset_ids):
-        """Locate adopted card identities without decoding unused historic outcomes.
-
-        The selected owner publications are verified above. Complete membership
-        is still checked for owners whose member result actually reaches the page.
-        """
-        events = self._selected_asset_owner_events(
-            connection, period, asset_ids=asset_ids, complete_owners=True
+    def _frozen_asset_owner_sources(self, connection, cutoff):
+        """Locate declared owners independently before narrowing mutable scope."""
+        from . import asset_batches, close_storage, publication
+        from .content_history_context import (
+            asset_membership_reader,
+            close_reader,
+            publication_reader,
         )
+
+        reads = self._reads(connection)
+        reusable = (
+            reads._snapshot_active and connection.in_transaction
+            and getattr(self.store.registry, "content_version", None) != 1
+            and close_reader() is close_storage
+            and publication_reader() is publication
+            and asset_membership_reader() is asset_batches
+        )
+        cached = getattr(reads, "_frozen_asset_owner_discovery", None) if reusable else None
+        if cached is not None and cached[0] is reads._snapshot_token:
+            if cutoff.ordinal in cached[1]:
+                return cached[1][cutoff.ordinal]
+        close_rows = reads.authoritative_close_rows(
+            periods=(row[0] for row in connection.execute(
+                "SELECT period FROM period_close WHERE period<=? ORDER BY period",
+                (cutoff.ordinal,),
+            )), through_period=cutoff.ordinal,
+        )
+        declarations, membership = {}, {}
+        for row in close_rows:
+            declared = {}
+            for item in reads.close_section(row, "asset_batch_adoptions"):
+                if (not isinstance(item, dict) or set(item) != {
+                    "owner_calculation_id", "membership_digest",
+                } or not isinstance(item["owner_calculation_id"], str)
+                        or not is_sha256_hex(item["membership_digest"])
+                        or item["owner_calculation_id"] in declared):
+                    raise KernelError("content_integrity_failed", "冻结资产所有者目录不匹配")
+                ident, expected = item["owner_calculation_id"], item["membership_digest"]
+                if ident in membership and membership[ident] != expected:
+                    raise KernelError("asset_batch_digest", "冻结资产成员摘要不一致")
+                declared[ident] = membership[ident] = expected
+            declarations[row["period"]] = declared
+        frozen_headers = reads.calculation_identity_headers(membership)
+        reads.verify_publication_records(frozen_headers.values())
+        for header in frozen_headers.values():
+            if (header["source_kind"] not in {
+                "asset_activation_batch", "asset_consumption_month",
+            } or not header["cs"] or not header["fs"]
+                    or header["subject_id"] != header["source_subject"]):
+                raise KernelError("content_integrity_failed", "冻结资产所有者精确来源不匹配")
+        discovered = close_rows, declarations, membership, frozen_headers
+        if reusable:
+            # Both consumers still prove their own direct adoptions and member
+            # directories. Discovery is neither a body nor membership proof;
+            # publish it only after every frozen source succeeds in this token.
+            if cached is None or cached[0] is not reads._snapshot_token:
+                cached = reads._frozen_asset_owner_discovery = (reads._snapshot_token, {})
+            cached[1][cutoff.ordinal] = discovered
+        return discovered
+
+    def _asset_owner_metadata_selection(self, connection, period):
+        """Select owner events without interpreting independently frozen bodies.
+
+        The complete small frozen owner list locates missing sources. Its
+        membership digest authenticates each complete directory later; it is
+        neither an outcome-content proof nor a negative member-index lookup.
+        Open and otherwise unanchored owners retain strict outcome reads.
+        """
+        from . import asset_batches, close_storage, publication
+        from .content_history_context import (
+            asset_membership_reader,
+            close_reader,
+            publication_reader,
+        )
+
+        reads = self._reads(connection)
+        if (
+            not reads._snapshot_active or not connection.in_transaction
+            or "asset_consumption_month" not in self.store.registry.models
+            or getattr(self.store.registry, "content_version", None) == 1
+            or close_reader() is not close_storage
+            or publication_reader() is not publication
+            or asset_membership_reader() is not asset_batches
+        ):
+            return None
+        cutoff = YearMonth(period)
+        selection_key = ("asset_owner_identity_selection", cutoff.ordinal)
+        if selection_key in reads._report_snapshot_cache:
+            return reads._report_snapshot_cache[selection_key]
+        owner_kinds = {"asset_activation_batch", "asset_consumption_month"}
+        close_rows, declarations, membership, frozen_headers = self._frozen_asset_owner_sources(
+            connection, cutoff,
+        )
+        subjects = {header["source_subject"] for header in frozen_headers.values()}
+        # Both live identity lanes survive a single missing subject/calculation;
+        # the current/publication guard below authenticates their exact sources.
+        subjects.update(row[0] for row in connection.execute(
+            "SELECT id FROM subject WHERE kind IN (SELECT value FROM json_each(?)) "
+            "UNION SELECT subject_id FROM calculation "
+            "WHERE kind IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(owner_kinds)),) * 2,
+        ))
+        current = self._current_accounting_heads(
+            connection, subjects, cutoff=cutoff.ordinal, current_heads=False,
+        )
+        selections = reads.close_asset_owner_accounting_many(close_rows, subjects=subjects)
+        adopted_by_period, vouchers_by_period = {}, {}
+        for selection in selections:
+            adopted = {item["calculation_id"]: item for item in selection.adopted_results}
+            owners = {
+                ident for ident, item in adopted.items() if item["role"] == "asset_batch_owner"
+            }
+            if owners != declarations[selection.period].keys():
+                raise KernelError("content_integrity_failed", "冻结资产所有者采用集合不匹配")
+            adopted_by_period[selection.period] = adopted
+            vouchers_by_period[selection.period] = {item["id"]: item for item in selection.vouchers}
+        authoritative = {
+            ident: close_period for close_period, vouchers in vouchers_by_period.items()
+            for ident in vouchers
+        }
+        query, parameters = selected_voucher_sql(
+            cutoff, subject_ids=subjects, authoritative_vouchers=authoritative,
+        )
+        selected = list(connection.execute(query, parameters))
+        if {
+            (row["close_period"], row["id"]) for row in selected
+            if row["close_period"] is not None
+        } != {
+            (period, ident) for period, vouchers in vouchers_by_period.items() for ident in vouchers
+        }:
+            raise KernelError("content_integrity_failed", "冻结资产凭证集合与独立采用不一致")
+        reads.verify_selected_voucher_adoptions(selected, through_period=cutoff.ordinal)
+        owner_ids = set(membership) | {row["id"] for row in current}
+        owner_ids.update(row["basis_calculation_id"] for row in selected)
+        headers = frozen_headers | reads.calculation_identity_headers(owner_ids - membership.keys())
+        reads.verify_publication_records(headers.values())
+        for header in headers.values():
+            if (header["source_kind"] not in owner_kinds or not header["cs"] or not header["fs"]
+                    or header["subject_id"] != header["source_subject"]):
+                raise KernelError("content_integrity_failed", "资产所有者精确来源不匹配")
+
+        # Header agreement does not independently bind owner kind: both mutable
+        # calculation/subject kinds could agree while selecting the wrong typed
+        # fact table. Prove every precise owner fact before either identity
+        # consumer excludes the other kind, including empty member directories.
+        try:
+            reads.verify_fact_versions(header["source_fact_id"] for header in headers.values())
+        except KernelError as error:
+            if error.code != "unknown_fact":
+                raise
+            raise KernelError(
+                "content_integrity_failed", "已采用资产所有者的类型化事实来源缺失",
+                component="asset_owner", reason="owner_typed_fact_missing",
+            ) from error
+
+        def adopted_header(item):
+            header = headers[item["calculation_id"]]
+            if any(item[field] != value for field, value in (
+                ("publication_id", header["id"]),
+                ("subject_id", header["source_subject"]),
+                ("fact_id", header["source_fact_id"]),
+                ("source_period", str(YearMonth.from_ordinal(header["source_period"]))),
+                ("posting_period", str(YearMonth.from_ordinal(header["posting_period"]))),
+                ("result_digest", header["source_digest"].hex()),
+            )):
+                raise KernelError("content_integrity_failed", "冻结资产采用身份不匹配")
+            return header
+
+        for close_period, declared in declarations.items():
+            for ident in declared:
+                adopted_header(adopted_by_period[close_period][ident])
+        decoded = {}
+        full = reads.metadata(owner_ids - membership.keys(), _decoded_outcomes=decoded)
+        events, represented = [], set()
+        for row in selected:
+            ident = row["basis_calculation_id"]
+            if row["close_period"] is not None:
+                voucher = vouchers_by_period[row["close_period"]].get(row["id"])
+                if voucher is None:
+                    raise KernelError("content_integrity_failed", "冻结资产凭证采用缺失")
+                item = adopted_by_period[row["close_period"]].get(voucher["adopted_calculation_id"])
+                if item is None:
+                    raise KernelError("content_integrity_failed", "冻结资产凭证直接依据缺失")
+                header = adopted_header(item)
+                if voucher["result_digest"] != header["source_digest"].hex():
+                    raise KernelError("content_integrity_failed", "冻结资产凭证依据摘要不匹配")
+                if row["reverses_id"] is None:
+                    ident = item["calculation_id"]
+            header = headers[ident]
+            represented.add(ident)
+            events.append({
+                "calculation_id": ident, "kind": header["source_kind"],
+                "calculation_period": str(YearMonth.from_ordinal(header["source_period"])),
+                "posting_period": str(YearMonth.from_ordinal(row["period"])),
+                "result_digest": header["source_digest"].hex(),
+                "voucher_version_id": row["id"], "voucher_number": row["number"],
+                "direction": -1 if row["reverses_id"] else 1,
+            })
+        states = {}
+        for row in current:
+            calc = full[row["id"]]
+            if not calc["line_count"]:
+                states[calc["id"]] = {
+                    "calculation_id": calc["id"], "kind": calc["kind"],
+                    "posting_period": calc["posting_period"],
+                    "result_digest": calc["result_digest"],
+                }
+        for close_period, declared in declarations.items():
+            for ident in declared:
+                header = headers[ident]
+                # A review can adopt a nonempty result while retaining a voucher
+                # from another month. It is not an independent zero-line state.
+                if ident not in represented and header["voucher_id"] is None:
+                    states[ident] = {
+                        "calculation_id": ident, "kind": header["source_kind"],
+                        "posting_period": str(YearMonth.from_ordinal(close_period)),
+                        "result_digest": header["source_digest"].hex(),
+                    }
+        owners = {
+            ident: {"id": ident, "kind": header["source_kind"],
+                    "period": header["source_period"], "digest": header["source_digest"]}
+            for ident, header in headers.items()
+        }
+        return (*events, *states.values()), owners, membership, decoded
+
+    def _selected_asset_activation_identities(self, connection, period):
+        """Reuse frozen complete membership only for card identity and status.
+
+        Owner kinds are authenticated before choosing activation directories.
+        Every selected owner keeps its entire directory; open owners retain
+        ordinary complete member/outcome reads. No amount or content proof is
+        inferred from frozen identity evidence.
+        """
+        selection = self._asset_owner_metadata_selection(connection, period)
+        if selection is None:
+            return None
+        reads = self._reads(connection)
+        cutoff = YearMonth(period).ordinal
+        identity_key = ("asset_activation_identity_events", cutoff)
+        if identity_key in reads._report_snapshot_cache:
+            return reads._report_snapshot_cache[identity_key]
+        events, owners, membership, decoded = selection
+        activation_events = tuple(
+            event for event in events
+            if owners[event["calculation_id"]]["kind"] == "asset_activation_batch"
+        )
+        frozen = tuple(event for event in activation_events
+                       if event["calculation_id"] in membership)
+        result = self._asset_member_identity_events(
+            connection, period, asset_ids=None,
+            selection=(frozen, owners, membership, decoded), include_sources=True,
+        )
+        for event in result:
+            event["frozen_identity"] = True
+        open_events = tuple(event for event in activation_events
+                            if event["calculation_id"] not in membership)
+        if open_events:
+            members_by_owner = reads.asset_members_many(
+                (event["calculation_id"] for event in open_events), _decoded_owners=decoded,
+            )
+            metadata = reads.metadata({
+                member["member_calculation_id"]
+                for members in members_by_owner.values() for member in members
+            })
+            for event in open_events:
+                for member in members_by_owner[event["calculation_id"]]:
+                    calc = metadata[member["member_calculation_id"]]
+                    result.append({
+                        "calculation_id": calc["id"], "subject_id": calc["subject_id"],
+                        "fact_id": calc["fact_id"], "kind": calc["kind"],
+                        "calculation_period": calc["period"],
+                        "result_digest": calc["result_digest"],
+                        "adoption_period": event["posting_period"],
+                        "asset_id": member["asset_id"],
+                        "owner_calculation_id": event["calculation_id"],
+                        "voucher_version_id": event.get("voucher_version_id"),
+                        "voucher_number": event.get("voucher_number"),
+                        "direction": event.get("direction", 1), "frozen_identity": False,
+                    })
+        result.sort(key=lambda item: (
+            item["adoption_period"], item["voucher_number"] or 0,
+            item["owner_calculation_id"], item["asset_id"],
+        ))
+        # Publish only after all selected activation directories and open member
+        # bodies succeed. Later card details reuse the same complete owner
+        # selection, then perform their own required member/money checks.
+        reads._report_snapshot_cache[("asset_owner_identity_selection", cutoff)] = selection
+        reads._report_snapshot_cache[identity_key] = result
+        return result
+
+    def _selected_asset_member_heads(self, connection, period, *, asset_ids):
+        """Locate card identities with each selected owner's complete membership.
+
+        Closed directories bind to their independently saved membership digest;
+        open owners are strictly decoded once. Unrelated member outcomes remain
+        outside this identity-only consumer.
+        """
+        if not asset_ids:
+            return []
+        selection = self._asset_owner_metadata_selection(connection, period)
+        if selection is not None:
+            events, owners, membership, decoded = selection
+            # This card-detail consumer only uses consumption timing/state.
+            # Activation identities keep their separate complete card lane.
+            selection = (
+                tuple(event for event in events
+                      if owners[event["calculation_id"]]["kind"] == "asset_consumption_month"),
+                owners, membership, decoded,
+            )
+        return self._asset_member_identity_events(
+            connection, period, asset_ids=asset_ids, selection=selection,
+        )
+
+    def _asset_member_identity_events(
+        self, connection, period, *, asset_ids, selection, include_sources=False,
+    ):
+        """Check complete selected directories before filtering emitted identities."""
+        from . import close_storage
+        from .content_history_context import close_reader
+
+        frozen_membership = {}
+        # Keep the exact owner decoded by this one selection call. Released or
+        # unowned readers retain their original complete source path.
+        decoded_owners = (
+            {} if close_reader() is close_storage
+            and getattr(self.store.registry, "content_version", None) != 1 else None
+        )
+        if selection is not None:
+            events, owners, frozen_membership, decoded_owners = selection
+        else:
+            events = self._selected_asset_owner_events(
+                connection, period, asset_ids=asset_ids, complete_owners=True,
+                _owner_outcomes=decoded_owners,
+            )
         if not events:
             return []
         owner_ids = {event["calculation_id"] for event in events}
-        owners = {
-            row["id"]: row
-            for row in connection.execute(
-                "SELECT id,kind,period,outcome,digest FROM calculation "
-                "WHERE id IN (SELECT value FROM json_each(?))",
-                (json.dumps(sorted(owner_ids)),),
-            )
-        }
+        retained = set(decoded_owners or ()) & owner_ids
+        reads = self._reads(connection)
+        if selection is None:
+            metadata = reads.metadata(retained, state=False)
+            owners = {
+                ident: {"id": ident, "kind": calc["kind"],
+                        "period": YearMonth(calc["period"]).ordinal,
+                        "digest": bytes.fromhex(calc["result_digest"])}
+                for ident, calc in metadata.items()
+            }
+            owners.update({
+                row["id"]: row
+                for row in connection.execute(
+                    "SELECT id,kind,period,outcome,digest FROM calculation "
+                    "WHERE id IN (SELECT value FROM json_each(?))",
+                    (json.dumps(sorted(owner_ids - retained)),),
+                )
+            } if owner_ids - retained else {})
         members = {}
         for row in connection.execute(
             "SELECT m.*,c.kind,c.subject_id,c.fact_id,c.period,c.digest,c.id AS calc_id,"
+            "f.id source_fact_id,f.subject_id fact_subject,f.period fact_period,"
+            "s.id source_subject_id,s.kind fact_kind,"
             "EXISTS(SELECT 1 FROM calculation_seal s WHERE s.calculation_id=c.id) AS sealed,"
+            "EXISTS(SELECT 1 FROM fact_seal fs WHERE fs.fact_id=f.id) AS fact_sealed,"
             "EXISTS(SELECT 1 FROM dependency_calculation d WHERE "
             "d.calculation_id=m.owner_calculation_id AND d.upstream_id=c.id) AS dependent,"
             "EXISTS(SELECT 1 FROM asset_batch_member other "
@@ -855,6 +1487,7 @@ class BusinessQueries:
             "AND other_owner.subject_id<>owner.subject_id) AS foreign_owned "
             "FROM asset_batch_member m LEFT JOIN calculation c "
             "ON c.id=m.member_calculation_id "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id LEFT JOIN subject s ON s.id=f.subject_id "
             "WHERE m.owner_calculation_id IN (SELECT value FROM json_each(?)) "
             "ORDER BY m.owner_calculation_id,m.position",
             (json.dumps(sorted(owner_ids)),),
@@ -862,11 +1495,16 @@ class BusinessQueries:
             owner_id = row["owner_calculation_id"]
             if (
                 row["calc_id"] is None
+                or row["source_fact_id"] is None or row["source_subject_id"] is None
                 or row["kind"] not in {"asset_activation", "asset_consumption"}
+                or (row["subject_id"], row["kind"], row["period"]) != (
+                    row["fact_subject"], row["fact_kind"], row["fact_period"]
+                )
                 or row["subject_id"] != row["member_subject_id"]
                 or row["fact_id"] != row["member_fact_id"]
                 or row["digest"] != row["result_digest"]
                 or not row["sealed"]
+                or not row["fact_sealed"]
                 or not row["dependent"]
                 or row["foreign_owned"]
             ):
@@ -885,11 +1523,11 @@ class BusinessQueries:
                 "asset_activation_batch", "asset_consumption_month"
             }:
                 raise KernelError("asset_batch_identity", "资产汇总计算不存在")
-            outcome = verify_outcome_bytes(owner["outcome"], owner["digest"], owner_id)
-            if (
-                digest(outcome) != owner["digest"]
-                or event["result_digest"] != owner["digest"].hex()
-            ):
+            outcome = None if owner_id in frozen_membership else (
+                decoded_owners[owner_id] if owner_id in retained else
+                verify_outcome_bytes(owner["outcome"], owner["digest"], owner_id)
+            )
+            if event["result_digest"] != owner["digest"].hex():
                 raise KernelError("asset_batch_digest", "资产汇总结果摘要不匹配")
             directory = []
             position = 1
@@ -918,7 +1556,7 @@ class BusinessQueries:
                     }
                 )
                 position += member["line_count"]
-                if member["asset_id"] not in asset_ids:
+                if asset_ids is not None and member["asset_id"] not in asset_ids:
                     continue
                 result.append(
                     {
@@ -931,8 +1569,17 @@ class BusinessQueries:
                         "voucher_version_id": event.get("voucher_version_id"),
                         "voucher_number": event.get("voucher_number"),
                         "direction": event.get("direction", 1),
+                        **({
+                            "subject_id": member["member_subject_id"],
+                            "fact_id": member["member_fact_id"],
+                            "result_digest": member["result_digest"].hex(),
+                        } if include_sources else {}),
                     }
                 )
+            if owner_id in frozen_membership:
+                if digest(directory).hex() != frozen_membership[owner_id]:
+                    raise KernelError("asset_batch_digest", "冻结资产完整成员清单不匹配")
+                continue
             values = outcome["values"]
             if (
                 type(values.get("member_count")) is not int
@@ -986,12 +1633,22 @@ class BusinessQueries:
             "vouchers": [],
         }
 
-    def _current_publication(self, connection, subject_id):
-        row = connection.execute(
-            "SELECT c.id FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
-            "WHERE a.subject_id=?",
-            (subject_id,),
-        ).fetchone()
+    def _current_publication(self, connection, subject_id, *, include_vouchers=True):
+        from . import close_storage
+        from .content_history_context import close_reader
+
+        if (close_reader() is close_storage
+                and getattr(self.store.registry, "content_version", None) != 1):
+            candidates = self._current_accounting_heads(
+                connection, {subject_id}, include_members=True,
+            )
+            row = candidates[0] if candidates else None
+        else:
+            row = connection.execute(
+                "SELECT c.id FROM calculation_current a "
+                "JOIN calculation c ON c.id=a.calculation_id "
+                "WHERE a.subject_id=?", (subject_id,),
+            ).fetchone()
         if row is None:
             return None
         calc = self._calculation(connection, row["id"])
@@ -1027,14 +1684,17 @@ class BusinessQueries:
                 "ORDER BY v.period,v.id",
                 (calc["id"],),
             )
-        ]
+        ] if include_vouchers else []
         active = connection.execute(
             "SELECT v.id FROM calculation_publication p JOIN voucher_current a "
             "ON a.voucher_id=p.voucher_id JOIN voucher_version v ON v.id=a.version_id "
             "WHERE p.calculation_id=?",
             (calc["id"],),
         ).fetchone()
-        if active and active[0] not in {item["voucher_version_id"] for item in vouchers}:
+        if (
+            include_vouchers and active
+            and active[0] not in {item["voucher_version_id"] for item in vouchers}
+        ):
             vouchers.append(
                 self._voucher(
                     connection, active[0], "current_publication", selected_calculation_id=calc["id"]
@@ -1327,7 +1987,9 @@ class BusinessQueries:
             ),
         }
 
-    def settlement_summary(self, connection, period, *, current=False, subject_ids=None):
+    def settlement_summary(
+        self, connection, period, *, current=False, subject_ids=None, include_history_counts=True
+    ):
         """Read the normalized projection; detail hydration stays in settlements()."""
         from .settlement_projection import settlement_summary
 
@@ -1344,6 +2006,7 @@ class BusinessQueries:
             current=current,
             subject_ids=subjects,
             reads=self._reads(connection),
+            include_history_counts=include_history_counts,
         )
 
     def settlements(self, connection, period, *, subject_ids=None, current=False, summary=False):
@@ -1401,7 +2064,7 @@ class BusinessQueries:
                 *scoped["through_period"]["state_results"],
             )
         }
-        subjects = {item["subject_id"] for item in reads.metadata(identities).values()}
+        subjects = {item["subject_id"] for item in reads.metadata(identities, state=False).values()}
         subjects.update(
             item["subject_id"]
             for item in scoped["through_period"]["unestablished_state_selections"]
@@ -1409,12 +2072,20 @@ class BusinessQueries:
         related = reads.related_subjects(subjects)
         current_cutoff = YearMonth(period)
         if related:
-            latest = connection.execute(
-                "SELECT max(p.posting_period) FROM json_each(?) ids "
-                "JOIN calculation_current a ON a.subject_id=ids.value "
-                "JOIN calculation_publication p ON p.calculation_id=a.calculation_id",
-                (json.dumps(sorted(related)),),
-            ).fetchone()[0]
+            from . import close_storage
+            from .content_history_context import close_reader
+
+            if (close_reader() is close_storage
+                    and getattr(self.store.registry, "content_version", None) != 1):
+                heads = self._current_accounting_heads(connection, related)
+                latest = max((row["posting_period"] for row in heads), default=None)
+            else:
+                latest = connection.execute(
+                    "SELECT max(p.posting_period) FROM json_each(?) ids "
+                    "JOIN calculation_current a ON a.subject_id=ids.value "
+                    "JOIN calculation_publication p ON p.calculation_id=a.calculation_id",
+                    (json.dumps(sorted(related)),),
+                ).fetchone()[0]
             if latest is not None:
                 current_cutoff = max(current_cutoff, YearMonth.from_ordinal(latest))
         current = self._selected_accounting(
@@ -1494,7 +2165,8 @@ class BusinessQueries:
             for row in connection.execute(
                 "SELECT c.id FROM json_each(?) ids "
                 "JOIN calculation_current a ON a.subject_id=ids.value "
-                "JOIN calculation c ON c.id=a.calculation_id WHERE c.kind='external_completion'",
+                "JOIN calculation c ON c.id=a.calculation_id "
+                "JOIN subject s ON s.id=a.subject_id WHERE s.kind='external_completion'",
                 (json.dumps(sorted(related_subjects)),),
             )
         }
@@ -1864,7 +2536,7 @@ class BusinessQueries:
                     **({"contract_issues": contract_issues} if contract_issues else {}),
                     "association": association,
                     "references": references,
-                    "period": _plain(plan.get("period")),
+                    "period": _file_job_period(plan.get("period")),
                     "verified_when_succeeded": (
                         row["status"] == "succeeded" and result_issue is None
                     ),
@@ -1893,6 +2565,7 @@ class BusinessQueries:
         as_of: str | None = None,
         summary=False,
         include_payroll_confirmation=False,
+        owner_projection=False,
     ):
         """Full public contract inside a caller-owned company read transaction."""
         period, as_of = str(YearMonth(period)), str(ActualDate(as_of or _today_china()))
@@ -1917,11 +2590,15 @@ class BusinessQueries:
         if latest:
             latest["deleted"] = current_fact is None
             latest["knowledge"] = "current_knowledge"
-            timestamp = recorded_times(connection, (("fact", latest["id"]),)).get(
-                ("fact", latest["id"])
+            timestamp = (
+                None if owner_projection else recorded_times(
+                    connection, (("fact", latest["id"]),)
+                ).get(("fact", latest["id"]))
             )
             latest["recorded_at"] = timestamp
-        current_publication = self._current_publication(connection, subject_id)
+        current_publication = self._current_publication(
+            connection, subject_id, include_vouchers=not owner_projection
+        )
         if current_publication is not None and (not summary or include_payroll_confirmation):
             confirmation = self._payroll_confirmation_source(
                 connection, current_publication["calculation"]
@@ -2121,18 +2798,20 @@ class BusinessQueries:
             if current_publication
             else "unpublished"
         )
-        external, _ = self._external(connection, subject_id, period, as_of, summary=summary)
+        external = None
+        if not owner_projection:
+            external, _ = self._external(connection, subject_id, period, as_of, summary=summary)
         settlements = self._settlements(connection, subject_id, selected, summary=summary)
         if summary:
             for field in ("business", "movements", "line_relations"):
                 settlements.pop(field, None)
         trace_targets = []
         seen = set()
-        for item in (
+        for item in (() if owner_projection else (
             *selected["through_period"]["voucher_events"],
             *selected["through_period"]["state_results"],
             *asset_members,
-        ):
+        )):
             target = {
                 "calculation_id": item.get("owner_calculation_id", item["calculation_id"]),
                 "voucher_version_id": item.get("voucher_version_id"),
@@ -2141,7 +2820,11 @@ class BusinessQueries:
             if key not in seen:
                 trace_targets.append(target)
                 seen.add(key)
-        for selection in selected["through_period"]["unestablished_state_selections"]:
+        selections = (
+            () if owner_projection
+            else selected["through_period"]["unestablished_state_selections"]
+        )
+        for selection in selections:
             for candidate in selection["candidates"]:
                 key = (candidate["calculation_id"], None)
                 if key not in seen:
@@ -2209,8 +2892,12 @@ class BusinessQueries:
             },
             "settlements": settlements,
             "external": external,
-            "file_jobs": self._file_jobs(connection, subject_id, period, summary=summary),
-            "display_profiles": self._profiles(connection, subject_id, period),
+            "file_jobs": None if owner_projection else self._file_jobs(
+                connection, subject_id, period, summary=summary
+            ),
+            "display_profiles": {} if owner_projection else self._profiles(
+                connection, subject_id, period, include_sources=not owner_projection
+            ),
             "trace_targets": trace_targets,
             "read_semantics": {
                 "knowledge": "current_knowledge",
@@ -2230,7 +2917,7 @@ class BusinessQueries:
                 if current_publication is not None
                 else None
             )
-            if selected_calculation_id is None:
+            if selected_calculation_id is None or owner_projection:
                 result["adopted_basis"] = None
             else:
                 from .close_review import business_adopted_basis
@@ -2248,14 +2935,18 @@ class BusinessQueries:
             for field in ("business", "movements", "line_relations"):
                 current_settlements.pop(field, None)
             result["projection"] = "summary"
-            result["review"]["disposition_count"] = connection.execute(
-                "SELECT count(*) FROM disposition WHERE subject_id=?",
-                (subject_id,),
+            result["review"]["disposition_count"] = 0 if owner_projection else connection.execute(
+                "SELECT count(*) FROM disposition WHERE subject_id=?", (subject_id,)
             ).fetchone()[0]
             result["review"]["dispositions"] = []
             result["trace_target_count"] = len(seen)
-            result["external"] = self._external_summary(external)
+            result["external"] = None if owner_projection else self._external_summary(external)
             result["current_followups"] = {"settlements": current_settlements}
+        if owner_projection:
+            # The owner consumes business amounts and real settlement progress.
+            # Duplicate candidates, correction plans and all historical entity
+            # references remain in the full CLI/MCP business-status contract.
+            return result
         from .duplicates import DuplicateCandidates
         from .entity_references import verify_hits
 
@@ -2741,7 +3432,6 @@ class BusinessQueries:
         _inspection_cache=None,
         _allow_frozen_materials=False,
         _checked_open=None,
-        _parallel_checks=None,
     ):
         """Compose readiness inside a caller-owned read snapshot."""
         from .tax_import import assess_tax_import_mapping
@@ -2838,7 +3528,6 @@ class BusinessQueries:
                     _inspection_cache=_inspection_cache,
                     _allow_frozen_materials=_allow_frozen_materials,
                     _query_reads=reads,
-                    _parallel_checks=_parallel_checks,
                 )
             )
             frozen = None

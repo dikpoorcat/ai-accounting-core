@@ -1,0 +1,38 @@
+{
+  "status": "completed_synthetic_group_receipts_archived",
+  "artifact_count": 2,
+  "result": "71 passed,4 warnings,127.05s,session36006 exit0",
+  "scope": "Current draft nine-module related group after owned/int64 guards; not new fixed candidate qualification or page timing",
+  "previous_directed_rounds_not_additive": true,
+  "excluded": [
+    "databases",
+    "credentials",
+    "original checkpoints",
+    "real data"
+  ],
+  "executor_sha256": "96373b7aaa18b4bb1e9473947067a631017fc3c70abbc05fcf84a4dfaf551244",
+  "artifacts": [
+    {
+      "source": ".tmp/stage9-journal-owner-scope-group.log",
+      "archive": "owner-month-selection-group-tests-20261003-01-stage9-journal-owner-scope-group.log.gz",
+      "bytes": 1486,
+      "sha256": "d59552336104b32d145cef89dd6d79e9ca9e9f9eb2ad56e321a23b64027a1af5",
+      "archive_bytes": 496,
+      "archive_sha256": "7d43d61901452e2febf83ee55442600382a2c3f5e6ae45556e8f06ac93932bc3",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-journal-owner-scope-group.xml",
+      "archive": "owner-month-selection-group-tests-20261003-02-stage9-journal-owner-scope-group.xml.gz",
+      "bytes": 12473,
+      "sha256": "6d70918fff0dbf61596eb0fe9ac55bc5df7730efdc4c2bb3a416218251e1ddb5",
+      "archive_bytes": 1998,
+      "archive_sha256": "8587c605943b8f7a0fd86b224a09487015a697ef4eae0566a8725da3e18e554a",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    }
+  ]
+}

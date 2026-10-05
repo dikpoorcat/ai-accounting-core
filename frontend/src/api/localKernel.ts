@@ -1,6 +1,5 @@
 import type { BrowserJobsContract } from "./generated/browserJobs";
 import type { BrowserSecurityStatusContract, BrowserSecurityStatusResponse } from "./generated/browserSecurityStatus";
-import type { DashboardBriefContract } from "./generated/dashboardBrief";
 import { validateBrowserSecurityStatusResponse } from "./generated/browserSecurityStatus.js";
 
 export class LocalApiError extends Error {
@@ -10,7 +9,6 @@ export class LocalApiError extends Error {
   }
 }
 
-export type EvidenceDetails = DashboardBriefContract.EvidenceDetail;
 export type LocalJob = BrowserJobsContract.BrowserJob;
 
 export function localJobDownloadAvailable(job: LocalJob): boolean {

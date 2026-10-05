@@ -1,0 +1,74 @@
+{
+  "status": "completed_fixed_source_synthetic_release_core_archived",
+  "artifact_count": 5,
+  "source_sha256": "1c37c576cb0026b0b39c199b74672a60890c43a7d9e2b944416179fe2bf398e9",
+  "source_manifest_sha256": "845318d7e9857cbae422033a7e8b87a5fb7edd2896f1c5f0617709eabca1c979",
+  "result": "119 passed in235.14s;exit0;12 unchanged sealed test/fixture files;9 bound modules;full source inventory unchanged",
+  "runner_seconds": 236.27437130000908,
+  "scope": "Fixed released1 candidate regression; copied CLI and synthetic released2 fixtures do not prove final package or productionv2",
+  "stage_complete": false,
+  "excluded": [
+    "databases",
+    "credentials",
+    "original checkpoints",
+    "real data"
+  ],
+  "executor_sha256": "aa85c7996051ca306867c6f1f85678a5018e9e4ca8f90f14371b5129b1ba51f5",
+  "artifacts": [
+    {
+      "source": ".tmp/stage9-month-reads-release-core-group.py",
+      "archive": "owner-month-reads-release-core-group-20261003-01-stage9-month-reads-release-core-group.py.gz",
+      "bytes": 5019,
+      "sha256": "7a79c4a173f45749a6be5cc8b9659ec1f555fa3b38d858f3bf2d9c528ea82b67",
+      "archive_bytes": 2009,
+      "archive_sha256": "a4e347855d65bae4a9264a1ea2003fc54973d79c737f2d842457c0f2fb33cd1c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-month-reads-release-core-group.log",
+      "archive": "owner-month-reads-release-core-group-20261003-02-stage9-month-reads-release-core-group.log.gz",
+      "bytes": 2901,
+      "sha256": "b4b27ef4cc7d9b698b561499bf17bf7c4be939a89040a4fdb3cb340446b21d6d",
+      "archive_bytes": 733,
+      "archive_sha256": "449860098f4508a2c08133a952a598ab5c954b9bb77fe2f432f711f40ba0f602",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-month-reads-release-core-group.xml",
+      "archive": "owner-month-reads-release-core-group-20261003-03-stage9-month-reads-release-core-group.xml.gz",
+      "bytes": 19132,
+      "sha256": "51c7515cecd1442d9d58e01d3cdc51ada7a32aeca05289b954cbbf08eb8eba09",
+      "archive_bytes": 2882,
+      "archive_sha256": "a2132865cab03dea99156a6b4c813a15c57d781b87fd265512dbf8c7f4c00a87",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-month-reads-release-core-group.json",
+      "archive": "owner-month-reads-release-core-group-20261003-04-stage9-month-reads-release-core-group.json.gz",
+      "bytes": 179529,
+      "sha256": "d4f579ea97985f0700c2a66a0fbf8c3c475240fcebb74418c8ded3bfaefc62d1",
+      "archive_bytes": 73660,
+      "archive_sha256": "339919c5cbffc437a35f5b54ffe6b3fb5d8b4b073355b4ce7d1da5ff094b9b52",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "source": ".tmp/stage9-month-reads-release-regression-plan.md",
+      "archive": "owner-month-reads-release-core-group-20261003-05-stage9-month-reads-release-regression-plan.md.gz",
+      "bytes": 5351,
+      "sha256": "1ededce68a0abeb6c00a97c4c1537c421bf8131b8272c00e0d1fc8296e2c75c0",
+      "archive_bytes": 2432,
+      "archive_sha256": "82fb93e21b8436437bc5f6b0476ee6dfc45227128bc7e2391f35cd6604b41b28",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    }
+  ]
+}

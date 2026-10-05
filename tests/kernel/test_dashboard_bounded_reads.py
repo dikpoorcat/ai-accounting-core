@@ -21,6 +21,7 @@ from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_pages import seal_page
 from ai_accounting.kernel.dashboard_reads import Journal
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
@@ -292,12 +293,8 @@ def read_probe(layered_book, monkeypatch):
                 "calculations": frozenset(
                     row["subject_id"] for row in reads._calculations.values()
                 ),
-                "facts": frozenset(
-                    version.subject_id for version in reads._fact_versions.values()
-                ),
-                "metadata": frozenset(
-                    row["subject_id"] for row in reads._metadata.values()
-                ),
+                "facts": frozenset(version.subject_id for version in reads._fact_versions.values()),
+                "metadata": frozenset(row["subject_id"] for row in reads._metadata.values()),
             }
         )
         original_release(captured)
@@ -367,19 +364,18 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
     }
     assert not source_ids.intersection(offpage)
     offpage_subjects = {
-        f"wage-{i}" if endpoint == "employees" else f"asset-{i}"
-        for i in range(1, 4)
+        f"wage-{i}" if endpoint == "employees" else f"asset-{i}" for i in range(1, 4)
     }
     assert not first_snapshot.loaded_subjects["calculations"].intersection(offpage_subjects)
 
 
 def test_business_and_source_collections_keep_month_and_entity_scope(layered_book, read_probe):
     dashboard = Dashboard(layered_book["engine"])
-    businesses = dashboard.brief("2026-01", section="businesses", limit=1)
-    collection = businesses["data"]["collections"]["businesses"]
+    businesses = dashboard.brief("2026-01", section="activity", limit=1)
+    collection = businesses["data"]["collections"]["activity"]
     assert collection["page"]["total_count"] == 8
     assert len(collection["items"]) == 1
-    sources = dashboard.assets("2026-01", section="source_history", asset_id="asset-0", limit=1)
+    sources = technical_collection(dashboard, "source_history", subjects={"asset-0"}, limit=1)
     page = sources["data"]["collections"]["source_history"]
     assert page["page"]["total_count"] == 4
     assert len(page["items"]) == 1
@@ -388,6 +384,28 @@ def test_business_and_source_collections_keep_month_and_entity_scope(layered_boo
         assert not layered_book["funding_subjects"].intersection(
             snapshot.loaded_subjects["calculations"]
         )
+
+
+def technical_collection(
+    dashboard, section, *, subjects=None, limit=1, cursor=None, expected_version=None
+):
+    """Retained private adapter proves collection binding outside owner endpoints."""
+    with dashboard._snapshot("2026-01") as snapshot:
+        dashboard._check_page_version(snapshot, cursor, expected_version)
+        collection = dashboard._business_collection(
+            snapshot,
+            "ai-business",
+            subjects,
+            section,
+            cursor,
+            {},
+            limit,
+        )
+        collection["page"] = seal_page(snapshot, "ai-business", section, collection["page"], {})
+        return {
+            "snapshot_version": snapshot.snapshot_version,
+            "data": {"collections": {section: collection}},
+        }
 
 
 def _copy_book(layered_book, tmp_path):
@@ -420,9 +438,7 @@ def test_dashboard_page_releases_snapshot_without_cyclic_collection(
 
     monkeypatch.setattr(dashboard_module._Snapshot, "__init__", capture_snapshot)
     monkeypatch.setattr(QueryReads, "__init__", capture_reads)
-    result = getattr(Dashboard(layered_book["engine"]), endpoint)(
-        "2026-01", preparation="deferred"
-    )
+    result = getattr(Dashboard(layered_book["engine"]), endpoint)("2026-01", preparation="deferred")
 
     assert result["data"]
     assert canonical(result)
@@ -454,7 +470,7 @@ def test_dashboard_snapshot_releases_on_failure_and_nested_exit(layered_book):
 def test_default_employee_list_does_not_build_discarded_payroll_history(layered_book, monkeypatch):
     import ai_accounting.kernel.dashboard as dashboard_module
 
-    original = dashboard_module._source_settlement
+    original = dashboard_module._people_asset_settlement
     original_selected = dashboard_module.Calculations.selected
     wage_sources = []
     selected_scopes = []
@@ -464,7 +480,7 @@ def test_default_employee_list_does_not_build_discarded_payroll_history(layered_
             wage_sources.append(calc["subject_id"])
         return original(snap, calc, **options)
 
-    monkeypatch.setattr(dashboard_module, "_source_settlement", counted)
+    monkeypatch.setattr(dashboard_module, "_people_asset_settlement", counted)
 
     def scoped(self, *, kinds=None, subjects=None, posting_period=None):
         if kinds and kinds.intersection(
@@ -482,12 +498,23 @@ def test_default_employee_list_does_not_build_discarded_payroll_history(layered_
     assert "payroll_sources" not in default["data"]["collections"]
     assert wage_sources == []
     assert all(scope is not None for scope in selected_scopes)
-    expanded = dashboard.employees(
-        "2026-01", employee_id="employee-0", section="payroll_sources", preparation="deferred",
+    focused = dashboard.employees(
+        "2026-01",
+        employee_id="employee-0",
+        section="employees",
+        preparation="deferred",
     )
-    assert expanded["data"]["collections"]["payroll_sources"]["items"]
-    assert wage_sources == ["wage-0"]
-    assert selected_scopes[-1] == {"wage-0"}
+    focused_items = focused["data"]["collections"]["employees"]["items"]
+    assert [item["employee_id"] for item in focused_items] == ["employee-0"]
+    assert "payroll_sources" not in focused["data"]["collections"]
+    assert wage_sources == []
+    assert focused["data"]["employees"] == default["data"]["employees"]
+    # Full month-end unpaid totals still prove all representative sources;
+    # neither the list nor a precise employee lookup builds history cards.
+    assert all(
+        scope <= {"legacy-wage", *(f"wage-{index}" for index in range(4))}
+        for scope in selected_scopes
+    )
 
 
 def test_employee_list_rejects_damaged_wage_identity_source(layered_book, tmp_path):
@@ -507,9 +534,7 @@ def test_employee_list_rejects_damaged_wage_identity_source(layered_book, tmp_pa
     assert failure.value.code == "content_integrity_failed"
 
 
-def test_employee_list_uses_verified_roles_before_loading_wage_scalars(
-    layered_book, monkeypatch
-):
+def test_employee_list_uses_verified_roles_before_loading_wage_scalars(layered_book, monkeypatch):
     import ai_accounting.kernel.entity_references as references
 
     engine = layered_book["engine"]
@@ -577,20 +602,33 @@ def test_asset_list_bounds_selected_batch_members(layered_book, monkeypatch):
     scopes = []
 
     def counted(
-        self, connection, period, *, kinds=None, subjects=None,
-        asset_ids=None, current_heads=False,
+        self,
+        connection,
+        period,
+        *,
+        kinds=None,
+        subjects=None,
+        asset_ids=None,
+        current_heads=False,
     ):
         scopes.append((kinds, subjects, asset_ids))
         return original(
-            self, connection, period, kinds=kinds, subjects=subjects,
-            asset_ids=asset_ids, current_heads=current_heads,
+            self,
+            connection,
+            period,
+            kinds=kinds,
+            subjects=subjects,
+            asset_ids=asset_ids,
+            current_heads=current_heads,
         )
 
     monkeypatch.setattr(BusinessQueries, "_selected_asset_members", counted)
     result = Dashboard(layered_book["engine"]).assets("2026-01", preparation="deferred")
     assert result["data"]["collections"]["assets"]["items"]
-    assert not any(kinds is None and subjects is None and asset_ids is None
-                   for kinds, subjects, asset_ids in scopes)
+    assert not any(
+        kinds is None and subjects is None and asset_ids is None
+        for kinds, subjects, asset_ids in scopes
+    )
     assert not any(kinds and "asset_consumption" in kinds for kinds, _, _ in scopes)
 
 
@@ -613,7 +651,7 @@ def test_asset_page_batches_selected_card_facts(layered_book, monkeypatch):
     assert selected in requested
 
 
-def test_asset_page_selects_source_vouchers_in_one_scope(layered_book, monkeypatch):
+def test_asset_page_stops_reference_only_source_voucher_reads(layered_book, monkeypatch):
     original = Journal.__iter__
     source_scopes = []
 
@@ -627,7 +665,10 @@ def test_asset_page_selects_source_vouchers_in_one_scope(layered_book, monkeypat
         "2026-01", section="assets", limit=4, preparation="deferred"
     )
     assert result["data"]["collections"]["assets"]["page"]["returned_count"] == 4
-    assert source_scopes == [frozenset(f"asset-{index}" for index in range(4))]
+    assert source_scopes == []
+    assert {item["asset_id"] for item in result["data"]["collections"]["assets"]["items"]} == {
+        f"asset-{index}" for index in range(4)
+    }
 
 
 def test_asset_list_rejects_damaged_selected_card_source(layered_book, tmp_path):
@@ -650,21 +691,21 @@ def test_asset_list_rejects_damaged_selected_card_source(layered_book, tmp_path)
 def test_worker_change_rejects_file_cursor_without_changing_business_epochs(layered_book, tmp_path):
     engine = _copy_book(layered_book, tmp_path)
     dashboard = Dashboard(engine)
-    first = dashboard.brief("2026-01", section="file_jobs", limit=1)
+    first = technical_collection(dashboard, "file_jobs", limit=1)
     collection = first["data"]["collections"]["file_jobs"]
     assert collection["page"]["total_count"] == 3
     with engine.store.connection() as connection:
         connection.execute("UPDATE jobs SET status='running',attempts=1 WHERE id='job-2'")
     with pytest.raises(KernelError, match="筛选|分页") as error:
-        dashboard.brief(
-            "2026-01",
-            section="file_jobs",
+        technical_collection(
+            dashboard,
+            "file_jobs",
             limit=1,
             cursor=collection["page"]["next_cursor"],
             expected_version=first["snapshot_version"],
         )
     assert error.value.code == "dashboard_snapshot_changed"
-    fresh = dashboard.brief("2026-01", section="file_jobs", limit=1)
+    fresh = technical_collection(dashboard, "file_jobs", limit=1)
     assert fresh["snapshot_version"] == first["snapshot_version"]
     assert (
         fresh["data"]["collections"]["file_jobs"]["page"]["collection_version"]
@@ -689,10 +730,10 @@ def test_worker_write_during_response_keeps_all_file_reads_on_one_snapshot(
         return result
 
     monkeypatch.setattr(BusinessQueries, "_file_jobs", file_jobs)
-    first = Dashboard(engine).brief("2026-01", section="file_jobs", limit=3)
+    first = technical_collection(Dashboard(engine), "file_jobs", limit=3)
     jobs = first["data"]["collections"]["file_jobs"]["items"]
     assert next(item for item in jobs if item["job_id"] == "job-2")["status"] == "pending"
-    second = Dashboard(engine).brief("2026-01", section="file_jobs", limit=3)
+    second = technical_collection(Dashboard(engine), "file_jobs", limit=3)
     jobs = second["data"]["collections"]["file_jobs"]["items"]
     assert next(item for item in jobs if item["job_id"] == "job-2")["status"] == "running"
 

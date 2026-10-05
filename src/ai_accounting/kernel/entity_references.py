@@ -346,6 +346,62 @@ def _entity_reference_fields(kind, data, *, registry=None):
             yield path, value, declaration["role"]
 
 
+def verify_fact_entity_types(connection, facts, *, registry):
+    """Check explicit object types in already authenticated raw fact payloads.
+
+    This source check is independent of both rebuildable reference directories.
+    The caller must authenticate raw bytes, order and seals before passing facts.
+    """
+    constraints = {}
+    for fact_id, fact in facts.items():
+        if getattr(registry, "content_version", None) == 1:
+            expanded = (
+                (item, item["path"], item["entity_id"])
+                for item in references_from_data(fact["kind"], fact["data"], registry=registry)
+                if item["reference_type"] == "entity"
+            )
+        else:
+            expanded = (
+                (declaration, path, entity_id)
+                for declaration in declarations_for(fact["kind"], registry=registry)
+                if declaration["reference_type"] == "entity"
+                for path, entity_id in _at(fact["data"], declaration["path"].split("."))
+            )
+        for declaration, path, entity_id in expanded:
+            kinds = tuple(declaration.get("kinds", ()))
+            account_type = declaration.get("account_type")
+            if not isinstance(entity_id, str) or not entity_id:
+                raise KernelError(
+                    "content_integrity_failed", "已保存事实的对象引用身份不合法",
+                    component="entity_reference", record_id=fact_id, path=path,
+                    reason="entity_reference_id_invalid",
+                )
+            constraints.setdefault((entity_id, kinds, account_type), (fact_id, path))
+    if not constraints:
+        return
+    entities = {
+        row["id"]: row for row in connection.execute(
+            "SELECT e.id,e.kind,e.account_type FROM json_each(?) ids "
+            "JOIN entity e ON e.id=ids.value",
+            (canonical(sorted({key[0] for key in constraints})),),
+        )
+    }
+    for (entity_id, kinds, account_type), (fact_id, path) in constraints.items():
+        entity = entities.get(entity_id)
+        reason = (
+            "referenced_entity_missing" if entity is None else
+            "entity_kind_mismatch" if kinds and entity["kind"] not in kinds else
+            "entity_account_type_mismatch"
+            if account_type is not None and entity["account_type"] != account_type else None
+        )
+        if reason:
+            raise KernelError(
+                "content_integrity_failed", "已保存事实的对象类型与明确业务引用不一致",
+                component="entity_reference", record_id=fact_id, path=path,
+                entity_id=entity_id, reason=reason,
+            )
+
+
 def validate_entity_references(connection, fact, subject_id):
     references = references_for(fact, subject_id)
     for item in references:
@@ -369,8 +425,19 @@ def validate_filter(connection, entity_id, role, identity_match):
 
 
 def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=None):
+    expected, metadata, registry = _recorded_reference_batch(
+        connection, fact_ids, registry=registry
+    )
+    if identity_match == "current":
+        return _current_reference_rows(connection, expected, metadata, registry=registry)
+    return expected
+
+
+def _recorded_reference_batch(connection, fact_ids, *, registry=None):
+    """Authenticate raw facts once before either reference interpretation."""
     from .storage import Store
 
+    fact_ids = set(fact_ids)
     metadata = list(
         connection.execute(
             "SELECT r.*,s.kind FROM fact_revision r JOIN subject s "
@@ -378,6 +445,8 @@ def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=
             (canonical(list(fact_ids)),),
         )
     )
+    if len(metadata) != len(fact_ids):
+        raise KernelError("unknown_fact", "fact revision does not exist")
     # Raw typed storage must be decoded in batches; a historical payload is never
     # revalidated through today's defaults.
     if registry is None:
@@ -386,7 +455,11 @@ def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=
         registry = default_registry()
     reader = object.__new__(Store)
     reader.registry = registry
-    data = reader.fact_data_many(connection, [row["id"] for row in metadata])
+    data = (
+        reader.fact_data_many(connection, fact_ids)
+        if getattr(registry, "content_version", None) == 1 else
+        reader._fact_data_many_from_headers(connection, metadata)
+    )
     expected = []
     for row in metadata:
         if digest(data[row["id"]]) != row["digest"]:
@@ -402,23 +475,27 @@ def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=
             expected.append(
                 (row["id"], path, entity_id, role, row["kind"], row["period"], row["digest"])
             )
-    if identity_match == "current":
-        if getattr(registry, "content_version", None) == 1:
-            from .content_v1_semantics import v1_current_bindings
-
-            expected = v1_current_bindings(connection, expected, registry=registry)
-        else:
-            expected = _current_bindings(connection, expected, registry=registry)
-    return expected
+    return expected, metadata, registry
 
 
-def _current_bindings(connection, rows, *, registry=None):
+def _current_reference_rows(connection, recorded, metadata, *, registry):
+    if getattr(registry, "content_version", None) == 1:
+        from .content_v1_semantics import v1_current_bindings
+
+        return v1_current_bindings(connection, recorded, registry=registry)
+    return _current_bindings(
+        connection, recorded, registry=registry,
+        _subjects={row["id"]: row["subject_id"] for row in metadata},
+    )
+
+
+def _current_bindings(connection, rows, *, registry=None, _subjects=None):
     # Exact subject/path transitions, never a company-wide identity alias.
     # Before/after facts are immutable authority; the projection itself is not.
     if not rows:
         return rows
     source_ids = {row[0] for row in rows}
-    subjects = {
+    subjects = {ident: _subjects[ident] for ident in source_ids} if _subjects is not None else {
         row["id"]: row["subject_id"]
         for row in connection.execute(
             "SELECT id,subject_id FROM fact_revision WHERE id IN(SELECT value FROM json_each(?))",
@@ -520,18 +597,16 @@ def _current_bindings(connection, rows, *, registry=None):
 
 def current_role_matches(connection, fact_ids, role, *, registry=None):
     ids = sorted(set(fact_ids))
-    verify_hits(connection, [{"fact_id": ident} for ident in ids], registry=registry)
+    verified = verify_hits(connection, [{"fact_id": ident} for ident in ids], registry=registry)
     result = {}
-    for row in connection.execute(
-        "SELECT fact_id,entity_id FROM entity_reference_current "
-        "WHERE fact_id IN(SELECT value FROM json_each(?)) AND role=?",
-        (canonical(ids), role),
-    ):
-        if row["fact_id"] in result and result[row["fact_id"]] != row["entity_id"]:
+    for fact_id, _path, entity_id, reference_role, _kind, _period, _digest in verified:
+        if reference_role != role:
+            continue
+        if fact_id in result and result[fact_id] != entity_id:
             raise KernelError(
                 "ambiguous_entity_reference", "这一业务角色存在多个对象，不能合并展示"
             )
-        result[row["fact_id"]] = row["entity_id"]
+        result[fact_id] = entity_id
     return result
 
 
@@ -572,22 +647,34 @@ def verify_hits(connection, rows, *, identity_match="current", registry=None):
     }
     if actual != expected:
         raise KernelError("entity_reference_corrupt", "对象引用目录与原始事实不一致")
+    return tuple(sorted(actual))
 
 
 def verify_entity_references(connection, *, registry=None):
-    rows = list(connection.execute("SELECT id AS fact_id FROM fact_revision"))
-    for match in ("recorded", "current"):
-        verify_hits(connection, rows, identity_match=match, registry=registry)
-
-
-def rebuild_entity_references(connection, *, registry=None):
     ids = [row[0] for row in connection.execute("SELECT id FROM fact_revision")]
-    changed = False
+    recorded, metadata, registry = _recorded_reference_batch(connection, ids, registry=registry)
     for match, table in (
         ("recorded", "entity_reference_recorded"),
         ("current", "entity_reference_current"),
     ):
-        expected = set(_expected_rows(connection, ids, identity_match=match, registry=registry))
+        expected = (
+            recorded if match == "recorded" else
+            _current_reference_rows(connection, recorded, metadata, registry=registry)
+        )
+        if {tuple(row) for row in connection.execute(f"SELECT * FROM {table}")} != set(expected):
+            raise KernelError("entity_reference_corrupt", "对象引用目录与原始事实不一致")
+
+
+def rebuild_entity_references(connection, *, registry=None):
+    ids = [row[0] for row in connection.execute("SELECT id FROM fact_revision")]
+    recorded, metadata, registry = _recorded_reference_batch(connection, ids, registry=registry)
+    current = _current_reference_rows(connection, recorded, metadata, registry=registry)
+    changed = False
+    for expected_rows, table in (
+        (recorded, "entity_reference_recorded"),
+        (current, "entity_reference_current"),
+    ):
+        expected = set(expected_rows)
         actual = {tuple(row) for row in connection.execute(f"SELECT * FROM {table}")}
         if actual != expected:
             changed = True

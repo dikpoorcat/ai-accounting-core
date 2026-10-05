@@ -44,7 +44,7 @@ def test_brief_skips_absent_investment_details_but_checks_actual_sources(
     save("money_fund_subscription", "buy", investments.subscription())
     publish("buy")
     assert dashboard.brief("2026-01", preparation="deferred")["data"] is not None
-    assert calls == [True]
+    assert calls == []
     with engine.store.connection() as connection:
         trigger = connection.execute(
             "SELECT sql FROM sqlite_schema WHERE name='immutable_calculation_UPDATE'"
@@ -334,6 +334,69 @@ def test_external_funds_exclude_both_bank_transfer_sides(bank_book):
     )
 
 
+def test_closed_receipt_correction_reduces_receipts_without_inventing_a_payment(bank_book):
+    engine, save, publish, proof = bank_book
+    # A cash refund has its own explicit actual receipt and needs no invented bank row.
+    fields = {
+        "period": "2026-09",
+        "actual_date": "2026-09-03",
+        "cash_account_id": "cash",
+        "amount_fen": 1000,
+    }
+    save("managed_reserve_refund", "receipt", fields)
+    publish("receipt")
+    investments.close(engine, "2026-09")
+    frozen = Dashboard(engine).funds("2026-09")["data"]
+    engine.amend_fact(
+        "managed_reserve_refund",
+        "receipt",
+        fields | {"amount_fen": 700},
+        evidence=(proof,),
+        expected_revision=1,
+        recording_error_confirmed=True,
+        request_id="amend-receipt",
+    )
+    preview = engine.preview(["receipt"], posting_period="2026-10")
+    engine.confirm(
+        ["receipt"],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        posting_period="2026-10",
+        request_id="receipt-correction",
+    )
+    assert Dashboard(engine).funds("2026-09")["data"] == frozen
+    corrected = Dashboard(engine).funds("2026-10")["data"]
+    assert corrected["opening_fen"] == 1000 and corrected["total_fen"] == 700
+    assert corrected["inflow_fen"] == -300 and corrected["outflow_fen"] == 0
+    movements = corrected["collections"]["movements"]["items"]
+    assert len(movements) == 2
+    assert {row["subject_id"] for row in movements} == {"receipt"}
+    assert {row["direction"] for row in movements} == {"inflow"}
+    correction = next(row for row in movements if row["correction"])
+    assert correction["signed_amount_fen"] == -1000
+    assert (
+        not {"reference", "calculation_id", "field_sources", "party_sources", "component_kinds"}
+        & correction.keys()
+    )
+
+
+def test_owner_funds_defaults_to_twenty_rows_with_full_company_summary(bank_book):
+    engine, _, _, _ = bank_book
+    _publish_filter_funding(engine, ["bank-a"] * 25)
+    response = Dashboard(engine).funds("2026-09")
+    data = response["data"]
+    assert response["schema_version"] == 9
+    assert data["total_fen"] == data["inflow_fen"] == 25
+    collection = data["collections"]["movements"]
+    assert len(collection["items"]) == 20
+    assert collection["page"]["total_count"] == 25 and collection["page"]["has_more"]
+    assert "fact_issues" not in data
+    assert (
+        not {"matched_count", "unmatched_count", "needs_review_count", "unmatched_totals"}
+        & data["bank_statement"].keys()
+    )
+
+
 def test_bank_platform_transfer_is_always_internal(platform_book):
     engine, save, publish, _ = platform_book
     save(
@@ -376,12 +439,12 @@ def test_reserve_expense_and_refund_follow_actual_funds_directions(bank_book):
     assert data["internal_transfer_fen"] == 0
     assert data["net_change_fen"] == data["total_fen"] == 800
     reserve = {
-        row["component_kinds"][0]: row
+        row["amount_fen"]: row
         for row in data["collections"]["movements"]["items"]
-        if row["component_kinds"][0].startswith("managed_reserve_")
+        if row["amount_fen"] in {300, 100}
     }
-    assert reserve["managed_reserve_expense"]["direction"] == "outflow"
-    assert reserve["managed_reserve_refund"]["direction"] == "inflow"
+    assert reserve[300]["direction"] == "outflow"
+    assert reserve[100]["direction"] == "inflow"
     assert not any(row["internal_transfer"] for row in reserve.values())
 
 
@@ -450,8 +513,9 @@ def test_bank_coverage_distinguishes_missing_partial_empty_and_review(bank_book)
     save("bank_statement", "statement", changed, revision=1)
     reviewed = Dashboard(engine).funds("2026-09", section="statements")["data"]
     assert reviewed["bank_statement"]["coverage_state"] == "partial"
-    assert reviewed["bank_statement"]["needs_review_count"] == 1
-    assert reviewed["collections"]["statements"]["items"][0]["state"] == "needs_review"
+    assert reviewed["bank_statement"]["review_state"] == "pending"
+    assert reviewed["collections"]["statements"]["items"][0]["amount_fen"] == 123
+    assert "state" not in reviewed["collections"]["statements"]["items"][0]
 
 
 def test_movement_identity_survives_earlier_period_publication(bank_book):
@@ -476,6 +540,7 @@ def test_investment_confirmation_is_separate_from_actual_receipt(investment_book
     assert january["bank_statement"]["coverage_state"] == "not_applicable"
     assert january["investments"]["closing_cost_fen"] == 10100
     assert january["investments"]["actual_payments_fen"] == 0
+    assert january["collections"]["investment_events"]["items"][0]["subject_id"] == "buy"
     save("money_fund_redemption", "redeem", investments.redemption())
     publish("redeem")
     february = Dashboard(engine).funds("2026-02")["data"]
@@ -485,6 +550,7 @@ def test_investment_confirmation_is_separate_from_actual_receipt(investment_book
     assert investment["investment_income_fen"] == 100
     assert investment["actual_receipts_fen"] == 0
     assert february["collections"]["investment_events"]["items"][0]["date"] is None
+    assert february["collections"]["investment_events"]["items"][0]["subject_id"] == "redeem"
     save(
         "payment",
         "receipt",
@@ -501,6 +567,8 @@ def test_investment_confirmation_is_separate_from_actual_receipt(investment_book
     assert paid["inflow_fen"] == paid["investments"]["actual_receipts_fen"] == 4100
     assert paid["investments"]["event_count"] == 2
     assert paid["collections"]["investment_events"]["items"][-1]["settlement_fen"] == 4100
+    assert paid["collections"]["investment_events"]["items"][-1]["subject_id"] == "receipt"
+    assert paid["collections"]["movements"]["items"][0]["subject_id"] == "receipt"
 
 
 def test_opening_investment_preserves_cost_without_inventing_subscription(opening_book):

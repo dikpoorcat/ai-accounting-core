@@ -1,0 +1,110 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "Open scope normal reverse head reuse: fixed single-production-file source pair actual-work diagnostic and recorded directed validation; no latency qualification browser package or MCP acceptance",
+  "files": [
+    {
+      "source": ".tmp/stage9-open-scope-group-work-prepare-20261004.py",
+      "archive": "stage9-open-scope-group-work-prepare-20261004.py.gz",
+      "raw_bytes": 3802,
+      "gzip_bytes": 1432,
+      "source_sha256": "e6aab612e5790b276a49fe2345d10209cb79ddcb461675fc2fe83bd193a39cad",
+      "gzip_sha256": "413ff82ef5a15be82615bfe37bf97af1cf65d0cc0464a6ccf7d0beef1951d87c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_work_and_snapshot_scripts_not_executed_for_archive"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-group-work-20261004.py",
+      "archive": "stage9-open-scope-group-work-20261004.py.gz",
+      "raw_bytes": 9699,
+      "gzip_bytes": 3242,
+      "source_sha256": "a02cb90dd9b8d87786edf5755bc6e56f90e323161c8b75475a321afe0aed947b",
+      "gzip_sha256": "b9d42796391a4e6f31bd59ab8c70a2eff36939392bf6493533aa8c390f97e643",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_work_and_snapshot_scripts_not_executed_for_archive"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-group-work-before-20261004.json",
+      "archive": "stage9-open-scope-group-work-before-20261004.json.gz",
+      "raw_bytes": 548736,
+      "gzip_bytes": 71239,
+      "source_sha256": "104e3c1f4a688077886877c0e87864d9f77a7999c273460e387cc54f04bbb4d9",
+      "gzip_sha256": "f945c1098b14e6f2bc8c718a33a38dcd85e32c387e97ee2b7eb80e9053df25f6",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "synthetic_work_SQL_templates_numeric_counters_guard_hashes_and_source_bound_context_no_payloads"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-group-work-after-20261004.json",
+      "archive": "stage9-open-scope-group-work-after-20261004.json.gz",
+      "raw_bytes": 548540,
+      "gzip_bytes": 71184,
+      "source_sha256": "642b380267293e6a21a8c3bf4b7524d799116bcf7614c267e397c56c5a403305",
+      "gzip_sha256": "d3b08f576881f8ff738e14cb7373602143778a9c4faa70072d1dde8e13692028",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "synthetic_work_SQL_templates_numeric_counters_guard_hashes_and_source_bound_context_no_payloads"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-group-work-comparison-20261004.json",
+      "archive": "stage9-open-scope-group-work-comparison-20261004.json.gz",
+      "raw_bytes": 4183,
+      "gzip_bytes": 740,
+      "source_sha256": "87c813ff7828bdee228e5b4dfd7dfcd092f20f81c58cbd8fbd14086f95558eb9",
+      "gzip_sha256": "11b8916fc6371af7d51c44947dfbd1e36a184df672785e6000113f668ba36eef",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_analysis"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-reverse-head-group-20261004.md",
+      "archive": "stage9-open-scope-reverse-head-group-20261004.md.gz",
+      "raw_bytes": 5278,
+      "gzip_bytes": 2325,
+      "source_sha256": "dbd898e1159ab6d29487ae34fa2c4eaf1253984d27ef04ac9ffe94abfb79f43d",
+      "gzip_sha256": "de4d39eab19d240b029c1d22859624855981a7d40006140d0e2de8d239aaa708",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_analysis"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-reverse-head-independent-review-20261004.md",
+      "archive": "stage9-open-scope-reverse-head-independent-review-20261004.md.gz",
+      "raw_bytes": 9852,
+      "gzip_bytes": 4799,
+      "source_sha256": "2587fd5ca3dc61046d2f061f1b33647be4b50d3ed61d22d5149fd02b2f00045b",
+      "gzip_sha256": "73007cd0fe3aff50b27d76ae7b3ea890ddf930e0961b5523686d1e6623666ee9",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_analysis"
+    },
+    {
+      "source": ".tmp/stage9-build-source-open-scope-group-before-20261004/source-manifest.json",
+      "archive": "stage9-build-source-open-scope-group-before-20261004-source-manifest.json.gz",
+      "raw_bytes": 91765,
+      "gzip_bytes": 38138,
+      "source_sha256": "17604e72db3c9526e3cda7cded441b2fab8ecd8628b81fca0586e4c70626e7a5",
+      "gzip_sha256": "7c9299d712c5321954af34631dd758ca0aeff2c1568581bf9bf36b1877799f10",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "full_source_manifest_only_paths_sha256_no_source_payload"
+    },
+    {
+      "source": ".tmp/stage9-build-source-open-scope-group-candidate-20261004/source-manifest.json",
+      "archive": "stage9-build-source-open-scope-group-candidate-20261004-source-manifest.json.gz",
+      "raw_bytes": 91223,
+      "gzip_bytes": 37842,
+      "source_sha256": "9d81e82d7e2637637cc052cd42ff80946c6a0274264473d53f1d22a6f48fcef5",
+      "gzip_sha256": "0bf27ce07cb7015ac41df80a294ee7b5e499a33c14299b438ec8d7ff7c62394f",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "full_source_manifest_only_paths_sha256_no_source_payload"
+    }
+  ],
+  "raw_bytes": 1313078,
+  "gzip_bytes": 230941,
+  "content_review": "Each actual JSON structure, SQL literal values, numeric counters, call names, guard SHA and read_context contents reviewed; source manifests contain paths and SHA only. source-bound read_version is not an authentication token; identities belong to the explicitly synthetic main48 fixture. No PID, credential, auth access token, actual result payloads, DB bytes or real private data.",
+  "directed_validation_source": "91 PASS/67.51s and Ruff preserved in implementation audit; standalone original stdout/XML/receipt not found in selected current-group paths, no log synthesized.",
+  "production_frozen": false
+}

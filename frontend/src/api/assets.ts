@@ -12,7 +12,7 @@ export type IntangibleAssetItem = DashboardAssetsContract.IntangibleAssetItem;
 export type UnestablishedAssetItem = DashboardAssetsContract.UnestablishedAsset;
 
 export interface AssetsQuery extends DashboardPageQuery {
-  section?: "assets" | "projects" | "source_history" | "settlement_events";
+  section?: "assets" | "projects";
   asset_filter?: "all" | "active" | "fixed" | "intangible" | "pending" | "exited";
   asset_id?: string;
   project_id?: string;
@@ -25,6 +25,11 @@ function matchesRequest(url: URL, response: DashboardAssetsResponse) {
   const section = url.searchParams.get("section");
   return response.read_context.company_id === companyId
     && validDashboardCollections(response.data)
+    && (response.data === null || (
+      response.data.asset_id === url.searchParams.get("asset_id")
+      && response.data.project_id === url.searchParams.get("project_id")
+      && response.data.asset_filter === (url.searchParams.get("asset_filter") ?? "all")
+    ))
     && (period === null || response.selected_period?.key === period)
     && (expectedVersion === null || response.snapshot_version === expectedVersion)
     && (section === null || (response.data !== null && section in response.data.collections));

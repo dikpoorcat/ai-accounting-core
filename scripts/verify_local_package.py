@@ -29,6 +29,13 @@ _RUNNERS = {}
 _PRIVATE_NATIVE = {}
 
 
+def package_default_root(package, bundle):
+    """Match the generated launcher's active contract without touching host data."""
+    if bundle.status not in {"draft", "released"}:
+        raise ValueError("Package bundle status must be draft or released")
+    return package / "data" / ("kernel-" + bundle.status)
+
+
 def _catalog_upgrade_state(root):
     """Capture the isolated daemon's committed directory data and version."""
     uri = (root / "catalog.sqlite").as_uri() + "?mode=ro"
@@ -36,14 +43,13 @@ def _catalog_upgrade_state(root):
         connection.execute("BEGIN")
         try:
             tables = [
-                row[0] for row in connection.execute(
+                row[0]
+                for row in connection.execute(
                     "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"
                 )
             ]
             rows = tuple(
-                (name, tuple(connection.execute(
-                    'SELECT * FROM "' + name.replace('"', '""') + '"'
-                )))
+                (name, tuple(connection.execute('SELECT * FROM "' + name.replace('"', '""') + '"')))
                 for name in tables
             )
             return (
@@ -103,73 +109,141 @@ def verify_daemon_upgrade_rejection(package, root, metadata):
     _check_health(current, _request(current, "/api/health", timeout=3))
     assert _process_alive(current["pid"]), "Upgrade stopped the active daemon process"
     assert _catalog_upgrade_state(root) == before, "Rejected upgrade changed directory data"
-    return {"daemon_held_root_lock_rejected": rejected["code"],
-            "daemon_alive_same_pid": current["pid"] == metadata["pid"],
-            "catalog_data_and_version_unchanged": True}
+    return {
+        "daemon_held_root_lock_rejected": rejected["code"],
+        "daemon_alive_same_pid": current["pid"] == metadata["pid"],
+        "catalog_data_and_version_unchanged": True,
+    }
 
 
-def _recorded_brief_worker(*args):
-    """Package-verifier-only wrapper; the production worker still does the read."""
-    from ai_accounting.kernel.brief_parallel import _worker_read
+def assert_owner_read(command, value, *, company_id=None, period=None, subject_id=None, wire=False):
+    """Exercise the current typed envelope, transport amounts, scope and page counts."""
+    from ai_accounting.kernel.response_contracts import RESPONSE_ADAPTERS, validate_response
 
-    return {**_worker_read(*args), "test_worker_pid": os.getpid()}
+    adapter = RESPONSE_ADAPTERS[command]
+    if wire:
+        from jsonschema import Draft202012Validator, ValidationError, validators
+
+        from ai_accounting.kernel.types import checked
+
+        def fen_int64(_validator, enabled, instance, _schema):
+            if enabled and isinstance(instance, str):
+                try:
+                    checked(int(instance))
+                except ValueError:
+                    yield ValidationError("Amount must be an integer fen string within int64")
+
+        validator = validators.extend(Draft202012Validator, {"x-fen-int64": fen_int64})
+        validator(adapter.json_schema(mode="serialization")).validate(value)
+    else:
+        validated = validate_response(command, value)
+        assert adapter.dump_python(validated, mode="python") == value
+    if company_id is not None:
+        if command == "dashboard_context":
+            assert value["current_company"]["company_id"] == company_id
+        elif command == "dashboard_close_review":
+            assert value["company_id"] == company_id
+        else:
+            assert value["read_context"]["company_id"] == company_id
+    if period is not None:
+        if command in {"dashboard_close_review", "dashboard_period_preparation"}:
+            assert value["period"] == period
+        elif command == "dashboard_quarterly_report":
+            assert value["period"]["year"] == int(period[:4])
+            assert value["period"]["quarter"] == (int(period[5:]) - 1) // 3 + 1
+        elif command != "dashboard_context":
+            assert value["selected_period"]["key"] == period
+    if subject_id is not None:
+        assert value["data"]["identity"]["subject_id"] == subject_id
+    data = value.get("data") or value
+    for collection in data.get("collections", {}).values():
+        page = collection["page"]
+        assert len(collection["items"]) == page["returned_count"]
+        assert page["returned_count"] <= page["filtered_count"] <= page["total_count"]
+        assert page["has_more"] == (page["next_cursor"] is not None)
+    return value
 
 
-def verify_parallel_brief(app, call, company_id, period, output):
-    """Require the actual service brief to accept all three spawned proofs."""
-    from ai_accounting.kernel.brief_parallel import _BriefParallelAttempt, _worker_read
+def assert_owner_close_review(
+    value,
+    *,
+    company_id,
+    database_id,
+    period,
+    state,
+    preview,
+    expected_expense_fen=None,
+    wire=False,
+):
+    """Compare the public review with the exact preview's projected frozen conclusions."""
+    from pydantic import TypeAdapter
 
-    coordinator = app.brief_parallel
-    if coordinator is None or coordinator.pool is None:
-        raise AssertionError("Packaged parallel brief pool was not started")
-    submitted, accepted = {}, []
-    original_submit = coordinator.pool.apply_async
-    original_finish = _BriefParallelAttempt.finish
+    from ai_accounting.kernel.close_review import PublicOwnerReview, public_owner_review
 
-    def recorded_submit(function, args):
-        assert function is _worker_read and args[0] not in submitted
-        job = original_submit(_recorded_brief_worker, args)
-        submitted[args[0]] = job
-        return job
+    assert_owner_read(
+        "dashboard_close_review", value, company_id=company_id, period=period, wire=wire
+    )
+    assert value["database_id"] == database_id
+    assert value["state"] == state
+    assert value["preview_digest"] == preview["digest"]
+    expected = public_owner_review(preview["manifest"]["owner_review"])
+    adapter = TypeAdapter(PublicOwnerReview)
+    expected = adapter.dump_python(
+        adapter.validate_python(expected), mode="json" if wire else "python"
+    )
+    assert value["owner_review"] == expected
+    if expected_expense_fen is not None:
+        expense = str(expected_expense_fen) if wire else expected_expense_fen
+        assert value["owner_review"]["amounts"]["month_expense_fen"] == expense
+    return value
 
-    def recorded_finish(attempt):
-        result = original_finish(attempt)
-        accepted.append((attempt.started, attempt.finished))
-        return result
 
-    coordinator.pool.apply_async = recorded_submit
-    _BriefParallelAttempt.finish = recorded_finish
-    try:
-        response = call("dashboard_brief", {"company_id": company_id, "period": period})
-    finally:
-        coordinator.pool.apply_async = original_submit
-        _BriefParallelAttempt.finish = original_finish
-    assert accepted == [(True, True)], "Packaged brief silently fell back to serial"
-    assert set(submitted) == {"materials", "duplicates", "reports"}
-    worker_pids = {}
-    for kind, job in submitted.items():
-        packet = job.get(timeout=15)
-        assert packet["ok"] and packet["test_worker_pid"] > 0
-        worker_pids[kind] = packet["test_worker_pid"]
-    # A Pool may schedule two quick tasks on one process while another worker
-    # is idle. Prove that all three real processes exist and every accepted
-    # task ran in that pool; task-to-process allocation is not a product rule.
-    pool_workers = tuple(coordinator.pool._pool)
-    pool_worker_pids = sorted(process.pid for process in pool_workers)
-    assert len(pool_worker_pids) == len(set(pool_worker_pids)) == 3
-    assert all(process.is_alive() for process in pool_workers)
-    assert set(worker_pids.values()) <= set(pool_worker_pids)
-    assert os.getpid() not in pool_worker_pids
-    assert response["schema_version"] == 7
+def assert_payroll_confirmation_history(value, *, current_evidence, frozen_evidence):
+    """Keep adopted confirmation history in the complete AI-accountant business read."""
+    current = value["current_business_result"]["payroll_confirmation"]
+    frozen = value["frozen_adoption"]["payroll_confirmation"]
+    assert current["confirmation_revision"] == 2
+    assert current["evidence"] == [current_evidence]
+    assert frozen["confirmation_revision"] == 1
+    assert frozen["evidence"] == [frozen_evidence]
+
+
+def verify_owner_brief(app, call, company_id, period, output):
+    """Validate the shipped read contract, request scope and single-snapshot result."""
+    from ai_accounting.kernel.dashboard import Dashboard
+    from ai_accounting.kernel.response_contracts import RESPONSE_ADAPTERS, validate_response
+
+    request = {"company_id": company_id, "period": period}
+    response = call("dashboard_brief", request)
+    assert_owner_read("dashboard_brief", response, company_id=company_id, period=period)
+    adapter = RESPONSE_ADAPTERS["dashboard_brief"]
+    actual = adapter.dump_python(validate_response("dashboard_brief", response), mode="json")
+    expected = adapter.dump_python(
+        validate_response(
+            "dashboard_brief", Dashboard(app.engine(company_id, dashboard_read=True)).brief(period)
+        ),
+        mode="json",
+    )
+    assert actual["read_context"]["company_id"] == company_id, "Brief returned another company"
+    assert actual["selected_period"]["key"] == period, "Brief returned another month"
+    assert actual["data"] is not None
+    for value in (actual, expected):
+        value["data"].pop("generated_at", None)
+    assert actual == expected, "Packaged brief differs from its current single-snapshot read"
+    data = actual["data"]
     with output.open("x", encoding="utf-8") as stream:
         json.dump(
             {
                 "company_id": company_id,
                 "period": period,
-                "parallel_finish": accepted[0][1],
-                "worker_pids": worker_pids,
-                "pool_worker_pids": pool_worker_pids,
-                "response_schema_version": response["schema_version"],
+                "response_schema_version": actual["schema_version"],
+                "response_contract_validated": True,
+                "scope_validated": True,
+                "single_snapshot_result_equal": True,
+                "activity_count": data["activity_count"],
+                "funds_overview": data["funds_overview"],
+                "position": data["position"],
+                "open_items": data["open_items"],
             },
             stream,
             ensure_ascii=False,
@@ -180,18 +254,9 @@ def verify_parallel_brief(app, call, company_id, period, output):
 
 
 def expected_contract_names(bundle):
-    names = []
-    for kind in ("company", "catalog"):
-        for version, item in sorted(bundle.contracts[kind].items()):
-            if bundle.status == "released" and item["status"] != "released":
-                continue
-            if bundle.status == "draft" and version != bundle.current_versions[kind]:
-                continue
-            filename = "draft.json" if item["status"] == "draft" else f"v{version}.json"
-            names.append(f"{kind}/{filename}")
-    if bundle.status == "released":
-        names.append("content-v1.json")
-    return tuple(sorted(names))
+    from ai_accounting.kernel.contract_files import contract_file_names
+
+    return contract_file_names(bundle)
 
 
 def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup, validation):
@@ -556,8 +621,11 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     assert nets["560201"] == 660000
     assert nets["5602"] == 78200
     funds = execute("dashboard_funds", {"period": month})
-    assert funds["schema_version"] == 7
-    mapping_check = funds["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]
+    assert_owner_read("dashboard_funds", funds, company_id=cid, period=month)
+    assert int(funds["data"]["bank_fen"]) == -499400
+    mapping_check = execute("period_readiness", {"period": month})["current_followups"][
+        "tax_import_mapping"
+    ]
     assert mapping_check["status"] == "needs_information"
     assert mapping_check["blocking_scope"] == "tax_import_file"
     for category in MATERIAL_CATEGORIES:
@@ -652,13 +720,21 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
         "dashboard_business_status",
         {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"},
     )
-    assert wage_details["schema_version"] == 5
-    current_confirmation = wage_details["data"]["current_business_result"]["payroll_confirmation"]
-    frozen_confirmation = wage_details["data"]["frozen_adoption"]["payroll_confirmation"]
-    assert current_confirmation["confirmation_revision"] == 2
-    assert current_confirmation["evidence"] == [wage_proof]
-    assert frozen_confirmation["confirmation_revision"] == 1
-    assert frozen_confirmation["evidence"] == [proof]
+    assert_owner_read(
+        "dashboard_business_status",
+        wage_details,
+        company_id=cid,
+        period=month,
+        subject_id="reserve-wage",
+    )
+    assert wage_details["data"]["current_business_result"] is not None
+    assert wage_details["data"]["frozen_adoption"] is not None
+    wage_business = execute(
+        "business_status", {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"}
+    )
+    assert_payroll_confirmation_history(
+        wage_business, current_evidence=wage_proof, frozen_evidence=proof
+    )
 
     late_source = save(
         "reserve-late-source",
@@ -828,7 +904,12 @@ def verify_stage8_workflow(call, other_company_id):
     empty = execute("workflow", {"as_of": "2026-02-28"})
     assert empty["schema_version"] == 1 and empty["period"] is None
     assert {item["id"] for item in empty["sections"]["materials_and_accounting"]} == {
-        "bank", "payroll", "transactions", "tax", "assets", "financing"
+        "bank",
+        "payroll",
+        "transactions",
+        "tax",
+        "assets",
+        "financing",
     }
     evidence = execute(
         "evidence",
@@ -842,13 +923,18 @@ def verify_stage8_workflow(call, other_company_id):
     obligation = execute(
         "save_fact",
         {
-            "kind": "external_obligation", "subject_id": "stage8-obligation",
+            "kind": "external_obligation",
+            "subject_id": "stage8-obligation",
             "data": {
-                "period": "2026-01", "obligation_kind": "quarterly_tax",
-                "start_period": "2026-01", "end_period": "2026-01",
-                "due_date": "2026-02-20", "applicability_confirmed": True,
+                "period": "2026-01",
+                "obligation_kind": "quarterly_tax",
+                "start_period": "2026-01",
+                "end_period": "2026-01",
+                "due_date": "2026-02-20",
+                "applicability_confirmed": True,
             },
-            "evidence": [evidence], "expected_revision": 0,
+            "evidence": [evidence],
+            "expected_revision": 0,
             "request_id": "stage8-obligation-request",
         },
     )
@@ -858,64 +944,92 @@ def verify_stage8_workflow(call, other_company_id):
     basis = execute("obligation_basis", {"obligation_id": "stage8-obligation"})
     assert basis["obligation_fact_id"] == obligation["fact_id"]
     completion_request = {
-        "kind": "external_completion", "subject_id": "stage8-completion",
+        "kind": "external_completion",
+        "subject_id": "stage8-completion",
         "data": {
-            "period": "2026-02", "obligation_id": basis["obligation_id"],
+            "period": "2026-02",
+            "obligation_id": basis["obligation_id"],
             "obligation_fact_id": basis["obligation_fact_id"],
             "obligation_kind": basis["obligation_kind"],
-            "start_period": basis["start_period"], "end_period": basis["end_period"],
+            "start_period": basis["start_period"],
+            "end_period": basis["end_period"],
             "no_reportable_activity_confirmed": True,
-            "completion_status": "confirmed_complete", "date_status": "known",
+            "completion_status": "confirmed_complete",
+            "date_status": "known",
             "completion_date": "2026-02-10",
         },
-        "evidence": [evidence], "expected_revision": 0,
+        "evidence": [evidence],
+        "expected_revision": 0,
         "request_id": "stage8-completion-request",
     }
     saved = execute("save_fact", completion_request)
     assert execute("save_fact", completion_request) == saved
-    receipt = execute(
-        "request_result", {"submitted_request_id": completion_request["request_id"]}
-    )
+    receipt = execute("request_result", {"submitted_request_id": completion_request["request_id"]})
     assert receipt == {
-        "status": "committed", "company_id": cid,
+        "status": "committed",
+        "company_id": cid,
         "database_id": company["database_id"],
         "submitted_request_id": completion_request["request_id"],
-        "action": "confirm_fact", "result": saved,
+        "action": "confirm_fact",
+        "result": saved,
     }
-    assert call(
-        "request_result",
-        {"company_id": other_company_id,
-         "submitted_request_id": completion_request["request_id"]},
-    )["status"] == "unknown"
+    assert (
+        call(
+            "request_result",
+            {
+                "company_id": other_company_id,
+                "submitted_request_id": completion_request["request_id"],
+            },
+        )["status"]
+        == "unknown"
+    )
     preview = execute("preview", {"subjects": ["stage8-completion"]})
-    execute("confirm", {
-        "subjects": ["stage8-completion"], "preview_digest": preview["digest"],
-        "epochs": preview["epochs"], "request_id": "stage8-completion-publish",
-    })
+    execute(
+        "confirm",
+        {
+            "subjects": ["stage8-completion"],
+            "preview_digest": preview["digest"],
+            "epochs": preview["epochs"],
+            "request_id": "stage8-completion-publish",
+        },
+    )
     completed = execute("workflow", {"period": "2026-01", "as_of": "2026-02-28"})
     item = completed["sections"]["external"]["obligations"][0]
     assert item["actual_completion_status"] == "completed"
     assert item["basis_review_status"] == "not_reviewed"
-    review = execute("save_fact", {
-        "kind": "external_basis_review", "subject_id": "stage8-review",
-        "data": {
-            "period": "2026-02", "completion_id": "stage8-completion",
-            "completion_fact_id": saved["fact_id"],
-            "obligation_id": basis["obligation_id"],
-            "obligation_fact_id": basis["obligation_fact_id"],
-            "obligation_kind": basis["obligation_kind"],
-            "start_period": basis["start_period"], "end_period": basis["end_period"],
-            "reviewed_calculations": [], "review_result": "matched",
+    review = execute(
+        "save_fact",
+        {
+            "kind": "external_basis_review",
+            "subject_id": "stage8-review",
+            "data": {
+                "period": "2026-02",
+                "completion_id": "stage8-completion",
+                "completion_fact_id": saved["fact_id"],
+                "obligation_id": basis["obligation_id"],
+                "obligation_fact_id": basis["obligation_fact_id"],
+                "obligation_kind": basis["obligation_kind"],
+                "start_period": basis["start_period"],
+                "end_period": basis["end_period"],
+                "reviewed_calculations": [],
+                "review_result": "matched",
+            },
+            "evidence": [evidence],
+            "expected_revision": 0,
+            "request_id": "stage8-review-request",
         },
-        "evidence": [evidence], "expected_revision": 0,
-        "request_id": "stage8-review-request",
-    })
+    )
     assert review["fact_id"]
     review_preview = execute("preview", {"subjects": ["stage8-review"]})
-    execute("confirm", {
-        "subjects": ["stage8-review"], "preview_digest": review_preview["digest"],
-        "epochs": review_preview["epochs"], "request_id": "stage8-review-publish",
-    })
+    execute(
+        "confirm",
+        {
+            "subjects": ["stage8-review"],
+            "preview_digest": review_preview["digest"],
+            "epochs": review_preview["epochs"],
+            "request_id": "stage8-review-publish",
+        },
+    )
     after = execute("workflow", {"period": "2026-01", "as_of": "2026-02-28"})
     item = after["sections"]["external"]["obligations"][0]
     assert item["actual_completion_status"] == "completed"
@@ -927,10 +1041,14 @@ def verify_stage8_job_recovery(call, validation, company_id):
     """Exercise failed durable backup, public diagnostics and explicit retry."""
     blocker = validation / "stage8-blocked-backup"
     blocker.write_text("synthetic directory blocker", encoding="utf-8")
-    queued = call("backup", {
-        "company_id": company_id, "directory": str(blocker),
-        "request_id": "stage8-failing-backup",
-    })
+    queued = call(
+        "backup",
+        {
+            "company_id": company_id,
+            "directory": str(blocker),
+            "request_id": "stage8-failing-backup",
+        },
+    )
     deadline = time.monotonic() + 30
     while True:
         job = call("jobs", {"company_id": company_id, "job_id": queued["job_id"]})[0]
@@ -941,9 +1059,9 @@ def verify_stage8_job_recovery(call, validation, company_id):
     assert job["attempts"] == 3
     assert job["error_code"] and job["error_message"]
     assert "last_error" not in job and str(blocker) not in job["error_message"]
-    workflow = call("workflow", {
-        "company_id": company_id, "period": "2026-01", "as_of": "2026-02-28"
-    })
+    workflow = call(
+        "workflow", {"company_id": company_id, "period": "2026-01", "as_of": "2026-02-28"}
+    )
     assert any(
         item["job_id"] == queued["job_id"] and item["status"] == "failed"
         for item in workflow["sections"]["files"]["jobs"]
@@ -951,10 +1069,14 @@ def verify_stage8_job_recovery(call, validation, company_id):
     resident_root = validation / "companies"
     _RUNNERS[resident_root].stop()
     blocker.unlink()
-    retry = call("retry_job", {
-        "company_id": company_id, "job_id": queued["job_id"],
-        "request_id": "stage8-retry-backup",
-    })
+    retry = call(
+        "retry_job",
+        {
+            "company_id": company_id,
+            "job_id": queued["job_id"],
+            "request_id": "stage8-retry-backup",
+        },
+    )
     assert retry["status"] == "pending"
     assert retry["previous_error_code"] == job["error_code"]
     assert retry["previous_error_message"] == job["error_message"]
@@ -974,7 +1096,7 @@ def verify_stage8_job_recovery(call, validation, company_id):
     assert Path(retried["result"]["path"]).is_file()
 
 
-def start_resident(root, *, native_smoke=False, parallel_brief=False):
+def start_resident(root, *, native_smoke=False):
     """Exercise the exact daemon components using exclusively synthetic owners."""
     from pydantic import SecretStr
 
@@ -990,9 +1112,7 @@ def start_resident(root, *, native_smoke=False, parallel_brief=False):
     from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
     from ai_accounting.kernel.service import LocalService
 
-    app = LocalService(
-        root, enable_read_pool=parallel_brief, enable_parallel_brief=parallel_brief
-    )
+    app = LocalService(root, enable_read_pool=True)
     password = SecretStr("Synthetic-package-owner-only-2026")
     app.security.provision("package-test-owner", password)
     server, capability = create_server(app, port=0)
@@ -1132,6 +1252,7 @@ def main():
     from ai_accounting.kernel.schema_bundle import production_bundle
 
     assert calculator_build_id() == manifest["runtime"]["build_id"]
+    assert manifest["source_build_id"] == manifest["runtime"]["build_id"]
     bundle = production_bundle()
     assert manifest["runtime"]["database_formats"] == {
         kind: bundle.database_format(kind) for kind in ("catalog", "company")
@@ -1167,9 +1288,10 @@ def main():
             if name not in actual_contracts:
                 continue
             saved = json.loads((contracts / name).read_text("utf-8"))
-            assert all(saved[key] == item[key] for key in (
-                "family", "kind", "status", "version", "application_id", "sha256"
-            ))
+            assert all(
+                saved[key] == item[key]
+                for key in ("family", "kind", "status", "version", "application_id", "sha256")
+            )
             # load_contracts has already checked an incremental v2+ parent
             # chain and expanded it to these authoritative SQL objects.
             if "objects" in saved:
@@ -1183,7 +1305,7 @@ def main():
     inputs = validation / "inputs"
     inputs.mkdir()
     data_root = validation / "companies"
-    start_resident(data_root, native_smoke=True, parallel_brief=True)
+    start_resident(data_root, native_smoke=True)
     calls = 0
 
     def call(command, payload, *, root=data_root):
@@ -1299,9 +1421,14 @@ def main():
             {"company_id": company["id"], "period": period, "preview_digest": preview["digest"]},
             root=root,
         )
-        assert review["state"] == "prepared"
-        assert review["preview_digest"] == preview["digest"]
-        assert review["owner_review"] == preview["manifest"]["owner_review"]
+        assert_owner_close_review(
+            review,
+            company_id=company["id"],
+            database_id=company["database_id"],
+            period=period,
+            state="prepared",
+            preview=preview,
+        )
         request = app.security_controller.request(
             kind="approve_period_close",
             company_id=company["id"],
@@ -1476,10 +1603,10 @@ def main():
     readiness_request = {**overview_request, "as_of": "2026-09-30"}
     business = business_contract(call("business_status", business_request))
     readiness = readiness_contract(call("period_readiness", readiness_request))
-    parallel_brief = verify_parallel_brief(
-        _SERVICES[data_root][0], call, company_id, "2026-09", validation / "parallel-brief.json"
+    owner_brief = verify_owner_brief(
+        _SERVICES[data_root][0], call, company_id, "2026-09", validation / "owner-brief.json"
     )
-    assert parallel_brief["data"]["voucher_count"] == 1
+    assert owner_brief["data"]["activity_count"] == 1
     database_formats = assert_current_formats(_SERVICES[data_root][0], company_id)
     assert manifest["runtime"]["database_formats"] == database_formats
     queued = call(
@@ -1507,12 +1634,12 @@ def main():
     restored_business = call("business_status", business_request, root=restored_root)
     restored_readiness = call("period_readiness", readiness_request, root=restored_root)
     restored_workflow_request = {
-        "company_id": company_id, "period": "2026-09", "as_of": "2026-09-30"
+        "company_id": company_id,
+        "period": "2026-09",
+        "as_of": "2026-09-30",
     }
     restored_workflow = call("workflow", restored_workflow_request, root=restored_root)
-    restored_receipt_request = {
-        "company_id": company_id, "submitted_request_id": "package-publish"
-    }
+    restored_receipt_request = {"company_id": company_id, "submitted_request_id": "package-publish"}
     restored_receipt = call("request_result", restored_receipt_request, root=restored_root)
     assert restored_workflow["schema_version"] == 1
     assert restored_receipt["status"] == "committed"
@@ -1679,8 +1806,16 @@ def main():
     frozen_review = call(
         "dashboard_close_review", {"company_id": close_company_id, "period": close_period}
     )
-    assert frozen_review["state"] == "closed"
-    assert frozen_review["owner_review"] == close_preview["manifest"]["owner_review"]
+    assert_owner_close_review(
+        frozen_review,
+        company_id=close_company_id,
+        database_id=close_company["database_id"],
+        period=close_period,
+        state="closed",
+        preview=close_preview,
+        expected_expense_fen=1000,
+    )
+    assert frozen_review["close_digest"] == closed["digest"]
     close_backup = wait_for_backup(
         close_company_id, {"status": "pending", "job_id": closed["backup_job"]}
     )
@@ -1857,7 +1992,7 @@ def main():
     default_environment = {
         key: value for key, value in os.environ.items() if key != "FINANCE_DATA_ROOT"
     }
-    default_root = package / "data/kernel-released"
+    default_root = package_default_root(package, bundle)
     daemon_upgrade_smoke = None
     try:
         result = subprocess.run(
@@ -1950,12 +2085,16 @@ def main():
                         ("business_status", business_request, business_contract, business),
                         ("period_readiness", readiness_request, readiness_contract, readiness),
                         (
-                            "workflow", restored_workflow_request,
-                            lambda value: value, restored_workflow,
+                            "workflow",
+                            restored_workflow_request,
+                            lambda value: value,
+                            restored_workflow,
                         ),
                         (
-                            "request_result", restored_receipt_request,
-                            lambda value: value, restored_receipt,
+                            "request_result",
+                            restored_receipt_request,
+                            lambda value: value,
+                            restored_receipt,
                         ),
                     ):
                         result = await session.call_tool(
@@ -2034,31 +2173,24 @@ def main():
             response = connection.getresponse()
             wire_dashboard = json.loads(response.read())
             assert response.status == 200, (action, wire_dashboard)
-            expected_version = {
-                "context": 2,
-                "business-status": 5,
-                "quarterly-report": 4,
-                "period-preparation": 4,
-            }.get(action, 7)
-            assert wire_dashboard["schema_version"] == expected_version
-            if action == "context":
-                assert wire_dashboard["current_company"]["company_id"] == company_id
-            elif action == "brief":
-                assert isinstance(wire_dashboard["data"]["total_debit_fen"], str)
-                assert wire_dashboard["data"]["total_debit_fen"] == "123456"
+            command = "dashboard_" + action.replace("-", "_")
+            assert_owner_read(
+                command,
+                wire_dashboard,
+                company_id=company_id,
+                period="2026-09",
+                wire=True,
+                subject_id="synthetic-expense" if action == "business-status" else None,
+            )
+            if action == "brief":
+                assert wire_dashboard["data"]["activity_count"] == 1
+                assert wire_dashboard["data"]["position"]["month_expense_fen"] == "123456"
+                assert wire_dashboard["data"]["open_items"]["payable_fen"] == "123456"
                 dashboard_read_context = wire_dashboard["read_context"]
-            if action in {"brief", "funds", "employees", "assets"}:
-                assert wire_dashboard["data"]["period_preparation"]["projection"] == (
-                    "dashboard_period_preparation"
-                )
             if action == "business-status":
                 assert wire_dashboard["data"]["identity"] == business["identity"]
                 obligation = wire_dashboard["data"]["settlements"]["obligations"][0]
                 assert obligation["source_amount_fen"] == obligation["remaining_fen"] == "123456"
-            for collection in wire_dashboard.get("data", {}).get("collections", {}).values():
-                page = collection["page"]
-                assert len(collection["items"]) == page["returned_count"]
-                assert page["returned_count"] <= page["filtered_count"] <= page["total_count"]
             connection.close()
         review_app, review_server, _, _ = _SERVICES[corrected_restored_root]
         review_token = review_app.security_controller.store.load_session_token().get_secret_value()
@@ -2071,9 +2203,17 @@ def main():
         response = connection.getresponse()
         wire_review = json.loads(response.read())
         assert response.status == 200, wire_review
-        assert wire_review["schema_version"] == 1 and wire_review["state"] == "closed"
-        assert wire_review["company_id"] == close_company_id
-        assert wire_review["owner_review"]["accounting_summary"]["total_debit_fen"] == "1000"
+        assert_owner_close_review(
+            wire_review,
+            company_id=close_company_id,
+            database_id=close_company["database_id"],
+            period=close_period,
+            state="closed",
+            preview=close_preview,
+            expected_expense_fen=1000,
+            wire=True,
+        )
+        assert wire_review["close_digest"] == closed["digest"]
         connection.close()
     finally:
         connection.close()

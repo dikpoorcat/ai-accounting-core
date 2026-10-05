@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from .contracts import KernelError
-from .types import canonical, checked, digest
+from .types import canonical, checked, digest, is_sha256_hex
 
 DERIVED_ROOT_NAME = "period_balance"
 CONTRACT = "ai-accounting-kernel/2/period-balance-freeze/1"
@@ -394,7 +394,6 @@ def _verified_root(connection, header):
         or set(root) != {
             "contract", "period", "close_digest", "publication_highwater", "buckets"
         }
-        or canonical(root) != row["payload"]
         or root.get("contract") != CONTRACT
         or root.get("period") != header.period
         or root.get("close_digest") != header.logical_digest.hex()
@@ -423,8 +422,7 @@ def read_frozen_balances(connection, header, category=None, keys=None):
             or type(entry[3]) is not str
             or not 0 <= entry[1] <= 255
             or entry[2] <= 0
-            or len(entry[3]) != 64
-            or any(char not in "0123456789abcdef" for char in entry[3])
+            or not is_sha256_hex(entry[3])
         ):
             _error("invalid_bucket_directory", header.period)
         key = (entry[0], entry[1])
@@ -436,18 +434,14 @@ def read_frozen_balances(connection, header, category=None, keys=None):
         for (cat, bucket), (count, checksum) in sorted(directory.items())
     ]:
         _error("unordered_bucket_directory", header.period)
-    target_buckets = (
-        {
-            (cat, _bucket(key))
-            for cat, _ in directory
-            for key in selected
-            if requested is None or cat in requested
-        }
-        if selected is not None
-        else {key for key in directory if requested is None or key[0] in requested}
-    )
-    if selected is not None and requested is not None:
-        target_buckets.update((cat, _bucket(key)) for cat in requested for key in selected)
+    if selected is None:
+        target_buckets = {key for key in directory if requested is None or key[0] in requested}
+    else:
+        # Categories repeat across physical buckets. Locate each requested key
+        # once; complete directory and selected-bucket checks still follow.
+        categories = requested if requested is not None else {cat for cat, _ in directory}
+        numbers = {_bucket(key) for key in selected} if categories else set()
+        target_buckets = {(cat, number) for cat in categories for number in numbers}
     output = []
     for cat, bucket in sorted(target_buckets):
         rows = [

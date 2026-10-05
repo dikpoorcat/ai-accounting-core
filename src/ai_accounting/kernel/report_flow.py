@@ -307,6 +307,109 @@ def persist_report_flow(connection, prepared):
     )
 
 
+def _flow_classification_headers_match(connection, period, expected_refs, source_vouchers):
+    """Check every named header while returning only its selection outcome."""
+    if type(period) is not int or any(type(ident) is not str for ident, _ in expected_refs) or any(
+        type(ident) is not str for ident in source_vouchers
+    ):
+        # Bound writer-produced references use string IDs and integer periods.
+        # Keep the original Python comparisons for other supplied types rather
+        # than changing their meaning through SQLite column affinity.
+        return _flow_classification_headers_match_rows(
+            connection, period, expected_refs, source_vouchers
+        )
+    by_id = {}
+    for ident, expected_digest in expected_refs:
+        if ident in by_id or type(expected_digest) is not str or "\0" in ident:
+            # An object cannot preserve duplicate IDs. Keep unusual digest
+            # payloads on their original encoding/affinity path, and NUL IDs
+            # on the array-value path instead of SQLite's object-key decoder.
+            by_id = None
+            break
+        by_id[ident] = expected_digest
+    if by_id is None:
+        request = canonical(expected_refs)
+        prefix = (
+            "WITH requested AS MATERIALIZED ("
+            "SELECT json_extract(value,'$[0]') ident,"
+            "json_extract(value,'$[1]') expected_digest FROM json_each(?1)) "
+        )
+        requested = "requested"
+        ident_column, digest_column = "requested.ident", "requested.expected_digest"
+    else:
+        # String keys/digests need no key normalization or sorting. json_each
+        # exposes them directly without extracting and materializing each pair.
+        request = json.dumps(
+            by_id, ensure_ascii=False, sort_keys=False, separators=(",", ":"), allow_nan=False
+        )
+        prefix, requested = "", "json_each(?1) requested"
+        ident_column, digest_column = "requested.key", "requested.value"
+    status = connection.execute(
+        prefix
+        + "SELECT count(*) row_count,coalesce(max(f.period IS NOT ?2),0) other_period,"
+        "coalesce(max(CASE "
+        "WHEN f.id IS NULL OR s.kind IS NOT 'report_classification' "
+        "OR c.voucher_version_id IS NULL THEN 4 "
+        "WHEN f.digest IS NULL THEN 3 "
+        f"WHEN lower(hex(f.digest)) IS NOT {digest_column} THEN 2 ELSE 0 END "
+        "),0) decision "
+        f"FROM {requested} LEFT JOIN fact_revision f ON f.id={ident_column} "
+        "LEFT JOIN subject s ON s.id=f.subject_id "
+        "LEFT JOIN fact_report_classification c ON c.revision_id=f.id",
+        (request, period),
+    ).fetchone()
+    # Same-month identity alone proves membership. A mixed month must retain
+    # the former row reader's complete membership and error ordering, before
+    # interpreting even an error from this provisional head check.
+    if status["other_period"]:
+        return _flow_classification_headers_match_rows(
+            connection, period, expected_refs, source_vouchers
+        )
+    if status["row_count"] != len(expected_refs) or status["decision"] == 4:
+        raise KernelError("content_integrity_failed", "冻结报表分类来源缺失")
+    # Production headers forbid NULL digests. Preserve the original .hex()
+    # failure if a malformed source nevertheless reaches this reader.
+    if status["decision"] == 3:
+        raise AttributeError("'NoneType' object has no attribute 'hex'")
+    if status["decision"] == 2:
+        raise KernelError("content_integrity_failed", "冻结报表分类来源摘要不一致")
+    # The original selector ordered by ID before comparing complete tuples.
+    # With all digests equal, duplicate IDs are valid and only descending IDs
+    # can make that comparison differ from this exact input sequence.
+    return status["decision"] == 0 and not any(
+        left[0] > right[0] for left, right in zip(expected_refs, expected_refs[1:], strict=False)
+    )
+
+
+def _flow_classification_headers_match_rows(connection, period, expected_refs, source_vouchers):
+    selected = list(connection.execute(
+        "SELECT f.id,f.digest,f.period,s.kind,c.voucher_version_id "
+        "FROM json_each(?) ids LEFT JOIN fact_revision f ON f.id=ids.value "
+        "LEFT JOIN subject s ON s.id=f.subject_id "
+        "LEFT JOIN fact_report_classification c ON c.revision_id=f.id ORDER BY ids.value",
+        (canonical([ident for ident, _ in expected_refs]),),
+    ))
+    if len(selected) != len(expected_refs) or any(
+        row["id"] is None or row["kind"] != "report_classification"
+        or row["voucher_version_id"] is None for row in selected
+    ):
+        raise KernelError("content_integrity_failed", "冻结报表分类来源缺失")
+    vouchers = set(source_vouchers)
+    actual_refs = tuple(
+        (row["id"], row["digest"].hex()) for row in selected
+        if row["period"] == period or row["voucher_version_id"] in vouchers
+    )
+    if expected_refs != actual_refs:
+        actual_digests = dict(actual_refs)
+        if any(
+            ident in actual_digests and actual_digests[ident] != expected_digest
+            for ident, expected_digest in expected_refs
+        ):
+            raise KernelError("content_integrity_failed", "冻结报表分类来源摘要不一致")
+        return False
+    return True
+
+
 def read_report_flow(connection, period, *, reads=None):
     """Return authenticated monthly data, or None if classification selection changed."""
 
@@ -340,44 +443,18 @@ def read_report_flow(connection, period, *, reads=None):
         or _root(period, close["digest"], source_root, semantic_root, stored["content"]) != bound
     ):
         raise KernelError("content_integrity_failed", "报表月度汇总与冻结来源不一致")
+    # The private parent root binds this writer-produced string byte for byte.
+    # Decode it after that proof; full comparison still rebuilds from sources.
     content = json.loads(stored["content"])
-    if canonical(content) != stored["content"]:
-        raise KernelError("content_integrity_failed", "报表月度汇总内容编码不一致")
     expected_refs = tuple(tuple(item) for item in content["classification_refs"])
     # The authenticated month root gives the exact adopted reference IDs.
     # Check every named immutable header and typed voucher binding, including
     # facts that belong to this month but not to a source voucher. Reading the
     # cumulative readiness directory here would materialize all prior years'
     # classifications once for each month in a report.
-    identifiers = [ident for ident, _ in expected_refs]
-    selected = list(connection.execute(
-        "SELECT f.id,f.digest,f.period,s.kind,c.voucher_version_id "
-        "FROM json_each(?) ids LEFT JOIN fact_revision f ON f.id=ids.value "
-        "LEFT JOIN subject s ON s.id=f.subject_id "
-        "LEFT JOIN fact_report_classification c ON c.revision_id=f.id "
-        "ORDER BY ids.value",
-        (canonical(identifiers),),
-    ))
-    if len(selected) != len(expected_refs) or any(
-        row["id"] is None
-        or row["kind"] != "report_classification"
-        or row["voucher_version_id"] is None
-        for row in selected
+    if not _flow_classification_headers_match(
+        connection, period, expected_refs, content["source_vouchers"]
     ):
-        raise KernelError("content_integrity_failed", "冻结报表分类来源缺失")
-    vouchers = set(content["source_vouchers"])
-    actual_refs = tuple(
-        (row["id"], row["digest"].hex())
-        for row in selected
-        if row["period"] == period or row["voucher_version_id"] in vouchers
-    )
-    if expected_refs != actual_refs:
-        actual_digests = dict(actual_refs)
-        if any(
-            ident in actual_digests and actual_digests[ident] != expected_digest
-            for ident, expected_digest in expected_refs
-        ):
-            raise KernelError("content_integrity_failed", "冻结报表分类来源摘要不一致")
         return None
     content["root"] = source_root
     if cache is not None:

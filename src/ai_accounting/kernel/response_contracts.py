@@ -25,7 +25,18 @@ from .close_review import (
     CloseReviewSourceReference,
 )
 from .contracts import KernelError
-from .response_types import Version1, Version2, Version4, Version5, Version7, WireFen
+from .response_types import (
+    Version1,
+    Version2,
+    Version3,
+    Version4,
+    Version5,
+    Version6,
+    Version9,
+    Version10,
+    Version11,
+    WireFen,
+)
 
 Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")]
 Day = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")]
@@ -60,6 +71,19 @@ class ResponseObject(TypedDict):
     __pydantic_config__ = ConfigDict(strict=True, extra="forbid")
 
 
+class OwnerTask(ResponseObject):
+    key: str
+    title: str
+    object: str
+    period: Month
+    amount_fen: WireFen | None
+    amount_status: Literal["known", "unknown", "not_applicable"]
+    deadline: Day | None
+    impact: str
+    next_step: str
+    subject_id: str | None
+
+
 class DashboardPeriod(ResponseObject):
     key: Month
     year: int
@@ -77,7 +101,6 @@ class DashboardQuarter(ResponseObject):
     year: int
     quarter: int
     label: str
-    complete: bool
 
 
 class DashboardCompany(ResponseObject):
@@ -88,7 +111,7 @@ class DashboardCompany(ResponseObject):
 
 
 class DashboardContextResponse(ResponseObject):
-    schema_version: Version2
+    schema_version: Version3
     company: str | None
     companies: list[DashboardCompany]
     current_company: DashboardCompany | None
@@ -425,30 +448,12 @@ class Collection(ResponseObject, Generic[T]):  # noqa: UP046 - Pydantic rebuild 
     page: CollectionPage
 
 
-class BankSourceCheck(ResponseObject):
-    state: Literal["confirmed", "unestablished", "needs_review", "conflict"]
-    message: str
-    statement_confirmed: bool
-    reconciliation_valid: bool
-    statement_calculation_id: str | None
-    selected_statement_calculation_ids: list[str]
-    statement_fact_id: str
-    reconciliation_calculation_id: str | None
-    reconciliation_fact_id: str | None
-    selection_source: str | None
-    selection_proof: SelectionProof | None
-    proof_method: (
-        Literal["frozen_reconciliation_direct_statement", "independent_statement_selection"] | None
-    )
 
 
 class AccountStatement(ResponseObject):
     inflow_fen: WireFen | None
     outflow_fen: WireFen | None
     transaction_count: Count
-    matched_count: Count
-    unmatched_count: Count
-    needs_review_count: Count
     coverage_state: CoverageState
     last_activity_date: Day | None
     account_code: str
@@ -458,13 +463,7 @@ class AccountStatement(ResponseObject):
 class Reconciliation(ResponseObject):
     state: Literal["pending", "not_applicable", "complete", "attention"]
     label: str
-    source_check: NotRequired[BankSourceCheck]
-    version: NotRequired[int | None]
-    statement_closing_fen: NotRequired[WireFen]
-    book_closing_fen: NotRequired[WireFen | None]
     difference_fen: NotRequired[WireFen | None]
-    unmatched_count: NotRequired[Count]
-    needs_review_count: NotRequired[Count]
 
 
 class FundAccount(ResponseObject):
@@ -482,32 +481,27 @@ class FundAccount(ResponseObject):
     code: str
     name: str
     active: bool | None
-    field_sources: FieldSources
     statement: AccountStatement
     reconciliation: Reconciliation
 
 
 class FundMovement(ResponseObject):
     id: str
+    subject_id: str
     date: Day | None
     account_id: str
     account_code: str
     account_name: str
     account_type: AccountType
     direction: Literal["inflow", "outflow"]
+    correction: bool
     amount_fen: WireFen
     signed_amount_fen: WireFen
-    reference: str
-    calculation_id: str
     type: str
-    summary: str
     display_summary: str
     list_summary: str
-    field_sources: FieldSources
-    party_sources: list[PartySource]
     party: str
     internal_transfer: bool
-    component_kinds: list[str]
 
 
 class BatchPaymentItem(ResponseObject):
@@ -524,36 +518,24 @@ class BatchPayment(ResponseObject):
 class BankStatementRow(ResponseObject):
     id: str
     date: Day
-    reference: str
     account_id: str
     account_code: str
     account_name: str
-    field_sources: FieldSources
     direction: Literal["inflow", "outflow"]
     amount_fen: WireFen
     signed_amount_fen: WireFen
     party: str
-    party_sources: list[PartySource]
     memo: str
-    state: Literal["matched", "unmatched", "needs_review"]
-    source_check: BankSourceCheck
     batch_payment: NotRequired[BatchPayment]
 
 
-class UnmatchedTotals(ResponseObject):
-    count: Count
-    inflow_fen: WireFen
-    outflow_fen: WireFen
 
 
 class BankStatement(ResponseObject):
     transaction_count: Count
     inflow_fen: WireFen | None
     outflow_fen: WireFen | None
-    matched_count: Count
-    unmatched_count: Count
-    needs_review_count: Count
-    unmatched_totals: UnmatchedTotals
+    review_state: Literal["pending", "complete"]
     coverage_state: CoverageState
     statement_count: Count
     expected_account_count: Count
@@ -569,17 +551,16 @@ class InvestmentProduct(ResponseObject):
     closing_cost_fen: WireFen | None
     investment_income_fen: WireFen
     name: str
-    field_sources: FieldSources
 
 
 class InvestmentEvent(ResponseObject):
     id: str
+    subject_id: str
     date: Day | None
     period: Month
     fund_id: str
     name: str
     type: str
-    reference: str
     cost_fen: WireFen | None
     net_proceeds_fen: WireFen | None
     investment_income_fen: WireFen | None
@@ -605,7 +586,13 @@ class FundsCollections(ResponseObject):
     investment_events: NotRequired[Collection[InvestmentEvent]]
 
 
+class SelectedMovementAccount(ResponseObject):
+    type: AccountType
+    account_id: str
+
+
 class FundsData(ResponseObject):
+    selected_movement_account: SelectedMovementAccount | None
     opening_fen: WireFen | None
     net_change_fen: WireFen
     inflow_fen: WireFen
@@ -627,12 +614,10 @@ class FundsData(ResponseObject):
     investments: FundInvestments
     bank_statement: BankStatement
     collections: FundsCollections
-    fact_issues: list[ReadinessIssue]
-    period_preparation: PeriodPreparation | None
 
 
 class FundsDashboardResponse(ResponseObject):
-    schema_version: Version7
+    schema_version: Version9
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -799,42 +784,81 @@ class BriefVoucher(ResponseObject):
     lines: list[VoucherLine]
 
 
+class OwnerVoucherAsset(ResponseObject):
+    asset_id: str
+    asset_type: Literal["fixed", "intangible"]
+    name: str | None
+    code: str | None
+
+
+class OwnerVoucherAssetMember(OwnerVoucherAsset):
+    calculation_id: str
+    owner_calculation_id: str
+    amount_fen: WireFen | None
+    amount_label: str
+    line_start: int | None
+    line_count: Count
+
+
+class OwnerVoucherLine(ResponseObject):
+    line_number: Annotated[int, Field(ge=1)]
+    code: str
+    account: str
+    debit_fen: WireFen
+    credit_fen: WireFen
+    party: str
+    source_label: str
+    parties: list[VoucherLineParty]
+    party_state: Literal["known", "multiple", "name_missing", "not_applicable", "unresolved"]
+    asset: NotRequired[OwnerVoucherAssetMember]
+
+
+class OwnerBriefVoucher(ResponseObject):
+    number: Annotated[str, Field(pattern=r"^[1-9][0-9]*$")]
+    voucher_version_id: str
+    subject_id: str
+    reverses_version_id: str | None
+    date: Day | None
+    recognition: Recognition
+    type: str
+    kind: str
+    state: Literal["已入账", "冲正"]
+    group: str
+    summary: str
+    list_summary: str
+    amount_fen: WireFen
+    business_amount_fen: WireFen | None
+    business_amount_label: str
+    asset: OwnerVoucherAsset | None
+    asset_members: list[OwnerVoucherAssetMember]
+    lines: list[OwnerVoucherLine]
+
+
 class ActivityTypeCount(ResponseObject):
     label: str
     count: Count
 
 
 class BriefActivityRow(ResponseObject):
+    key: str
+    subject_id: str
+    voucher_version_id: str
     date: Day | None
     recognition: Recognition
-    reference: str
-    calculation_id: str
-    voucher_version_id: str
     title: str
-    subject: str
     description: str
-    display_description: str
-    asset: AssetReference | None
-    field_sources: FieldSources
     amount_fen: WireFen | None
     amount_label: str
-    journal_total_fen: WireFen
     state: str
     party: str
-    evidence: list[str]
-    evidence_details: list[EvidenceDetail]
-    components: list[VoucherComponent]
-    funds: list[VoucherFundMovement]
-    settlements: list[VoucherSettlement]
+    group: str
 
 
 class BriefActivityGroup(ResponseObject):
     key: str
     label: str
     event_count: Count
-    loaded_count: Count
     type_counts: list[ActivityTypeCount]
-    rows: list[BriefActivityRow]
 
 
 class CommentaryContentValidity(ResponseObject):
@@ -886,27 +910,10 @@ class BriefPositionIssue(ResponseObject):
 
 
 class BriefPosition(ResponseObject):
-    assets_fen: WireFen | None
-    liabilities_fen: WireFen | None
-    capital_fen: WireFen | None
-    equity_fen: WireFen | None
-    bank_fen: WireFen
-    bank_calculation: dict[str, WireFen | None]
-    liability_calculation: dict[str, WireFen | None]
-    fixed_asset_cost_fen: WireFen
-    accumulated_depreciation_fen: WireFen
-    fixed_asset_net_fen: WireFen | None
-    intangible_asset_cost_fen: WireFen
-    accumulated_amortization_fen: WireFen
-    intangible_asset_net_fen: WireFen | None
-    other_assets_fen: WireFen | None
     month_revenue_fen: WireFen | None
     month_expense_fen: WireFen | None
     month_result_fen: WireFen | None
-    cumulative_result_fen: WireFen | None
-    equation_valid: bool | None
     complete: bool
-    issues: list[BriefPositionIssue]
 
 
 class BriefCash(ResponseObject):
@@ -1114,13 +1121,67 @@ class BriefValidation(ResponseObject):
     items: list[ValidationItem]
 
 
+class BriefOpenItem(ResponseObject):
+    id: str
+    category_key: str
+    party: str
+    description: str
+    status: str
+    source_amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    outstanding_fen: WireFen | None
+    current_status: str | None
+    current_outstanding_fen: WireFen | None
+    subject_id: str | None
+
+
+class BriefOpenCategory(ResponseObject):
+    key: str
+    label: str
+    direction: Literal["receivable", "payable"]
+    unit: Literal["笔"]
+    count: Count
+    loaded_count: Count
+    outstanding_fen: WireFen | None
+
+
+class BriefOpenSummary(ResponseObject):
+    receivable_count: Count
+    receivable_fen: WireFen | None
+    payable_count: Count
+    payable_fen: WireFen | None
+    total_count: Count
+    complete: bool
+    categories: list[BriefOpenCategory]
+    cutoff_period: Month
+    current_cutoff_period: Month
+
+
+class BriefNote(ResponseObject):
+    id: str
+    text: str
+    status: Literal["current", "frozen", "stale", "unverifiable"]
+
+
+class BriefNotes(ResponseObject):
+    status: Literal["frozen", "current", "stale", "not_provided"]
+    current: BriefNote | None
+    latest: BriefNote | None
+    supplements: list[BriefNote]
+
+
+class BriefRisk(ResponseObject):
+    key: str
+    title: str
+    impact: str
+    status: Literal["ai_reviewing", "attention"]
+
+
 class BriefCollections(ResponseObject):
-    vouchers: NotRequired[Collection[BriefVoucher]]
-    open_items: NotRequired[Collection[OpenItem]]
-    businesses: NotRequired[Collection[BusinessEvent]]
-    settlement_events: NotRequired[ScopedSettlementCollection]
-    external_followups: NotRequired[Collection[ExternalObligation]]
-    file_jobs: NotRequired[Collection[FileJob]]
+    activity: NotRequired[Collection[BriefActivityRow]]
+    vouchers: NotRequired[Collection[OwnerBriefVoucher]]
+    open_items: NotRequired[Collection[BriefOpenItem]]
 
 
 class AdoptedBasisSources(ResponseObject):
@@ -1139,38 +1200,35 @@ class BusinessAdoptedBasis(AdoptedBasisSources):
     calculation_ids: list[str]
 
 
+class OwnerReviewRequest(ResponseObject):
+    preview_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
 class BriefData(ResponseObject):
     generated_at: str
-    management_commentary: str
-    management_commentary_details: CommentaryDetails
-    material_completeness: MaterialCompleteness | None
-    period_preparation: PeriodPreparation | None
+    month_state: Literal["open", "closed", "covered"]
+    owner_review_request: OwnerReviewRequest | None
+    management_commentary_details: BriefNotes
+    activity_count: Count
+    focused_activity: BriefActivityRow | None
     voucher_count: Count
-    line_count: Count
-    total_debit_fen: WireFen
-    total_credit_fen: WireFen
-    focused_voucher: BriefVoucher | None
-    adopted_basis: BriefAdoptedBasis
+    focused_voucher: OwnerBriefVoucher | None
     activity_groups: list[BriefActivityGroup]
     position: BriefPosition
     funds_overview: FundsOverview
-    cash: BriefCash
-    unmatched_bank_activity: UnmatchedBankActivity
-    open_items: BriefOpenItems
-    workforce_cost: WorkforceCost
-    long_term_assets: LongTermAssets
-    validation: BriefValidation
+    open_items: BriefOpenSummary
+    risks: list[BriefRisk]
+    owner_tasks: list[OwnerTask]
     collections: BriefCollections
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version7
+    schema_version: Version11
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
     read_context: DashboardReadContext
     data: BriefData | None
-    projection: NotRequired[Literal["dashboard_brief_deferred"]]
 
 
 class TraceTarget(ResponseObject):
@@ -1395,17 +1453,6 @@ class SettlementCurrentFollowup(ResponseObject):
     obligations: list[SettlementObligation]
 
 
-class TaxDetail(ResponseObject):
-    calculation_id: str
-    period: Month
-    kind: str
-    reversal: bool
-    booked_tax_fen: WireFen
-    calculated_tax_fen: WireFen | None
-    actual_withholding_tax_fen: WireFen | None
-    actual_withholding_fact_id: str | None
-
-
 class FieldConflict(ResponseObject):
     code: Literal["employment_interval_conflict"]
     fields: list[Literal["employment_start", "employment_end"]]
@@ -1414,30 +1461,18 @@ class FieldConflict(ResponseObject):
 class EmployeeItem(ResponseObject):
     employee_id: str
     selection_status: Literal["established"]
-    code: str
     name: str
-    field_sources: FieldSources
-    field_conflicts: list[FieldConflict]
-    record_status: str
     period_state: str
     period_state_label: str
     in_period: bool | None
     employment_start_date: MonthOrDay | None
     employment_end_date: MonthOrDay | None
-    tax_withholding_start_date: MonthOrDay | None
-    profile_available: bool
-    expense_areas: list[str]
-    social_insurance_participating: bool | None
-    housing_fund_participating: bool | None
-    social_insurance_base_fen: WireFen | None
-    housing_fund_base_fen: WireFen | None
     has_payroll_activity: bool
     batch_count: Count
-    tax_details: list[TaxDetail]
-    declared_tax_fen: WireFen | None
     recorded_net_payments_fen: WireFen | None
     direct_net_payments_fen: WireFen | None
     other_net_settlements_fen: WireFen | None
+    outstanding_net_fen: WireFen | None
     payroll_periods: list[Month]
     has_annual_bonus: bool
     gross_salary_fen: WireFen
@@ -1448,7 +1483,6 @@ class EmployeeItem(ResponseObject):
     employee_housing_fund_fen: WireFen
     individual_income_tax_fen: WireFen
     net_salary_fen: WireFen
-    tax_reported_salary_fen: WireFen
     personal_deduction_fen: WireFen
     company_cost_fen: WireFen
     wage_tax_scope: str
@@ -1459,8 +1493,6 @@ class UnestablishedEmployee(ResponseObject):
     employee_id: str
     name: str
     selection_status: Literal["unestablished"]
-    candidate_selections: list[CandidateSelection]
-    trace_targets: list[CalculationTarget]
     gross_salary_fen: None
     annual_bonus_fen: None
     employer_social_insurance_fen: None
@@ -1469,12 +1501,12 @@ class UnestablishedEmployee(ResponseObject):
     employee_housing_fund_fen: None
     individual_income_tax_fen: None
     net_salary_fen: None
-    tax_reported_salary_fen: None
     personal_deduction_fen: None
     company_cost_fen: None
     recorded_net_payments_fen: None
     direct_net_payments_fen: None
     other_net_settlements_fen: None
+    outstanding_net_fen: None
 
 
 class EmployeeSummary(ResponseObject):
@@ -1486,7 +1518,6 @@ class EmployeeSummary(ResponseObject):
     employee_housing_fund_fen: WireFen | None
     individual_income_tax_fen: WireFen | None
     net_salary_fen: WireFen | None
-    tax_reported_salary_fen: WireFen | None
     personal_deduction_fen: WireFen | None
     unestablished_count: Count
     registered_count: Count
@@ -1494,98 +1525,67 @@ class EmployeeSummary(ResponseObject):
     unknown_period_count: Count
     payroll_count: Count
     without_payroll_count: Count
-    profile_missing_count: Count
     contributions_only_count: Count
-    controlled_cost_fen: WireFen | None
-    settlement_adjustment_fen: WireFen | None
     ledger_cost_fen: WireFen
-    detail_reconciled: bool | None
-    breakdown_available: bool
-    breakdown_reason: str | None
-    identity_note: str
+    checking: bool
+    direct_net_payments_fen: WireFen | None
+    other_net_settlements_fen: WireFen | None
+    outstanding_net_fen: WireFen | None
 
 
-class PayrollDeclaration(ResponseObject):
-    fact_id: str
-    revision: int
-    source: Literal["current_record"]
-    tax_period: Month
-    recording_period: Month
-    date: Day | None
-    declared_tax_fen: WireFen
-    recorded_later: bool
-    recorded_at: str | None
-    source_metadata: SourceMetadata
+class PeopleAssetObligation(ResponseObject):
+    key: str
+    name: str
+    amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    period_paid_fen: WireFen | None
+    period_other_settled_fen: WireFen | None
+    remaining_fen: WireFen | None
 
 
-class PayrollDisbursement(ResponseObject):
-    calculation_id: str
-    recording_period: Month
-    needs_review: bool
-    matches_displayed_wage: bool
-    employee_id: str
-    tax_period: Month
-    payroll_kind: str
-    payroll_id: str
-    payroll_fact_id: str
-    payroll_calculation_id: str
-    payroll_result_digest: str
-    declaration_id: str
-    declaration_fact_id: str
-    declaration_evidence: list[str]
-    calculated_tax_fen: WireFen
-    declared_tax_fen: WireFen
-    original_net_fen: WireFen
-    target_net_fen: WireFen
-    held_fen: WireFen
-    withholding_recorded: bool
+class PeopleAssetSettlement(ResponseObject):
+    subject_id: str
+    cutoff_period: Month
+    checking: bool
+    obligations: list[PeopleAssetObligation]
 
 
-class PayrollSource(SourceSettlement):
+class LaborSource(PeopleAssetSettlement):
     source_id: str
-    calculation_id: str
-    kind: str
-    period: Month
-    opening_period: Month | None
-    component: str | None
-    label: str
-    declarations: list[PayrollDeclaration]
-    disbursements: list[PayrollDisbursement]
-
-
-class LaborSource(SourceSettlement):
-    source_id: str
-    calculation_id: str
     period: Month
     person_id: str
     name: str
-    field_sources: FieldSources
     capitalized: bool
     project_id: str | None
     gross_fen: WireFen
     net_fen: WireFen
     booked_tax_fen: WireFen
-    theoretical_tax_fen: WireFen | None
     withholding_method: str
     withholding_label: str
 
 
 class EmployeeCollections(ResponseObject):
     employees: NotRequired[Collection[EmployeeItem | UnestablishedEmployee]]
-    payroll_sources: NotRequired[Collection[PayrollSource]]
     labor_sources: NotRequired[Collection[LaborSource]]
-    settlement_events: NotRequired[ScopedSettlementCollection]
+
+
+class OwnerWorkforceCost(ResponseObject):
+    total_fen: WireFen
+    personal_labor_fen: WireFen
+    capitalized_labor_fen: WireFen
 
 
 class EmployeesData(ResponseObject):
+    employee_id: str | None
+    employee_filter: Literal["all", "in_period", "payroll", "no_payroll", "unknown", "ended"]
     employees: EmployeeSummary
     collections: EmployeeCollections
-    workforce_cost: WorkforceCost
-    period_preparation: PeriodPreparation | None
+    workforce_cost: OwnerWorkforceCost
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version7
+    schema_version: Version9
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1593,18 +1593,13 @@ class DashboardEmployeesResponse(ResponseObject):
     data: EmployeesData | None
 
 
-class LabeledSettlement(SourceSettlement):
-    source_id: str
-    label: str
-
-
-class AssetBatchReference(ResponseObject):
-    calculation_id: str
-    owner_calculation_id: str
-    voucher_version_id: str | None
-    voucher_number: int | None
-    period: Month
-    label: str
+class AssetPaymentSummary(ResponseObject):
+    obligation_count: Count
+    checking: bool
+    amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    remaining_fen: WireFen | None
 
 
 class AssetItemBase(ResponseObject):
@@ -1614,27 +1609,17 @@ class AssetItemBase(ResponseObject):
     name: str
     category: str
     category_label: str
-    field_sources: FieldSources
     status: Literal["active", "pending_activation", "disposed", "retired"]
     status_label: str
     acquisition_date: Day | None
     posting_period: Month
     recognition_label: str
-    source_label: str
-    source_party_label: str
-    source_parties: str | None
     settlement_scope: str
-    settlements: list[LabeledSettlement]
+    payment_summary: AssetPaymentSummary
     cost_fen: WireFen | None
     accumulated_charge_fen: WireFen | None
     month_charge_fen: WireFen | None
     book_value_fen: WireFen | None
-    latest_charge_period: Month | None
-    charge_state_label: str | None
-    batch_references: list[AssetBatchReference]
-    benefit_area_label: str | None
-    useful_life_months: int | None
-    acquisition_reference: str
     month_acquired: bool
     month_activated: bool
     month_exited: bool
@@ -1643,40 +1628,27 @@ class AssetItemBase(ResponseObject):
 class FixedAssetDisposal(ResponseObject):
     date: Day
     book_value_fen: WireFen | None
-    reference: str
-    settlement: SourceSettlement
     kind: Literal["sale", "retirement"]
     gross_proceeds_fen: WireFen
     gain_fen: WireFen
     loss_fen: WireFen
     party: str
-    party_id: NotRequired[str]
-    source: NotRequired[str | None]
-    field_sources: NotRequired[FieldSources]
 
 
 class IntangibleAssetRetirement(ResponseObject):
     date: Day
     book_value_fen: WireFen | None
-    reference: str
-    settlement: SourceSettlement
 
 
 class FixedAssetItem(AssetItemBase):
     asset_type: Literal["fixed"]
     in_service_date: Day | None
-    residual_value_fen: WireFen | None
-    depreciation_method_label: str | None
-    rounding_policy_label: str | None
     disposal: FixedAssetDisposal | None
 
 
 class IntangibleAssetItem(AssetItemBase):
     asset_type: Literal["intangible"]
     available_for_use_date: Day | None
-    life_basis_label: str
-    life_basis_explanation: str
-    rights_description: str
     retirement: IntangibleAssetRetirement | None
 
 
@@ -1685,8 +1657,6 @@ class UnestablishedAsset(ResponseObject):
     asset_type: Literal["fixed", "intangible"] | None
     name: str
     selection_status: Literal["unestablished"]
-    candidate_selections: list[CandidateSelection]
-    trace_targets: list[CalculationTarget]
     cost_fen: None
     accumulated_charge_fen: None
     month_charge_fen: None
@@ -1739,18 +1709,8 @@ class AssetProject(ResponseObject):
     kind: str
     label: str
     party: str
-    party_id: NotRequired[str]
-    source: NotRequired[str | None]
-    field_sources: NotRequired[FieldSources]
     cost_fen: WireFen
     remaining_fen: WireFen
-    settlement: SourceSettlement
-
-
-class AssetDifferences(ResponseObject):
-    cost_fen: WireFen | None
-    accumulated_fen: WireFen | None
-    net_fen: WireFen | None
 
 
 class EstablishedCardTotals(ResponseObject):
@@ -1763,11 +1723,12 @@ class EstablishedCardTotals(ResponseObject):
 class AssetCollections(ResponseObject):
     assets: NotRequired[Collection[AssetItem]]
     projects: NotRequired[Collection[AssetProject]]
-    source_history: NotRequired[Collection[SourceHistoryItem]]
-    settlement_events: NotRequired[ScopedSettlementCollection]
 
 
 class AssetsData(ResponseObject):
+    asset_id: str | None
+    project_id: str | None
+    asset_filter: Literal["all", "active", "fixed", "intangible", "pending", "exited"]
     fixed_asset_cost_fen: WireFen
     accumulated_depreciation_fen: WireFen
     fixed_asset_net_fen: WireFen
@@ -1784,10 +1745,6 @@ class AssetsData(ResponseObject):
     pending_intangible_count: Count
     pending_intangible_cost_fen: WireFen | None
     project_cost_fen: WireFen
-    reconciliation_scope: str
-    card_cost_fen: WireFen | None
-    card_accumulated_fen: WireFen | None
-    card_net_fen: WireFen | None
     established_card_totals: EstablishedCardTotals | None
     pending_fixed_count: Count
     pending_fixed_cost_fen: WireFen | None
@@ -1797,17 +1754,14 @@ class AssetsData(ResponseObject):
     month_cost_adjustment_fen: WireFen
     month_activated_count: Count
     month_exited_count: Count
-    reconciled: bool | None
-    reconciliation_label: str
-    differences: AssetDifferences
+    checking: bool
     fixed: FixedAssetSummary
     intangible: IntangibleAssetSummary
     collections: AssetCollections
-    period_preparation: PeriodPreparation | None
 
 
 class DashboardAssetsResponse(ResponseObject):
-    schema_version: Version7
+    schema_version: Version10
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -2033,11 +1987,96 @@ class EntityReference(ResponseObject):
     role: str
 
 
+class OwnerSettlementEvent(ResponseObject):
+    id: str
+    subject_id: str
+    source_subject_id: str
+    posting_period: Month
+    direction: int
+    signed_amount_fen: WireFen | None
+    relation_state: Literal["resolved", "unresolved"]
+    kind: str
+    name: str
+    mode: str
+
+
+class OwnerScopedSettlementCollection(Collection[OwnerSettlementEvent]):
+    scope_period: NotRequired[Month]
+    current_cutoff_period: NotRequired[Month]
+    cutoff_semantics: NotRequired[str]
+
+
+class OwnerObligation(ResponseObject):
+    key: str
+    name: str
+    source_period: Month | None
+    source_amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    remaining_fen: WireFen | None
+    settlement_status: str
+
+
+class OwnerSettlements(ResponseObject):
+    cutoff_period: Month
+    status: str
+    checking: bool
+    obligations: list[OwnerObligation]
+
+
+class OwnerSettlementFollowups(ResponseObject):
+    settlements: OwnerSettlements
+
+
+class OwnerLatestSource(ResponseObject):
+    period: Month
+    deleted: bool
+
+
+class OwnerCurrentResult(ResponseObject):
+    amount_fen: WireFen | None
+    amount_label: str
+    posting_period: Month
+
+
+class OwnerFrozenResult(ResponseObject):
+    amount_fen: WireFen | None
+    amount_label: str
+    close_period: Month
+
+
+class OwnerBusinessReview(ResponseObject):
+    status: str
+
+
+class OwnerProfileValues(ResponseObject):
+    display_name: str | None
+    display_number: str | None
+    purpose: str | None
+    note: str | None
+    employment_start: MonthOrDay | None
+    employment_end: MonthOrDay | None
+    employment_status: str | None
+    active: bool | None
+    category_label: str | None
+    rights_description: str | None
+
+
+class OwnerDisplayProfile(ResponseObject):
+    entity_id: str
+    values: OwnerProfileValues
+
+
+class OwnerDisplayProfiles(ResponseObject):
+    business: NotRequired[OwnerDisplayProfile]
+    counterparties: NotRequired[list[OwnerDisplayProfile]]
+    employees: NotRequired[list[OwnerDisplayProfile]]
+    assets: NotRequired[list[OwnerDisplayProfile]]
+    fund_accounts: NotRequired[list[OwnerDisplayProfile]]
+
+
 class BusinessCollections(ResponseObject):
-    events: NotRequired[Collection[BusinessEvent]]
-    settlement_events: NotRequired[ScopedSettlementCollection]
-    source_history: NotRequired[Collection[SourceHistoryItem]]
-    file_jobs: NotRequired[Collection[FileJob]]
+    settlement_events: NotRequired[OwnerScopedSettlementCollection]
 
 
 class BusinessIdentityDetails(ResponseObject):
@@ -2051,31 +2090,20 @@ class BusinessStatusData(ResponseObject):
     identity: BusinessIdentityDetails
     period: Month
     as_of: Day
-    latest_source: LatestBusinessSource
+    latest_source: OwnerLatestSource
     closure: Closure
-    as_posted: AsPostedAccounting
-    current_business_result: CurrentBusinessResult | None
-    frozen_adoption: FrozenAdoption | None
-    adopted_basis: BusinessAdoptedBasis | None
-    review: BusinessReview
-    settlements: BusinessSettlements
-    external: ExternalSummary
-    file_jobs: FileJobsSummary
-    display_profiles: DisplayProfiles
-    trace_targets: list[TraceTarget]
-    read_semantics: BusinessReadSemantics
-    projection: Literal["summary"]
-    trace_target_count: Count
-    current_followups: BusinessStatusCurrentFollowups
-    duplicate_checks: DuplicateChecks
-    identity_corrections: list[IdentityCorrection]
-    entity_references: list[EntityReference]
+    current_business_result: OwnerCurrentResult | None
+    frozen_adoption: OwnerFrozenResult | None
+    review: OwnerBusinessReview
+    settlements: OwnerSettlements
+    display_profiles: OwnerDisplayProfiles
+    current_followups: OwnerSettlementFollowups
     settlement_view: Literal["historical", "current"]
     collections: BusinessCollections
 
 
 class DashboardBusinessStatusResponse(ResponseObject):
-    schema_version: Version5
+    schema_version: Version6
     snapshot_version: str
     selected_period: DashboardPeriod
     read_semantics: ReadSemantics
@@ -2083,33 +2111,12 @@ class DashboardBusinessStatusResponse(ResponseObject):
     data: BusinessStatusData
 
 
-class CarryForwardOption(ResponseObject):
-    fact_id: str
-    subject_id: str
-    revision: int
-    period: Month
-    label: str
-    evidence_count: Count
-    used: bool
 
 
-class CarryForward(ResponseObject):
-    selected_fact_id: str | None
-    options: list[CarryForwardOption]
 
 
-class ReportReadinessDetail(ResponseObject):
-    primary: str
-    secondary: str
-    location: ReadinessIssue
 
 
-class ReportReadinessItem(ResponseObject):
-    key: str
-    label: str
-    state: Literal["pass", "pending", "attention"]
-    summary: str
-    details: list[ReportReadinessDetail]
 
 
 class ReportSummary(ResponseObject):
@@ -2142,16 +2149,8 @@ class ReportStatement(ResponseObject):
     rows: list[ReportStatementRow]
 
 
-class ReportCheck(ResponseObject):
-    code: str
-    label: str
-    passed: bool | None
 
 
-class ReportChecks(ResponseObject):
-    passed: Count
-    total: Count
-    items: list[ReportCheck]
 
 
 class Organization(ResponseObject):
@@ -2168,41 +2167,20 @@ class ReportEpochs(ResponseObject):
 class ReportExport(ResponseObject):
     available: bool
     file_name: str
-    calculation_hash: str | None
     preview_digest: str | None
     epochs: ReportEpochs | None
 
 
-class ReportTemplate(ResponseObject):
-    name: str
-    sha256: str
-    profile: str
-    file_name: str
 
 
-class ReportRule(ResponseObject):
-    version: str
-    adapter_version: str
-    effective_from: Day
-    source_url: str
 
 
-class ReportTechnical(ResponseObject):
-    calculation_hash: str
-    template: ReportTemplate
-    rule: ReportRule
-    source_close_hashes: list[str]
-    classification_count: Count
-    income_tax_confirmation_count: Count
-    requirement_codes: list[str]
-    errors: list[str]
 
 
 class DashboardQuarterlyReportResponse(ResponseObject):
-    schema_version: Version4
+    schema_version: Version5
     close_state: Literal["open", "closed"]
     readiness_state: Literal["ready", "blocked"]
-    carry_forward: CarryForward
     status: Literal["ready", "blocked", "in_progress", "not_applicable", "error"]
     status_label: str
     headline: str
@@ -2210,15 +2188,11 @@ class DashboardQuarterlyReportResponse(ResponseObject):
     checked_at: str
     organization: Organization
     period: ReportPeriod
-    readiness: list[ReportReadinessItem]
     summary: ReportSummary
     statements: list[ReportStatement]
-    checks: ReportChecks
     draft: bool
     export: ReportExport
-    technical: ReportTechnical
     read_context: DashboardReadContext
-    period_preparations: list[PeriodPreparation] | None
     projection: NotRequired[Literal["dashboard_quarterly_report_deferred"]]
 
 

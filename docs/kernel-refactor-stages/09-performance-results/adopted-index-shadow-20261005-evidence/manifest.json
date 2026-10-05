@@ -1,0 +1,54 @@
+{
+  "source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8",
+  "source_files": 771,
+  "source_manifest_sha256": "58067bd14dcb1374b944cd891842c69ad4385ca020f37437464d39f7907a63cf",
+  "capture_sha256": "b15f0942c2d2282f7ae18e2b7fbe5e5c7d0b390c7de40269e187cba4ad36a233",
+  "gzip_mtime": 0,
+  "scope": "Read-only main plus TEMP full close_reference shadow, five original/shadow/indexed SQL comparisons. Instrumented/warm TEMP experiment, not production whole-page/migration/fixed-v1/backup/full-verifier acceptance. Archive only, protection facts from receipt.",
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-adopted-index-shadow-diagnostic-20261005.json",
+      "source_sha256": "89f4e2fbc54898a3aaa27e114ddf74711d1503f7ede4d24b1039839f678ae0e2",
+      "source_bytes": 274379,
+      "archive": "stage9-adopted-index-shadow-diagnostic-20261005.json.gz",
+      "representation": "redacted_analysis; all three SQL/plan/VM/execute/fetch/result variants retained, parameters/guards/IDs hashed, roots/PID/address/auth redacted",
+      "redacted_sha256": "df2ae97eb4fad485c3dc87d0315115b31bd85cabfbbfaa5e426f49491cb9ae6d",
+      "redacted_bytes": 242744,
+      "gzip_sha256": "da161c6abd3a3916821719db06f8e4b817ab74d65a123ad1bdba39affa0ec9ba",
+      "gzip_bytes": 23205,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-index-shadow-diagnostic-20261005.log",
+      "source_sha256": "765ff6426d298de67c03387f77a0bb7286301422441513c3c4d3193762bc007f",
+      "source_bytes": 409,
+      "archive": "stage9-adopted-index-shadow-diagnostic-20261005.log.gz",
+      "representation": "redacted_analysis; all three SQL/plan/VM/execute/fetch/result variants retained, parameters/guards/IDs hashed, roots/PID/address/auth redacted",
+      "redacted_sha256": "765ff6426d298de67c03387f77a0bb7286301422441513c3c4d3193762bc007f",
+      "redacted_bytes": 409,
+      "gzip_sha256": "47fa0d1bafc9422d502896b7b37d1da6912d9d444313f089d7e7d1aab77a8187",
+      "gzip_bytes": 163,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-adopted-index-shadow-diagnostic-20261005.py",
+      "source_sha256": "c1c779e34cb70645fe43084b48703c2dc1361965e15b7e4d04ed3182d6b70fb1",
+      "source_bytes": 7385,
+      "reason": "Helper content unpublished, private SHA only"
+    },
+    {
+      "private_source_path": ".tmp/stage9-build-source-stable-owned-read-converged-20261005/source-manifest.json",
+      "source_sha256": "58067bd14dcb1374b944cd891842c69ad4385ca020f37437464d39f7907a63cf",
+      "source_bytes": 93110,
+      "reason": "Existing fixed-source manifest provenance, SHA reference only"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-path-first-diagnostic-20261005.json",
+      "source_sha256": "b15f0942c2d2282f7ae18e2b7fbe5e5c7d0b390c7de40269e187cba4ad36a233",
+      "source_bytes": 302433,
+      "reason": "Previously sealed original capture provenance, SHA reference only"
+    }
+  ]
+}

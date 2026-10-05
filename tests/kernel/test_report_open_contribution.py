@@ -246,8 +246,13 @@ def test_open_report_rejects_missing_no_impact_review_publication(book):
         foreign_keys=False,
     )
     with QueryReads.snapshot(engine) as reads:
-        with pytest.raises(KernelError, match="当前凭证缺少正式发布采用"):
-            _authoritative_rows(reads.connection, "open", YearMonth("2026-02").ordinal)
+        for _ in range(2):
+            with pytest.raises(KernelError, match="^正式发布缺少精确当前核算来源$") as failure:
+                _authoritative_rows(reads.connection, "open", YearMonth("2026-02").ordinal)
+            assert failure.value.code == "content_integrity_failed"
+            assert not reads._verified_open_voucher_scopes
+            assert not reads._verified_publication_ids
+            assert not reads._verified_current_voucher_publications
 
 
 def test_second_closed_correction_uses_each_original_line_anchor(book, monkeypatch):

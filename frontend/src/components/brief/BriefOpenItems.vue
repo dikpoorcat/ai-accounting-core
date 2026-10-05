@@ -71,12 +71,6 @@ function settledLabel(direction: "receivable" | "payable") {
   return direction === "receivable" ? "已收" : "已付";
 }
 
-function sourcePeriodLabel(value: string | null | undefined) {
-  if (!value) return "";
-  const matched = /^(\d{4})-(\d{2})$/.exec(value);
-  return matched ? `${matched[1]} 年 ${Number(matched[2])} 月` : value;
-}
-
 function hasSettlementProgress(item: BriefOpenItem) {
   return item.status === "partial" && (
     (item.source_amount_fen !== null && item.source_amount_fen !== undefined)
@@ -179,23 +173,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <details v-if="openItems.issues?.length" class="open-item-issues">
-      <summary>{{ openItems.issues.length }} 条来源信息需要核对</summary>
-      <ul>
-        <li v-for="(issue, index) in openItems.issues" :key="index">
-          <p>{{ issue.message || '这笔款项的来源尚待核对。' }}</p>
-          <BusinessStatusDetails
-            v-if="issue.subject_id"
-            :subject-id="issue.subject_id"
-            :period="period"
-            :snapshot-version="snapshotVersion"
-            summary-label="核对依据"
-            presentation="brief"
-            @changed="$emit('changed')"
-          />
-        </li>
-      </ul>
-    </details>
+    <p v-if="openItems.complete === false" class="open-item-issues" role="status">AI 会计核对中，已知余额暂不能代表全部款项。</p>
     <div v-if="visibleCategories.length" class="open-workbench">
       <nav class="open-index" aria-label="待收待付分类">
         <span class="category-heading">款项分类</span>
@@ -217,7 +195,7 @@ onBeforeUnmount(() => {
 
       <section v-if="selectedCategory" :class="['open-detail', selectedCategory.direction]" :aria-label="`${categoryLabel(selectedCategory.label)}明细`" aria-live="polite">
         <div class="list-columns" aria-hidden="true">
-          <span>来源期间</span><span>对象与事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span><span class="column-action">依据</span>
+          <span>对象与事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span><span class="column-action">详情</span>
         </div>
         <ul class="open-event-list" aria-label="待收待付明细">
           <li
@@ -225,9 +203,6 @@ onBeforeUnmount(() => {
             :key="item.id"
             :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id) }]"
           >
-            <span class="open-event-reference">
-              {{ sourcePeriodLabel(item.source_period) || "来源期间未标注" }}
-            </span>
             <span class="open-event-copy">
               <strong>{{ item.party }}</strong>
               <small v-if="item.description && item.description !== item.party">{{ item.description }}</small>
@@ -240,18 +215,17 @@ onBeforeUnmount(() => {
               <small>{{ outstandingLabel(selectedCategory.direction) }}</small>
               <b>{{ formatFen(item.outstanding_fen) }}</b>
             </span>
-            <div v-if="item.source_business?.subject_id" class="open-event-source">
+            <div v-if="item.subject_id" class="open-event-source">
               <BusinessStatusDetails
-                :subject-id="item.source_business.subject_id"
+                :subject-id="item.subject_id"
                 :period="period"
                 :snapshot-version="snapshotVersion"
-                summary-label="核对依据"
+                summary-label="业务详情"
                 presentation="brief"
                 :brief-context="{
                   direction: selectedCategory.direction,
                   party: item.party,
                   description: item.description,
-                  sourcePeriod: item.source_period,
                   sourceAmountFen: item.source_amount_fen,
                   paidFen: item.paid_fen,
                   otherSettledFen: item.other_settled_fen,
@@ -267,7 +241,7 @@ onBeforeUnmount(() => {
         </ul>
       </section>
     </div>
-    <p v-else-if="openItems.complete !== false && !openItems.unestablished_count" class="empty">
+    <p v-else-if="openItems.complete !== false" class="empty">
       {{ isClosed ? "该月关账时没有应收或应付余额。" : "期末没有未完全结清的应收或应付事项。" }}
     </p>
   </section>
@@ -372,7 +346,7 @@ h3 {
 }
 
 .open-workbench {
-  --list-columns: 100px minmax(110px, 1fr) 88px 144px 80px;
+  --list-columns: minmax(110px, 1fr) 88px 144px 80px;
   display: grid;
   min-width: 0;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -568,15 +542,6 @@ h3 {
   z-index: 5;
 }
 
-.open-event-reference {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--brief-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .open-event-copy {
   display: grid;
   min-width: 0;
@@ -647,7 +612,7 @@ h3 {
 }
 
 .open-event-source :deep(.compact-status-trigger) {
-  grid-column: 5;
+  grid-column: 4;
   justify-self: end;
 }
 
@@ -704,11 +669,6 @@ h3 {
     padding: 12px 2px;
   }
 
-  .open-event-reference {
-    grid-row: 1;
-    grid-column: 1;
-  }
-
   .open-event-row > .status {
     grid-row: 1;
     grid-column: 2;
@@ -716,19 +676,19 @@ h3 {
   }
 
   .open-event-copy {
-    grid-row: 2;
-    grid-column: 1 / -1;
+    grid-row: 1;
+    grid-column: 1;
   }
 
   .open-event-money {
-    grid-row: 3;
+    grid-row: 2;
     grid-column: 1;
     justify-items: start;
     text-align: left;
   }
 
   .open-event-source :deep(.compact-status-trigger) {
-    grid-row: 3;
+    grid-row: 2;
     grid-column: 2;
     justify-self: end;
   }
@@ -782,20 +742,15 @@ h3 {
     padding: 9px 10px;
   }
 
-  .open-event-reference {
-    grid-row: 1;
-    grid-column: 1;
-  }
-
   .open-event-copy {
-    grid-row: 2;
+    grid-row: 1;
     grid-column: 1 / -1;
   }
 
   .open-event-row > .status {
-    grid-row: 1;
-    grid-column: 2;
-    justify-self: end;
+    grid-row: 2;
+    grid-column: 1;
+    justify-self: start;
   }
 
   .open-event-money {

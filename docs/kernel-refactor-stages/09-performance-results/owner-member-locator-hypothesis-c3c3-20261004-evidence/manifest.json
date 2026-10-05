@@ -1,0 +1,30 @@
+{
+  "scope": "healthy main120 read-only SQL member-exclusion hypothesis on c3c3; not immutable membership/absence proof, not production change or timing",
+  "gzip_mtime": 0,
+  "items": [
+    {
+      "source_path": ".tmp/stage9-owner-member-locator-diagnostic-20261004-run2.json",
+      "source_sha256": "c0aab67f0b2c18b9135ebbceef4ff270a2b92650e5a0a428d5ede39cee7d9a4c",
+      "source_bytes": 26028,
+      "archive": "stage9-owner-member-locator-diagnostic-20261004-run2.json.gz",
+      "representation": "redacted_analysis",
+      "archived_sha256": "995dbfe7a1ec4ecf7a411978c44403f0e0c2cb8459d137fc9374a078ba0826a4",
+      "archived_bytes": 20441,
+      "gzip_sha256": "1108515681b24f65468feccc4413c009a0a12c7affc646680284b8a0d4f3e753",
+      "gzip_bytes": 2738,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-owner-member-locator-hypothesis-summary-20261004.json",
+      "source_sha256": "ac22a1489a15e57c890a12cb1c319e83db79684af77fd013c567165e5e465abb",
+      "source_bytes": 1620,
+      "archive": "stage9-owner-member-locator-hypothesis-summary-20261004.json.gz",
+      "representation": "generated_analysis",
+      "archived_sha256": "ac22a1489a15e57c890a12cb1c319e83db79684af77fd013c567165e5e465abb",
+      "archived_bytes": 1620,
+      "gzip_sha256": "5978d7c337df91e88556df20f331ba18c3536af99d57542de9f84039d73e6553",
+      "gzip_bytes": 930,
+      "roundtrip_equal": true
+    }
+  ]
+}

@@ -46,10 +46,21 @@ def test_brief_adopted_basis_keeps_response_and_avoids_second_fact_load(book, mo
 
     with QueryReads.snapshot(engine) as reads:
         reads.facts((fact_id,))
+        body_loads = []
+        load_bodies = engine.store.facts
+
+        def counted_bodies(connection, identifiers):
+            identifiers = set(identifiers)
+            body_loads.append(identifiers)
+            return load_bodies(connection, identifiers)
+
+        monkeypatch.setattr(engine.store, "facts", counted_bodies)
         statements = []
         reads.connection.set_trace_callback(statements.append)
         separate = original(reads.connection, engine, (calculation_id,))
         separate_sql = tuple(statements)
+        assert fact_id in set().union(*body_loads)
+        body_loads.clear()
         statements.clear()
         shared = original(reads.connection, engine, (calculation_id,), reads=reads)
         shared_sql = tuple(statements)
@@ -57,7 +68,9 @@ def test_brief_adopted_basis_keeps_response_and_avoids_second_fact_load(book, mo
         assert shared == separate
         assert len(shared_sql) < len(separate_sql)
         assert any("fact_funding" in sql for sql in separate_sql)
-        assert not any("fact_funding" in sql for sql in shared_sql)
+        # A narrow physical-period check is still necessary; the already read
+        # scalar body must not be hydrated again merely to verify its digest.
+        assert body_loads == []
         with QueryReads.snapshot(engine) as other:
             with pytest.raises(ValueError, match="this engine and read snapshot"):
                 original(reads.connection, engine, (calculation_id,), reads=other)

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import test_banking as banking
+from test_dashboard_projection import diagnostic_position
 from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as _opening_book
 
@@ -54,20 +55,25 @@ def test_bank_control_does_not_gate_position_but_true_opening_still_does(
     )
     dashboard = Dashboard(engine)
     missing = dashboard.brief("2026-01")["data"]
-    assert missing["cash"]["missing_account_count"] == 1
-    position = missing["position"]
+    assert dashboard.funds("2026-01")["data"]["bank_statement"]["missing_account_count"] == 1
+    position = diagnostic_position(engine, "2026-01")
     assert position["assets_fen"] == 100
     assert position["complete"] and position["equation_valid"] is True
+    owner_position = missing["position"]
+    assert owner_position["complete"]
+    assert missing["funds_overview"]["total_fen"] == 100
+    assert not any(item["key"] == "amounts" for item in missing["risks"])
 
     # Neither a missing statement nor an unpublished reconciliation gates the
     # exact position; these facts do not add accounting amounts.
     banking.statement(bank_save, publish, [], month="2026-01", initial=initial)
     banking.reconciliation(bank_save, publish, [], month="2026-01", posted=False)
     waiting = dashboard.brief("2026-01")["data"]
-    assert waiting["cash"]["missing_account_count"] == 0
-    assert waiting["position"] == position
+    assert dashboard.funds("2026-01")["data"]["bank_statement"]["missing_account_count"] == 0
+    assert waiting["position"] == owner_position
+    assert diagnostic_position(engine, "2026-01") == position
     publish("reconciliation")
-    assert dashboard.brief("2026-01")["data"]["position"] == position
+    assert dashboard.brief("2026-01")["data"]["position"] == owner_position
     _close_without_current_business(engine, "2026-01", proof)
 
     bank_status = BusinessQueries(engine).business_status(
@@ -82,13 +88,12 @@ def test_bank_control_does_not_gate_position_but_true_opening_still_does(
     assert bank_status["frozen_adoption"]["calculation_id"] == bank_opening["calculation_id"]
 
     historical = dashboard.brief("2026-01")["data"]["position"]
-    assert historical == position
+    assert historical == owner_position
+    assert diagnostic_position(engine, "2026-01") == position
     if opening_kind == "opening_bank":
         opening_status = BusinessQueries(engine).business_status(
             "real-opening", "2026-01", as_of="2026-02-01"
         )
         opening = opening_status["as_posted"]
         assert opening["unestablished_state_selections"] == []
-        assert opening_status["frozen_adoption"]["selection_proof"]["basis"] == (
-            "direct_adoption"
-        )
+        assert opening_status["frozen_adoption"]["selection_proof"]["basis"] == ("direct_adoption")

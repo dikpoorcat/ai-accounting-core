@@ -1,0 +1,180 @@
+{
+  "source_sha256": "8c98a8e870f6be0dde8fdfc9590e4145a0e1181c4ffc8c03fc0faacb3da58e38",
+  "source_manifest_sha256": "f52f6138b2f2e83d2dae3b57bc5a5fcc9cf09f6de5bbf4609fc140ae71b67146",
+  "source_files": 777,
+  "changed_files_from_525f": [
+    "src/ai_accounting/kernel/close_storage.py",
+    "src/ai_accounting/kernel/report_projection.py",
+    "tests/kernel/test_close_physical_batch.py",
+    "tests/kernel/test_report_party_summary.py"
+  ],
+  "scope": "Actual five-page pool-work diagnostic concurrent with regression, not page timing; first wide regression 336 pass/2 failed, corrected focused 36 pass overlap not additive. No fresh Q/preview.",
+  "gzip_mtime": 0,
+  "representation": "Redacted raw receipts/logs retain counters, complete response differences and failed states; private guards canonical SHA. Source inventory hashes retained; helper SHA only.",
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run.json",
+      "source_sha256": "45a1269b69940f11eabdd0e31494f62dd54176cc0831b7a4ff51498c00b0e2a0",
+      "source_bytes": 834667,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "c865ff4e43003417830095a5a6f5c5f85e45cc1ef203579d46ec615c0ab9b96e",
+      "redacted_bytes": 799092,
+      "gzip_sha256": "b3a41abbfbb331cf8c62bd033a6cdad0af0d3a06e3227b0b7e57fafd4cffecd5",
+      "gzip_bytes": 126119,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-execution.log",
+      "source_sha256": "c4be5885b7a79170a1aaf2a6717406875ee075691d02ae9924254b566ae99810",
+      "source_bytes": 316,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-execution.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "c4be5885b7a79170a1aaf2a6717406875ee075691d02ae9924254b566ae99810",
+      "redacted_bytes": 316,
+      "gzip_sha256": "44fdfa80ccf618adcb2966dab5e8cb8f8369e1eed25c56e9a472ce8e541ea460",
+      "gzip_bytes": 117,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run-current-brief-raw.json",
+      "source_sha256": "707635527cfda9531876fdaf41b38b853a3e8bd283b391c7ff544e7722ea0ece",
+      "source_bytes": 183419,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run-current-brief-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "5792d7a75026d1e3abee80789959145f84127694d523c5640593403da4d03ca2",
+      "redacted_bytes": 183309,
+      "gzip_sha256": "ba78afa9c660849d1445852b6b6c2caff4fe5da411641ee2ae6008598d9546b6",
+      "gzip_bytes": 27549,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run-current-funds-raw.json",
+      "source_sha256": "32c1fa25019bca5aaba79faf30b9c0713717a04cc855a92622df9110cdb2c678",
+      "source_bytes": 161552,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run-current-funds-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "a592a15b4dd5dfffd8cbd8ea01e9ba76701314f07de74e978f39e7c72da3c4fc",
+      "redacted_bytes": 161442,
+      "gzip_sha256": "a89eab0a0e65c94137cf5a08b221db945fc9ffc405ebca068b06ff64a1b5a3f8",
+      "gzip_bytes": 27299,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run-current-employees-raw.json",
+      "source_sha256": "c86dad107409c654ab6938f4ecefe3f7862520515f7f42688352f79831347a91",
+      "source_bytes": 111513,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run-current-employees-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "7d5daf3f454014f91ba79c066480e3fd1129ddced1532d0d0db674fe1f3fda2d",
+      "redacted_bytes": 111403,
+      "gzip_sha256": "4da532af5de404875a7891b5ad08a8458ea1f2e03efa6a4ac5262f93d455e1b1",
+      "gzip_bytes": 18798,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run-current-assets-raw.json",
+      "source_sha256": "79e548d854a0ecaafce793d5f812e3946716cc9c6759d32e1c8243c6e3582b69",
+      "source_bytes": 143158,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run-current-assets-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "028569f1ec3904ff4b0e98f0efa1c03a3c547fd1b850a6630fee27e7c8b8f6b8",
+      "redacted_bytes": 143048,
+      "gzip_sha256": "1e51e46ae4ace4d9d9d5bcd2e94715c5905928d1f6252fe733277b49dbd82834",
+      "gzip_bytes": 24167,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005-run-current-quarterly_report-raw.json",
+      "source_sha256": "eddf13a3279d56bcfd17bfba8066b857359ca412def33b183f75b5b012f0e655",
+      "source_bytes": 120232,
+      "archive": "stage9-current-main120-converged-pool-work-20261005-run-current-quarterly_report-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "b1faa00e99dba9402bc8e886245932c4bb9268fc92ce8b18fd947e36adf08077",
+      "redacted_bytes": 120122,
+      "gzip_sha256": "2ad220ac6dfc8fe5ea0a5c6f4887dcd05582db7561f51899dec6f463d95cbeb9",
+      "gzip_bytes": 20175,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-overlay-checkpoint-first-failures-20261005.log",
+      "source_sha256": "9d7c5e8b820eba958a76bf0aeb10c42c243c56a550812e7ec6be4632e8ccc22c",
+      "source_bytes": 1780,
+      "archive": "stage9-overlay-checkpoint-first-failures-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "4fc315e0727e166bd4b436628b1c1dc08f723b72ed089ce2af738e7f10b9d89b",
+      "redacted_bytes": 1804,
+      "gzip_sha256": "81b62364a20afda86ebd0163c5251b41861cd46b93a848c97678f892f3447bf0",
+      "gzip_bytes": 694,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-overlay-checkpoint-corrected-focused-20261005.log",
+      "source_sha256": "18feddf6fbc1cf3f73b19dfffc26134c8518c974365326b0ef385f07624e593c",
+      "source_bytes": 102,
+      "archive": "stage9-overlay-checkpoint-corrected-focused-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "18feddf6fbc1cf3f73b19dfffc26134c8518c974365326b0ef385f07624e593c",
+      "redacted_bytes": 102,
+      "gzip_sha256": "b99f9e2532db6e9c960c2dc426bb810b582b961e1d0d2eba16704a793274fcb6",
+      "gzip_bytes": 55,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-overlay-checkpoint-group-regression-20261005.log",
+      "source_sha256": "8a73b6bf4820cc534f9da1860d5f662ddc0dcc8fa821ab41aad3daf80c437911",
+      "source_bytes": 7085,
+      "archive": "stage9-overlay-checkpoint-group-regression-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "bcc2f5b82981d80e94495f9cd2f04180d33820aa643df8fb5549e65b1a5966d0",
+      "redacted_bytes": 7133,
+      "gzip_sha256": "3b2284e761ea78d76158b94c2ee5e5541a2b86db65053c9c4694641f25331c6b",
+      "gzip_bytes": 2321,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-reader-group-source-snapshot-20261005.log",
+      "source_sha256": "d548878f837241d92e038ef24c69cebb5f4a5c0f03ed38ccf7dd6a1fda63880d",
+      "source_bytes": 202,
+      "archive": "stage9-reader-group-source-snapshot-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "4d8b72bdb3a65e4c33cc0b8b89254c4eb72c594f121ac47921d2998e10bb1aea",
+      "redacted_bytes": 186,
+      "gzip_sha256": "4851e5b8bbbe7ac678fc69f40e272199ecd29ddddd628e6e6f38bdb91b48e152",
+      "gzip_bytes": 173,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-build-source-reader-group-converged-20261005/source-manifest.json",
+      "source_sha256": "f52f6138b2f2e83d2dae3b57bc5a5fcc9cf09f6de5bbf4609fc140ae71b67146",
+      "source_bytes": 93933,
+      "archive": "source-manifest.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "4a8edd3bdb1ef57ea1bde3414f2a96ee26b32520412e0fdcc41e03a4c5ea9446",
+      "redacted_bytes": 93115,
+      "gzip_sha256": "60dec65e0e985b9514cb0cc32bc4464948e52a4e233dadbe135816614f6d32fc",
+      "gzip_bytes": 41666,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-reader-group-source-snapshot-first-tool-failure-20261005.log",
+      "source_sha256": "209325df6a1a85d87333601b802e934970f04a71a6a3bc061835339a954c0d34",
+      "source_bytes": 402,
+      "archive": "stage9-reader-group-source-snapshot-first-tool-failure-20261005.log.gz",
+      "representation": "redacted_preserved_tool_stderr",
+      "redacted_sha256": "680311f37fb3f45e2150d52f22f8dc03e33cdb056cd7607d20f400245bec0971",
+      "redacted_bytes": 388,
+      "gzip_sha256": "68c62a80ab3bdb47222dc88a397534c4b78e293b0a8e16983580a7ef9abb6ee7",
+      "gzip_bytes": 268,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-current-main120-converged-pool-work-20261005.py",
+      "source_sha256": "48480fbeb95c3d5f849f04542b4d42830c226c2b4e4ca0b4eea627e7fd2099e9",
+      "source_bytes": 12805,
+      "representation": "private_source_sha_only"
+    }
+  ]
+}

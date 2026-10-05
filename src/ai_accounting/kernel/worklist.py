@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from .business_queries import BusinessQueries
+from .business_queries import BusinessQueries, _file_job_period
 from .contracts import KernelError
 from .diagnostics import job_error_message, public_job_code
 from .periods import MATERIAL_CATEGORIES
@@ -278,7 +278,10 @@ class Worklist:
                         if area_accounting_issues
                         or area_close_issues
                         or any(
-                            f["pending"] or f["calculation_id"] is None for f in accounting_sources
+                            f["pending"]
+                            or f["kind"] in self.store.registry.evaluators
+                            and f["calculation_id"] is None
+                            for f in accounting_sources
                         )
                         else "ready"
                         if accounting_sources
@@ -378,7 +381,7 @@ class Worklist:
                     "error_code": error_code,
                     "error_message": job_error_message(error_code) if error_code else None,
                     "association": "period_scope" if period is not None else "company",
-                    "period": period,
+                    "period": _file_job_period(period),
                     "references": [],
                     "result_issue": result_issue,
                     "contract_issues": [],

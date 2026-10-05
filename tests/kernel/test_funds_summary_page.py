@@ -155,7 +155,17 @@ def test_real_movement_and_statement_share_full_summary_with_bounded_pages(bank_
         baseline = FundsRead(snap)
         expected_totals = baseline.account_summary()
         assert {key: selected[key] for key in expected_totals} == expected_totals
-        assert selected["bank_statement"] == baseline.bank_summary()
+        bank_summary = baseline.bank_summary()
+        assert {
+            key: value for key, value in selected["bank_statement"].items()
+            if key != "review_state"
+        } == {
+            key: value for key, value in bank_summary.items()
+            if key not in {
+                "matched_count", "unmatched_count", "needs_review_count", "unmatched_totals"
+            }
+        }
+        assert selected["bank_statement"]["review_state"] == "pending"
         for section, source, parameters in (
             ("movements", *baseline.movements()),
             ("statements", baseline.bank_source, baseline.bank_parameters),

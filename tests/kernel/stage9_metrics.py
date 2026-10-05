@@ -13,6 +13,12 @@ from contextlib import contextmanager
 from ai_accounting.kernel.contracts import Fact
 
 DECODE_COUNTERS = {
+    "calculation_result_rows_loaded": (
+        "Actual non-null saved outcome values returned by SQLite; repeated transfers count."
+    ),
+    "calculation_result_bytes_loaded": (
+        "UTF-8 bytes of those saved outcomes delivered to Python, independent of decoding."
+    ),
     "stdlib_json_loads": (
         "Successful json.loads calls only; excludes Pydantic and pydantic-core JSON parsing."
     ),
@@ -33,8 +39,8 @@ DECODE_COUNTERS = {
         "sources are outside this count."
     ),
     "adoption_accounting_slice_reads": (
-        "Successful close_storage.read_accounting calls; nested adopted rows are counted "
-        "separately and a QueryReads cache hit does not count."
+        "Successful close_storage.read_accounting/read_adopted_results calls; "
+        "adopted rows are counted separately and a QueryReads cache hit does not count."
     ),
     "adoption_section_reads": (
         "Successful close_storage.read_section calls for adopted_results; may overlap a "
@@ -83,6 +89,8 @@ class _Cursor:
             for index in self.outcome_columns:
                 if isinstance(row[index], str):
                     raw = row[index].encode("utf-8")
+                    self.counter["calculation_result_rows_loaded"] += 1
+                    self.counter["calculation_result_bytes_loaded"] += len(raw)
                     self.outcome_payloads.add((len(raw), hashlib.sha256(raw).digest()))
             size = sum(_value_bytes(v) for v in row)
             self.counter["returned_rows"] += 1
@@ -196,7 +204,7 @@ def measure_work(engine, operation):
             "ai_accounting.kernel.close_storage",
             "ai_accounting.kernel.close_storage_v1",
         }:
-            if name == "read_accounting" and arg is not None:
+            if name in {"read_accounting", "read_adopted_results"} and arg is not None:
                 counts["adoption_accounting_slice_reads"] += 1
                 counts["adoption_accounting_rows"] += len(arg.adopted_results)
             elif (

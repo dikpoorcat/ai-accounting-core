@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from datetime import date
 from typing import Annotated, Any
 
-from pydantic import Field, StrictInt
+from pydantic import AfterValidator, Field, StrictInt
 from pydantic_core import core_schema
 
 MIN_FEN = -(2**63)
@@ -22,6 +23,54 @@ PositiveFen = Annotated[Fen, Field(gt=0)]
 SubjectId = Annotated[str, Field(strict=True, min_length=1, max_length=200)]
 _YEAR_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
 _ACTUAL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def is_sha256_hex(value: object) -> bool:
+    """Check the exact lowercase ASCII encoding without Python per-byte work."""
+    return isinstance(value, str) and _SHA256_HEX.fullmatch(value) is not None
+
+
+def _exact_evidence_digest(value: str) -> str:
+    if not is_sha256_hex(value):
+        raise ValueError("evidence digest must be exactly 64 lowercase hexadecimal characters")
+    return value
+
+
+# Keep the existing nested fact JSON schema (and generated SQL) unchanged.
+# Strictness and the fullmatch validator also apply outside strict parent models.
+EvidenceDigest = Annotated[
+    str, Field(strict=True, pattern=r"^[0-9a-f]{64}$"), AfterValidator(_exact_evidence_digest)
+]
+
+
+def evidence_digest_bytes(
+    value: object, field: str = "evidence_digest", index: int | None = None
+) -> bytes:
+    """Validate a public evidence reference without echoing the submitted value."""
+    if not is_sha256_hex(value):
+        from .contracts import KernelError
+
+        raise KernelError(
+            "invalid_command",
+            "命令字段或类型不符合接口约定",
+            issues=[
+                {
+                    "type": "evidence_digest_format",
+                    "loc": [field] if index is None else [field, index],
+                    "msg": "evidence digest must be exactly 64 lowercase hexadecimal characters",
+                }
+            ],
+        )
+    return bytes.fromhex(value)
+
+
+def validate_evidence_digests(values, field: str = "evidence") -> None:
+    """Check public reference elements before sorting or querying their content."""
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        evidence_digest_bytes(None, field)
+    for index, value in enumerate(values):
+        evidence_digest_bytes(value, field, index)
 
 
 def checked(value: int) -> int:

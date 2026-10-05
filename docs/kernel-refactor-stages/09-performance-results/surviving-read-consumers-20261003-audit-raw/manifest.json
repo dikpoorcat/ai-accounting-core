@@ -1,0 +1,30 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "two readonly source audits; no executed tests/database/profile; unimplemented candidates",
+  "files": [
+    {
+      "source": ".tmp/stage9-report-anchor-group-audit-20261003.md",
+      "archive": "stage9-report-anchor-group-audit-20261003.md.gz",
+      "raw_bytes": 11775,
+      "gzip_bytes": 5919,
+      "source_sha256": "36d07d9c97d171c4bf1b0bb75e875ffa09197a7e7789096ac9d40d82ea836901",
+      "gzip_sha256": "b90196f117e5edc7baae8bba756fb199fcc33df11f5f8d99a0e10dc34bae3107",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-shared-read-guard-cost-audit-20261003.md",
+      "archive": "stage9-shared-read-guard-cost-audit-20261003.md.gz",
+      "raw_bytes": 7307,
+      "gzip_bytes": 4020,
+      "source_sha256": "bfe50f747a20dafc1443272ed8dc56275c2885d7ed93d9936d63cd6bd4e1153f",
+      "gzip_sha256": "47002204f5e4c1cdefa8eb4c55295117ffb568118204819f3f22604d66de7e69",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    }
+  ],
+  "total_raw_bytes": 19082,
+  "total_gzip_bytes": 9939,
+  "credential_scan": "no matches",
+  "excludes": "DB/WAL/SHM/PID/credentials/ZIP/fullsource/pstats/real business materials"
+}

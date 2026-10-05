@@ -1,0 +1,62 @@
+{
+  "scope": "Current four-production-file repeated-range and verified-report-row group, 176 pass/0 skip/0 fail 366.89s; independent from 148d/browser; fresh qualification and performance not run",
+  "first_failure_retained": "Initial range-work 7 pass/1 synthetic duplicate-business fixture rejection; final complete group includes fixed fixture. Scope original retained as written; its forward-looking row-bridge proposal is historical, actual four-file group also contains root's report-row bridge.",
+  "private_data_archived": false,
+  "mtime": 0,
+  "source_count": 5,
+  "raw_bytes": 58326,
+  "raw_budget_bytes": 65536,
+  "gzip_bytes": 18075,
+  "files": [
+    {
+      "source": ".tmp/stage9-repeated-source-group-regression-first-20261003.xml",
+      "archive": "01-stage9-repeated-source-group-regression-first-20261003.xml.gz",
+      "bytes": 28699,
+      "sha256": "b08b908805b220bec84712eb562c54e81a366818cf0bf0d1e5ec0ecf39299aff",
+      "source_sha256_after": "b08b908805b220bec84712eb562c54e81a366818cf0bf0d1e5ec0ecf39299aff",
+      "gzip_bytes": 5175,
+      "gzip_sha256": "f81155b89672afac9dbcb503afb389cc03ca384c7ed54047ae4f961b2545b1f2",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-repeated-source-group-regression-first-20261003.log",
+      "archive": "02-stage9-repeated-source-group-regression-first-20261003.log.gz",
+      "bytes": 276,
+      "sha256": "63b421db43bf917b9873b8d90d618b303c06c9609f74df6c5df9be66e9c7f5e4",
+      "source_sha256_after": "63b421db43bf917b9873b8d90d618b303c06c9609f74df6c5df9be66e9c7f5e4",
+      "gzip_bytes": 80,
+      "gzip_sha256": "bd8eabfa43baee20e35369b972e41fe0f9e2b001bf7b589b6d43f2b1bdf49b9a",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-integrity-repeated-ranges-scope-20261003.md",
+      "archive": "03-stage9-owner-integrity-repeated-ranges-scope-20261003.md.gz",
+      "bytes": 19980,
+      "sha256": "0c8ac126f535fa8f9f3d235e2e13a143fc3a9dfaa19184030b4f8be4c147d070",
+      "source_sha256_after": "0c8ac126f535fa8f9f3d235e2e13a143fc3a9dfaa19184030b4f8be4c147d070",
+      "gzip_bytes": 9697,
+      "gzip_sha256": "976e0036fc405f21eb817097e8a3cf2b72587107494c3d3973df66f1eaffdaaf",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-integrity-range-work-first-20261003.xml",
+      "archive": "04-stage9-integrity-range-work-first-20261003.xml.gz",
+      "bytes": 5256,
+      "sha256": "21854aa26638410409965fff04d87192890f24d55a547d9e465c336dee8db838",
+      "source_sha256_after": "21854aa26638410409965fff04d87192890f24d55a547d9e465c336dee8db838",
+      "gzip_bytes": 1772,
+      "gzip_sha256": "46defbd85a36572b5f8f48b7165713d06a83b729efa3836d3312cc0ed802e8e5",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-integrity-range-work-first-20261003.log",
+      "archive": "05-stage9-integrity-range-work-first-20261003.log.gz",
+      "bytes": 4115,
+      "sha256": "d75c7b093fd5d01cafbb35e82a070d327e7b6f1877ce33fb580886e603e1fe0a",
+      "source_sha256_after": "d75c7b093fd5d01cafbb35e82a070d327e7b6f1877ce33fb580886e603e1fe0a",
+      "gzip_bytes": 1351,
+      "gzip_sha256": "58dac3eb45d1fdc153a8f0c952bcd483105b2523594ab2f7a8db8a760cf335cc",
+      "decompressed_bytes_equal": true
+    }
+  ]
+}

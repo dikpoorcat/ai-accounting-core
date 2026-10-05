@@ -1,0 +1,152 @@
+{
+  "created_utc": "2026-10-02T18:01:00.972516+00:00",
+  "scope": "completed fact-body probe and static money/asset/release audits; no new runtime execution or reading active r77 money experiments",
+  "prior_manifest": {
+    "path": "docs/kernel-refactor-stages/09-performance-results/owner-r76-main12-performance-manifest.json",
+    "sha256": "eef2ca63167c7782df3d5ff4d2c62130c44378aa07f049b4b88e4e58f8e3593c",
+    "not_rearchived": true
+  },
+  "source_binding": {
+    "probe_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r76-release",
+    "probe_verified_input_sha256": "501332f2a9ae5aca7928fed7c5c923f122518316846421780db99c9573a2f6b3",
+    "probe_loaded_modules": {
+      "ai_accounting.kernel.query_reads": {
+        "file": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r76-release\\src\\ai_accounting\\kernel\\query_reads.py",
+        "sha256": "305924fa53da1b7696433efa8c2654bbe50baf69114ad87e390c9c0e8b0727ac"
+      },
+      "ai_accounting.kernel.storage": {
+        "file": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r76-release\\src\\ai_accounting\\kernel\\storage.py",
+        "sha256": "eb2d0f71c4805d11d0be48a1230e6deda7377fd86dd305a59242b49d984f245e"
+      },
+      "ai_accounting.kernel.integrity": {
+        "file": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r76-release\\src\\ai_accounting\\kernel\\integrity.py",
+        "sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763"
+      }
+    },
+    "asset": "r75 main48 prior recorded profile; static audit only",
+    "money": "r76 static consumer analysis with explicitly historical r73 work numbers",
+    "release": "current static read-only audit; existing r73 six-file50 receipt remains original identity"
+  },
+  "limits": [
+    "same-bound body repetition observed only1 on main12",
+    "main48 intersection not measured",
+    "lines-only rejection is static reasoning, not executed corruption fixture",
+    "contribution3MB cost/net benefit not validated",
+    "asset2full1adopted-only not safely merged",
+    "old isolated50 not final package acceptance",
+    "r76pure7 slow samples retained; no500ms pass",
+    "no production/test edits, no Git commit"
+  ],
+  "files": [
+    {
+      "raw_path": ".tmp/stage9-r76-fact-body-scope-probe-analysis.json",
+      "raw_sha256": "a87de16469d5be916c66927fb5a91156691608bed8d310764b80142636ebb9a6",
+      "raw_bytes": 4117,
+      "raw_mtime_ns": 1790963669590630000,
+      "raw_mtime_utc": "2026-10-02T17:54:29.590630+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-01-stage9-r76-fact-body-scope-probe-analysis.json.gz",
+      "archive_sha256": "f7e54a4f4a36d1b13a93fe3fa117dd9e81b1e54a2a7f16bfc6abcfd283d29f9b",
+      "archive_bytes": 908,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r76-fact-body-scope-probe-analysis.md",
+      "raw_sha256": "52ed938cad09695f6437a1352e1aa9a996a7c247722f54f141ff06548a34aa06",
+      "raw_bytes": 3752,
+      "raw_mtime_ns": 1790963669591631400,
+      "raw_mtime_utc": "2026-10-02T17:54:29.591631+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-02-stage9-r76-fact-body-scope-probe-analysis.md.gz",
+      "archive_sha256": "493ae3212d7ce6061fb3dccb8310c2ee16b5f4f8550dc7405ab750669c0b85f2",
+      "archive_bytes": 2330,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r76-fact-body-scope-probe.json",
+      "raw_sha256": "98a90e1b196f7d21ea3c10e8995f40f2a8e936ea0df6d17f6a23dea2be57cfba",
+      "raw_bytes": 3029785,
+      "raw_mtime_ns": 1790963573432377800,
+      "raw_mtime_utc": "2026-10-02T17:52:53.432378+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-03-stage9-r76-fact-body-scope-probe.json.gz",
+      "archive_sha256": "9df6c2b1c0d79032985f38e20476704e93af2fc20ab11d46f0bd358a16957109",
+      "archive_bytes": 785450,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r76-fact-body-scope-probe.py",
+      "raw_sha256": "f198a6a075862c00137738eaadd56cba22bd8734b39aaeda6311167c2c70aa36",
+      "raw_bytes": 6686,
+      "raw_mtime_ns": 1790963551359777400,
+      "raw_mtime_utc": "2026-10-02T17:52:31.359777+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-04-stage9-r76-fact-body-scope-probe.py.gz",
+      "archive_sha256": "23a26bd52750aa8003f43580244ac7c98f4230fe03f8e02be79da1b679f922d0",
+      "archive_bytes": 2598,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r76-fact-body-reuse-readonly.md",
+      "raw_sha256": "13a843fea3bd2adbf81237cf3a1ae77c54bdd2aab3f2d85a23dccf7e074f4e36",
+      "raw_bytes": 8391,
+      "raw_mtime_ns": 1790963456078198700,
+      "raw_mtime_utc": "2026-10-02T17:50:56.078199+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-05-stage9-r76-fact-body-reuse-readonly.md.gz",
+      "archive_sha256": "b9067928a6819ef8eb3f2fa91c7400d1b136e1c094f73e5e8d14eda6b8fc3038",
+      "archive_bytes": 4469,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r76-required-money-contribution-audit.md",
+      "raw_sha256": "96a4f2b080dca94e6fd8b47ab44901a937082e15194cf052f8ab15477d8dd58c",
+      "raw_bytes": 12368,
+      "raw_mtime_ns": 1790963309220924600,
+      "raw_mtime_utc": "2026-10-02T17:48:29.220925+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-06-stage9-r76-required-money-contribution-audit.md.gz",
+      "archive_sha256": "d6f5281984f3e94b2b6dc448d7ecae890b19cc4d1d0232ab62e4d8d63df31567",
+      "archive_bytes": 6332,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r75-asset-accounting-scope-audit.md",
+      "raw_sha256": "97a6152718c4498a3d416de40f37c4e7a58f79a35ea98f05e8b3064443331cb1",
+      "raw_bytes": 3783,
+      "raw_mtime_ns": 1790963189097714200,
+      "raw_mtime_utc": "2026-10-02T17:46:29.097714+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-07-stage9-r75-asset-accounting-scope-audit.md.gz",
+      "archive_sha256": "579c3856cfc0fe3c7c8454e5913d66de254d5798a04324e543b11518c1a3266d",
+      "archive_bytes": 2204,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r77-release-upgrade-audit.md",
+      "raw_sha256": "147323b697c41db5b19c9c377d6962dbd89ea46ecc6b8bfc0a8e33729896e6bb",
+      "raw_bytes": 11369,
+      "raw_mtime_ns": 1790963843499701900,
+      "raw_mtime_utc": "2026-10-02T17:57:23.499702+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-08-stage9-r77-release-upgrade-audit.md.gz",
+      "archive_sha256": "d897f5d20d00679095d708686f0c4931532f0e001016e069b4acfeaecc113311",
+      "archive_bytes": 5950,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r77-release-upgrade-audit.json",
+      "raw_sha256": "2d6c0d3d2587282a3a05e3b2378a700dec89f49d379e36708fd4e9c29196bcaa",
+      "raw_bytes": 4402,
+      "raw_mtime_ns": 1790963762117866900,
+      "raw_mtime_utc": "2026-10-02T17:56:02.117867+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-09-stage9-r77-release-upgrade-audit.json.gz",
+      "archive_sha256": "ab6efa42059d78e472ffeb71e6cf07296923d6b0e38185201f69e39bd0d8ac74",
+      "archive_bytes": 1828,
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit.md",
+      "raw_sha256": "a73ed719a899abee5744708b14b038d9b293795b7d7b13fa75cd5215703caa4c",
+      "raw_bytes": 4544,
+      "raw_mtime_ns": 1790964060720580900,
+      "raw_mtime_utc": "2026-10-02T18:01:00.720581+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r77-money-and-release-audit-10-owner-r77-money-and-release-audit.md.gz",
+      "archive_sha256": "7461cde25462741c6d827b5591a80a0c0cf699e38a04240dbad494714adabae6",
+      "archive_bytes": 2856,
+      "decompressed_byte_equal": true
+    }
+  ]
+}

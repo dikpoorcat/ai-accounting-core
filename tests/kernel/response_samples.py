@@ -88,6 +88,8 @@ def native_samples(root):
     )
     add("company_without_period", "dashboard_context", call("dashboard_context"))
     add("funds_without_period", "dashboard_funds", call("dashboard_funds"))
+    add("first_account_without_period", "dashboard_funds",
+        call("dashboard_funds", movement_account_selection="first"))
     references, evidence, _ = replay_sources(call, "contract")
     call(
         "confirm",
@@ -111,6 +113,8 @@ def native_samples(root):
         call("dashboard_brief", period="2026-01", preparation="deferred"),
     )
     add("cash_funds", "dashboard_funds", call("dashboard_funds", period="2026-01"))
+    add("first_account_funds", "dashboard_funds",
+        call("dashboard_funds", period="2026-01", movement_account_selection="first"))
     add(
         "deferred_funds",
         "dashboard_funds",
@@ -209,6 +213,8 @@ def native_samples(root):
     closed_book, _ = public_bank_book(closed_path)
     engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
+    add("first_frozen_account_funds", "dashboard_funds",
+        Dashboard(engine).funds("2026-09", movement_account_selection="first"))
     add(
         "frozen_readiness",
         "period_readiness",
@@ -258,6 +264,10 @@ def native_samples(root):
     display_profile(personnel.engine, "business", "january", display_name="合成工资业务")
     personnel_dashboard = Dashboard(personnel.engine)
     add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    add(
+        "employees_focused", "dashboard_employees",
+        personnel_dashboard.employees("2026-01", employee_id="employee", section="employees"),
+    )
     personnel.close("2026-01")
     display_profile(
         personnel.engine, "employee", "employee", 1,
@@ -314,7 +324,7 @@ def native_samples(root):
     add(
         "external_brief",
         "dashboard_brief",
-        Dashboard(external_book.engine).brief("2026-01", section="external_followups"),
+        Dashboard(external_book.engine).brief("2026-01"),
     )
     add(
         "external_readiness",
@@ -325,6 +335,15 @@ def native_samples(root):
     external_book.save(review, "review")
     external_book.publish("review")
     add("actual_tax_reviewed", "workflow", workflow.query("2026-01", as_of="2026-02-25"))
+    from test_reimbursement_assets import asset
+    from test_reimbursement_assets import book as asset_book
+
+    asset_path = root / "asset-payment-summary"
+    asset_path.mkdir()
+    asset_engine, asset_save, asset_publish = asset_book.__wrapped__(asset_path)
+    asset_save("reimbursed_asset", "computer", asset())
+    asset_publish("computer")
+    add("asset_payment_summary", "dashboard_assets", Dashboard(asset_engine).assets("2026-02"))
     return samples
 
 

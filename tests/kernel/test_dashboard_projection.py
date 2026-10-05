@@ -23,8 +23,10 @@ from test_reports import cit
 from test_reports import profile as report_profile
 
 from ai_accounting.kernel.asset_batches import AssetBatches
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import Fact, KernelError, Line, Outcome, Registry
-from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard import Dashboard, _funds, _open_items, _position
+from ai_accounting.kernel.dashboard_funds import FundsRead
 from ai_accounting.kernel.domains.assets import AssetAcquisition, AssetActivation
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.http import wire_money
@@ -34,6 +36,41 @@ from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import PositiveFen, YearMonth
 
 bank_book, opening_book, report_book, engine = _bank_book, _opening_book, _report_book, _engine
+
+
+def diagnostic_vouchers(engine, period):
+    """Exercise retained diagnostic presentation separately from the owner response."""
+    with Dashboard(engine)._snapshot(period) as snapshot:
+        items = [snapshot.voucher(row) for row in snapshot.month_journal]
+        snapshot.attach_recorded_times()
+        return items
+
+
+def diagnostic_funds(engine, period, **options):
+    with Dashboard(engine)._snapshot(period) as snapshot:
+        data = _funds(snapshot, **options)
+        data["bank_statement"] = FundsRead(snapshot).bank_summary()
+        snapshot.attach_recorded_times()
+        return data
+
+
+def diagnostic_position(engine, period):
+    with Dashboard(engine)._snapshot(period) as snapshot:
+        return _position(snapshot)
+
+
+def diagnostic_open_items(engine, period):
+    with Dashboard(engine)._snapshot(period) as snapshot:
+        data = _open_items(snapshot)
+        snapshot.attach_recorded_times()
+        return data
+
+
+def explicit_checks(dashboard, period):
+    context = dashboard.brief(period)["read_context"]
+    return dashboard.period_preparation(
+        period, expected_read_version=context["read_version"], as_of=context["as_of"]
+    )["data"]["brief_checks"]
 
 
 def _assert_asset_member_summary_parity(engine, period):
@@ -47,16 +84,11 @@ def _assert_asset_member_summary_parity(engine, period):
 def _assert_brief_asset_summary_parity(engine, period):
     dashboard = Dashboard(engine)
     complete = dashboard.assets(period, preparation="deferred")["data"]
-    brief = dashboard.brief(period, preparation="deferred")["data"]["long_term_assets"]
-    assert brief == {
-        "net_fen": complete["ledger_net_fen"],
-        "fixed_net_fen": complete["fixed_asset_net_fen"],
-        "intangible_net_fen": complete["intangible_asset_net_fen"],
-        "fixed_active_count": complete["fixed"]["active_count"],
-        "intangible_active_count": complete["intangible"]["active_count"],
-        "pending_count": complete["pending_fixed_count"] + complete["pending_intangible_count"],
-        "project_cost_fen": complete["project_cost_fen"],
-    }
+    brief = dashboard.brief(period, preparation="deferred")["data"]
+    assert "long_term_assets" not in brief
+    assert complete["ledger_net_fen"] == (
+        complete["fixed_asset_net_fen"] + complete["intangible_asset_net_fen"]
+    )
 
 
 payroll_company = _payroll_company
@@ -94,23 +126,27 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
     )
     dashboard = Dashboard(book, company_name="测试企业")
     data = dashboard.brief("2026-09", limit=500)["data"]
-    assert data["voucher_count"] == 501
-    assert len(data["collections"]["vouchers"]["items"]) == 500
-    assert data["total_debit_fen"] == data["position"]["bank_fen"] == 501
-    page = data["collections"]["vouchers"]["page"]
+    assert data["activity_count"] == 501
+    assert len(data["collections"]["activity"]["items"]) == 500
+    assert data["funds_overview"]["bank_fen"] == 501
+    page = data["collections"]["activity"]["page"]
     assert page["has_more"] and page["total_count"] == page["filtered_count"] == 501
     assert page["returned_count"] == 500
     following = dashboard.brief(
         "2026-09",
-        section="vouchers",
+        section="activity",
         cursor=page["next_cursor"],
         limit=500,
         expected_version=dashboard.brief("2026-09")["snapshot_version"],
     )["data"]
-    assert len(following["collections"]["vouchers"]["items"]) == 1
-    assert following["total_debit_fen"] == 501
+    assert len(following["collections"]["activity"]["items"]) == 1
+    assert following["funds_overview"]["bank_fen"] == 501
     assert sum(group["event_count"] for group in following["activity_groups"]) == 501
-    assert sum(len(group["rows"]) for group in following["activity_groups"]) == 1
+    default = dashboard.brief("2026-09")["data"]
+    assert len(default["collections"]["activity"]["items"]) == 20
+    assert default["activity_count"] == default["funds_overview"]["bank_fen"] == 501
+    with dashboard._snapshot("2026-09") as snapshot:
+        assert snapshot.month_journal.totals()["debit"] == 501
     funds = dashboard.funds("2026-09", limit=500)["data"]
     assert funds["total_fen"] == funds["inflow_fen"] == 501
     assert len(funds["collections"]["movements"]["items"]) == 500
@@ -123,6 +159,45 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
     )["data"]
     assert len(following["collections"]["movements"]["items"]) == 1
     assert following["inflow_fen"] == 501
+
+
+def test_owner_default_activity_page_keeps_complete_monthly_expense(bank_book):
+    book, _, _, proof = bank_book
+    data = {
+        "period": "2026-09",
+        "counterparty_id": "expense-supplier",
+        "amount_fen": 1,
+        "expense_class": "administration",
+        "creditor_kind": "supplier",
+    }
+    seed_registration_entities(book, "expense", data)
+    facts = [
+        {
+            "kind": "expense",
+            "subject_id": f"expense-{index:03}",
+            "data": data,
+            "evidence": [proof],
+            "expected_revision": 0,
+        }
+        for index in range(21)
+    ]
+    book.save_facts(facts, request_id="owner-expenses")
+    subjects = [item["subject_id"] for item in facts]
+    preview = book.preview(subjects)
+    book.confirm(
+        subjects,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="owner-expenses-published",
+    )
+    result = Dashboard(book).brief("2026-09")["data"]
+    assert len(result["collections"]["activity"]["items"]) == 20
+    assert result["activity_count"] == 21
+    assert result["position"]["month_revenue_fen"] == 0
+    assert result["position"]["month_expense_fen"] == 21
+    assert result["position"]["month_result_fen"] == -21
+    assert result["open_items"]["payable_fen"] == 21
+    assert sum(group["event_count"] for group in result["activity_groups"]) == 21
 
 
 def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
@@ -151,7 +226,7 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
     )
     dashboard = Dashboard(book)
     data = dashboard.funds("2026-09", limit=1)["data"]
-    assert data["bank_statement"]["matched_count"] == 2
+    assert diagnostic_funds(book, "2026-09", limit=1)["bank_statement"]["matched_count"] == 2
     assert data["bank_statement"]["transaction_count"] == 2
     statement_rows = data["collections"]["statements"]
     assert len(statement_rows["items"]) == 1
@@ -186,17 +261,20 @@ def test_unpublished_or_missing_inventory_is_not_complete(bank_book):
     )
     dashboard = Dashboard(book)
     data = dashboard.brief("2026-09")["data"]
-    assert data["voucher_count"] == 0
-    assert not data["material_completeness"]["satisfied"]
-    assert any(issue["field"] == "charge" for issue in data["validation"]["issues"])
+    assert data["activity_count"] == 0
+    checks = explicit_checks(dashboard, "2026-09")
+    assert not checks["material_completeness"]["satisfied"]
+    assert any(issue["field"] == "charge" for issue in checks["issues"])
     commit("charge")
     data = dashboard.brief("2026-09")["data"]
-    assert not data["material_completeness"]["satisfied"]
+    checks = explicit_checks(dashboard, "2026-09")
+    assert not checks["material_completeness"]["satisfied"]
     assert any(
-        issue["field"].startswith("materials.") for issue in data["material_completeness"]["issues"]
+        issue["field"].startswith("materials.")
+        for issue in checks["material_completeness"]["issues"]
     )
-    assert data["collections"]["vouchers"]["items"][0]["date"] is None
-    assert data["collections"]["vouchers"]["items"][0]["recognition"]["precision"] == "month"
+    assert data["collections"]["activity"]["items"][0]["date"] is None
+    assert data["collections"]["activity"]["items"][0]["recognition"]["precision"] == "month"
 
 
 def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
@@ -209,19 +287,25 @@ def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
     dashboard = Dashboard(engine)
     january = dashboard.brief("2026-01")["data"]
     february = dashboard.brief("2026-02")["data"]
-    assert january["total_debit_fen"] == before["total_debit_fen"] == 100
     assert (
-        sum(line["debit_fen"] for line in january["collections"]["vouchers"]["items"][0]["lines"])
-        == 100
+        january["position"]["month_expense_fen"] == before["position"]["month_expense_fen"] == 100
+    )
+    assert (
+        sum(line["debit_fen"] for line in diagnostic_vouchers(engine, "2026-01")[0]["lines"]) == 100
     )
     assert february["position"]["month_expense_fen"] == 25
     # This synthetic calculator supplies no creditor identity for its 2202 line.
-    assert february["position"]["liabilities_fen"] is None
-    assert february["position"]["equation_valid"] is None
-    assert february["position"]["issues"]
+    position = diagnostic_position(engine, "2026-02")
+    assert position["liabilities_fen"] is None
+    assert position["equation_valid"] is None
+    assert position["issues"]
+    assert not position["complete"]
+    # Party classification does not change the posted operating result.
+    assert february["position"]["complete"]
+    assert not any(risk["key"] == "amounts" for risk in february["risks"])
     assert sorted(
         sum(line["debit_fen"] for line in v["lines"])
-        for v in february["collections"]["vouchers"]["items"]
+        for v in diagnostic_vouchers(engine, "2026-02")
     ) == [100, 125]
     with engine.store.connection(read_only=True) as connection:
         from ai_accounting.kernel.close_storage import decode_close
@@ -248,14 +332,14 @@ def test_reviewed_no_impact_source_keeps_number_and_displays_new_evidence(engine
     )
     _, reviewed = publish(engine, request="reviewed-publication")
     data = Dashboard(engine).brief("2026-01")["data"]
-    assert data["collections"]["vouchers"]["items"][0]["number"] == str(
-        original["results"][0]["voucher_number"]
-    )
+    diagnostic = diagnostic_vouchers(engine, "2026-01")[0]
+    assert diagnostic["number"] == str(original["results"][0]["voucher_number"])
+    assert diagnostic["calculation_id"] == reviewed["results"][0]["calculation_id"]
+    assert diagnostic["evidence"] == [proof]
     assert (
-        data["collections"]["vouchers"]["items"][0]["calculation_id"]
-        == reviewed["results"][0]["calculation_id"]
+        data["collections"]["activity"]["items"][0]["voucher_version_id"]
+        == diagnostic["voucher_version_id"]
     )
-    assert data["collections"]["vouchers"]["items"][0]["evidence"] == [proof]
 
 
 def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
@@ -285,15 +369,22 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     assert employee["gross_salary_fen"] == 4000000
     assert employee["individual_income_tax_fen"] == 90000
     assert employee["net_salary_fen"] == 3910000
-    assert employee["tax_withholding_start_date"] == "2026-03"
-    assert employee["tax_details"][0]["calculated_tax_fen"] == 30000
-    assert employee["tax_details"][0]["actual_withholding_tax_fen"] == 90000
+    values = company.current(wage.subject_id).values
+    assert values["tax_input"]["withholding_start_date"] == "2026-03"
+    assert values["calculated_tax_fen"] == 30000
+    assert values["tax_fen"] == 90000
     assert employee["recorded_net_payments_fen"] == 0
-    assert employee["declared_tax_fen"] is None
+    with company.engine.store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_payroll_tax_declaration_actual"
+            ).fetchone()[0]
+            == 0
+        )
     assert employee["in_period"] is None
     assert data["employees"]["unknown_period_count"] == 1
     assert data["employees"]["in_period_count"] == 0
-    assert data["employees"]["detail_reconciled"]
+    assert data["workforce_cost"]["total_fen"] == employee["company_cost_fen"]
     assert (
         wire_money(data)["collections"]["employees"]["items"][0]["individual_income_tax_fen"]
         == "90000"
@@ -318,11 +409,13 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
     payroll_items = Dashboard(company.engine).brief("2026-01", section="open_items")["data"][
         "collections"
     ]["open_items"]["items"]
-    by_component = {item["name"]: item for item in payroll_items}
+    diagnostics = diagnostic_open_items(company.engine, "2026-01")["collection"]["items"]
+    by_component = {item["name"]: item for item in diagnostics}
 
     assert set(by_component) == {"net", "tax", "employee_social", "employer_social"}
     assert {item["party"] for item in payroll_items} == {"测试员工"}
-    assert {item["party_key"] for item in payroll_items} == {"employee"}
+    assert all("source_period" not in item for item in payroll_items)
+    assert {item["party_key"] for item in diagnostics} == {"employee"}
     assert {name: item["description"] for name, item in by_component.items()} == {
         "net": "实发工资",
         "tax": "代扣个人所得税",
@@ -359,7 +452,8 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     original_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
         "open_items"
     ]["items"]
-    original_net = next(item for item in original_items if item["name"] == "net")
+    original_net = next(item for item in original_items if item["description"] == "实发工资")
+    assert all("source_period" not in item for item in original_items)
     assert original_net["status"] == "open"
     assert original_net["current_status"] == "open"
     assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
@@ -370,11 +464,14 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     assert dashboard.funds("2026-02")["data"]["outflow_fen"] == 907400
     january = dashboard.brief("2026-01")["data"]["open_items"]
     assert january["payable_fen"] == original["payable_fen"]
-    assert january["current_outstanding"]["payable_fen"] == original["payable_fen"] - 907400
+    assert (
+        diagnostic_open_items(company.engine, "2026-01")["current_outstanding"]["payable_fen"]
+        == original["payable_fen"] - 907400
+    )
     january_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
         "open_items"
     ]["items"]
-    january_net = next(item for item in january_items if item["name"] == "net")
+    january_net = next(item for item in january_items if item["description"] == "实发工资")
     assert january_net["status"] == "open"
     assert january_net["current_status"] == "settled"
     assert january_net["current_outstanding_fen"] == 0
@@ -384,11 +481,11 @@ def test_closed_actual_declaration_shows_existing_correction_without_reposting(p
     company = payroll_company
     company.publish("january", "february")
     declaration, _ = declare(company, extra=0)
-    dashboard = Dashboard(company.engine)
+    Dashboard(company.engine)
     assert (
-        dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"][0][
-            "declared_tax_fen"
-        ]
+        BusinessQueries(company.engine).business_status("declared", "2026-01")["latest_fact"][
+            "data"
+        ]["declared_tax_fen"]
         == 12600
     )
     company.close("2026-01")
@@ -409,9 +506,9 @@ def test_closed_actual_declaration_shows_existing_correction_without_reposting(p
         request_id=company.request(),
     )
     assert (
-        dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"][0][
-            "declared_tax_fen"
-        ]
+        BusinessQueries(company.engine).business_status("declared", "2026-01")["latest_fact"][
+            "data"
+        ]["declared_tax_fen"]
         == 12700
     )
     assert company.engine.ledger("2026-01") == original_ledger
@@ -506,8 +603,11 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
     january = dashboard.assets("2026-01")["data"]
     february = dashboard.assets("2026-02")["data"]
     assert january["ledger_cost_fen"] == january["month_acquired_fen"] == 120000
-    assert february["ledger_cost_fen"] == february["card_cost_fen"] == 132000
-    assert february["reconciled"]
+    assert (
+        february["ledger_cost_fen"]
+        == sum(item["cost_fen"] for item in february["collections"]["assets"]["items"])
+        == 132000
+    )
     assert february["month_acquired_count"] == february["month_acquired_fen"] == 0
     assert february["month_activated_count"] == 0
     assert february["month_cost_adjustment_fen"] == 12000
@@ -520,8 +620,7 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
     # not a certified source for deciding whether cost minus carrying is charge.
     with company.engine.store.connection() as connection:
         changed = connection.execute(
-            "UPDATE period_balance SET amount=amount+1 "
-            "WHERE posting_period=? AND balance_key=?",
+            "UPDATE period_balance SET amount=amount+1 WHERE posting_period=? AND balance_key=?",
             (YearMonth("2026-01").ordinal, "asset:computer:carrying"),
         )
         assert changed.rowcount == 1
@@ -581,13 +680,21 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     )
     february = Dashboard(book).assets("2026-02")["data"]
     assert february["registered_count"] == 2
-    assert february["card_cost_fen"] == february["ledger_cost_fen"] == 150000
-    assert february["reconciled"]
+    assert (
+        sum(item["cost_fen"] for item in february["collections"]["assets"]["items"])
+        == february["ledger_cost_fen"]
+        == 150000
+    )
     february_assets = Dashboard(book).assets("2026-02", section="assets", asset_filter="fixed")[
         "data"
     ]["collections"]["assets"]["items"]
     assert all(item["acquisition_date"] is None for item in february_assets)
-    assert all(item["acquisition_reference"] == "1" for item in february_assets)
+    assert all(item["settlement_scope"] == "本验收批次结算" for item in february_assets)
+    assert all(item["payment_summary"] == {
+        "obligation_count": 2, "checking": False,
+        "amount_fen": 150000, "paid_fen": 0,
+        "other_settled_fen": 0, "remaining_fen": 150000,
+    } for item in february_assets)
     preview = batches.prepare_consumption_month("2026-03", **options)
     batches.confirm_consumption_month(
         "2026-03",
@@ -598,7 +705,11 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     )
     march = Dashboard(book).assets("2026-03")["data"]
     assert march["month_charge_fen"] == 12500
-    assert march["card_net_fen"] == march["ledger_net_fen"] == 137500
+    assert (
+        sum(item["book_value_fen"] for item in march["collections"]["assets"]["items"])
+        == march["ledger_net_fen"]
+        == 137500
+    )
     store(
         "asset_disposal",
         "computer-scrap",
@@ -625,7 +736,6 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
         request_id="activate-after-disposal",
     )
     disposed = Dashboard(book).assets("2026-03")["data"]
-    assert disposed["reconciled"]
     assert disposed["active_count"] == 1
     assert disposed["ledger_net_fen"] == 27500
     disposed_assets = Dashboard(book).assets("2026-03", section="assets", asset_filter="fixed")[
@@ -633,6 +743,7 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     ]["collections"]["assets"]["items"]
     computer = next(item for item in disposed_assets if item["asset_id"] == "computer")
     assert computer["disposal"]["loss_fen"] == 110000
+    assert "settlement" not in computer["disposal"]
     assert computer["book_value_fen"] == 0
     _assert_asset_member_summary_parity(book, "2026-02")
     _assert_asset_member_summary_parity(book, "2026-03")
@@ -649,7 +760,10 @@ def test_opening_cards_and_bank_balances_are_not_current_movements(opening_book)
     assert funds["opening_fen"] == funds["total_fen"] == 1010000
     assert funds["movement_count"] == 0
     assert funds["inflow_fen"] == 0
-    assert assets["reconciled"]
+    assert (
+        sum(item["book_value_fen"] for item in assets["collections"]["assets"]["items"])
+        == assets["ledger_net_fen"]
+    )
     assert assets["ledger_net_fen"] == 100000
     assert assets["month_acquired_count"] == 0
     asset_items = dashboard.assets("2026-01", section="assets", asset_filter="fixed")["data"][
@@ -700,11 +814,7 @@ def test_quarterly_closed_display_and_export_share_frozen_plan(report_book):
     data = Dashboard(book).quarterly_report(2026, 1)
     assert expected["status"] == "ready"
     assert data["export"]["available"]
-    assert (
-        data["export"]["preview_digest"]
-        == data["technical"]["calculation_hash"]
-        == expected["digest"]
-    )
+    assert data["export"]["preview_digest"] == expected["digest"]
     assert data["export"]["epochs"] == expected["epochs"]
     assert (
         data["summary"]["assets_total_fen"]
@@ -740,7 +850,8 @@ def test_empty_catalog_company_and_money_precision(bank_book, tmp_path):
     assert error.value.code == "invalid_command"
 
 
-def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path):
+@pytest.mark.parametrize("zero_ending", [False, True])
+def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path, zero_ending):
     """A non-zero account outside every mapping table is collected, not dropped from 收入/费用."""
 
     class MappedExpense(Fact):
@@ -759,6 +870,9 @@ def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path
         kind: ClassVar[str] = "test_unmapped_revenue"
         amount: PositiveFen
 
+    class PreviousUnmappedBalance(Fact):
+        kind: ClassVar[str] = "test_previous_unmapped_balance"
+
     def post(debit, credit):
         def calculate(version, context):
             amount = version.fact.amount
@@ -773,6 +887,12 @@ def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path
     registry.register(MappedRevenue, post("2001", "5001"))
     registry.register(UnmappedExpense, post("199901", "2001"))
     registry.register(UnmappedRevenue, post("2001", "199902"))
+    registry.register(
+        PreviousUnmappedBalance,
+        lambda version, context: Outcome(
+            (Line("199901", credit=700), Line("199902", debit=900), Line("2001", credit=200)), {}
+        ),
+    )
     engine = Engine(
         Store.create(
             tmp_path / "unmapped-account.sqlite",
@@ -785,6 +905,22 @@ def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path
     proof = engine.register_evidence(
         b"synthetic unmapped account", "text/plain", "unmapped", request_id="unmapped-evidence"
     )["digest"]
+    if zero_ending:
+        engine.save_fact(
+            "test_previous_unmapped_balance",
+            "previous-unmapped",
+            {"period": "2025-12"},
+            evidence=(proof,),
+            expected_revision=0,
+            request_id="previous-unmapped",
+        )
+        preview = engine.preview(["previous-unmapped"])
+        engine.confirm(
+            ["previous-unmapped"],
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id="post-previous-unmapped",
+        )
     facts = (
         ("mapped-expense", "test_mapped_expense", 100),
         ("mapped-revenue", "test_mapped_revenue", 400),
@@ -808,7 +944,15 @@ def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path
         epochs=preview["epochs"],
         request_id="post-unmapped-accounts",
     )
-    position = Dashboard(engine).brief("2026-01")["data"]["position"]
+    data = Dashboard(engine).brief("2026-01")["data"]
+    position = diagnostic_position(engine, "2026-01")
+    assert data["position"]["complete"] is False
+    risk_keys = {item["key"] for item in data["risks"]}
+    assert "month_amounts" in risk_keys
+    assert ("ending_amounts" in risk_keys) is not zero_ending
+    assert data["position"]["month_revenue_fen"] == 400
+    assert data["position"]["month_expense_fen"] == 100
+    assert data["position"]["month_result_fen"] == 300
     # Only the mapped accounts move 收入/费用; the unmapped amounts stay out of both sums.
     assert position["month_revenue_fen"] == 400
     assert position["month_expense_fen"] == 100

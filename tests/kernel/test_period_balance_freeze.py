@@ -1,5 +1,7 @@
 """Real close-rooted, as-of period balance proof on synthetic companies."""
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -56,6 +58,209 @@ def _header(connection, prepared):
     header = verified_header(connection, row)
     assert derived_root(header, "period_balance") == prepared.root_digest
     return header
+
+
+def test_authenticated_balance_root_keeps_amounts_without_body_reencoding(
+    company, monkeypatch, record_testsuite_property
+):
+    from ai_accounting.kernel.types import canonical
+
+    save(company, 10000)
+    publish(company, "initial")
+    close(company, "2026-01")
+    with company[0].store.connection(read_only=True) as connection:
+        prepared = _prepared(connection, "2026-01")
+    body = json.loads(prepared.payload)
+    serialized_body_bytes = []
+    encode = json.JSONEncoder.encode
+
+    def measured(encoder, value):
+        encoded = encode(encoder, value)
+        if isinstance(value, dict) and set(value) == set(body):
+            serialized_body_bytes.append(len(encoded.encode("utf-8")))
+        return encoded
+
+    monkeypatch.setattr(json.JSONEncoder, "encode", measured)
+    with QueryReads.snapshot(company[0]) as reads:
+        header = _header(reads.connection, prepared)
+        full = read_frozen_balances(reads.connection, header, "test_position")
+        selected = read_frozen_balances(reads.connection, header, "test_position", {"bank-a"})
+        absent = read_frozen_balances(reads.connection, header, "test_position", {"absent"})
+        assert full == selected == [
+            {"category": "test_position", "key": "bank-a", "ending": 10000,
+             "activity": 10000, "ending_present": True, "activity_present": True}
+        ]
+        assert absent == []
+    assert serialized_body_bytes == []
+    for _ in range(3):
+        assert canonical(body) == prepared.payload
+    expected_bytes = 3 * len(prepared.payload.encode("utf-8"))
+    assert sum(serialized_body_bytes) == expected_bytes > 0
+    record_testsuite_property("period_balance_read_root_reencoded_bytes", 0)
+    record_testsuite_property("period_balance_former_root_reencoded_bytes", expected_bytes)
+
+
+@pytest.mark.parametrize("unrelated_count", [16, 128])
+@pytest.mark.parametrize("category", ["test_position", None, ("test_position", "absent")])
+def test_selected_keys_are_located_once_as_unrelated_balances_grow(
+    company, monkeypatch, unrelated_count, category,
+):
+    from ai_accounting.kernel import period_balance_freeze as frozen
+
+    selected = {"bank-a", "missing-a", "missing-b"}
+    target_numbers = {frozen._bucket(key) for key in selected}
+    accounts = []
+    for index in range(10000):
+        key = f"unrelated-{index}"
+        if frozen._bucket(key) not in target_numbers:
+            accounts.append(key)
+        if len(accounts) == unrelated_count:
+            break
+    assert len(accounts) == unrelated_count
+    subjects = ["position"]
+    save(company, 12345)
+    for index, account in enumerate(accounts):
+        subject = f"unrelated-{index}"
+        subjects.append(subject)
+        save(company, index + 1, account=account, subject=subject)
+    engine = company[0]
+    preview = engine.preview(subjects)
+    engine.confirm(
+        subjects, preview_digest=preview["digest"], epochs=preview["epochs"],
+        request_id="publish-key-work",
+    )
+    close(company, "2026-01")
+    located = []
+    original = frozen._bucket
+
+    def measured(key):
+        located.append(key)
+        return original(key)
+
+    with QueryReads.snapshot(engine) as reads:
+        prepared = _prepared(reads.connection, "2026-01")
+        header = _header(reads.connection, prepared)
+        monkeypatch.setattr(frozen, "_bucket", measured)
+        assert read_frozen_balances(reads.connection, header, category, selected) == [
+            {"category": "test_position", "key": "bank-a", "ending": 12345,
+             "activity": 12345, "ending_present": True, "activity_present": True}
+        ]
+    # Three requested keys plus the one actual selected row's independent
+    # content check. Additional, non-hit balances cannot add lookup work.
+    assert len(located) <= len(selected) + 1
+    assert not set(accounts).intersection(located)
+
+
+def test_explicit_absent_category_still_rejects_uncommitted_bucket_rows(company):
+    from ai_accounting.kernel import period_balance_freeze as frozen
+
+    save(company, 100)
+    publish(company, "initial")
+    close(company, "2026-01")
+    engine = company[0]
+    with engine.store.connection() as connection:
+        prepared = _prepared(connection, "2026-01")
+        connection.execute(
+            "INSERT INTO period_balance_freeze_row VALUES(?,?,?,?,?,?,?,?)",
+            (prepared.period, "absent", "bank-a", frozen._bucket("bank-a"), 1, 1, 1, 1),
+        )
+        connection.commit()
+    with QueryReads.snapshot(engine) as reads:
+        with pytest.raises(KernelError) as error:
+            read_frozen_balances(reads.connection, _header(reads.connection, prepared),
+                                 "absent", {"bank-a"})
+        assert error.value.details["reason"] == "unexpected_bucket_rows"
+
+
+@pytest.mark.parametrize("change,rebind_mutable", [
+    ("whitespace", False), ("format", True), ("bucket_digest", True),
+])
+def test_balance_root_raw_changes_reject_at_parent_and_repair_from_source(
+    company, change, rebind_mutable
+):
+    from ai_accounting.kernel.integrity import verify_integrity
+    from ai_accounting.kernel.types import canonical
+
+    save(company, 10000)
+    publish(company, "initial")
+    close(company, "2026-01")
+    engine = company[0]
+    with engine.store.connection(read_only=True) as connection:
+        prepared = _prepared(connection, "2026-01")
+    body = json.loads(prepared.payload)
+    if change == "whitespace":
+        altered = " " + prepared.payload
+    elif change == "format":
+        altered = json.dumps(body, indent=2)
+    else:
+        body["buckets"][0][3] = "0" * 64
+        altered = canonical(body)
+    checksum = (
+        hashlib.sha256(altered.encode("utf-8")).digest()
+        if rebind_mutable else prepared.root_digest
+    )
+    with engine.store.connection() as connection:
+        connection.execute(
+            "UPDATE period_balance_freeze_root SET payload=?,digest=? WHERE period=?",
+            (altered, checksum, prepared.period),
+        )
+        connection.commit()
+    with QueryReads.snapshot(engine) as reads:
+        header = _header(reads.connection, prepared)
+        for _ in range(2):
+            with pytest.raises(KernelError) as caught:
+                read_frozen_balances(reads.connection, header, "test_position")
+            assert caught.value.details["reason"] == "root_digest_mismatch"
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError):
+            verify_integrity(engine, connection)
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert compare_balance_freeze(connection, repair=True)["changed"]
+        assert connection.execute(
+            "SELECT payload FROM period_balance_freeze_root WHERE period=?", (prepared.period,)
+        ).fetchone()[0] == prepared.payload
+        connection.commit()
+    with QueryReads.snapshot(engine) as reads:
+        assert read_frozen_balances(
+            reads.connection, _header(reads.connection, prepared), "test_position"
+        )[0]["ending"] == 10000
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert verify_integrity(engine, connection)["status"] == "verified"
+
+
+@pytest.mark.parametrize("change", ["whitespace", "unknown_field", "row_type"])
+def test_illegal_prepared_balance_still_rejects_before_persistence(company, change):
+    from ai_accounting.kernel.period_balance_freeze import persist_balance_freeze
+    from ai_accounting.kernel.types import canonical
+
+    save(company, 10000)
+    publish(company, "initial")
+    close(company, "2026-01")
+    with company[0].store.connection(read_only=True) as connection:
+        prepared = _prepared(connection, "2026-01")
+        body = json.loads(prepared.payload)
+        if change == "row_type":
+            row = prepared.rows[0]
+            wrong = replace(prepared, rows=((*row[:4], str(row[4]), *row[5:]),))
+        else:
+            if change == "unknown_field":
+                body["unknown"] = 1
+                payload = canonical(body)
+            else:
+                payload = " " + prepared.payload
+            wrong = replace(
+                prepared, payload=payload,
+                root_digest=hashlib.sha256(payload.encode("utf-8")).digest(),
+            )
+        with pytest.raises(KernelError) as caught:
+            persist_balance_freeze(connection, wrong)
+        assert caught.value.details["reason"] in {"prepared_root_identity", "prepared_row_identity"}
+        assert connection.execute(
+            "SELECT payload FROM period_balance_freeze_root WHERE period=?", (prepared.period,)
+        ).fetchone()[0] == prepared.payload
 
 
 def test_asof_close_root_preserves_activity_and_zero_key_after_later_correction(company):

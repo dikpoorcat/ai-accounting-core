@@ -1,0 +1,131 @@
+{
+  "kind": "raw_synthetic_receipts",
+  "files": [
+    {
+      "source": ".tmp\\stage9-owner-main12-browser-r49.json",
+      "archive": "owner-required-r50-stage9-owner-main12-browser-r49.json.gz",
+      "bytes": 9050,
+      "sha256": "65f355bdcf1b9a0bd99b4e9892d0a1ddbe046249b531f532922464cae3ed2ccc"
+    },
+    {
+      "source": ".tmp\\stage9-owner-main12-browser-r49.log",
+      "archive": "owner-required-r50-stage9-owner-main12-browser-r49.log.gz",
+      "bytes": 115,
+      "sha256": "193669f5acb2886a0f003272389c3f46ef1d7a6b58a64c2e3225fe1e11b404cc"
+    },
+    {
+      "source": ".tmp\\stage9-owner-main12-diagnostic-r49.json",
+      "archive": "owner-required-r50-stage9-owner-main12-diagnostic-r49.json.gz",
+      "bytes": 50685,
+      "sha256": "a24ff6364f42937eede3066b91798e309936942cd52fc2b3f7504b7f39a77b97"
+    },
+    {
+      "source": ".tmp\\stage9-owner-main12-diagnostic-r49.log",
+      "archive": "owner-required-r50-stage9-owner-main12-diagnostic-r49.log.gz",
+      "bytes": 118,
+      "sha256": "08831c3888ac9fb77b806da3d6f86b3c2be97c98629867ba7f3ebc95041a853a"
+    },
+    {
+      "source": ".tmp\\stage9-owner-required-profile-r49.json",
+      "archive": "owner-required-r50-stage9-owner-required-profile-r49.json.gz",
+      "bytes": 372364,
+      "sha256": "7f4276f64082fcabbae9f63b88cdbfc3eaf3b222ba253ed8df68977e7c1ea4a8"
+    },
+    {
+      "source": ".tmp\\stage9-owner-required-profile-r49.log",
+      "archive": "owner-required-r50-stage9-owner-required-profile-r49.log.gz",
+      "bytes": 2337,
+      "sha256": "0f2e9577098fbda1441252ccb0fb174cfb730d02bf7f8c3f97cbee1727bdcc8c"
+    },
+    {
+      "source": ".tmp\\stage9-owner-main12-r49-verified.json",
+      "archive": "owner-required-r50-stage9-owner-main12-r49-verified.json.gz",
+      "bytes": 9681,
+      "sha256": "4ef4c3d55938804b826a1bbe331ff59bdbb468f7222d76c7f1187afca3ef54d2"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-plan-audit.json",
+      "archive": "owner-required-r50-stage9-json-source-plan-audit.json.gz",
+      "bytes": 26330,
+      "sha256": "c007064861bb7a4e354934e4c0125732112d422b850f4ca0e801bc400d3dbee8"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-plan-audit-bounded.json",
+      "archive": "owner-required-r50-stage9-json-source-plan-audit-bounded.json.gz",
+      "bytes": 1596,
+      "sha256": "194654b0516bd0329f4fdf45263ab6390510ed60a8f78534c9d609cf4f58b8be"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-small-ab.json",
+      "archive": "owner-required-r50-stage9-json-source-small-ab.json.gz",
+      "bytes": 355,
+      "sha256": "94daeae4dbf554c058db3cb734d9e45943d7fb7d7d2778eaeef524575c1a1494"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-lookup-targeted.log",
+      "archive": "owner-required-r50-stage9-json-source-lookup-targeted.log.gz",
+      "bytes": 710,
+      "sha256": "03182e1011ab50b1bfda9986d3826a6c3699ce3144deedcd1499480b2a38b55b"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-lookup-targeted.xml",
+      "archive": "owner-required-r50-stage9-json-source-lookup-targeted.xml.gz",
+      "bytes": 4092,
+      "sha256": "61598b6bb8cba86da763125dd6a6fb820be3bb9865d26cfd319e3ed0a95f96d7"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-lookup-final.log",
+      "archive": "owner-required-r50-stage9-json-source-lookup-final.log.gz",
+      "bytes": 544,
+      "sha256": "2ed77de8e28f6a87f2638f3d2046156d69465d72835cde62dc6d6c7fac0b3ecb"
+    },
+    {
+      "source": ".tmp\\stage9-json-source-lookup-final.xml",
+      "archive": "owner-required-r50-stage9-json-source-lookup-final.xml.gz",
+      "bytes": 1272,
+      "sha256": "a50ad67b34e07d87b30e9a02ce3f151eb8bbfd40483fe00baab40cf5c1a861b6"
+    },
+    {
+      "source": ".tmp\\stage9-owner-employee-required-r50.log",
+      "archive": "owner-required-r50-stage9-owner-employee-required-r50.log.gz",
+      "bytes": 194,
+      "sha256": "c2f172f61c323b37d81e03953ccabc052602b132c8192b14fc5e074ca938efed"
+    },
+    {
+      "source": ".tmp\\stage9-owner-employee-required-r50.xml",
+      "archive": "owner-required-r50-stage9-owner-employee-required-r50.xml.gz",
+      "bytes": 13350,
+      "sha256": "bcc3db243b8dae1180791ed2e922c716e3ab7816f71da7fe341c600a90361f6e"
+    },
+    {
+      "source": ".tmp\\stage9-employee-obligations-r50-comparison.json",
+      "archive": "owner-required-r50-stage9-employee-obligations-r50-comparison.json.gz",
+      "bytes": 4351,
+      "sha256": "73ac6234a80eafe489cdfc3bb5836d23b390a3989335bd1ff8c18ef3bc4b5206"
+    },
+    {
+      "source": ".tmp\\stage9-owner-brief-amounts-source.log",
+      "archive": "owner-required-r50-stage9-owner-brief-amounts-source.log.gz",
+      "bytes": 547,
+      "sha256": "a1abd92627eda585048c9b8f79d8218c6b7759d1a267e27c8be492df61d46548"
+    },
+    {
+      "source": ".tmp\\stage9-owner-brief-amounts-source.xml",
+      "archive": "owner-required-r50-stage9-owner-brief-amounts-source.xml.gz",
+      "bytes": 3773,
+      "sha256": "d330cce8bfd3e427a0177ca9ba82c3a72539bc3a38cc85fb2ad0e9595458433d"
+    },
+    {
+      "source": ".tmp\\stage9-owner-brief-amounts-affected.log",
+      "archive": "owner-required-r50-stage9-owner-brief-amounts-affected.log.gz",
+      "bytes": 873,
+      "sha256": "963b626c62066a19dc464c32e83304507f5f1f09e2f77660e3fea77b7d2f3ffa"
+    },
+    {
+      "source": ".tmp\\stage9-owner-brief-amounts-affected.xml",
+      "archive": "owner-required-r50-stage9-owner-brief-amounts-affected.xml.gz",
+      "bytes": 12114,
+      "sha256": "a61597eb2c00c4c6ab80b14dc1b5afefe9d3dd7dfdc8617318a8ea4fae1a8a8c"
+    }
+  ]
+}

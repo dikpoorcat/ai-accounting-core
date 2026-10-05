@@ -6,12 +6,12 @@ import { validateDashboardFundsResponse } from "./generated/dashboardFunds.js";
 export type FundsDashboardResponse = DashboardFundsResponse;
 export type FundsData = DashboardFundsContract.FundsData;
 export type FundAccount = DashboardFundsContract.FundAccount;
-export type BankStatementState = DashboardFundsContract.BankStatementRow["state"];
 
 export interface FundsQuery {
   section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";
   cursor?: string;
   expected_version?: string;
+  movement_account_selection?: "all" | "first";
   movement_account_type?: FundAccount["type"];
   movement_account_id?: string;
   statement_account_id?: string;
@@ -28,8 +28,6 @@ function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolea
 
   const data = response.data;
   if (!validDashboardCollections(data)) return false;
-  const deferred = url.searchParams.get("preparation") === "deferred";
-  if (deferred ? data.period_preparation !== null : data.period_preparation === null) return false;
   const requestedSection = url.searchParams.get("section") ?? "movements";
   if (!(requestedSection in data.collections)) return false;
 
@@ -37,8 +35,15 @@ function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolea
   const movementType = url.searchParams.get("movement_account_type");
   const movementAccount = url.searchParams.get("movement_account_id");
   const statementAccount = url.searchParams.get("statement_account_id");
-  return (!movementType || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === movementType))
-    && (!movementAccount || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_id === movementAccount))
+  const selected = data.selected_movement_account;
+  if (url.searchParams.get("movement_account_selection") === "first") {
+    const first = data.collections.accounts?.items[0];
+    if (first ? !selected || selected.type !== first.type || selected.account_id !== first.account_id : selected !== null) return false;
+  } else if (movementType || movementAccount) {
+    if (!selected || selected.type !== movementType || selected.account_id !== movementAccount) return false;
+  } else if (selected !== null) return false;
+  return (!selected || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === selected.type && item.account_id === selected.account_id))
+    && (url.searchParams.get("movement_account_selection") !== "first" || selected !== null || !movements || movements.items.length === 0)
     && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
 }
 
@@ -47,7 +52,7 @@ export function requestDashboardFunds(path: string, options: { signal?: AbortSig
 }
 
 export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {
-  const query = new URLSearchParams({ limit: "100", ...(periodKey ? { period: periodKey } : {}), ...options });
+  const query = new URLSearchParams({ limit: "20", ...(periodKey ? { period: periodKey } : {}), ...options });
   query.set("preparation", "deferred");
   return requestDashboardFunds(`/api/dashboard/funds?${query}`, {
     signal,

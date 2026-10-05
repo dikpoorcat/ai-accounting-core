@@ -12,7 +12,7 @@ from ..contracts import (
     NeedsInformation,
     Outcome,
 )
-from ..types import ActualDate, PositiveFen, sum_fen
+from ..types import ActualDate, EvidenceDigest, PositiveFen, sum_fen
 from .money import FUNDS_ACCOUNT_BY_BALANCE_CATEGORY
 from .platforms import (
     MovementConsumption,
@@ -39,7 +39,7 @@ class ManagedReserveInternalMovement(MovementConsumption):
     kind: ClassVar[str] = "managed_reserve_internal_movement"
     platform_account_id: Identifier
     boundary: Literal["reserve_internal"]
-    boundary_evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    boundary_evidence_digest: EvidenceDigest
     reserve_boundary_confirmed: StrictBool | None = Field(
         default=None,
         json_schema_extra={

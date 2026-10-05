@@ -11,10 +11,9 @@ from test_engine import engine as engine_fixture
 from test_integrity_content import damage
 
 from ai_accounting.kernel import close_storage
-from ai_accounting.kernel.business_queries import _selected_accounting_references
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard_reads import Journal
-from ai_accounting.kernel.query_reads import QueryReads
+from ai_accounting.kernel.query_reads import QueryReads, _selected_voucher_path_references
 from ai_accounting.kernel.read_indexes import (
     CLOSE_VOUCHERS,
     selected_voucher_references,
@@ -87,21 +86,25 @@ def test_voucher_reference_lookup_preserves_cutoff_duplicates_and_index_work():
     assert new_vm * 10 < old_vm
 
 
-def test_period_reference_lookup_preserves_wrong_type_and_duplicate_pairs_with_less_work():
+def test_period_reference_lookup_preserves_wrong_type_and_unique_heads_with_less_work():
     connection = _directory()
     rows = [
-        (period, CLOSE_VOUCHERS, str(index), "voucher", f"item-{index}", None)
+        (period, CLOSE_VOUCHERS, str(index), "voucher", f"item-{period}-{index}", None)
         for period in (10, 11)
         for index in range(1000)
     ]
     rows += [
-        (10, CLOSE_VOUCHERS, "1000", "fact", "item-0", None),
-        (11, CLOSE_VOUCHERS, "1000", "unexpected", "item-1", None),
-        (10, "another.path", "0", "voucher", "item-0", None),
+        (10, CLOSE_VOUCHERS, "1000", "fact", "item-10-0", None),
+        (11, CLOSE_VOUCHERS, "1000", "unexpected", "item-11-1", None),
+        (10, "another.path", "0", "fact", "item-10-0", None),
     ]
     connection.executemany("INSERT INTO close_reference VALUES(?,?,?,?,?,?)", rows)
-    pairs = [[f"item-{index}", period] for period in (10, 11) for index in range(40)]
-    pairs.append(["item-0", 10])
+    pairs = [[f"item-{period}-{index}", period] for period in (10, 11) for index in range(40)]
+    pairs.append(["item-10-0", 10])
+    # The adoption verifier receives unique live heads keyed by voucher ID.
+    # Duplicate-ID multiset behavior belongs to selected_voucher_references above.
+    frozen = dict(pairs)
+    assert len(frozen) == len(pairs) - 1
     original_sql = (
         "SELECT r.* FROM json_each(?) ids JOIN close_reference r "
         "ON r.reference_id=json_extract(ids.value,'$[0]') "
@@ -109,38 +112,45 @@ def test_period_reference_lookup_preserves_wrong_type_and_duplicate_pairs_with_l
     )
     original, old_vm = _work(
         connection,
-        lambda: connection.execute(original_sql, (json.dumps(pairs), CLOSE_VOUCHERS)),
+        lambda: [
+            row for row in connection.execute(
+                original_sql, (json.dumps(list(frozen.items())), CLOSE_VOUCHERS)
+            ) if row["reference_type"] != "voucher"
+        ],
     )
     selected = []
 
     def read_selected():
-        selected.extend(_selected_accounting_references(connection, pairs))
+        selected.extend(_selected_voucher_path_references(connection, frozen))
         return selected
 
     selected_work, new_vm = _work(connection, read_selected)
     assert selected_work == original
-    assert len(selected) == 84  # The duplicate pair also repeats its wrong-type directory hit.
-    assert {row["reference_type"] for row in selected} == {"voucher", "fact", "unexpected"}
+    assert len(selected) == 2
+    assert {(row["reference_id"], row["close_period"]) for row in selected} == {
+        ("item-10-0", 10), ("item-11-1", 11)
+    }
+    assert {row["reference_type"] for row in selected} == {"fact", "unexpected"}
     with pytest.raises(KernelError) as failure:
         verify_close_references(connection, selected)
     assert failure.value.details["reason"] == "invalid_reference_type"
 
     assert new_vm * 3 < old_vm
-    large_pairs = [
-        [f"item-{index}", period] for period in (10, 11) for index in range(250)
-    ]
+    large_frozen = {
+        f"item-{period}-{index}": period for period in (10, 11) for index in range(250)
+    }
     large_rows, large_vm = _work(
-        connection, lambda: _selected_accounting_references(connection, large_pairs)
+        connection, lambda: _selected_voucher_path_references(connection, large_frozen)
     )
-    assert sum(large_rows.values()) == 502  # Both wrong-type leaves remain visible.
+    assert sum(large_rows.values()) == 2  # Both wrong-type leaves remain visible.
     assert large_vm < new_vm * 8  # Growing candidates must not rescan per candidate pair.
 
 
 @pytest.mark.parametrize("count", [1, 100, 500])
 def test_exact_reference_work_does_not_grow_with_unrelated_closed_history(count):
     connection = _directory()
-    assert _selected_accounting_references(connection, []) == []
-    assert _selected_accounting_references(connection, [["missing", 10]]) == []
+    assert _selected_voucher_path_references(connection, {}) == []
+    assert _selected_voucher_path_references(connection, {"missing": 10}) == []
     chosen = [
         (10, CLOSE_VOUCHERS, str(index), "voucher", f"chosen-{index}", None)
         for index in range(count)
@@ -154,10 +164,12 @@ def test_exact_reference_work_does_not_grow_with_unrelated_closed_history(count)
     ]
     connection.executemany("INSERT INTO close_reference VALUES(?,?,?,?,?,?)", chosen)
     pairs = [[f"chosen-{index}", 10] for index in range(count)] + [["chosen-0", 10]]
+    frozen = dict(pairs)
+    assert len(frozen) == count
     baseline_rows, baseline_vm = _work(
-        connection, lambda: _selected_accounting_references(connection, pairs)
+        connection, lambda: _selected_voucher_path_references(connection, frozen)
     )
-    assert sum(baseline_rows.values()) == count + 5
+    assert sum(baseline_rows.values()) == 2
     previous = 0
     for months in (12, 48, 120):
         connection.executemany(
@@ -170,15 +182,15 @@ def test_exact_reference_work_does_not_grow_with_unrelated_closed_history(count)
             ),
         )
         actual, vm = _work(
-            connection, lambda: _selected_accounting_references(connection, pairs)
+            connection, lambda: _selected_voucher_path_references(connection, frozen)
         )
         assert actual == baseline_rows
         # Logarithmic index depth may change; unrelated directory rows must not
         # turn this exact lookup into a scan, even for one selected reference.
         assert vm <= baseline_vm + 1000
         previous = months
-    hits = _selected_accounting_references(connection, pairs)
-    assert {row["reference_type"] for row in hits} == {"", "not-a-type", "voucher"}
+    hits = _selected_voucher_path_references(connection, frozen)
+    assert {row["reference_type"] for row in hits} == {"", "not-a-type"}
     with pytest.raises(KernelError) as failure:
         verify_close_references(connection, hits)
     assert failure.value.details["reason"] == "invalid_reference_type"
@@ -190,12 +202,39 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
     close(engine)
     decoded_families = []
     load_family = close_storage._family
+    selected_headers = []
+    load_headers = close_storage.voucher_reference_headers
 
     def counted_family(connection, header, family):
         decoded_families.append((header.period, family))
         return load_family(connection, header, family)
 
     monkeypatch.setattr(close_storage, "_family", counted_family)
+
+    def counted_headers(connection, batches, *, parts):
+        batches = list(batches)
+        result = load_headers(connection, batches, parts=parts)
+        selected_headers.extend(
+            (header.period, reference) for header, references in batches
+            for reference in references
+        )
+        return result
+
+    monkeypatch.setattr(close_storage, "voucher_reference_headers", counted_headers)
+
+    def observe_adoptions(reads):
+        seen = []
+        verify = reads.verify_selected_voucher_adoptions
+
+        def counted(rows, *, through_period):
+            rows = tuple(rows)
+            result = verify(rows, through_period=through_period)
+            # Record successful adoption proofs, including their cutoff.
+            seen.extend((row["id"], row["close_period"], through_period) for row in rows)
+            return result
+
+        monkeypatch.setattr(reads, "verify_selected_voucher_adoptions", counted)
+        return seen
 
     def journal_rows(reads):
         snapshot = SimpleNamespace(
@@ -211,21 +250,22 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
         journal, rows = journal_rows(reads)
         reads.verify_selected_voucher_adoptions(rows, through_period=MONTH)
         assert (MONTH, "accounting") in decoded_families
+        assert len(selected_headers) == len(rows)
+        expected_heads = {(MONTH, row["id"]) for row in rows}
+        assert set(reads._verified_frozen_voucher_headers) == expected_heads
+        assert len(reads._verified_selected_voucher_adoptions) == len(rows)
         reads.metadata({row["basis_calculation_id"] for row in rows})
         reads.voucher_lines({row["id"] for row in rows})
         decoded_families.clear()
-        seen = []
-        verify = reads.verify_close_references
-
-        def counted(references):
-            seen.extend(references)
-            return verify(references)
-
-        monkeypatch.setattr(reads, "verify_close_references", counted)
+        selected_headers.clear()
+        seen = observe_adoptions(reads)
         hydrated = journal.hydrate(rows)
         assert len(hydrated) == len(rows)
         assert len(seen) == len(rows)
+        assert set(seen) == {(row["id"], MONTH, MONTH) for row in rows}
         assert not decoded_families
+        assert not selected_headers
+        assert set(reads._verified_frozen_voucher_headers) == expected_heads
         same_snapshot = [dict(row) for row in hydrated]
 
     with QueryReads.snapshot(engine) as reads:
@@ -233,9 +273,18 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
         reads.metadata({row["basis_calculation_id"] for row in rows})
         reads.voucher_lines({row["id"] for row in rows})
         decoded_families.clear()
+        selected_headers.clear()
+        assert not reads._verified_selected_voucher_adoptions
+        assert not reads._verified_frozen_voucher_headers
+        seen = observe_adoptions(reads)
         fresh = [dict(row) for row in journal.hydrate(rows)]
         assert fresh == same_snapshot
+        assert len(seen) == len(rows)
+        assert set(seen) == {(row["id"], MONTH, MONTH) for row in rows}
         assert (MONTH, "accounting") in decoded_families
+        assert len(selected_headers) == len(rows)
+        assert set(reads._verified_frozen_voucher_headers) == expected_heads
+        assert len(reads._verified_selected_voucher_adoptions) == len(rows)
 
 
 def test_journal_bad_leaf_rejected_without_success_cache(engine):
@@ -261,6 +310,10 @@ def test_journal_bad_leaf_rejected_without_success_cache(engine):
             journal.hydrate(rows)
         assert failure.value.code == "content_integrity_failed"
         assert not reads._verified_close_references
+        assert not reads._verified_selected_voucher_adoptions
+        assert not reads._verified_frozen_voucher_headers
         with pytest.raises(KernelError):
             journal.hydrate(rows)
         assert not reads._verified_close_references
+        assert not reads._verified_selected_voucher_adoptions
+        assert not reads._verified_frozen_voucher_headers

@@ -1,0 +1,495 @@
+{
+  "created_utc": "2026-10-02T10:42:05.486849+00:00",
+  "scope": "Completed fixed-r70 registered content proofs and full boundary receipts; dry-run/preparation labelled independently; no browser or formal release acceptance",
+  "fixed_source_sha256": "402024802800938685bfb59983e6d717ae32fa55c555bad0a3ced3f3d8a8e404",
+  "repository_status": "draft/0",
+  "registered_proofs": {
+    "main12": {
+      "status": "complete",
+      "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+      "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-main12-r43",
+      "integrity": {
+        "status": "verified",
+        "coverage": {
+          "sources": "verified",
+          "historical_adoption": "verified",
+          "projections": "verified",
+          "read_indexes": "verified"
+        },
+        "limitations": [],
+        "counts": {
+          "facts": 30225,
+          "calculations": 12413,
+          "vouchers": 12309,
+          "closes": 11,
+          "evidence": 85
+        }
+      },
+      "integrity_ms": 98823.92840000102,
+      "verified_open_preview": {
+        "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "database_id": "6cc5f6cbe6cd402ebdfd072195398780",
+        "period": "2016-12",
+        "construction_preview_digest": "e2d6db753485d113d925b602b37201269a4ef529154dc7a131a58a50ed21bbc0",
+        "digest": "045e8801f1c2808a948a77e3ba739a8885957cee85c86d07cd2a40b4ac3f5f06",
+        "epochs": {
+          "accounting": 514,
+          "material": 336,
+          "management": 80
+        },
+        "state": [
+          1,
+          514,
+          336,
+          80,
+          12058,
+          0
+        ]
+      }
+    },
+    "main48": {
+      "status": "complete",
+      "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+      "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-main48-r63",
+      "integrity": {
+        "status": "verified",
+        "coverage": {
+          "sources": "verified",
+          "historical_adoption": "verified",
+          "projections": "verified",
+          "read_indexes": "verified"
+        },
+        "limitations": [],
+        "counts": {
+          "facts": 121593,
+          "calculations": 50519,
+          "vouchers": 49245,
+          "closes": 47,
+          "evidence": 337
+        }
+      },
+      "integrity_ms": 1059252.0821999933,
+      "verified_open_preview": {
+        "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+        "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+        "database_id": "6cc5f6cbe6cd402ebdfd072195398780",
+        "period": "2019-12",
+        "construction_preview_digest": "e685e144e52f11d20c9f83dc678abb88377862f959046c9ec7cbe014178f8f8f",
+        "digest": "5b93cc1477b74a296008302bd654c452848b7b91677d06f095c8da788abcccf6",
+        "epochs": {
+          "accounting": 2065,
+          "material": 1164,
+          "management": 152
+        },
+        "state": [
+          1,
+          2065,
+          1164,
+          152,
+          48238,
+          0
+        ]
+      }
+    },
+    "independent12": {
+      "status": "complete",
+      "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+      "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-independent12-r63",
+      "integrity": {
+        "status": "verified",
+        "coverage": {
+          "sources": "verified",
+          "historical_adoption": "verified",
+          "projections": "verified",
+          "read_indexes": "verified"
+        },
+        "limitations": [],
+        "counts": {
+          "facts": 30114,
+          "calculations": 12025,
+          "vouchers": 12000,
+          "closes": 11,
+          "evidence": 37
+        }
+      },
+      "integrity_ms": 89709.75700000417,
+      "verified_open_preview": {
+        "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+        "company_id": "680c88a23ffc484d905583ba2962713a",
+        "database_id": "9da703f8a5d04f9b802ba2cc5bb00de3",
+        "period": "2016-12",
+        "construction_preview_digest": "fd3c92bf072289b32b085200610d4beaa82234e90c21c5b414057bffc4ca6700",
+        "digest": "fd3c92bf072289b32b085200610d4beaa82234e90c21c5b414057bffc4ca6700",
+        "epochs": {
+          "accounting": 169,
+          "material": 192,
+          "management": 52
+        },
+        "state": [
+          1,
+          169,
+          192,
+          52,
+          12001,
+          0
+        ]
+      }
+    }
+  },
+  "integrity_ms_scope": "registered content verifier segment only; not verifier+preview total elapsed or exclusive timing",
+  "concurrency": "registered verifications overlapped with other proof/dry-run/archive work; not pure timing",
+  "boundaries": {
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r70-release",
+    "workspace": "D:\\GitHub\\ai-accounting-core",
+    "root": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-owner-r70-boundaries",
+    "mode": "full",
+    "note": "Sampled RSS includes this test harness; calibration is not a boundary acceptance result.",
+    "evidence": {
+      "accepted_bytes": 20971520,
+      "accepted": {
+        "seconds": 0.903033200011123,
+        "rss_before_bytes": 121958400,
+        "sampled_peak_rss_bytes": 167854080
+      },
+      "over_limit": {
+        "bytes": 20971521,
+        "status": "rejected",
+        "measurement": {
+          "seconds": 0.005482200009282678,
+          "rss_before_bytes": 122130432,
+          "sampled_peak_rss_bytes": 122150912
+        }
+      },
+      "digest": "18921b81551d588c3966d002dc7079104de9b66246b02a933bb7b4d6e0e25854"
+    },
+    "bank_rows": {
+      "rows": 100000,
+      "csv_bytes": 7389036,
+      "public_inspect": {
+        "seconds": 3.010527100006584,
+        "rss_before_bytes": 112050176,
+        "sampled_peak_rss_bytes": 438644736
+      },
+      "full_parse": {
+        "seconds": 2.6437582000216935,
+        "rss_before_bytes": 169807872,
+        "sampled_peak_rss_bytes": 430985216
+      },
+      "typed_save": {
+        "seconds": 4.544450699992012,
+        "rss_before_bytes": 445456384,
+        "sampled_peak_rss_bytes": 578019328
+      },
+      "physical_entries": 100000,
+      "typed_save_physical_delta": {
+        "fact_revision": 1,
+        "fact_bank_statement_entries": 100000,
+        "request": 1,
+        "audit": 1
+      },
+      "over_limit": {
+        "rows": 100001,
+        "status": "rejected",
+        "inspect": {
+          "seconds": 2.243520499992883,
+          "rss_before_bytes": 297476096,
+          "sampled_peak_rss_bytes": 454893568
+        },
+        "registration_attempted": false,
+        "physical_counts_after_rejection": {
+          "evidence": 3,
+          "fact_revision": 1,
+          "fact_bank_statement_entries": 100000,
+          "request": 5,
+          "audit": 5
+        }
+      }
+    },
+    "batch": {
+      "accepted_facts": 5000,
+      "accepted": {
+        "seconds": 24.27412019998883,
+        "rss_before_bytes": 271642624,
+        "sampled_peak_rss_bytes": 280322048
+      },
+      "physical_fact_delta": 5000,
+      "physical_request_delta": 1,
+      "physical_audit_delta": 1,
+      "over_limit": {
+        "facts": 5001,
+        "status": "rejected",
+        "measurement": {
+          "seconds": 0.004868399992119521,
+          "rss_before_bytes": 251953152,
+          "sampled_peak_rss_bytes": 251953152
+        },
+        "physical_counts_after_rejection": {
+          "evidence": 3,
+          "fact_revision": 5001,
+          "fact_bank_statement_entries": 100000,
+          "request": 8,
+          "audit": 8
+        }
+      }
+    },
+    "final_physical_counts": {
+      "evidence": 3,
+      "fact_revision": 5001,
+      "fact_bank_statement_entries": 100000,
+      "request": 8,
+      "audit": 8
+    }
+  },
+  "boundary_rejections_unchanged_counts": "fixed source script _assert_unchanged checked all tracked physical counts; evidence rejection numbers are not separately in JSON",
+  "large_book_dry_runs": {
+    "main120": "exact_difference_verified only; no target full verify",
+    "independent48": "exact_difference_verified only; no target full verify",
+    "independent120": "exact_difference_verified only; prior r30 proof not current r70"
+  },
+  "browser_intermediate_results_archived": false,
+  "entry_count": 17,
+  "raw_total_bytes": 146063,
+  "archive_total_bytes": 48868,
+  "all_decompressed_byte_equal": true,
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-owner-main12-r70-verified.json",
+      "raw_sha256": "44bc771e602f52b67fb9ede8fcc2f27798bcb6bccfb444afc898e261d7e5e348",
+      "raw_bytes": 9681,
+      "raw_mtime_utc": "2026-10-02T10:04:44.136148+00:00",
+      "raw_mtime_ns": 1790935484136147800,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-001-stage9-owner-main12-r70-verified.json.gz",
+      "archive_sha256": "5e8379430ba267647db7270266df27022904216677649e40154da5c758a17f3d",
+      "archive_bytes": 2812,
+      "archive_mtime_utc": "2026-10-02T10:42:05.338667+00:00",
+      "archive_mtime_ns": 1790937725338667300,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main12-r70-verified.log",
+      "raw_sha256": "d4a23c41f8025888a9e7e3c1696f8a919a7fee679dc6a121156841949df0b222",
+      "raw_bytes": 81,
+      "raw_mtime_utc": "2026-10-02T10:04:44.143149+00:00",
+      "raw_mtime_ns": 1790935484143149300,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-002-stage9-owner-main12-r70-verified.log.gz",
+      "archive_sha256": "cca0c86e64faf38c0dd13b8d2a813748badbba220ec6ccb0587e12627abb7b11",
+      "archive_bytes": 98,
+      "archive_mtime_utc": "2026-10-02T10:42:05.352666+00:00",
+      "archive_mtime_ns": 1790937725352666400,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main48-r70-verified.json",
+      "raw_sha256": "17428bc02bfbc2a545041591b5b8134d27e25cbcd09fa159007cae2c95304647",
+      "raw_bytes": 28090,
+      "raw_mtime_utc": "2026-10-02T10:27:11.100962+00:00",
+      "raw_mtime_ns": 1790936831100962000,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-003-stage9-owner-main48-r70-verified.json.gz",
+      "archive_sha256": "e29a3a16a308a6c209df8bde7491202ac4205ee6b530c2ddb6980a45e9d16c56",
+      "archive_bytes": 6647,
+      "archive_mtime_utc": "2026-10-02T10:42:05.359668+00:00",
+      "archive_mtime_ns": 1790937725359668000,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main48-r70-verified.log",
+      "raw_sha256": "151a99f1188974b27fafb58846de802668f5a5eaaa97d1b5b90144215afc52f7",
+      "raw_bytes": 81,
+      "raw_mtime_utc": "2026-10-02T10:27:11.106083+00:00",
+      "raw_mtime_ns": 1790936831106082700,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-004-stage9-owner-main48-r70-verified.log.gz",
+      "archive_sha256": "80cb91b1fa583f64bd5ac1707ba5d4fcb8b489e7a3467df67d2bf87c6d123252",
+      "archive_bytes": 98,
+      "archive_mtime_utc": "2026-10-02T10:42:05.368627+00:00",
+      "archive_mtime_ns": 1790937725368627100,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-independent12-r70-verified.json",
+      "raw_sha256": "08a0fb3135dc8217bef7b009b5176ae0786ad2a91ccdb09be7e20ed97d6b5ace",
+      "raw_bytes": 9153,
+      "raw_mtime_utc": "2026-10-02T10:04:26.641095+00:00",
+      "raw_mtime_ns": 1790935466641095100,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-005-stage9-owner-independent12-r70-verified.json.gz",
+      "archive_sha256": "e171b5512604748a4e4ffc9ac61e022322c2bbeaaa573ef15b06fba34884e2d0",
+      "archive_bytes": 2377,
+      "archive_mtime_utc": "2026-10-02T10:42:05.376630+00:00",
+      "archive_mtime_ns": 1790937725376629900,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-independent12-r70-verified.log",
+      "raw_sha256": "f16c2f8235ed7b4c1760c19883aa61d2b983715f40335003f630c19bcbc01b68",
+      "raw_bytes": 88,
+      "raw_mtime_utc": "2026-10-02T10:04:26.647094+00:00",
+      "raw_mtime_ns": 1790935466647094200,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-006-stage9-owner-independent12-r70-verified.log.gz",
+      "archive_sha256": "3667d181c82a350f96f9bdfb54a61391d47068e158f4008fc583c7f39f11db1e",
+      "archive_bytes": 103,
+      "archive_mtime_utc": "2026-10-02T10:42:05.388629+00:00",
+      "archive_mtime_ns": 1790937725388629400,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-r70-boundaries/report.json",
+      "raw_sha256": "bed057a02a8a4d52a1d1dd6a4b6cec6e99c0055dcae01365c879256bc5d9e620",
+      "raw_bytes": 2949,
+      "raw_mtime_utc": "2026-10-02T10:36:12.680759+00:00",
+      "raw_mtime_ns": 1790937372680759000,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-007-report.json.gz",
+      "archive_sha256": "3e6864486ff8980ddfaa37bfe1399d0659908e342b36d57291d5731255e9cade",
+      "archive_bytes": 883,
+      "archive_mtime_utc": "2026-10-02T10:42:05.395630+00:00",
+      "archive_mtime_ns": 1790937725395630400,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-r70-boundaries.log",
+      "raw_sha256": "af7b8d89d7db3cb124726a8ff6e14c6bc6ac3e282574888f72962586af09bde4",
+      "raw_bytes": 75,
+      "raw_mtime_utc": "2026-10-02T10:36:12.689760+00:00",
+      "raw_mtime_ns": 1790937372689760400,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-008-stage9-owner-r70-boundaries.log.gz",
+      "archive_sha256": "bebf1626fa945e3142a4fc772dac3a01256c773bd917d97daea3eb6e1b38f70f",
+      "archive_bytes": 92,
+      "archive_mtime_utc": "2026-10-02T10:42:05.402628+00:00",
+      "archive_mtime_ns": 1790937725402628000,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-rebase-owner-r70.py",
+      "raw_sha256": "349577999481da78d6fd7ea909d19d3596c0f9846a85aa458c5adbc8d13ce844",
+      "raw_bytes": 807,
+      "raw_mtime_utc": "2026-10-02T10:00:06.210824+00:00",
+      "raw_mtime_ns": 1790935206210824400,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-009-stage9-rebase-owner-r70.py.gz",
+      "archive_sha256": "693516241189553aca1ac3118bb71e8dde143f17e69ce36a83c153dda17a6adf",
+      "archive_bytes": 522,
+      "archive_mtime_utc": "2026-10-02T10:42:05.409629+00:00",
+      "archive_mtime_ns": 1790937725409628800,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-rebase-owner-r49.py",
+      "raw_sha256": "8711ee4a99043ee573dceec995d6f311ca97714ee9bae1019a09c9f9c4a603e4",
+      "raw_bytes": 38179,
+      "raw_mtime_utc": "2026-10-01T19:35:09.882333+00:00",
+      "raw_mtime_ns": 1790883309882332800,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-010-stage9-rebase-owner-r49.py.gz",
+      "archive_sha256": "6889ef7ea642f3bac8bfad72f23da8adb38e6e05e0ca46703af20d5991eb382d",
+      "archive_bytes": 10537,
+      "archive_mtime_utc": "2026-10-02T10:42:05.420831+00:00",
+      "archive_mtime_ns": 1790937725420831100,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main120-r70-rebase-dry.log",
+      "raw_sha256": "b30bbe1f6cd30602ad93024a0dc395cd6215568bb4714b1d840f6e1914c9abb6",
+      "raw_bytes": 2781,
+      "raw_mtime_utc": "2026-10-02T10:00:35.141334+00:00",
+      "raw_mtime_ns": 1790935235141333800,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-011-stage9-owner-main120-r70-rebase-dry.log.gz",
+      "archive_sha256": "847fbcd56f6d87fcbdfb5c0a8b5fef85b5bf76c0959d06dcc2023e8a8db165a8",
+      "archive_bytes": 1084,
+      "archive_mtime_utc": "2026-10-02T10:42:05.427829+00:00",
+      "archive_mtime_ns": 1790937725427829000,
+      "decompressed_byte_equal": true,
+      "evidence_role": "dry_run_only_no_target_registered_verification"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-independent48-r70-rebase-dry.log",
+      "raw_sha256": "2cf3eeca4e7040af3575163df491a3253d76499b958ceb27df074ed434cbdfcc",
+      "raw_bytes": 2793,
+      "raw_mtime_utc": "2026-10-02T10:00:32.139333+00:00",
+      "raw_mtime_ns": 1790935232139332500,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-012-stage9-owner-independent48-r70-rebase-dry.log.gz",
+      "archive_sha256": "90f4bce242bd264693cf30bb91c925c279ad24b93bd6ebdafe8449ce05847e36",
+      "archive_bytes": 1084,
+      "archive_mtime_utc": "2026-10-02T10:42:05.435833+00:00",
+      "archive_mtime_ns": 1790937725435833300,
+      "decompressed_byte_equal": true,
+      "evidence_role": "dry_run_only_no_target_registered_verification"
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-independent120-r70-rebase-dry.log",
+      "raw_sha256": "93f6c5e16457b034b0fffd124a3a149cee974eb1522b2b515173a1162acd37ab",
+      "raw_bytes": 2787,
+      "raw_mtime_utc": "2026-10-02T10:00:34.126144+00:00",
+      "raw_mtime_ns": 1790935234126144000,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-013-stage9-owner-independent120-r70-rebase-dry.log.gz",
+      "archive_sha256": "cc31446fa8bf0d5f0a99d1678b0300b879fc94da6749ec1119303a55ff65cd4c",
+      "archive_bytes": 1087,
+      "archive_mtime_utc": "2026-10-02T10:42:05.443828+00:00",
+      "archive_mtime_ns": 1790937725443828300,
+      "decompressed_byte_equal": true,
+      "evidence_role": "dry_run_only_no_target_registered_verification"
+    },
+    {
+      "raw_path": ".tmp/stage9-r70-final-entrypoints.md",
+      "raw_sha256": "d7517c6ce74fb92fd78eab68a03170d66c0d9a8cd3853257d4aaf030c58e3412",
+      "raw_bytes": 11693,
+      "raw_mtime_utc": "2026-10-02T09:51:15.950673+00:00",
+      "raw_mtime_ns": 1790934675950673500,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-014-stage9-r70-final-entrypoints.md.gz",
+      "archive_sha256": "d4ea634f89b625744f1069f84bf5d07eb060e27851f8f3e49b62202171dfd3a9",
+      "archive_bytes": 5196,
+      "archive_mtime_utc": "2026-10-02T10:42:05.456851+00:00",
+      "archive_mtime_ns": 1790937725456851300,
+      "decompressed_byte_equal": true,
+      "evidence_role": "read_only_preparation_not_execution_receipt"
+    },
+    {
+      "raw_path": ".tmp/stage9-r70-coverage-gaps.md",
+      "raw_sha256": "7f243c8122532d5f8cecc24c7f7e566a6bec9eb542dd01c7865064ed0d26bd71",
+      "raw_bytes": 14215,
+      "raw_mtime_utc": "2026-10-02T10:06:46.662387+00:00",
+      "raw_mtime_ns": 1790935606662387200,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-015-stage9-r70-coverage-gaps.md.gz",
+      "archive_sha256": "e05439051e08dab31fb12e4a3643c9afb0c4e21e2f3c23533a3cc3ab306202a8",
+      "archive_bytes": 7030,
+      "archive_mtime_utc": "2026-10-02T10:42:05.464852+00:00",
+      "archive_mtime_ns": 1790937725464851900,
+      "decompressed_byte_equal": true,
+      "evidence_role": "read_only_preparation_not_execution_receipt"
+    },
+    {
+      "raw_path": ".tmp/stage9-r70-pressure-entrypoint.md",
+      "raw_sha256": "ad6b017c38669e34ad58742b9ae362c9b9ed5ad9544437144df7f8550d12c022",
+      "raw_bytes": 8411,
+      "raw_mtime_utc": "2026-10-02T10:33:26.053998+00:00",
+      "raw_mtime_ns": 1790937206053998100,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-016-stage9-r70-pressure-entrypoint.md.gz",
+      "archive_sha256": "9a03fb70eeedc8b910f1c3e22bb459b41ba9cb0c714b890630e1de6a21c7597a",
+      "archive_bytes": 4833,
+      "archive_mtime_utc": "2026-10-02T10:42:05.473853+00:00",
+      "archive_mtime_ns": 1790937725473853100,
+      "decompressed_byte_equal": true,
+      "evidence_role": "read_only_preparation_not_execution_receipt"
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r70-release/scripts/benchmark_stage9_boundaries.py",
+      "raw_sha256": "d91e189b3e3d367eedcec745a5ab552237a8822dc8bb87cb6835f8ffa1e3b416",
+      "raw_bytes": 14199,
+      "raw_mtime_utc": "2026-10-02T09:55:46.339327+00:00",
+      "raw_mtime_ns": 1790934946339326900,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r70-content-and-boundaries-017-benchmark_stage9_boundaries.py.gz",
+      "archive_sha256": "410343241a96d37e2221d850c2c91f29652b02dd4947765a65f49a20b042817a",
+      "archive_bytes": 4385,
+      "archive_mtime_utc": "2026-10-02T10:42:05.480850+00:00",
+      "archive_mtime_ns": 1790937725480849800,
+      "decompressed_byte_equal": true,
+      "evidence_role": "existing_completed_evidence_or_pinned_source"
+    }
+  ]
+}

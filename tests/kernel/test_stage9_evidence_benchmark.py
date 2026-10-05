@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -31,7 +32,7 @@ def isolated_stage9_source(monkeypatch):
     monkeypatch.setattr(sys, "path", sys.path.copy())
 
 
-def test_foreground_scope_is_default_complete_http_without_browser_rendering(monkeypatch):
+def test_foreground_scope_is_owner_default_http_without_browser_rendering(monkeypatch):
     recorded = {}
 
     class Response:
@@ -64,32 +65,31 @@ def test_foreground_scope_is_default_complete_http_without_browser_rendering(mon
     assert query.path == "/api/dashboard/brief"
     assert parse_qs(query.query) == {
         "company_id": ["company-1"], "period": ["2026-01"],
-        "limit": ["100"], "preparation": ["complete"],
+        "limit": ["20"], "preparation": ["deferred"],
     }
     assert recorded["headers"] == {"Authorization": "Bearer synthetic-token"}
     assert recorded["closed"] is True
     assert foreground_scope() == {
-        "entry": "GET /api/dashboard/brief", "limit": 100,
-        "preparation": "complete", "includes_http": True,
+        "entry": "GET /api/dashboard/brief", "limit": 20,
+        "preparation": "deferred", "includes_http": True,
         "includes_browser_rendering": False,
         "purpose": "evidence_operations_default_brief_http_contention",
     }
     assert foreground_scope("browser") == {
-        "entry": "browser_brief_refresh", "limit": 100,
-        "preparation": "complete", "includes_http": True,
+        "entry": "browser_brief_refresh", "limit": 20,
+        "preparation": "deferred", "includes_http": True,
         "includes_browser_rendering": True,
         "purpose": "evidence_operations_default_brief_browser_contention",
     }
 
 
 def test_memory_peak_sum_uses_one_sample_not_independent_process_peaks():
-    peaks = {"backup": {"parent": 0, "workers": {}, "sum": 0}}
-    update_memory_peaks(peaks, "backup", 100, {11: 2, 12: 3, 13: 4})
-    update_memory_peaks(peaks, "backup", 20, {11: 50, 12: 60, 13: 70})
-    assert peaks["backup"] == {
-        "parent": 100, "workers": {11: 50, 12: 60, 13: 70}, "sum": 200,
-    }
-    assert peaks["backup"]["sum"] != 100 + 50 + 60 + 70
+    peaks = {"backup": {"processes": {}, "sum": 0}}
+    update_memory_peaks(peaks, "backup", {10: 100, 11: 2})
+    update_memory_peaks(peaks, "backup", {10: 20, 11: 90})
+    assert peaks["backup"] == {"processes": {10: 100, 11: 90}, "sum": 110}
+    assert peaks["backup"]["sum"] != 100 + 90
+
 
 
 @pytest.mark.parametrize("fault", ["browser", "rss"])
@@ -194,7 +194,7 @@ def test_evidence_survives_production_verify_backup_and_restore(isolated_stage9_
         assert report["backup"]["zip_bytes"] < MIB
         assert report["foreground"]["errors"] == []
         assert report["foreground"]["scope"] == foreground_scope()
-        assert report["foreground"]["parallel_brief_enabled"] is True
+        assert report["foreground"]["resident_read_pool_enabled"] is True
         assert report["foreground"]["response_bytes"] > 0
         assert all(
             "samples" in report["foreground"][name]
@@ -204,18 +204,18 @@ def test_evidence_survives_production_verify_backup_and_restore(isolated_stage9_
         assert report["company_format"] == report["backup"]["database_format"]
         assert report["source_inventory"]["status"] == "unsealed_working_tree"
         assert report["measurement_harness"]["separate_from_fixed_source"] is False
-        assert len(report["brief_worker_pids"]) == 3
-        assert len(set(report["brief_worker_pids"])) == 3
+        assert report["resident_process_id"] == os.getpid()
         assert report["memory_errors"] == []
-        assert report["memory_scope"]["total_peak"].startswith("maximum_of_parent_plus_workers")
-        assert report["sampled_peak_parent_plus_brief_workers_rss_bytes"] >= (
-            report["sampled_peak_rss_bytes"]
+        assert (
+            report["memory_scope"]["processes"]
+            == "resident_and_background_operations_same_process"
         )
+        assert report["memory_scope"]["process_ids"] == [os.getpid()]
+        assert report["memory_scope"]["total_peak"].startswith("maximum_of_live_process_rss_sum")
         for name in ("verify", "backup", "restore", "restored_verify"):
             measured = report["phases"][name]
-            assert set(measured["sampled_peak_brief_worker_rss_by_pid_bytes"]) == set(
-                report["brief_worker_pids"]
-            )
-            assert measured["sampled_peak_parent_plus_brief_workers_rss_bytes"] >= (
-                measured["sampled_peak_rss_bytes"]
-            )
+            assert set(measured["sampled_peak_process_rss_by_pid_bytes"]) == {os.getpid()}
+            assert measured["sampled_peak_rss_bytes"] == measured[
+                "sampled_peak_process_rss_by_pid_bytes"
+            ][os.getpid()]
+            assert report["sampled_peak_rss_bytes"] >= measured["sampled_peak_rss_bytes"]

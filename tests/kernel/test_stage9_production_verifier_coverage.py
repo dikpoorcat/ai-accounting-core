@@ -49,9 +49,25 @@ def test_production_factory_accepts_declared_release_history(monkeypatch):
         schema_bundle.production_bundle.cache_clear()
 
 
-def test_draft_factory_does_not_require_released_verifiers():
+def test_production_factory_registers_the_active_content_verifiers():
     bundle = schema_bundle.production_bundle()
-    assert bundle.status == "draft"
+    assert bundle.status == schema_bundle.STATUS
+    assert bundle.current_versions == {
+        "company": schema_bundle.VERSION,
+        "catalog": schema_bundle.VERSION,
+    }
+    if bundle.status == "draft":
+        assert bundle.company_verifiers == {0: schema_bundle.verify_current_company}
+        assert schema_bundle.VERSION == 0
+    else:
+        assert bundle.status == "released" and schema_bundle.VERSION >= 1
+        expected = {1: content_v1.verify_v1_company}
+        if schema_bundle.VERSION > 1:
+            expected[schema_bundle.VERSION] = schema_bundle.verify_current_company
+        assert bundle.company_verifiers == expected
+
+
+def test_synthetic_draft_does_not_require_released_verifiers():
     assert (
         schema_bundle._require_released_company_verifiers(
             _synthetic_bundle((1, 2), {}, status="draft")

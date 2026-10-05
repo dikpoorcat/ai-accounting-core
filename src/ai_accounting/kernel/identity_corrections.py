@@ -31,6 +31,7 @@ from .contracts import (
 from .dependencies import fact_matches, scope_keys
 from .engine import Engine
 from .stored_json import load_outcome, verify_outcome_bytes
+from .types import EvidenceDigest, validate_evidence_digests
 
 IDENTITY_CORRECTION_DDL = """
 CREATE TABLE identity_correction(id TEXT PRIMARY KEY,plan TEXT NOT NULL CHECK(json_valid(plan)),
@@ -604,6 +605,7 @@ class IdentityCorrections:
 
         if not changes or not evidence or not isinstance(reason, str) or not reason.strip():
             raise NeedsInformation("identity_correction", "需要明确变更、纠错依据与原因")
+        validate_evidence_digests(evidence)
         typed = [IdentityChange.model_validate(item) for item in changes]
         if len({i.subject_id for i in typed}) != len(typed):
             raise KernelError("duplicate_subject", "纠错不能重复指定同一业务")
@@ -1063,21 +1065,34 @@ class IdentityCorrections:
         public["digest"] = digest({k: v for k, v in public.items() if k != "digest"}).hex()
         return public, prepared, versions
 
+    def _opening_package_owner(self, connection, calculation_id):
+        rows = connection.execute(
+            "SELECT c.id,c.subject_id,c.kind,c.period,f.subject_id original_subject_id,"
+            "s.kind original_kind,f.period original_period "
+            "FROM dependency_calculation d JOIN calculation c ON c.id=d.upstream_id "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+            "LEFT JOIN subject s ON s.id=f.subject_id WHERE d.calculation_id=?",
+            (calculation_id,),
+        ).fetchall()
+        for row in rows:
+            self.store._verify_calculation_identity(row)
+        return next((row for row in rows if row["kind"] == "opening_package"), None)
+
     def _opening_version(
         self, connection, source, fact, assignments, evidence, *, replacement=None
     ):
         row = connection.execute(
-            "SELECT c.id FROM calculation c JOIN calculation_current h "
-            "ON h.calculation_id=c.id WHERE c.fact_id=?",
+            "SELECT c.id,c.subject_id,c.kind,c.period,f.subject_id original_subject_id,"
+            "s.kind original_kind,f.period original_period "
+            "FROM calculation c JOIN calculation_current h ON h.calculation_id=c.id "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+            "LEFT JOIN subject s ON s.id=f.subject_id WHERE c.fact_id=?",
             (source.id,),
         ).fetchone()
         if not row:
             raise KernelError("opening_binding_source", "期初来源尚未正式采用")
-        package = connection.execute(
-            "SELECT c.id FROM dependency_calculation d JOIN calculation c ON c.id=d.upstream_id "
-            "WHERE d.calculation_id=? AND c.kind='opening_package'",
-            (row[0],),
-        ).fetchone()
+        self.store._verify_calculation_identity(row)
+        package = self._opening_package_owner(connection, row[0])
         if not package:
             raise KernelError("opening_binding_source", "期初缺少精确总清单")
         sid = "opening-identity:" + source.subject_id
@@ -1088,20 +1103,16 @@ class IdentityCorrections:
         replacement_fields = {}
         if replacement is not None:
             target = connection.execute(
-                "SELECT c.id FROM calculation_current h JOIN calculation c "
-                "ON c.id=h.calculation_id WHERE c.fact_id=?",
+                "SELECT c.id,c.subject_id,c.kind,c.period,f.subject_id original_subject_id,"
+                "s.kind original_kind,f.period original_period "
+                "FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
+                "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+                "LEFT JOIN subject s ON s.id=f.subject_id WHERE c.fact_id=?",
                 (replacement.id,),
             ).fetchone()
-            target_package = (
-                connection.execute(
-                    "SELECT c.id FROM dependency_calculation d "
-                    "JOIN calculation c ON c.id=d.upstream_id "
-                    "WHERE d.calculation_id=? AND c.kind='opening_package'",
-                    (target[0],),
-                ).fetchone()
-                if target
-                else None
-            )
+            if target:
+                self.store._verify_calculation_identity(target)
+            target_package = self._opening_package_owner(connection, target[0]) if target else None
             if not target_package:
                 raise NeedsInformation(
                     "replacement_subject_id", "所保留期初尚未被完整总清单正式采用"
@@ -1137,7 +1148,7 @@ class IdentityCorrections:
         self,
         *,
         changes: list[IdentityChange],
-        evidence: list[str],
+        evidence: list[EvidenceDigest],
         reason: str,
         posting_period: str | None = None,
         entity_resolution: EntityResolution | None = None,
@@ -1164,7 +1175,7 @@ class IdentityCorrections:
         self,
         *,
         changes: list[IdentityChange],
-        evidence: list[str],
+        evidence: list[EvidenceDigest],
         reason: str,
         preview_digest: str,
         epochs: dict,
@@ -1464,7 +1475,9 @@ def verify_identity_corrections(engine, connection):
                     fail(item["id"], "纠错保存事实与批准事实不一致")
                 if item["action"] == "reassign":
                     entity_changes = compare_entities(
-                        source.fact, after.fact, source.subject_id,
+                        source.fact,
+                        after.fact,
+                        source.subject_id,
                         registry=engine.store.registry,
                     )
                     if (
@@ -1526,7 +1539,9 @@ def verify_identity_corrections(engine, connection):
                         else source.fact
                     )
                     entity_changes = compare_entities(
-                        old_basis, corrected, source.subject_id,
+                        old_basis,
+                        corrected,
+                        source.subject_id,
                         registry=engine.store.registry,
                     )
                     if (
@@ -1593,7 +1608,9 @@ def verify_identity_corrections(engine, connection):
                     else replacement.fact
                 )
                 entity_changes = compare_entities(
-                    source.fact, destination, source.subject_id,
+                    source.fact,
+                    destination,
+                    source.subject_id,
                     registry=engine.store.registry,
                 )
             if entity_changes != expected[item["subject_id"]]["entity_changes"]:

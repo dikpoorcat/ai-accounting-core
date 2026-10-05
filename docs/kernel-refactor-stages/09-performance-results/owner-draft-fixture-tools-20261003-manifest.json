@@ -1,0 +1,50 @@
+{
+  "status": "archived_tool_and_narrow_tests_only",
+  "count": 4,
+  "draft_source_sha256": "d198eab959be1d3a1237744778b3329bbe4f01379d7917541bc4e017f31cf045",
+  "source_file_count": 737,
+  "content_qualified": false,
+  "browser_acceptance": false,
+  "files": [
+    {
+      "source": "scripts/prepare_stage9_draft_book.py",
+      "scope": "copy_tool_only_not_content_qualification",
+      "raw_bytes": 15710,
+      "raw_sha256": "943c617c2a8a71ce145001c72c8db97ac3905097f625e1b9bf66962445362e50",
+      "gzip": "docs/kernel-refactor-stages/09-performance-results/owner-draft-fixture-tools-20261003-raw/001-prepare_stage9_draft_book.py.gz",
+      "gzip_sha256": "184f17b7452bf69378c2ef52e2477ccdd311bff37583051a4bc0376ca4a323ca",
+      "gzip_mtime": 0,
+      "raw_roundtrip_verified": true
+    },
+    {
+      "source": "tests/kernel/test_stage9_draft_fixture_copy.py",
+      "scope": "current_narrow_test_source_not_full_business_acceptance",
+      "raw_bytes": 11464,
+      "raw_sha256": "ced64dc19d596ffca981e8a6ae314cda2cc32b0306a06170a1f70dfdd9c6fe3d",
+      "gzip": "docs/kernel-refactor-stages/09-performance-results/owner-draft-fixture-tools-20261003-raw/002-test_stage9_draft_fixture_copy.py.gz",
+      "gzip_sha256": "6b293eb60288f6c74f44cedb346ca1301c583263a63fe28cf9fac9ede34a4ad0",
+      "gzip_mtime": 0,
+      "raw_roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-draft-fixture-narrow-tests.log",
+      "scope": "initial_two_files_29_pass_19.94s",
+      "raw_bytes": 102,
+      "raw_sha256": "21d4783e7723c54facc9196432187e36c65dd28ecea91121a49400243036c336",
+      "gzip": "docs/kernel-refactor-stages/09-performance-results/owner-draft-fixture-tools-20261003-raw/003-stage9-draft-fixture-narrow-tests.log.gz",
+      "gzip_sha256": "cdb26a7593f16255ee6e11e9e74ecc6d49c6581b667be8bca363bd37a37ae484",
+      "gzip_mtime": 0,
+      "raw_roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-draft-fixture-narrow-tests-fix1.log",
+      "scope": "wal_guard_and_real_voucher_frozen_preservation_two_files_32_pass_21.25s",
+      "raw_bytes": 102,
+      "raw_sha256": "b2d66f5c4e2da19e6b1187f4fec09f166386bbc208f871d3fc6dc4019721df45",
+      "gzip": "docs/kernel-refactor-stages/09-performance-results/owner-draft-fixture-tools-20261003-raw/004-stage9-draft-fixture-narrow-tests-fix1.log.gz",
+      "gzip_sha256": "b54e00de7ed1e2349a1319c443e89bafedca511c0fa156ae1cdb3dffe7bfe49f",
+      "gzip_mtime": 0,
+      "raw_roundtrip_verified": true
+    }
+  ]
+}

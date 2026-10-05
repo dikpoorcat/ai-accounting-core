@@ -77,7 +77,6 @@ def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
         assert status == 400, (route, query, result)
         assert result["status"] == "rejected" and result["code"] == "invalid_command"
 
-
     for route, query in (
         ("overview", "period=bad"),
         ("ledger", "period=bad"),
@@ -106,7 +105,8 @@ def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
     )["digest"]
     for period in ("2026-01", "2026-03"):
         engine.save_fact(
-            "expense", f"expense-{period}",
+            "expense",
+            f"expense-{period}",
             {
                 "period": period,
                 "amount_fen": 10000,
@@ -114,7 +114,9 @@ def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
                 "expense_class": "administration",
                 "creditor_kind": "supplier",
             },
-            evidence=(proof,), expected_revision=0, request_id=f"save-{period}",
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=f"save-{period}",
         )
 
     status, _, _, context = http.request(
@@ -125,9 +127,15 @@ def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
         f"/api/dashboard/brief?company_id={company}&period=2026-03", headers=headers
     )
     assert status == 200, brief
-    issues = brief["data"]["validation"]["issues"]
-    assert {"field": "close_order", "code": "earlier_period_open",
-            "message": "须先处理并关闭前面有业务的月份", "period": "2026-01"} in issues
+    assert "validation" not in brief["data"]
+    assert "period_preparation" not in brief["data"]
+    preparation = Dashboard(engine).period_preparation(
+        "2026-03",
+        expected_read_version=brief["read_context"]["read_version"],
+        as_of=brief["read_context"]["as_of"],
+    )
+    issues = preparation["data"]["brief_checks"]["issues"]
+    assert any(issue.get("code") == "earlier_period_open" for issue in issues)
 
 
 def test_restored_routes_and_empty_authenticated_catalog(resident):
@@ -184,7 +192,7 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
         f"/api/dashboard/brief?company_id={company}&period=2026-09",
         headers=headers,
     )
-    assert status == 200 and browser["data"]["total_debit_fen"] == "123456"
+    assert status == 200 and browser["data"]["position"]["month_expense_fen"] == "123456"
 
 
 def test_dashboard_company_selection_query_contract_and_expiration(resident):
@@ -242,20 +250,18 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     )
     path = (
         f"/api/dashboard/business-status?company_id={company}&period=2026-09"
-        "&subject_id=expense&section=events&limit=1"
+        "&subject_id=expense&limit=1"
     )
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 5
+    assert response["schema_version"] == 6
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
-    assert response["data"]["collections"]["events"]["page"]["returned_count"] == 1
+    assert "events" not in response["data"]["collections"]
     assert http.request(path + "&expected_version=stale", headers=headers)[0] == 409
     assert http.request(path + "&unexpected=field", headers=headers)[0] == 400
-    assert (
-        http.request(path.replace("section=events", "section=arbitrary"), headers=headers)[0] == 400
-    )
+    assert http.request(path + "&section=arbitrary", headers=headers)[0] == 400
     assert http.request(path.replace("limit=1", "limit=501"), headers=headers)[0] == 400
     assert http.request(path + "&settlement_view=historical", headers=headers)[0] == 200
     assert http.request(path + "&settlement_view=unknown", headers=headers)[0] == 400
@@ -414,21 +420,21 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
     _publish_expense(engine, "second", 200)
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     status, _, _, first = http.request(base, headers=headers)
-    assert status == 200 and first["data"]["collections"]["vouchers"]["page"]["has_more"]
-    cursor = quote(first["data"]["collections"]["vouchers"]["page"]["next_cursor"], safe="")
+    assert status == 200 and first["data"]["collections"]["activity"]["page"]["has_more"]
+    cursor = quote(first["data"]["collections"]["activity"]["page"]["next_cursor"], safe="")
     following = (
-        base + f"&section=vouchers&cursor={cursor}&expected_version={first['snapshot_version']}"
+        base + f"&section=activity&cursor={cursor}&expected_version={first['snapshot_version']}"
     )
     status, _, _, page = http.request(following, headers=headers)
     assert status == 200 and page["snapshot_version"] == first["snapshot_version"]
-    assert len(page["data"]["collections"]["vouchers"]["items"]) == 1
+    assert len(page["data"]["collections"]["activity"]["items"]) == 1
     _publish_expense(engine, "first", 150, revision=1)
     status, _, _, error = http.request(following, headers=headers)
     assert status == 409 and error["code"] == "dashboard_snapshot_changed"
     assert "data" not in error
     status, _, _, refreshed = http.request(base, headers=headers)
     assert status == 200 and refreshed["snapshot_version"] != first["snapshot_version"]
-    assert refreshed["data"]["total_debit_fen"] == "350"
+    assert refreshed["data"]["position"]["month_expense_fen"] == "350"
 
 
 def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
@@ -436,23 +442,23 @@ def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     headers, _ = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "数字凭证深链测试企业")["id"]
     engine = service.engine(company)
-    first = _publish_expense(engine, "first", 100)
+    _publish_expense(engine, "first", 100)
     target = _publish_expense(engine, "target", 200)
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     numeric = base + f"&voucher_number={target['number']}"
     status, _, _, result = http.request(numeric, headers=headers)
     assert status == 200, result
-    assert result["data"]["focused_voucher"]["voucher_version_id"] == target["id"]
-    assert result["data"]["focused_voucher"]["business_amount_fen"] == "200"
-    assert [
-        item["voucher_version_id"] for item in result["data"]["collections"]["vouchers"]["items"]
-    ] == [first["id"]]
-    assert result["data"]["collections"]["vouchers"]["page"]["has_more"]
+    assert result["data"]["focused_activity"]["subject_id"] == "target"
+    assert result["data"]["focused_activity"]["amount_fen"] == "200"
+    assert [item["subject_id"] for item in result["data"]["collections"]["activity"]["items"]] == [
+        "first"
+    ]
+    assert result["data"]["collections"]["activity"]["page"]["has_more"]
     status, _, _, exact = http.request(
         base + f"&voucher_version_id={target['id']}", headers=headers
     )
     assert status == 200
-    assert exact["data"]["focused_voucher"] == result["data"]["focused_voucher"]
+    assert exact["data"]["focused_activity"] == result["data"]["focused_activity"]
     status, _, _, absent = http.request(base + "&voucher_number=10009", headers=headers)
     assert status == 400 and absent["code"] == "dashboard_voucher_not_found"
     for suffix in (

@@ -1,0 +1,27 @@
+{
+  "scope": "ce54 real declared single-company upgrade on an isolated synthetic main120 copy; not root upgrade, a5/525f qualification or page timing",
+  "source_sha256": "ce54b17fda46c9596c06d96267f525efed3b5dbdd1380a8fec732b0e789d62a8",
+  "helper": {
+    "private_path": ".tmp/stage9-upgrade-index-transition-fixture-20261005.py",
+    "sha256": "c98170187a6a106974b0ed8ff25f52cb48e77ff5a763467763cb04065d7567b5"
+  },
+  "entries": [
+    {
+      "file": "stage9-index-transition-main120-upgrade-20261005.json.gz",
+      "private_original": ".tmp/stage9-index-transition-main120-upgrade-20261005.json",
+      "original_sha256": "b771498027263fbd32e41bcc0e31a70d9a3e36f5422251752622c5a7ea2b6e18",
+      "original_bytes": 4111,
+      "gzip_sha256": "5b6c668a43043679f9aa29a2f5ec400aea5af990c0b01817b9ea3a2f9a685c97",
+      "gzip_bytes": 1186
+    },
+    {
+      "file": "stage9-index-transition-main120-upgrade-20261005.log.gz",
+      "private_original": ".tmp/stage9-index-transition-main120-upgrade-20261005.log",
+      "original_sha256": "175986bce28e9e5c50f2c390a7ee78d2db97fc8425acafd73d027cf199ebe822",
+      "original_bytes": 1296,
+      "gzip_sha256": "d5c71fea0e063398a34cb21298753e4bf2918c7bc092cff5672044b42ee84b66",
+      "gzip_bytes": 362
+    }
+  ],
+  "originals_unchanged": true
+}

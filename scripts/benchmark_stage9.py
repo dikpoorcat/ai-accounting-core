@@ -103,7 +103,7 @@ def main():
         "workspace": str(workspace),
         "root": str(args.root.resolve()),
         "requested_months": args.months,
-        "default_page_limit": 100,
+        "default_page_limit": 20,
         "python": sys.version,
         "measurements": {},
     }
@@ -216,13 +216,13 @@ def main():
 
     operations = {
         name: (
-            lambda name=name: getattr(dashboard, name)(period, limit=100, preparation="deferred")
+            lambda name=name: getattr(dashboard, name)(period, limit=20, preparation="deferred")
         )
         for name in ("funds", "employees", "assets")
     }
     operations.update(
         context=dashboard.context,
-        brief=lambda: dashboard.brief(period, limit=100),
+        brief=lambda: dashboard.brief(period, limit=20, preparation="deferred"),
         preparation=preparation,
         reports=lambda: dashboard.quarterly_report(
             int(period[:4]), (int(period[5:]) - 1) // 3 + 1, preparation="deferred"

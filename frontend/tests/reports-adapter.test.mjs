@@ -33,34 +33,33 @@ function dashboardContext(companyId, periods = [["2026-01", "open"]]) {
     return { key, year, month, label: key, short_label: key, status, start_date: `${key}-01`, end_date: `${key}-28`, closed_at: null };
   });
   return {
-    schema_version: 2, company: company.name, companies: [company], current_company: company,
+    schema_version: 3, company: company.name, companies: [company], current_company: company,
     periods: months, quarters: [], default_period: months.at(-1)?.key ?? null, default_quarter: null,
   };
 }
 
-test("chosen immutable continuation source follows the company through preview and export", async () => {
+test("quarterly export follows the same company and exact preview without an internal source selector", async () => {
   globalThis.window = { location: { origin: "http://127.0.0.1:7000", search: "?company_id=company-a" } };
   const generatedSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
   const report = structuredClone(generatedSamples.quarterly_report.response);
   report.read_context.company_id = "company-a";
-  report.carry_forward.selected_fact_id = "immutable-source";
   report.export = { ...report.export, available: true, preview_digest: "digest", epochs: { accounting: 1, material: 2, management: 3 } };
   globalThis.fetch = async (url, options) => {
     if (url.startsWith("/api/dashboard/")) {
       const query = new URL(url, window.location.origin).searchParams;
       assert.equal(query.get("company_id"), "company-a");
-      assert.equal(query.get("carry_forward_fact_id"), "immutable-source");
+      assert.equal(query.has("carry_forward_fact_id"), false);
       return new Response(JSON.stringify(report));
     }
     assert.equal(url, "/api/local/report-export");
     assert.deepEqual(JSON.parse(options.body), {
       company_id: "company-a", year: report.period.year, quarter: report.period.quarter,
       preview_digest: "digest", epochs: report.export.epochs,
-      request_id: "request-one", carry_forward_fact_id: "immutable-source",
+      request_id: "request-one",
     });
     return new Response(JSON.stringify({ status: "queued", job_id: "job", preview_digest: "digest" }));
   };
-  const preview = await reports.fetchDeferredQuarterlyReport("company-a", report.period.year, report.period.quarter, undefined, "immutable-source");
+  const preview = await reports.fetchDeferredQuarterlyReport("company-a", report.period.year, report.period.quarter);
   assert.deepEqual(await reports.requestQuarterlyExport("company-a", preview, "request-one"), {
     status: "queued", job_id: "job", preview_digest: "digest",
   });
@@ -122,12 +121,12 @@ async function reportView(stubs) {
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const formatFen = String;
   `;
-  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, taxTemplateMode, statementValue };", {
+  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, statementValue, taxTemplateMode, activeTemplateMeta, balanceTemplateRows, templateStatementValue, templateSectionLabel };", {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   const view = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
   view.report.value = {
-    period: { year: 2026, quarter: 3 }, carry_forward: { selected_fact_id: null, options: [] },
+    period: { year: 2026, quarter: 3 },
     export: { available: true, preview_digest: "same-preview", file_name: "report.xlsx", epochs: {} },
   };
   return view;
@@ -146,11 +145,8 @@ test("the default report view retains unknown amounts while hiding proved zero r
   const total = { line: 47, name: "负债合计", values: { ending_fen: null, beginning_fen: "0" }, has_amount: false, is_total: true };
   view.report.value.statements = [{ key: "balance_sheet", rows: [zero, unknown, total] }];
   view.activeStatementKey.value = "balance_sheet";
-  assert.equal(view.taxTemplateMode.value, false);
   assert.deepEqual(view.visibleStatementRows.value.map((row) => row.line), [39, 47]);
   assert.equal(view.statementValue(view.visibleStatementRows.value[0].values.ending_fen), "—");
-  view.taxTemplateMode.value = true;
-  assert.deepEqual(view.visibleStatementRows.value.map((row) => row.line), [38, 39, 47]);
 });
 
 test("a terminal failure creates a new task on explicit regeneration", async () => {
@@ -202,4 +198,29 @@ test("an interrupted wait resumes the accepted task without creating a duplicate
   assert.equal(view.needsRegeneration.value, false);
   await view.exportReport();
   assert.equal(requested, 1);
+});
+
+
+test("tax template mode restores full rows, form identities and exact yuan amounts", async () => {
+  const view = await reportView(exportEnvironment());
+  const columns = [{ key: "ending_fen", label: "期末余额" }, { key: "beginning_fen", label: "年初余额" }];
+  const rows = Array.from({ length: 53 }, (_, index) => ({ line: index + 1, name: `项目${index + 1}`, values: { ending_fen: "0", beginning_fen: "0" }, has_amount: false, is_total: false }));
+  view.report.value.statements = [{ key: "balance_sheet", columns, rows }];
+  view.activeStatementKey.value = "balance_sheet";
+  assert.equal(view.visibleStatementRows.value.length, 0);
+  view.taxTemplateMode.value = true;
+  assert.equal(view.visibleStatementRows.value.length, 53);
+  assert.equal(view.activeTemplateMeta.value.formCode, "会小企01表");
+  assert.deepEqual(view.balanceTemplateRows.value.flatMap(pair => [pair.left, pair.right]).filter(cell => cell.kind === "row").map(cell => cell.row.line).sort((a, b) => a - b), rows.map(row => row.line));
+  assert.equal(view.templateStatementValue("900719925474099301"), "9,007,199,254,740,993.01");
+  assert.equal(view.templateStatementValue("-1"), "-0.01");
+  assert.equal(view.templateStatementValue(null), "—");
+  for (const [key, formCode] of [["profit_statement", "会小企02表"], ["cash_flow_statement", "会小企03表"]]) {
+    view.report.value.statements.push({ key, rows, columns });
+    view.activeStatementKey.value = key;
+    assert.equal(view.activeTemplateMeta.value.formCode, formCode);
+  }
+  assert.equal(view.templateSectionLabel("cash_flow_statement", 14), "三、筹资活动产生的现金流量：");
+  view.taxTemplateMode.value = false;
+  assert.equal(view.visibleStatementRows.value.length, 0);
 });

@@ -1,0 +1,140 @@
+{
+  "kind": "synthetic_rebase_full_verification_and_failed_browser_receipts",
+  "scope": "Fixed r63 synthetic main48 and independent12 fresh-target construction with registered complete verification; main48 actual pure30 over_target. No new tests or measurements executed by archiving.",
+  "limitations": [
+    "Synthetic sources only; unchanged original business rows, rowids and frozen contents preserved. Fresh-target metadata is not a real-company migration history.",
+    "main48 verified JSON is a byte-identical copy of the original rebase report, not another verification run.",
+    "main48 browser r63 initial argv was rejected by synthetic_path gate; only its log exists and it is not a timing sample.",
+    "Actual main48 r63a retains all 150 successful samples including 92 at or over 500ms; page performance failed.",
+    "Main12 passed remains valid; independent12 pure timing, main120 and final delivery remain unaccepted.",
+    "Repository remains draft/0; isolated candidate does not freeze repository contracts. All previous failures remain retained."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-owner-main48-r63/stage9-rebase-report.json",
+      "source_mtime_utc": "2026-10-02T03:08:03.808839+00:00",
+      "archive": "owner-main48-independent12-r63-main48-stage9-rebase-report.json.gz",
+      "bytes": 143941,
+      "sha256": "ec23712da3d0386fb18bf983408733abf6d7cff7dcc1c1ecd9ad0dfc010b3d24",
+      "archive_bytes": 28747,
+      "archive_sha256": "402eb32f7521e46b2f00afd58789febdb50f81dc8eb9d1f92161eee1d230e0c3"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-r63/stage9-rebase-progress.jsonl",
+      "source_mtime_utc": "2026-10-02T03:08:03.837565+00:00",
+      "archive": "owner-main48-independent12-r63-main48-stage9-rebase-progress.jsonl.gz",
+      "bytes": 44207,
+      "sha256": "4a252b4fea548370660d135a327d6350c18792d9695da44cc504ef0d47ca4d34",
+      "archive_bytes": 8822,
+      "archive_sha256": "995bdc92a62f9994da706aaa47c93f74cbab1bbd40d457b0f76a50db13bcc8a6"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-r63/stage9-rebase-finished.json",
+      "source_mtime_utc": "2026-10-02T03:08:03.826495+00:00",
+      "archive": "owner-main48-independent12-r63-main48-stage9-rebase-finished.json.gz",
+      "bytes": 585,
+      "sha256": "f6e83535eb047c52706af1cb4d18b953276618383f1050931478a6e7f0595323",
+      "archive_bytes": 368,
+      "archive_sha256": "815641ce4350f00f265093fc0698ae5df6cf2b68b818e5f63225a606ed05cd5b"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-r63/stage9-rebase-copy-proof-1790908626869032400.json",
+      "source_mtime_utc": "2026-10-02T02:37:06.873034+00:00",
+      "archive": "owner-main48-independent12-r63-main48-stage9-rebase-copy-proof-1790908626869032400.json.gz",
+      "bytes": 74631,
+      "sha256": "b9a3a247c6f8f2c28133502c812e19699035b2d26476371e6cfadf2825d1eea0",
+      "archive_bytes": 15366,
+      "archive_sha256": "5dad8e198a15e74a61f3f6493def36617a4829ec4b82df4c0002e505c2d42d2f"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-rebase-r63.log",
+      "source_mtime_utc": "2026-10-02T03:08:03.909178+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-main48-rebase-r63.log.gz",
+      "bytes": 135,
+      "sha256": "9dae6a3544f6267501d1bb97ab05d698630b05c97ad15cc2f2b42566ad9d5ebb",
+      "archive_bytes": 131,
+      "archive_sha256": "f17d78556986fee0a5c4c7cbb129ad58581eadd3b8e457c2d17d238d91008854"
+    },
+    {
+      "source": ".tmp/stage9-owner-independent12-r63/stage9-rebase-report.json",
+      "source_mtime_utc": "2026-10-02T02:34:01.637581+00:00",
+      "archive": "owner-main48-independent12-r63-independent12-stage9-rebase-report.json.gz",
+      "bytes": 124919,
+      "sha256": "4880c6aa7318452bc07dc374b09c5301cc546234e17b7d998d64376f80a811ca",
+      "archive_bytes": 20952,
+      "archive_sha256": "473d35f89016579a9e03fae85d8587aa56c5672546cca95ec7bbb72adf046453"
+    },
+    {
+      "source": ".tmp/stage9-owner-independent12-r63/stage9-rebase-progress.jsonl",
+      "source_mtime_utc": "2026-10-02T02:34:01.650582+00:00",
+      "archive": "owner-main48-independent12-r63-independent12-stage9-rebase-progress.jsonl.gz",
+      "bytes": 44130,
+      "sha256": "4a62fed96650e51b134e3cf554b2e320d4e08a29197811edfa3c39254b00bee2",
+      "archive_bytes": 7552,
+      "archive_sha256": "46bb635937c82f4af8f6445cf6df404a3ab225fb5507c628af7a87e5730713bf"
+    },
+    {
+      "source": ".tmp/stage9-owner-independent12-r63/stage9-rebase-finished.json",
+      "source_mtime_utc": "2026-10-02T02:34:01.646583+00:00",
+      "archive": "owner-main48-independent12-r63-independent12-stage9-rebase-finished.json.gz",
+      "bytes": 605,
+      "sha256": "6d6bef2e8f7729cb0361eb3d4f7aa3ac228bdb0c791536fe12b877cc425720fe",
+      "archive_bytes": 374,
+      "archive_sha256": "1b0a4f3b0d922f4025e43878f97d02da6d45cb8c2a7d4cc93de8e3045855d2bb"
+    },
+    {
+      "source": ".tmp/stage9-owner-independent12-r63/stage9-rebase-copy-proof-1790908279209331500.json",
+      "source_mtime_utc": "2026-10-02T02:31:19.212332+00:00",
+      "archive": "owner-main48-independent12-r63-independent12-stage9-rebase-copy-proof-1790908279209331500.json.gz",
+      "bytes": 74609,
+      "sha256": "8e12938101b98f93f6af617ef844695261a5c5042a44e410208bb87408963bad",
+      "archive_bytes": 13038,
+      "archive_sha256": "98aed69c91e0e3b7dd7aad6b61879ced68625ef15147f71325b6752896721243"
+    },
+    {
+      "source": ".tmp/stage9-owner-independent12-rebase-r63.log",
+      "source_mtime_utc": "2026-10-02T02:34:01.659581+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-independent12-rebase-r63.log.gz",
+      "bytes": 142,
+      "sha256": "caf3873b559b328c4342dbf4e12a7728f0113d7aaa5a995505059c617e672e75",
+      "archive_bytes": 137,
+      "archive_sha256": "e8a79f2c18ae41320655d846347fd7ec959563c2fc6dfea746041c5c09c60715"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-r63-verified.json",
+      "source_mtime_utc": "2026-10-02T03:08:03.808839+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-main48-r63-verified.json.gz",
+      "bytes": 143941,
+      "sha256": "ec23712da3d0386fb18bf983408733abf6d7cff7dcc1c1ecd9ad0dfc010b3d24",
+      "archive_bytes": 28747,
+      "archive_sha256": "402eb32f7521e46b2f00afd58789febdb50f81dc8eb9d1f92161eee1d230e0c3"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-browser-r63.log",
+      "source_mtime_utc": "2026-10-02T03:11:12.357659+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-main48-browser-r63.log.gz",
+      "bytes": 1071,
+      "sha256": "f75409fe49a7a3b587a20b876481dd0b34c9d4b863cd805a72336c6692c07b6e",
+      "archive_bytes": 421,
+      "archive_sha256": "bea881011ef8eb892fa6266e81c7768afe48202715848ea9517bc26b4e648fd8"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-browser-r63a.json",
+      "source_mtime_utc": "2026-10-02T03:31:03.389061+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-main48-browser-r63a.json.gz",
+      "bytes": 9077,
+      "sha256": "f899f15f895b4a6468c9c250cc8618f66c4926047d115865b0c97b8730acaf6a",
+      "archive_bytes": 2901,
+      "archive_sha256": "d5b858dc7b8657621ece3f12da563e27caa509497f94084212567e929f55dbad"
+    },
+    {
+      "source": ".tmp/stage9-owner-main48-browser-r63a.log",
+      "source_mtime_utc": "2026-10-02T03:31:03.395063+00:00",
+      "archive": "owner-main48-independent12-r63-stage9-owner-main48-browser-r63a.log.gz",
+      "bytes": 116,
+      "sha256": "2bbdaf6350ae5799f1dc3049630a619407caed68b8781c61fc9be25bbf6fc53a",
+      "archive_bytes": 126,
+      "archive_sha256": "d89ce2533eb6b2e485110f5706005a57ec14db4773c52d9b29862ba9ce1c1db0"
+    }
+  ]
+}

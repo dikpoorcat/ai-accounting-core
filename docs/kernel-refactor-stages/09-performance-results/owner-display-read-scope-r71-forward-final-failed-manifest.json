@@ -1,0 +1,718 @@
+{
+  "created_utc": "2026-10-02T13:55:44.538685+00:00",
+  "scope": "ordinary reader guard actual failed affected group, prior synthetic probe fixture failures and actual pre-guard production leak; no full class closure or performance/release acceptance",
+  "prior_manifests": [
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-manifest.json",
+      "sha256": "c81a88da0eb42650fd7af78c0589510e94a4f14aceb29544fdd7a7e677d40998",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-manifest.json",
+      "sha256": "686116aaabd91b6271c88688c1cf6631e5750510a8eeb7eea4596eb469be6c07",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-assets-manifest.json",
+      "sha256": "c75a5be4c933cbca5b80660a49aa7e12eb740f4c586fa76fc100f24b7881b903",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-manifest.json",
+      "sha256": "e4bb2656195ea48e168a9c60fc5d2890378b063ae5ed214ebb793a1cc4a691ab",
+      "unchanged": true
+    }
+  ],
+  "run": {
+    "tests": 205,
+    "passed": 200,
+    "failures": 5,
+    "errors": 0,
+    "skipped": 0,
+    "stdout_seconds": 371.84,
+    "xml_seconds": 371.619,
+    "pytest_returncode": 1,
+    "module_counts": {
+      "tests.kernel.test_open_correction_publication_heads": 47,
+      "tests.kernel.test_open_correction_source_heads": 20,
+      "tests.kernel.test_owner_asset_metadata_scope": 62,
+      "tests.kernel.test_asset_owner_outcome_reads": 7,
+      "tests.kernel.test_owner_asset_card_page_scope": 1,
+      "tests.kernel.test_publication_v1_voucher_heads": 32,
+      "tests.kernel.test_open_voucher_scope_work": 1,
+      "tests.kernel.test_payroll_corrections": 4,
+      "tests.kernel.test_publication_periods": 12,
+      "tests.kernel.test_report_projection": 19
+    },
+    "failures_detail": [
+      {
+        "name": "test_fixed_v1_missing_reversal_head_is_not_zero_or_old_history[correction]",
+        "classname": "tests.kernel.test_publication_v1_voucher_heads",
+        "message": "AssertionError: assert 'correction_c...ersal_missing' == 'current_reve...head_mismatch'\n  \n  - current_reversal_head_mismatch\n  + correction_current_reversal_missing"
+      },
+      {
+        "name": "test_fixed_v1_missing_reversal_head_is_not_zero_or_old_history[correction_zero]",
+        "classname": "tests.kernel.test_publication_v1_voucher_heads",
+        "message": "AssertionError: assert 'correction_c...ersal_missing' == 'current_reve...head_mismatch'\n  \n  - current_reversal_head_mismatch\n  + correction_current_reversal_missing"
+      },
+      {
+        "name": "test_fixed_v1_missing_reversal_head_is_not_zero_or_old_history[replace]",
+        "classname": "tests.kernel.test_publication_v1_voucher_heads",
+        "message": "AssertionError: assert 'correction_c...ersal_missing' == 'current_reve...head_mismatch'\n  \n  - current_reversal_head_mismatch\n  + correction_current_reversal_missing"
+      },
+      {
+        "name": "test_fixed_v1_missing_reversal_head_is_not_zero_or_old_history[move]",
+        "classname": "tests.kernel.test_publication_v1_voucher_heads",
+        "message": "AssertionError: assert 'correction_c...ersal_missing' == 'current_reve...head_mismatch'\n  \n  - current_reversal_head_mismatch\n  + correction_current_reversal_missing"
+      },
+      {
+        "name": "test_fixed_v1_old_reversal_version_after_source_month_move_is_rejected",
+        "classname": "tests.kernel.test_publication_v1_voucher_heads",
+        "message": "AssertionError: assert 'correction_c...ersal_missing' == 'current_reve...head_mismatch'\n  \n  - current_reversal_head_mismatch\n  + correction_current_reversal_missing"
+      }
+    ]
+  },
+  "selected_source_identity": {
+    "before_sha256": "48d385b95ba992f6e598e50ab420098513311152450c5310e230ff7170b4837f",
+    "after_sha256": "2c2d4aa0067a574d1a637bae08648dbbe9b2400472e49ea1844de29c01a8d315",
+    "source_unchanged": false,
+    "before_count": 628,
+    "after_count": 629,
+    "changes": {
+      "frontend/tests/local-api-proxy.test.mjs": {
+        "before": null,
+        "after": "f0e90ff62ab0d6732b1a8e06fa54498a159fdd7732463ada0dcd915d72f490dd"
+      },
+      "frontend/vite.config.ts": {
+        "before": "6a070645ff9cf8d74b7d5661b4e43b0cef5905d0eb2677f8f64b878c491fdc0b",
+        "after": "5c2cce84d82babac441af9fae9703b3f3417dae1233ac47c9c268f983cc9ac19"
+      }
+    },
+    "limitation": "selected-source observations changed; per-file matching backend/test snapshots do not imply whole fixed candidate"
+  },
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-r71-correction-forward-final-related.log",
+      "scope": "actual failed 205 selected group receipt; 200 passed/5 reason mismatch, selected-source changed",
+      "raw_sha256": "e9a3a9d023588cbeed977d99bdf4e2aaa33afb97ee6f97539265826683602c7e",
+      "raw_bytes": 8132,
+      "raw_mtime_ns": 1790949133697431300,
+      "raw_mtime_utc": "2026-10-02T13:52:13.697431+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-001-stage9-r71-correction-forward-final-related.log.gz",
+      "archive_sha256": "cfb1925c3f6bc801254c9db40635866803873ed2ee3da154eba67383f8297932",
+      "archive_bytes": 1091,
+      "archive_mtime_ns": 1790949344216776900,
+      "archive_mtime_utc": "2026-10-02T13:55:44.216777+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-forward-final-related.xml",
+      "scope": "actual failed 205 selected group receipt; 200 passed/5 reason mismatch, selected-source changed",
+      "raw_sha256": "548aaf59b9bbed2cddf6cb97ca104a0feba9d28249cce6c78727f5b8c169abf4",
+      "raw_bytes": 42663,
+      "raw_mtime_ns": 1790949133470300700,
+      "raw_mtime_utc": "2026-10-02T13:52:13.470301+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-002-stage9-r71-correction-forward-final-related.xml.gz",
+      "archive_sha256": "4775b4ac7fe9058ba43247468f6e50c49f7b6f25775bec93a7b8a6acb83afa62",
+      "archive_bytes": 4967,
+      "archive_mtime_ns": 1790949344226776000,
+      "archive_mtime_utc": "2026-10-02T13:55:44.226776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-forward-final-related.json",
+      "scope": "actual failed 205 selected group receipt; 200 passed/5 reason mismatch, selected-source changed",
+      "raw_sha256": "3ddc6abc0ad9032511180a0ffe8555e897de6bf500544f85c2040b150c707769",
+      "raw_bytes": 151713,
+      "raw_mtime_ns": 1790949134597940200,
+      "raw_mtime_utc": "2026-10-02T13:52:14.597940+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-003-stage9-r71-correction-forward-final-related.json.gz",
+      "archive_sha256": "daf6e86442c32beba875c373f8c1acfa48ab64ded50cef692438a019de672f51",
+      "archive_bytes": 61592,
+      "archive_mtime_ns": 1790949344240775400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.240775+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-forward-final-related-command.txt",
+      "scope": "actual failed 205 selected group receipt; 200 passed/5 reason mismatch, selected-source changed",
+      "raw_sha256": "37c3634125cf51c1100ebf812e5e19cbef97507431565910f96a4c90af7fe94b",
+      "raw_bytes": 649,
+      "raw_mtime_ns": 1790948761313046400,
+      "raw_mtime_utc": "2026-10-02T13:46:01.313046+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-004-stage9-r71-correction-forward-final-related-command.txt.gz",
+      "archive_sha256": "fb0b5efc0ec99367eab9c3cf937c93cea8e63d35feac2d1d10e2f4deb823e8ff",
+      "archive_bytes": 280,
+      "archive_mtime_ns": 1790949344248776300,
+      "archive_mtime_utc": "2026-10-02T13:55:44.248776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-run-correction-final-group.py",
+      "scope": "actual runner source archived after execution",
+      "raw_sha256": "e6d581f47d8e0aa4aad2e81a8dd8c06441b39c15dd545a97987d26a41fed4e99",
+      "raw_bytes": 2106,
+      "raw_mtime_ns": 1790948758903742400,
+      "raw_mtime_utc": "2026-10-02T13:45:58.903743+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-005-stage9-run-correction-final-group.py.gz",
+      "archive_sha256": "348e3bf7ce60433c215d7d0fb2a192a549cb129cfbbe77bd067f4c14a4618195",
+      "archive_bytes": 980,
+      "archive_mtime_ns": 1790949344257778200,
+      "archive_mtime_utc": "2026-10-02T13:55:44.257778+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "scripts/snapshot_stage9_source.py",
+      "scope": "selected-source inventory implementation, archive-time identity",
+      "raw_sha256": "7de6b848c272ce2e0a41d8fc13cca70ad58227846ef1e91c39f05cffdde48ddc",
+      "raw_bytes": 5522,
+      "raw_mtime_ns": 1790475800576321700,
+      "raw_mtime_utc": "2026-09-27T02:23:20.576322+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-006-snapshot_stage9_source.py.gz",
+      "archive_sha256": "d903ebbfe3589b20d66c80b18fa672f9657cffa823d7ce058d4b4d2d3b28a48b",
+      "archive_bytes": 1793,
+      "archive_mtime_ns": 1790949344264778400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.264779+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "7de6b848c272ce2e0a41d8fc13cca70ad58227846ef1e91c39f05cffdde48ddc",
+        "after_sha256": "7de6b848c272ce2e0a41d8fc13cca70ad58227846ef1e91c39f05cffdde48ddc",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe.py",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "36443aee80b75bd4927827688155036d08a8be12a63517f9473bb5f4b96baff0",
+      "raw_bytes": 5059,
+      "raw_mtime_ns": 1790947388524214900,
+      "raw_mtime_utc": "2026-10-02T13:23:08.524215+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-007-stage9-r71-reversal-pages-combination-probe.py.gz",
+      "archive_sha256": "3735b8029e550bae33b5ebe454cd8c7552b61a20b5fae52964d7db8a8cb30afe",
+      "archive_bytes": 1761,
+      "archive_mtime_ns": 1790949344272776300,
+      "archive_mtime_utc": "2026-10-02T13:55:44.272776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe.json",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "3aade0eb83f324bf211e87e3b6290aa8c1c3eceb253ce98776edb2e346797dd2",
+      "raw_bytes": 95032,
+      "raw_mtime_ns": 1790947390770134900,
+      "raw_mtime_utc": "2026-10-02T13:23:10.770135+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-008-stage9-r71-reversal-pages-combination-probe.json.gz",
+      "archive_sha256": "5989d847c43403f034e8a6b4dc2f91f21ba1bc61bd5f409fd527a0768ba88a92",
+      "archive_bytes": 13900,
+      "archive_mtime_ns": 1790949344282776300,
+      "archive_mtime_utc": "2026-10-02T13:55:44.282776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe.log",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "21e6f8a60fe2419b911f0501732a4a1e888aa669f97ceec1e53fbaf50ce0f133",
+      "raw_bytes": 10710,
+      "raw_mtime_ns": 1790947390834701200,
+      "raw_mtime_utc": "2026-10-02T13:23:10.834701+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-009-stage9-r71-reversal-pages-combination-probe.log.gz",
+      "archive_sha256": "f40cfb2acfe97654c1c9de14158a5859248a6c80377efc16052eb822e0ebb9d6",
+      "archive_bytes": 2265,
+      "archive_mtime_ns": 1790949344292776400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.292776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-command.txt",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "c4744ca3a38d70f88c4206ff80cd2e945720a453aa2441a7118fc5dbdb31f480",
+      "raw_bytes": 89,
+      "raw_mtime_ns": 1790947388539213500,
+      "raw_mtime_utc": "2026-10-02T13:23:08.539214+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-010-stage9-r71-reversal-pages-combination-probe-command.txt.gz",
+      "archive_sha256": "c98527859b382f7b9559d3375744f889ba9546b7bea26c7067077535deb8dc3d",
+      "archive_bytes": 101,
+      "archive_mtime_ns": 1790949344300775900,
+      "archive_mtime_utc": "2026-10-02T13:55:44.300776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair1.py",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "50dfe23100a4f4042e0ecacb26421ffeab39c0ccf7bb07f5b6c0beb4526861f5",
+      "raw_bytes": 6056,
+      "raw_mtime_ns": 1790947466387099200,
+      "raw_mtime_utc": "2026-10-02T13:24:26.387099+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-011-stage9-r71-reversal-pages-combination-probe-repair1.py.gz",
+      "archive_sha256": "87f8d19e4ac88808e7771ccc027f99e2acdce5c6742b069507b7796a8689d0a8",
+      "archive_bytes": 2066,
+      "archive_mtime_ns": 1790949344307776400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.307776+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair1.json",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "b57e24f82015d37f9a10c7947f70296e90c193d5713ef9f30fedbdb357119abb",
+      "raw_bytes": 2010,
+      "raw_mtime_ns": 1790947468236489400,
+      "raw_mtime_utc": "2026-10-02T13:24:28.236490+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-012-stage9-r71-reversal-pages-combination-probe-repair1.json.gz",
+      "archive_sha256": "cfc0539b4094d4121b6d048f8628c26aeda324917b8bb2245a97d34139976bb8",
+      "archive_bytes": 676,
+      "archive_mtime_ns": 1790949344313776900,
+      "archive_mtime_utc": "2026-10-02T13:55:44.313777+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair1.log",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "81660dcfb325518676fff06459d4bae7f5e9330a838189a5bd67ac56b8f979c9",
+      "raw_bytes": 3128,
+      "raw_mtime_ns": 1790947468321592700,
+      "raw_mtime_utc": "2026-10-02T13:24:28.321593+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-013-stage9-r71-reversal-pages-combination-probe-repair1.log.gz",
+      "archive_sha256": "a38b298312cfa01ef4fd19b7d955b0f3a987d455650119a09a083e0cd32e65ba",
+      "archive_bytes": 530,
+      "archive_mtime_ns": 1790949344322780500,
+      "archive_mtime_utc": "2026-10-02T13:55:44.322780+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair1-command.txt",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "6ff8b5d588132d65f453e54511dc5731e562bcc8d8a4ce4d3e5f3a876dafb496",
+      "raw_bytes": 97,
+      "raw_mtime_ns": 1790947466400766800,
+      "raw_mtime_utc": "2026-10-02T13:24:26.400767+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-014-stage9-r71-reversal-pages-combination-probe-repair1-command.txt.gz",
+      "archive_sha256": "f4432a4b4d7b60d5b12ec19d0d972ce7aa4487401c5a375618e2be5835afd456",
+      "archive_bytes": 105,
+      "archive_mtime_ns": 1790949344330777300,
+      "archive_mtime_utc": "2026-10-02T13:55:44.330777+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair2.py",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "d8be4102caef2b5015a7d059af140a9d6093c058921ad243adbad9a3b5b2f182",
+      "raw_bytes": 5467,
+      "raw_mtime_ns": 1790947526522459400,
+      "raw_mtime_utc": "2026-10-02T13:25:26.522460+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-015-stage9-r71-reversal-pages-combination-probe-repair2.py.gz",
+      "archive_sha256": "7883d7e0d0541977ed4d1d925cca801422f2a6edb315a0cda71a65663f371924",
+      "archive_bytes": 1930,
+      "archive_mtime_ns": 1790949344339057800,
+      "archive_mtime_utc": "2026-10-02T13:55:44.339058+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair2.json",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "dc1f857516cbd4418dc80bc4737b439caec005834c0fd82fdc5b334141208b68",
+      "raw_bytes": 1425,
+      "raw_mtime_ns": 1790947530777662900,
+      "raw_mtime_utc": "2026-10-02T13:25:30.777663+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-016-stage9-r71-reversal-pages-combination-probe-repair2.json.gz",
+      "archive_sha256": "fa0130e6092e23a88c19534f9240fc561c2d09f0aa53d6ded9560296c97f1d2f",
+      "archive_bytes": 593,
+      "archive_mtime_ns": 1790949344345057600,
+      "archive_mtime_utc": "2026-10-02T13:55:44.345057+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair2.log",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "5fe844ecf315377c8211f2c6460fc00315176f50454578734c2623912a3308e8",
+      "raw_bytes": 2070,
+      "raw_mtime_ns": 1790947530847092700,
+      "raw_mtime_utc": "2026-10-02T13:25:30.847093+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-017-stage9-r71-reversal-pages-combination-probe-repair2.log.gz",
+      "archive_sha256": "3f8ca1b015975397105a8fe22ab7d356666a2a776a2cd033d06940957a5023fc",
+      "archive_bytes": 451,
+      "archive_mtime_ns": 1790949344352058700,
+      "archive_mtime_utc": "2026-10-02T13:55:44.352059+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair2-command.txt",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "88ad687346cf1d2c3956d94d59e33187414f32a4372424fb06d9eee721172837",
+      "raw_bytes": 97,
+      "raw_mtime_ns": 1790947526534460600,
+      "raw_mtime_utc": "2026-10-02T13:25:26.534461+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-018-stage9-r71-reversal-pages-combination-probe-repair2-command.txt.gz",
+      "archive_sha256": "b111958cc1989130bfc46f9e4903c7e0f0f49974b1ef9282df7e61c36b172044",
+      "archive_bytes": 106,
+      "archive_mtime_ns": 1790949344361057400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.361057+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair3.py",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "8c0cc23d3232270f9582f79552b3da8ea4bbc6f566022afdbfed267d0ff8b1e3",
+      "raw_bytes": 5785,
+      "raw_mtime_ns": 1790947570431840000,
+      "raw_mtime_utc": "2026-10-02T13:26:10.431840+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-019-stage9-r71-reversal-pages-combination-probe-repair3.py.gz",
+      "archive_sha256": "22f7997c8adfc286ae44c553eac3cb9594a276c0d6066daf4e18e3ae86b90d85",
+      "archive_bytes": 2024,
+      "archive_mtime_ns": 1790949344368056800,
+      "archive_mtime_utc": "2026-10-02T13:55:44.368057+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair3.json",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "05918251b81bf8b583379dfb6e7f888f0a95ddec4e562fa6d007735139f011c3",
+      "raw_bytes": 512001,
+      "raw_mtime_ns": 1790947575473280000,
+      "raw_mtime_utc": "2026-10-02T13:26:15.473280+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-020-stage9-r71-reversal-pages-combination-probe-repair3.json.gz",
+      "archive_sha256": "ccd262513035834433df804331d7ad213ea27a234e1891fa0758dd770cf80f57",
+      "archive_bytes": 66659,
+      "archive_mtime_ns": 1790949344390058400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.390059+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair3.log",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "bfc56269dcae42d78e9e4784ef0f4a94a3d68f12ad136017bc0536fde5167a75",
+      "raw_bytes": 56786,
+      "raw_mtime_ns": 1790947575474277300,
+      "raw_mtime_utc": "2026-10-02T13:26:15.474277+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-021-stage9-r71-reversal-pages-combination-probe-repair3.log.gz",
+      "archive_sha256": "3567655dd65c3ca0210f8091789d17dc48d8c8987132f0730e893d3a433d54b6",
+      "archive_bytes": 4858,
+      "archive_mtime_ns": 1790949344402057000,
+      "archive_mtime_utc": "2026-10-02T13:55:44.402057+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-pages-combination-probe-repair3-command.txt",
+      "scope": "historical ordinary-page probe; initial/repair1/repair2 fixture failures, repair3 actual pre-ordinary-guard production consumer leak",
+      "raw_sha256": "1bad572ee355bf3ad8a3281345ec74c0c7667a1e5ae7b4403bb1232151fdff31",
+      "raw_bytes": 97,
+      "raw_mtime_ns": 1790947570445905900,
+      "raw_mtime_utc": "2026-10-02T13:26:10.445906+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-022-stage9-r71-reversal-pages-combination-probe-repair3-command.txt.gz",
+      "archive_sha256": "25f4cfc6254ab3c21998b9668c9f05fdde38b68170a4e60bb0f6c7e85713d407",
+      "archive_bytes": 106,
+      "archive_mtime_ns": 1790949344409056700,
+      "archive_mtime_utc": "2026-10-02T13:55:44.409057+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/publication.py",
+      "scope": "archive-time production source, compared to actual runner before/after selected-source inventory",
+      "raw_sha256": "6b4bae5a4699e059f972466998350e945556dc51561b8b78969a71dd998ce65e",
+      "raw_bytes": 30624,
+      "raw_mtime_ns": 1790948628564489200,
+      "raw_mtime_utc": "2026-10-02T13:43:48.564489+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-023-publication.py.gz",
+      "archive_sha256": "a7e0c6425b5af4ec5983e53aa54b55ac05b5dd72805ee015a2affeaf29fb8ff5",
+      "archive_bytes": 7225,
+      "archive_mtime_ns": 1790949344419057500,
+      "archive_mtime_utc": "2026-10-02T13:55:44.419057+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "6b4bae5a4699e059f972466998350e945556dc51561b8b78969a71dd998ce65e",
+        "after_sha256": "6b4bae5a4699e059f972466998350e945556dc51561b8b78969a71dd998ce65e",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/publication_v1.py",
+      "scope": "archive-time production source, compared to actual runner before/after selected-source inventory",
+      "raw_sha256": "d1201e53dcb1c0a8841e908e4340f617d5bff81cce6167735836d2e7cfaf5ee9",
+      "raw_bytes": 29002,
+      "raw_mtime_ns": 1790948628565489400,
+      "raw_mtime_utc": "2026-10-02T13:43:48.565489+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-024-publication_v1.py.gz",
+      "archive_sha256": "0aee4447a9339e27d1ced942f9811af23d91eea89def687c7b2e468182dbad84",
+      "archive_bytes": 6371,
+      "archive_mtime_ns": 1790949344429056300,
+      "archive_mtime_utc": "2026-10-02T13:55:44.429056+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "d1201e53dcb1c0a8841e908e4340f617d5bff81cce6167735836d2e7cfaf5ee9",
+        "after_sha256": "d1201e53dcb1c0a8841e908e4340f617d5bff81cce6167735836d2e7cfaf5ee9",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/query_reads.py",
+      "scope": "archive-time production source, compared to actual runner before/after selected-source inventory",
+      "raw_sha256": "75fa38e8e65a8424349e9b9795d16a923081253832c99580794325690bf82594",
+      "raw_bytes": 111052,
+      "raw_mtime_ns": 1790947943358594200,
+      "raw_mtime_utc": "2026-10-02T13:32:23.358594+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-025-query_reads.py.gz",
+      "archive_sha256": "dc5e97fb7023c11a100fdf653ad8839cc59c3ab58e0b2baed93799090caea59d",
+      "archive_bytes": 23130,
+      "archive_mtime_ns": 1790949344445057900,
+      "archive_mtime_utc": "2026-10-02T13:55:44.445058+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "75fa38e8e65a8424349e9b9795d16a923081253832c99580794325690bf82594",
+        "after_sha256": "75fa38e8e65a8424349e9b9795d16a923081253832c99580794325690bf82594",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/integrity.py",
+      "scope": "archive-time production source, compared to actual runner before/after selected-source inventory",
+      "raw_sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763",
+      "raw_bytes": 75150,
+      "raw_mtime_ns": 1790946598074297000,
+      "raw_mtime_utc": "2026-10-02T13:09:58.074297+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-026-integrity.py.gz",
+      "archive_sha256": "1e7e2a24837f05754b2e30223bf4e8de2dae5031993b24e04042622c3d0d503b",
+      "archive_bytes": 14818,
+      "archive_mtime_ns": 1790949344460056100,
+      "archive_mtime_utc": "2026-10-02T13:55:44.460056+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763",
+        "after_sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_open_correction_publication_heads.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "662c8aed90f2605ef2102408eea157d4f52c605308c7ccaf74371d82cbb4860c",
+      "raw_bytes": 15165,
+      "raw_mtime_ns": 1790948554201271200,
+      "raw_mtime_utc": "2026-10-02T13:42:34.201271+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-027-test_open_correction_publication_heads.py.gz",
+      "archive_sha256": "f7ef7cc80e03400a6dd745b3215e9635e30f9b8288028a1dd72bf2328fb91772",
+      "archive_bytes": 3865,
+      "archive_mtime_ns": 1790949344469058400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.469058+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "662c8aed90f2605ef2102408eea157d4f52c605308c7ccaf74371d82cbb4860c",
+        "after_sha256": "662c8aed90f2605ef2102408eea157d4f52c605308c7ccaf74371d82cbb4860c",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_open_correction_source_heads.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "4d5eaa2b290750cddbb438e4091ac80e3171c7df79194386086aee571bc5107d",
+      "raw_bytes": 6765,
+      "raw_mtime_ns": 1790946473977274200,
+      "raw_mtime_utc": "2026-10-02T13:07:53.977274+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-028-test_open_correction_source_heads.py.gz",
+      "archive_sha256": "d02c05689b4d78533078f705002533471b68a5850ca61564fb71d2d640d2f14f",
+      "archive_bytes": 1752,
+      "archive_mtime_ns": 1790949344475056400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.475056+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "4d5eaa2b290750cddbb438e4091ac80e3171c7df79194386086aee571bc5107d",
+        "after_sha256": "4d5eaa2b290750cddbb438e4091ac80e3171c7df79194386086aee571bc5107d",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_owner_asset_metadata_scope.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "37858827786ed34df76f262b7df61f5420dd6762f2aaea306d318545f7d7e98d",
+      "raw_bytes": 30241,
+      "raw_mtime_ns": 1790945506100569500,
+      "raw_mtime_utc": "2026-10-02T12:51:46.100569+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-029-test_owner_asset_metadata_scope.py.gz",
+      "archive_sha256": "4ee754cb39281f08f7f75e128dfed650ae2e8e63f28aceca4a9ec3e2c8715b7c",
+      "archive_bytes": 5673,
+      "archive_mtime_ns": 1790949344484563000,
+      "archive_mtime_utc": "2026-10-02T13:55:44.484563+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "37858827786ed34df76f262b7df61f5420dd6762f2aaea306d318545f7d7e98d",
+        "after_sha256": "37858827786ed34df76f262b7df61f5420dd6762f2aaea306d318545f7d7e98d",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_asset_owner_outcome_reads.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "86fef341708a1ba8fac117188beff683fe2ac23ab8888ff1d43f280544df6007",
+      "raw_bytes": 7814,
+      "raw_mtime_ns": 1790941758098332600,
+      "raw_mtime_utc": "2026-10-02T11:49:18.098333+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-030-test_asset_owner_outcome_reads.py.gz",
+      "archive_sha256": "23f5698093aeb54d7549f4cbf5a09852e76814f5515c0db7287e3006686b3927",
+      "archive_bytes": 2130,
+      "archive_mtime_ns": 1790949344493688000,
+      "archive_mtime_utc": "2026-10-02T13:55:44.493688+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "86fef341708a1ba8fac117188beff683fe2ac23ab8888ff1d43f280544df6007",
+        "after_sha256": "86fef341708a1ba8fac117188beff683fe2ac23ab8888ff1d43f280544df6007",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_owner_asset_card_page_scope.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "d8c4f925a7b41d40b137c3daa678a483e44b53c3947a3b9554350e0da95fb2dd",
+      "raw_bytes": 3387,
+      "raw_mtime_ns": 1790942177202003900,
+      "raw_mtime_utc": "2026-10-02T11:56:17.202004+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-031-test_owner_asset_card_page_scope.py.gz",
+      "archive_sha256": "3b3012d7fbb9734eafb3f679d2f05d1cbf7023e4890fbd6c641c03d47912c35e",
+      "archive_bytes": 1234,
+      "archive_mtime_ns": 1790949344501687100,
+      "archive_mtime_utc": "2026-10-02T13:55:44.501687+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "d8c4f925a7b41d40b137c3daa678a483e44b53c3947a3b9554350e0da95fb2dd",
+        "after_sha256": "d8c4f925a7b41d40b137c3daa678a483e44b53c3947a3b9554350e0da95fb2dd",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_publication_v1_voucher_heads.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "b2adfa7cab8c268e5de82f502f712af16415fc7d79a037bb2f9f0c02b4593f8c",
+      "raw_bytes": 10533,
+      "raw_mtime_ns": 1790945539355883000,
+      "raw_mtime_utc": "2026-10-02T12:52:19.355883+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-032-test_publication_v1_voucher_heads.py.gz",
+      "archive_sha256": "cfb83dcdf74fa114123eaadd115a309896575ce9e0165f507cf35ad9b815fd1d",
+      "archive_bytes": 2370,
+      "archive_mtime_ns": 1790949344503686500,
+      "archive_mtime_utc": "2026-10-02T13:55:44.503686+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "b2adfa7cab8c268e5de82f502f712af16415fc7d79a037bb2f9f0c02b4593f8c",
+        "after_sha256": "b2adfa7cab8c268e5de82f502f712af16415fc7d79a037bb2f9f0c02b4593f8c",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_open_voucher_scope_work.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "be724b63ba23639b73ab2e841f04740c4fe205f83e4c945511b8b9150a7ab5ac",
+      "raw_bytes": 2555,
+      "raw_mtime_ns": 1790945661215164800,
+      "raw_mtime_utc": "2026-10-02T12:54:21.215165+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-033-test_open_voucher_scope_work.py.gz",
+      "archive_sha256": "abb233c469e65a4f9e5853367aa1230e20ce0ad80a86b4a3ffc28d847e02f1d6",
+      "archive_bytes": 1089,
+      "archive_mtime_ns": 1790949344509685400,
+      "archive_mtime_utc": "2026-10-02T13:55:44.509686+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "be724b63ba23639b73ab2e841f04740c4fe205f83e4c945511b8b9150a7ab5ac",
+        "after_sha256": "be724b63ba23639b73ab2e841f04740c4fe205f83e4c945511b8b9150a7ab5ac",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_payroll_corrections.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "203c69ff527c0f7e8ea521007179dbd4c1ec9a0d1b0b3bc93effbd2471785f40",
+      "raw_bytes": 16187,
+      "raw_mtime_ns": 1790076282547772800,
+      "raw_mtime_utc": "2026-09-22T11:24:42.547773+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-034-test_payroll_corrections.py.gz",
+      "archive_sha256": "8e565246bbf9a9b99265083c81124f6c6a34fa65e1dd37147efeb52e9e4e0772",
+      "archive_bytes": 4137,
+      "archive_mtime_ns": 1790949344511685200,
+      "archive_mtime_utc": "2026-10-02T13:55:44.511685+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "203c69ff527c0f7e8ea521007179dbd4c1ec9a0d1b0b3bc93effbd2471785f40",
+        "after_sha256": "203c69ff527c0f7e8ea521007179dbd4c1ec9a0d1b0b3bc93effbd2471785f40",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_publication_periods.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "db845d452b74dc07d109503d8a2f148298ee607a635160cf38a2a9a5c3d4202a",
+      "raw_bytes": 15090,
+      "raw_mtime_ns": 1790435418689284400,
+      "raw_mtime_utc": "2026-09-26T15:10:18.689284+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-035-test_publication_periods.py.gz",
+      "archive_sha256": "472ce949656a559294eac000f2402999948c5bbfa4963d2a090ff3f7c64f1eac",
+      "archive_bytes": 3549,
+      "archive_mtime_ns": 1790949344513685200,
+      "archive_mtime_utc": "2026-10-02T13:55:44.513685+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "db845d452b74dc07d109503d8a2f148298ee607a635160cf38a2a9a5c3d4202a",
+        "after_sha256": "db845d452b74dc07d109503d8a2f148298ee607a635160cf38a2a9a5c3d4202a",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_report_projection.py",
+      "scope": "archive-time selected test source, compared to runner before/after inventory",
+      "raw_sha256": "5b5ff91bc5b4dea60ce51c7e38d8a009727a33a72bdc87dbcffa04b7392411df",
+      "raw_bytes": 22974,
+      "raw_mtime_ns": 1790916643908257200,
+      "raw_mtime_utc": "2026-10-02T04:50:43.908257+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-036-test_report_projection.py.gz",
+      "archive_sha256": "9e9790b6089bf031cef73d96d4c16d04abed63032af99450c3864fef51da71ed",
+      "archive_bytes": 4992,
+      "archive_mtime_ns": 1790949344521688100,
+      "archive_mtime_utc": "2026-10-02T13:55:44.521688+00:00",
+      "decompressed_byte_equal": true,
+      "execution_inventory_comparison": {
+        "before_sha256": "5b5ff91bc5b4dea60ce51c7e38d8a009727a33a72bdc87dbcffa04b7392411df",
+        "after_sha256": "5b5ff91bc5b4dea60ce51c7e38d8a009727a33a72bdc87dbcffa04b7392411df",
+        "matches_before": true,
+        "matches_after": true,
+        "identity": "archive-time file compared to actual before/after observations, not import-time locked copy"
+      }
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71.md",
+      "scope": "concentrated failed-group scope update",
+      "raw_sha256": "505a50930f073274e5e32480e4d47e1fea050db805b5d3b6824c7f1bc0939398",
+      "raw_bytes": 16140,
+      "raw_mtime_ns": 1790949344215777800,
+      "raw_mtime_utc": "2026-10-02T13:55:44.215778+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-forward-final-failed-037-owner-display-read-scope-r71.md.gz",
+      "archive_sha256": "c1138492d26a777849c195a915dbb96ade04b68b32cf92351b16614c6946180b",
+      "archive_bytes": 7691,
+      "archive_mtime_ns": 1790949344532687000,
+      "archive_mtime_utc": "2026-10-02T13:55:44.532687+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

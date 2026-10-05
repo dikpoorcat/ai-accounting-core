@@ -1,0 +1,123 @@
+{
+  "status": "archived",
+  "scope": "completed synthetic independent48 copy and declared upgrade only",
+  "copy_source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8",
+  "upgrade_source_sha256": "525f02d6718561bb51b22b559b03b3dc6f2aea968eb9a3a13484a532c0cc1d9f",
+  "source_manifest_file_sha256": "23cf3745f887ec981bab163c6aa1594b6dda9b162bf1310c652677f8ac4db7c9",
+  "artifacts": [
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-independent48-copy.json",
+      "artifact": "stage9-followup-distribution-525f-20261005-independent48-copy.json.gz",
+      "original_bytes": 7886,
+      "original_sha256": "a5b5700dd39ba5a6aa6aabbe0723530efaca03b7923ad576bb2018253cbec259",
+      "representation": "redacted UTF-8 JSON",
+      "redacted_bytes": 7605,
+      "redacted_sha256": "27ba35d6d50af5f898737322010276678c52b57fffff94e48a999627509bb879",
+      "compressed_bytes": 2302,
+      "compressed_sha256": "dd2cb17d696256d09bd1c06b7009acb267f819c8d6441b1ddb6c476091cb9465",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-independent48-copy.log",
+      "artifact": "stage9-followup-distribution-525f-20261005-independent48-copy.log.gz",
+      "original_bytes": 84,
+      "original_sha256": "d32df7bc5d9e77d06f41a33a630452d02604f33f4eb63322868f2b8821de8525",
+      "representation": "redacted UTF-8 text",
+      "redacted_bytes": 84,
+      "redacted_sha256": "d32df7bc5d9e77d06f41a33a630452d02604f33f4eb63322868f2b8821de8525",
+      "compressed_bytes": 80,
+      "compressed_sha256": "3e4df06a9775fe661c3580d33668a2f944fea6d6df04fcb697dc0872d78d4945",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-independent48-upgrade.json",
+      "artifact": "stage9-followup-distribution-525f-20261005-independent48-upgrade.json.gz",
+      "original_bytes": 25706,
+      "original_sha256": "331d12e72ceb337ed891afa983e1d5bc5a068b2626124fa8aee9c48f69cb2182",
+      "representation": "redacted UTF-8 JSON",
+      "redacted_bytes": 24964,
+      "redacted_sha256": "1be03ed26d6f0d70812fcb1eafcb0e988ede8feaf9fd587f42494935ded0c5f9",
+      "compressed_bytes": 3601,
+      "compressed_sha256": "455fa473cc93a5dfafb2caa8647f73c5c9f44d5b15044594c0063a547982b71b",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-independent48-upgrade-v2.log",
+      "artifact": "stage9-followup-distribution-525f-20261005-independent48-upgrade-v2.log.gz",
+      "original_bytes": 1105,
+      "original_sha256": "9b779ae73633fcccd7f71c29bf8dd95ca4dfdf27c16e699edc404bded4a7c23b",
+      "representation": "redacted UTF-8 text",
+      "redacted_bytes": 1105,
+      "redacted_sha256": "9b779ae73633fcccd7f71c29bf8dd95ca4dfdf27c16e699edc404bded4a7c23b",
+      "compressed_bytes": 328,
+      "compressed_sha256": "b3c730ec66aadad7cd74efd175abc9801fd59724037ce5dda87a075e9944084d",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-parameters.json",
+      "artifact": "stage9-followup-distribution-525f-20261005-parameters.json.gz",
+      "original_bytes": 10863,
+      "original_sha256": "8850904f61d0f35377fced2a8b0e0d6c25a7265dac278908da4b65d675120062",
+      "representation": "redacted UTF-8 JSON",
+      "redacted_bytes": 10995,
+      "redacted_sha256": "769fb31ec1ff8977cad9e108c39808ca7d849600e2056e5185b8af4c5c42eec9",
+      "compressed_bytes": 3545,
+      "compressed_sha256": "8e649a65cc0864c66048a134a9610d7974ead655080d121f4c8784400ec22b14",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    },
+    {
+      "original_private_path": ".tmp/stage9-root-followup-exits-observed-20261005.json",
+      "artifact": "stage9-root-followup-exits-observed-20261005.json.gz",
+      "original_bytes": 737,
+      "original_sha256": "d93e82f3f4967beff343bd89cd834ecc9e033dc00a782e1038f96b22f7971dcd",
+      "representation": "redacted UTF-8 JSON",
+      "redacted_bytes": 667,
+      "redacted_sha256": "1a8a71d7dc5edce94e3c7f684e5ba547a3ba3125bb53acc2f2e51d25447f0f2c",
+      "compressed_bytes": 312,
+      "compressed_sha256": "78b2ceac2b3849614b2ef5ceb8b29f8667bf541b701131d6360f124759ffb093",
+      "roundtrip_equal_to_redacted": true,
+      "original_byte_identity_claimed": false
+    }
+  ],
+  "private_references": [
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-copy.py",
+      "original_bytes": 12433,
+      "original_sha256": "92b3ce4886f7510ea1fdeed9ccbf336de729c159e01f78191392ee22d1fc8ebf",
+      "representation": "private hash reference only"
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-upgrade-v2.py",
+      "original_bytes": 14717,
+      "original_sha256": "9387363cfd5030d5a5856a9a9fbac75ef39cf4147f41c97f9c2f14e50fe9e812",
+      "representation": "private hash reference only"
+    },
+    {
+      "original_private_path": ".tmp/stage9-followup-distribution-525f-20261005-independent48-browser-input.json",
+      "original_bytes": 29751,
+      "original_sha256": "1e090049ba2eac85c3157a8381a52ae9672248c78ed6399f0a959189a3cfd6e8",
+      "representation": "private hash reference only"
+    },
+    {
+      "original_private_path": ".tmp/stage9-build-source-verification-snapshot-converged-20261005/source-manifest.json",
+      "original_bytes": 93942,
+      "original_sha256": "23cf3745f887ec981bab163c6aa1594b6dda9b162bf1310c652677f8ac4db7c9",
+      "representation": "private hash reference only"
+    },
+    {
+      "original_private_path": ".tmp/stage9-build-source-stable-owned-read-converged-20261005/source-manifest.json",
+      "original_bytes": 93110,
+      "original_sha256": "58067bd14dcb1374b944cd891842c69ad4385ca020f37437464d39f7907a63cf",
+      "representation": "private hash reference only"
+    }
+  ],
+  "databases_zip_credentials_included": false,
+  "redaction": "Absolute Windows paths and synthetic identity values replaced with SHA256 markers; credential/session/PID fields hashed. Business proofs, counts, table counts, phase names, timings and guards retained.",
+  "observation_scope": "Root tool-exit observation, not independent replay; archive concludes independent48 only.",
+  "archive_helper_sha256": "9a4771550062761624dbe94e164ac3002b5c7fbcb05a1aa576f42ee2d69578fa"
+}

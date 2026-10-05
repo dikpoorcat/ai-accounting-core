@@ -1,0 +1,77 @@
+{
+  "kind": "raw_concentrated_affected_group_receipts",
+  "scope": "r63 employee/asset identity and required-money header reuse concentrated affected group; original local failures retained in their respective records.",
+  "result": {
+    "passed": 212,
+    "warnings": 7,
+    "pytest_elapsed_seconds": 460.48,
+    "elapsed_seconds": 462.0434458999953,
+    "exit_code": 0,
+    "source_unchanged": true,
+    "before_sha256": "16cfe1fd5d755ce8c1add56bc15f3578f73ea6efe9fd426b9191ec53411f25cc",
+    "after_sha256": "16cfe1fd5d755ce8c1add56bc15f3578f73ea6efe9fd426b9191ec53411f25cc",
+    "changed_files": [],
+    "targets": [
+      "tests/kernel/test_required_money_header_reuse.py",
+      "tests/kernel/test_journal_source_header_reuse.py",
+      "tests/kernel/test_current_adoption_damage.py",
+      "tests/kernel/test_publication_record_proof_reuse.py",
+      "tests/kernel/test_journal_original_source_scope.py",
+      "tests/kernel/test_journal_kind_authority.py",
+      "tests/kernel/test_brief_activity_reuse.py",
+      "tests/kernel/test_owner_brief_amounts.py",
+      "tests/kernel/test_journal_summary_proof_reuse.py",
+      "tests/kernel/test_funds_required_summary_work.py",
+      "tests/kernel/test_posted_line_reuse.py",
+      "tests/kernel/test_employee_head_adoption_reads.py",
+      "tests/kernel/test_asset_identity_reads.py",
+      "tests/kernel/test_payroll_head_line_scope.py",
+      "tests/kernel/test_employee_role_identity_scope.py",
+      "tests/kernel/test_employee_frozen_cohort_reads.py",
+      "tests/kernel/test_employee_adopted_result_reads.py",
+      "tests/kernel/test_asset_batches.py::test_open_activation_batch_withdraws_member_and_preserves_number",
+      "tests/kernel/test_identity_corrections.py::test_asset_identity_differs_from_acquisition_and_reassigns_owned_members",
+      "tests/kernel/test_integrity_asset_card_close.py",
+      "tests/kernel/test_dashboard_workforce_assets.py",
+      "tests/kernel/test_history_reads_v1_warm_cache.py",
+      "tests/kernel/test_response_contracts.py::test_live_shapes_preserve_native_types_omission_and_null",
+      "tests/kernel/test_response_contracts.py::test_today_backend_samples_pass_generated_browser_validators"
+    ]
+  },
+  "limitations": [
+    "Concentrated affected regression only; not final full regression, business-scale verification, browser timing or 500ms acceptance.",
+    "Three test import-order/blank-line corrections occurred after this group; they change no logic and are not part of its unchanged-source claim.",
+    "r63 isolated candidate, actual main-12 registered full verification and pure browser timing remain pending.",
+    "r62 brief remains over_target with 1 of 30 successful refresh samples at least 500ms.",
+    "No test or measurement was executed by this archive operation."
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-r63-required-group.json",
+      "source_mtime_utc": "2026-10-02T02:14:40.997516+00:00",
+      "archive": "owner-required-group-r63.json.gz",
+      "bytes": 1864,
+      "sha256": "b508b23a2aad0ed81d16b8f481e14b40e77b354449f5a5ec0a626617386f382d",
+      "archive_bytes": 637,
+      "archive_sha256": "d518dfd67e59d4521abc3cbae739639269ab97a8eb1e41ec735c90bdf8bf11f4"
+    },
+    {
+      "source": ".tmp/stage9-r63-required-group.log",
+      "source_mtime_utc": "2026-10-02T02:14:40.193652+00:00",
+      "archive": "owner-required-group-r63.log.gz",
+      "bytes": 2480,
+      "sha256": "8bcc1efbaaecc129be36d80569055985c67b7c220e85045af906ce1f7ac2f572",
+      "archive_bytes": 627,
+      "archive_sha256": "cb1d80901eff468530d42b8a23bf9ae724c07d84898250f789f8e54e615e9b00"
+    },
+    {
+      "source": ".tmp/stage9-r63-required-group.xml",
+      "source_mtime_utc": "2026-10-02T02:14:39.703622+00:00",
+      "archive": "owner-required-group-r63.xml.gz",
+      "bytes": 36653,
+      "sha256": "f29e2346395c9c248076d66b6330ba2faccc5a14500dadca3770381dd85e843e",
+      "archive_bytes": 5273,
+      "archive_sha256": "d9519c96cb869a5ea9bed89df7aa820e6ec782e08b29c08ebf39f63ecaddbe3a"
+    }
+  ]
+}

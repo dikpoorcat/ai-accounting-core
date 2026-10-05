@@ -12,16 +12,13 @@ function matchesRequest(url: URL, response: DashboardQuarterlyReportResponse) {
   const companyId = url.searchParams.get("company_id");
   const year = Number(url.searchParams.get("year"));
   const quarter = Number(url.searchParams.get("quarter"));
-  const carryForward = url.searchParams.get("carry_forward_fact_id");
   return response.read_context.company_id === companyId
     && response.period.year === year
-    && response.period.quarter === quarter
-    && (carryForward === null || response.carry_forward.selected_fact_id === carryForward);
+    && response.period.quarter === quarter;
 }
 
-export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, carryForwardFactId?: string) {
+export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal) {
   const query = new URLSearchParams({ company_id: companyId, year: String(year), quarter: String(quarter), preparation: "deferred" });
-  if (carryForwardFactId) query.set("carry_forward_fact_id", carryForwardFactId);
   return requestGeneratedJson(`/api/dashboard/quarterly-report?${query}`, "/api/dashboard/quarterly-report", validateDashboardQuarterlyReportResponse, matchesRequest, { signal });
 }
 
@@ -33,7 +30,6 @@ export async function requestQuarterlyExport(companyId: string, report: Quarterl
   const body = JSON.stringify({
     company_id: companyId, year: report.period.year, quarter: report.period.quarter,
     preview_digest: report.export.preview_digest, epochs: report.export.epochs, request_id: requestId,
-    ...(report.carry_forward.selected_fact_id ? { carry_forward_fact_id: report.carry_forward.selected_fact_id } : {}),
   });
   const { validateReportExportReceiptResponse } = await import("./generated/reportExportReceipt.js");
   signal?.throwIfAborted();

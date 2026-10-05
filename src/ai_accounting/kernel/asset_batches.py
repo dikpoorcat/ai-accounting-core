@@ -24,7 +24,7 @@ from .contracts import FactVersion, KernelError, NeedsInformation, Read
 from .domains.assets import AssetActivation, AssetConsumption
 from .engine import Engine
 from .stored_json import load_outcome
-from .types import YearMonth, canonical, digest, sum_fen
+from .types import EvidenceDigest, YearMonth, canonical, digest, sum_fen, validate_evidence_digests
 
 
 class ActivationBatchMemberInput(BaseModel):
@@ -44,29 +44,48 @@ def frozen_members(connection, owner_calculation_id: str) -> list[dict]:
     return _checked_members(connection, owner_calculation_id, require_seals=True)
 
 
-def frozen_members_many(connection, owner_calculation_ids) -> dict[str, list[dict]]:
+def frozen_members_many(
+    connection, owner_calculation_ids, *, _owner_outcomes=None
+) -> dict[str, list[dict]]:
     """Validate selected owners and their members in one bounded read batch."""
-    return _checked_members_many(connection, owner_calculation_ids, require_seals=True)
+    return _checked_members_many(
+        connection, owner_calculation_ids, require_seals=True, _owner_outcomes=_owner_outcomes,
+    )
 
 
 def _checked_members(connection, owner_calculation_id, *, require_seals):
-    return _checked_members_many(
-        connection, (owner_calculation_id,), require_seals=require_seals
-    )[owner_calculation_id]
+    return _checked_members_many(connection, (owner_calculation_id,), require_seals=require_seals)[
+        owner_calculation_id
+    ]
 
 
-def _checked_members_many(connection, owner_calculation_ids, *, require_seals):
+def _checked_members_many(
+    connection, owner_calculation_ids, *, require_seals, _owner_outcomes=None
+):
     owner_ids = tuple(dict.fromkeys(owner_calculation_ids))
     if not owner_ids:
         return {}
     selected = json.dumps(owner_ids)
+    from .query_reads import _owns_current_selector_snapshot
+    from .storage import _active_fact_reads
+
+    reads = _active_fact_reads.get()
+    retained = {
+        ident: _owner_outcomes[ident] for ident in owner_ids
+        if ident in (_owner_outcomes or {}) and ident in reads._verified_sql_outcomes
+    } if _owns_current_selector_snapshot(reads, connection) else {}
+    owner_columns = (
+        "c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,c.program_version,"
+        "CASE WHEN c.id IN (SELECT value FROM json_each(?)) THEN NULL ELSE c.outcome END outcome"
+        if retained else "c.*"
+    )
     owners = {
         row["id"]: row
         for row in connection.execute(
-            "SELECT c.*, EXISTS(SELECT 1 FROM calculation_seal s "
+            "SELECT " + owner_columns + ", EXISTS(SELECT 1 FROM calculation_seal s "
             "WHERE s.calculation_id=c.id) AS _sealed FROM calculation c "
             "WHERE c.id IN (SELECT value FROM json_each(?))",
-            (selected,),
+            (json.dumps(sorted(retained)), selected) if retained else (selected,),
         )
     }
     member_rows = {ident: [] for ident in owner_ids}
@@ -87,11 +106,7 @@ def _checked_members_many(connection, owner_calculation_ids, *, require_seals):
     ):
         member_rows[row["owner_calculation_id"]].append(row)
     member_ids = tuple(
-        dict.fromkeys(
-            row["member_calculation_id"]
-            for rows in member_rows.values()
-            for row in rows
-        )
+        dict.fromkeys(row["member_calculation_id"] for rows in member_rows.values() for row in rows)
     )
     calculated_rows = (
         {
@@ -108,18 +123,19 @@ def _checked_members_many(connection, owner_calculation_ids, *, require_seals):
     )
     return {
         ident: _validate_members(
-            owners.get(ident), member_rows[ident], calculated_rows, require_seals
+            owners.get(ident), member_rows[ident], calculated_rows, require_seals,
+            _owner_outcome=retained.get(ident),
         )
         for ident in owner_ids
     }
 
 
-def _validate_members(owner, member_rows, calculated_rows, require_seals):
+def _validate_members(owner, member_rows, calculated_rows, require_seals, *, _owner_outcome=None):
     if owner is None or owner["kind"] not in OWNER_KINDS:
         raise KernelError("asset_batch_identity", "资产汇总计算不存在")
     if require_seals and not owner["_sealed"]:
         raise KernelError("asset_batch_unsealed", "资产汇总计算尚未封印")
-    outcome = load_outcome(owner["outcome"])
+    outcome = _owner_outcome if _owner_outcome is not None else load_outcome(owner["outcome"])
     if digest(outcome) != owner["digest"]:
         raise KernelError("asset_batch_digest", "资产汇总结果摘要不匹配")
     members, position, balances = [], 1, []
@@ -389,6 +405,7 @@ class AssetBatches:
     def _prepare(
         self, mode, subject_id, period, members, evidence, expected_revision, posting_period
     ):
+        validate_evidence_digests(evidence)
         month = YearMonth(period)
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
@@ -724,7 +741,7 @@ class AssetBatches:
         period: str,
         members: ActivationBatchMembers,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         posting_period: str | None = None,
     ):
@@ -745,7 +762,7 @@ class AssetBatches:
         self,
         period: str,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         posting_period: str | None = None,
     ):
@@ -921,7 +938,7 @@ class AssetBatches:
         period: str,
         members: ActivationBatchMembers,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         preview_digest: str,
         epochs: dict,
@@ -945,7 +962,7 @@ class AssetBatches:
         self,
         period: str,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         preview_digest: str,
         epochs: dict,

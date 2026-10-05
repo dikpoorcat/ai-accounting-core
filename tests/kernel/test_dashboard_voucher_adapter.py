@@ -6,6 +6,7 @@ from entity_fixture import save_entity_display_profile, seed_entities, seed_fact
 from test_bank_group_matching import batch_payment
 from test_banking import book as book
 from test_banking import funding
+from test_dashboard_projection import diagnostic_vouchers
 from test_engine import close, publish, save
 from test_engine import engine as engine
 from test_payroll_preparation import company as payroll_company
@@ -39,10 +40,11 @@ def test_brief_includes_pending_intangible_in_asset_amount_and_count(book):
         },
     )
     publish("software")
-    result = Dashboard(engine).brief("2026-09")["data"]["long_term_assets"]
-    assert result["net_fen"] == 1600000
-    assert result["pending_count"] == 1
-    assert result["intangible_active_count"] == 0
+    result = Dashboard(engine).assets("2026-09")["data"]
+    assert result["ledger_net_fen"] == 1600000
+    assert result["pending_intangible_count"] == 1
+    assert result["intangible"]["active_count"] == 0
+    assert "long_term_assets" not in Dashboard(engine).brief("2026-09")["data"]
 
 
 def test_business_receipt_is_not_voucher_total_including_vat_transfer(service_company):
@@ -50,13 +52,14 @@ def test_business_receipt_is_not_voucher_total_including_vat_transfer(service_co
     receipt(service_company, "first", 40000, "2026-04-02")
     service_company.publish("first")
     data = Dashboard(service_company.engine).brief("2026-04")["data"]
-    voucher = data["collections"]["vouchers"]["items"][0]
+    voucher = diagnostic_vouchers(service_company.engine, "2026-04")[0]
     assert voucher["amount_fen"] == 41479
     assert voucher["business_amount_fen"] == voucher["components"][0]["amount_fen"] == 40000
     assert voucher["fund_inflow_fen"] == 40000
     assert voucher["fund_outflow_fen"] == 0
     assert voucher["funds"][0]["amount_fen"] == 40000
-    assert data["activity_groups"][0]["rows"][0]["amount_fen"] == 40000
+    assert data["collections"]["activity"]["items"][0]["amount_fen"] == 40000
+    assert data["funds_overview"]["inflow_fen"] == 40000
     assert voucher["lines"][2]["account"] == "待转销项税额"
     assert voucher["lines"][0]["party"] == voucher["lines"][2]["party"] == ""
 
@@ -75,13 +78,17 @@ def test_batch_recipients_and_individual_obligation_lines_use_exact_relationship
             request_id="name-" + ident,
         )
     voucher = next(
-        item
-        for item in Dashboard(engine).brief("2026-09")["data"]["collections"]["vouchers"]["items"]
-        if item["kind"] == "payment"
+        item for item in diagnostic_vouchers(engine, "2026-09") if item["kind"] == "payment"
     )
     assert {item["party"] for item in voucher["settlements"]} == {"甲员工", "乙员工"}
     assert [item["party"] for item in voucher["lines"]] == ["甲员工", "", "乙员工", ""]
     assert "甲员工" in voucher["components"][0]["parties"]
+    activity = next(
+        item
+        for item in Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"]
+        if item["subject_id"] == voucher["components"][0]["id"]
+    )
+    assert activity["party"] == "甲员工、乙员工"
 
 
 def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
@@ -102,9 +109,7 @@ def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
         )
     voucher = next(
         item
-        for item in Dashboard(company.engine).brief("2026-02")["data"]["collections"]["vouchers"][
-            "items"
-        ]
+        for item in diagnostic_vouchers(company.engine, "2026-02")
         if item["kind"] == "payroll_reserve_payment"
     )
     component = voucher["components"][0]
@@ -114,6 +119,15 @@ def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
     assert all(item["source"] == "display_profile" for item in component["party_sources"])
     # Both employees have the same net salary. Equal amounts must not erase their identities.
     assert [line["party"] for line in voucher["lines"][:4]] == ["甲员工", "", "乙员工", ""]
+    activity = next(
+        item
+        for item in Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"][
+            "items"
+        ]
+        if item["subject_id"] == "gross-batch"
+    )
+    assert activity["party"] == "甲员工、乙员工"
+    assert "payroll-group" not in activity["party"]
 
 
 @pytest.mark.parametrize("channel", ["bank", "cash", "platform"])
@@ -189,9 +203,16 @@ def test_social_payment_uses_actual_recipient_and_exact_wage_sources(tmp_path, c
     company.save(payment, "social-payment")
     company.publish("social-payment")
     before = company.engine.ledger("2026-02")
-    voucher = Dashboard(company.engine).brief("2026-02")["data"]["collections"]["vouchers"][
-        "items"
-    ][0]
+    voucher = diagnostic_vouchers(company.engine, "2026-02")[0]
+    activity = next(
+        item
+        for item in Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"][
+            "items"
+        ]
+        if item["subject_id"] == "social-payment"
+    )
+    assert activity["party"] == "合成社保收款机构"
+    assert "2026-01" in activity["description"]
     assert [line["party"] for line in voucher["lines"]] == ["合成社保收款机构", ""] * 4
     for index, line in enumerate(voucher["lines"]):
         if index % 2:
@@ -240,12 +261,12 @@ def test_voucher_and_trace_show_immutable_evidence_names_without_loading_files(b
     )
     publish_fact("receipt")
     data = Dashboard(engine).brief("2026-09")["data"]
-    voucher = data["collections"]["vouchers"]["items"][0]
+    voucher = diagnostic_vouchers(engine, "2026-09")[0]
     names = voucher["evidence_details"]
     assert [item["name"] for item in names].count("银行付款凭据.pdf") == 2
     assert [item["name"] for item in names].count("") == 2
     assert {item["digest"] for item in names} == set(proofs)
-    assert data["activity_groups"][0]["rows"][0]["evidence_details"] == names
+    assert "evidence_details" not in data["collections"]["activity"]["items"][0]
     trace = engine.trace(voucher_version_id=voucher["voucher_version_id"])
     assert trace["evidence_details"] == names
     assert voucher["evidence"] == sorted(proofs)
@@ -292,11 +313,11 @@ def test_frozen_unnamed_profiles_accept_later_names_without_changing_frozen_acco
         request_id="owner-name",
     )
     data = Dashboard(engine).brief("2026-09")["data"]
-    assert data["collections"]["vouchers"]["items"][0]["components"][0]["parties"] == ["已提供姓名"]
+    assert data["collections"]["activity"]["items"][0]["party"] == "已提供姓名"
     assert (
         next(
             line
-            for line in data["collections"]["vouchers"]["items"][0]["lines"]
+            for line in diagnostic_vouchers(engine, "2026-09")[0]["lines"]
             if line["code"] == "3001"
         )["party"]
         == "已提供姓名"
@@ -313,7 +334,8 @@ def test_tax_identity_name_and_employee_code_are_reused(tmp_path):
         "items"
     ][0]
     assert item["name"] == "测试员工"
-    assert item["code"] == "00007"
+    with Dashboard(company.engine)._snapshot("2026-01") as snapshot:
+        assert snapshot.party_code("employee") == "00007"
     assert company.current("january") == original
 
 
@@ -321,10 +343,14 @@ def test_all_three_correction_vouchers_open_their_own_basis(engine):
     save(engine, amount=100)
     publish(engine)
     close(engine)
-    original = Dashboard(engine).brief("2026-01")["data"]["collections"]["vouchers"]["items"][0]
+    original = diagnostic_vouchers(engine, "2026-01")[0]
     save(engine, amount=125, revision=1, request="amend")
     publish(engine, request="amend-publish", posting_period="2026-02")
-    rows = Dashboard(engine).brief("2026-02")["data"]["collections"]["vouchers"]["items"]
+    rows = diagnostic_vouchers(engine, "2026-02")
+    owner = Dashboard(engine).brief("2026-02")["data"]["collections"]["activity"]["items"]
+    assert {item["voucher_version_id"] for item in owner} == {
+        item["voucher_version_id"] for item in rows
+    }
     reversal = next(item for item in rows if item["reverses_version_id"])
     replacement = next(item for item in rows if not item["reverses_version_id"])
     assert reversal["calculation_id"] == original["calculation_id"]
@@ -347,19 +373,19 @@ def test_paged_queries_reject_changed_or_missing_version_before_returning_rows(b
     dashboard = Dashboard(engine)
     first = dashboard.brief("2026-09", limit=1)
     funds = dashboard.funds("2026-09", limit=1)
-    cursor = first["data"]["collections"]["vouchers"]["page"]["next_cursor"]
+    cursor = first["data"]["collections"]["activity"]["page"]["next_cursor"]
     following = dashboard.brief(
         "2026-09",
-        section="vouchers",
+        section="activity",
         cursor=cursor,
         limit=1,
         expected_version=first["snapshot_version"],
     )
-    assert following["data"]["total_debit_fen"] == 300
+    assert following["data"]["funds_overview"]["bank_fen"] == 300
     funding(save, publish, subject="c", amount=50)
     for kwargs in ({}, {"expected_version": first["snapshot_version"]}):
         with pytest.raises(KernelError) as failure:
-            dashboard.brief("2026-09", section="vouchers", cursor=cursor, **kwargs)
+            dashboard.brief("2026-09", section="activity", cursor=cursor, **kwargs)
         assert failure.value.code == "dashboard_snapshot_changed"
     with pytest.raises(KernelError) as failure:
         dashboard.funds(
@@ -369,4 +395,4 @@ def test_paged_queries_reject_changed_or_missing_version_before_returning_rows(b
             expected_version=funds["snapshot_version"],
         )
     assert failure.value.code == "dashboard_snapshot_changed"
-    assert dashboard.brief("2026-09")["data"]["total_debit_fen"] == 350
+    assert dashboard.brief("2026-09")["data"]["funds_overview"]["bank_fen"] == 350

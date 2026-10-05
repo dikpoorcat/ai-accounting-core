@@ -58,3 +58,33 @@ def test_package_inventory_rejects_file_symlink(tmp_path):
         pytest.skip(f"This host cannot create test symlinks: {error}")
     with pytest.raises(ValueError, match="link"):
         verify_package_inventory(root, manifest, manifest_sha)
+
+
+@pytest.mark.parametrize("existing", ["package", "archive", "relocated", "verification"])
+def test_package_rejects_every_existing_delivery_target_before_copy(
+    tmp_path, monkeypatch, existing,
+):
+    from scripts import package_local_kernel as packager
+
+    output = tmp_path / "release"
+    targets = {
+        "package": output,
+        "archive": tmp_path / "release.zip",
+        "relocated": tmp_path / "release-relocated",
+        "verification": tmp_path / "release-verification.json",
+    }
+    old = targets[existing]
+    if existing in {"package", "relocated"}:
+        old.mkdir()
+        preserved = old / "preserved.txt"
+    else:
+        preserved = old
+    preserved.write_bytes(b"existing delivery evidence\n")
+    monkeypatch.setattr(packager.sys, "argv", ["packager", "--output", str(output)])
+    monkeypatch.setattr(packager.sys, "platform", "win32")
+    monkeypatch.setattr(packager.sys, "version_info", (3, 12, 13))
+    monkeypatch.setattr(packager.sqlite3, "sqlite_version", "3.53.1")
+    with pytest.raises(SystemExit, match="existing builds are never overwritten"):
+        packager.main()
+    assert preserved.read_bytes() == b"existing delivery evidence\n"
+    assert all(not path.exists() for key, path in targets.items() if key != existing)

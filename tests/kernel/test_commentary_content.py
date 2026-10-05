@@ -43,8 +43,10 @@ def test_future_write_preserves_content_but_not_submission_and_relevant_sources_
     page = Dashboard(engine).brief("2026-01")
     page_content = page["data"]["management_commentary_details"]
     assert page_content["current"]["id"] == saved["id"]
-    assert page_content["current"]["content_validity"]["status"] == "current"
-    assert page["data"]["management_commentary"] == saved["text"]
+    assert page_content["current"]["status"] == "current"
+    assert page_content["current"]["text"] == saved["text"]
+    assert "content_validity" not in page_content["current"]
+    assert "management_commentary" not in page["data"]
     assert page["read_semantics"]["knowledge"] == "current_knowledge"
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
@@ -180,15 +182,21 @@ def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatc
     assert current["supplements"][0]["content_validity"]["status"] == "stale"
     page = Dashboard(engine).brief("2026-01")
     page_content = page["data"]["management_commentary_details"]
-    assert page["data"]["management_commentary"] == original["text"]
+    assert "management_commentary" not in page["data"]
+    assert page_content["current"]["text"] == original["text"]
     assert page_content["current"]["id"] == original["id"]
-    assert page_content["frozen"]["content_validity"]["status"] == "frozen"
+    assert "frozen" not in page_content
+    assert page_content["current"]["status"] == "frozen"
     assert page_content["supplements"][0]["id"] == supplement["id"]
-    assert page_content["supplements"][0]["content_validity"]["status"] == "stale"
+    assert page_content["supplements"][0]["status"] == "stale"
     assert page["read_semantics"]["accounting"] == "as_posted"
     assert page["read_semantics"]["business_basis"] == "frozen_adoption"
     assert page["read_semantics"]["knowledge"] == "current_knowledge"
-    preparation = page["data"]["period_preparation"]
+    assert "period_preparation" not in page["data"]
+    context = page["read_context"]
+    preparation = Dashboard(engine).period_preparation(
+        "2026-01", expected_read_version=context["read_version"], as_of=context["as_of"]
+    )["data"]["period_preparation"]
     assert preparation["closure"]["state"] == "exact_close"
     assert preparation["frozen_readiness"]["status"] == "ready"
     assert preparation["current_followups"]["affects_frozen_readiness"] is False

@@ -38,10 +38,20 @@ from pydantic import (
 from .build import calculator_build_id
 from .contracts import Fact, FactVersion, KernelError, NeedsInformation
 from .storage import Store
-from .types import ActualDate, Fen, YearMonth, canonical, checked, digest, sum_fen
+from .types import (
+    ActualDate,
+    EvidenceDigest,
+    Fen,
+    YearMonth,
+    canonical,
+    checked,
+    digest,
+    evidence_digest_bytes,
+    sum_fen,
+    validate_evidence_digests,
+)
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
-EvidenceDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 MATERIAL_READ_INDEX_DDL = {
     kind: (
@@ -49,11 +59,14 @@ MATERIAL_READ_INDEX_DDL = {
         + (
             "CREATE INDEX material_resolution_link_fact ON "
             "fact_material_resolution_v2_links(fact_id,revision_id);"
-            if kind == "material_resolution_v2" else ""
+            if kind == "material_resolution_v2"
+            else ""
         )
     )
     for kind in (
-        "material_resolution_v2", "material_group_resolution", "material_period_allocation"
+        "material_resolution_v2",
+        "material_group_resolution",
+        "material_period_allocation",
     )
 }
 Category = Literal["transactions", "payroll", "bank", "tax", "assets", "financing"]
@@ -266,17 +279,19 @@ class MaterialResolution(Fact):
     links: tuple[MaterialLink, ...] = Field(
         default=(),
         description="认账金额分配；重复资料仅精确选择目标联合组的完整正式关联。",
-        json_schema_extra={"x-accounting-fact": {
-            "role": "contextual",
-            "meaning": "material_result_association_or_exact_group_duplicate_selector",
-            "constraint": (
-                "认账为金额分配；duplicate仅选择目标group完整typed link，"
-                "不新增业务或消耗容量"
-            ),
-            "reusable_sources": [
-                "current_material_group_resolution", "current_published_business_result"
-            ],
-        }},
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "contextual",
+                "meaning": "material_result_association_or_exact_group_duplicate_selector",
+                "constraint": (
+                    "认账为金额分配；duplicate仅选择目标group完整typed link，不新增业务或消耗容量"
+                ),
+                "reusable_sources": [
+                    "current_material_group_resolution",
+                    "current_published_business_result",
+                ],
+            }
+        },
     )
     duplicate_source_id: Identifier | None = None
     duplicate_location: Identifier | None = None
@@ -600,15 +615,16 @@ class _XlsxRow(dict):
 
 _EMPTY_SUM = re.compile(
     r"SUM\(\s*(\$?[A-Z]+\$?[1-9][0-9]*)\s*:\s*"
-    r"(\$?[A-Z]+\$?[1-9][0-9]*)\s*\)", re.IGNORECASE,
+    r"(\$?[A-Z]+\$?[1-9][0-9]*)\s*\)",
+    re.IGNORECASE,
 )
 
 
 def _empty_xlsx_template(number, originals):
     actual = {
-        column: item for column, item in originals.items()
-        if item[1] is not None or item[2] == "e"
-        or (item[0] is not None and str(item[0]).strip())
+        column: item
+        for column, item in originals.items()
+        if item[1] is not None or item[2] == "e" or (item[0] is not None and str(item[0]).strip())
     }
     if not actual:
         return False
@@ -662,8 +678,10 @@ def _xlsx_template_formula(node, origin, shared):
                 )
                 if first[1] != row or last[1] != row:
                     raise ValueError("shared seed must sum only its own row")
-                if not (bounds[0] <= column_index_from_string(column) <= bounds[2]
-                        and bounds[1] <= row <= bounds[3]):
+                if not (
+                    bounds[0] <= column_index_from_string(column) <= bounds[2]
+                    and bounds[1] <= row <= bounds[3]
+                ):
                     raise ValueError("shared seed is outside its declared range")
                 shared[key] = (text, origin, bounds)
             except (TypeError, ValueError):
@@ -673,8 +691,9 @@ def _xlsx_template_formula(node, origin, shared):
         return ""
     text, seed_origin, bounds = seed
     column, row = coordinate_from_string(origin)
-    if not (bounds[0] <= column_index_from_string(column) <= bounds[2]
-            and bounds[1] <= row <= bounds[3]):
+    if not (
+        bounds[0] <= column_index_from_string(column) <= bounds[2] and bounds[1] <= row <= bounds[3]
+    ):
         return ""
     try:
         return Translator("=" + text, origin=seed_origin).translate_formula(origin)[1:]
@@ -1370,7 +1389,8 @@ class _CompletenessReads:
                 if filtered
                 else self.connection.execute(
                     "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
-                    "WHERE s.kind=? ORDER BY c.subject_id", (kind,),
+                    "WHERE s.kind=? ORDER BY c.subject_id",
+                    (kind,),
                 ).fetchall()
             )
             identifiers = [row[0] for row in rows]
@@ -1426,8 +1446,14 @@ def _amount_basis(fact, calculation, path):
     requested = normalized(path.split(".")[1])
     members = {}
     for prefix, values in (
-        ("fact", ((name, getattr(fact, name)) for name in type(fact).model_fields
-                  if name.endswith("_fen"))),
+        (
+            "fact",
+            (
+                (name, getattr(fact, name))
+                for name in type(fact).model_fields
+                if name.endswith("_fen")
+            ),
+        ),
         ("result", calculation.values.items()),
     ):
         for field, value in values:
@@ -1478,9 +1504,7 @@ def _material_result(row, *, _sql_outcome_batch=None):
 
 def _current_material_result(connection, registry, subject):
     row = connection.execute(
-        "SELECT f.fact_id current_fact_id,"
-        + _MATERIAL_RESULT_COLUMNS_SQL
-        + " FROM fact_current f "
+        "SELECT f.fact_id current_fact_id," + _MATERIAL_RESULT_COLUMNS_SQL + " FROM fact_current f "
         "LEFT JOIN calculation_current a ON a.subject_id=f.subject_id "
         "LEFT JOIN calculation c ON c.id=a.calculation_id WHERE f.subject_id=?",
         (subject,),
@@ -1531,9 +1555,9 @@ def _whole_group_duplicate_targets(groups, resolutions):
         for member in group.fact.members:
             by_member.setdefault((group.fact.source_id, member.location), []).append(group)
     for resolution in resolutions:
-        by_resolution.setdefault(
-            (resolution.fact.source_id, resolution.fact.location), []
-        ).append(resolution)
+        by_resolution.setdefault((resolution.fact.source_id, resolution.fact.location), []).append(
+            resolution
+        )
     result = {}
     for group in groups:
         fact = group.fact
@@ -1547,11 +1571,15 @@ def _whole_group_duplicate_targets(groups, resolutions):
                 break
             copy = copies[0].fact
             if (
-                copy.treatment != "duplicate" or copy.links
+                copy.treatment != "duplicate"
+                or copy.links
                 or copy.source_fact_id != fact.source_fact_id
-                or copy.period != fact.period or copy.recognition_period not in periods
-                or copy.amount_fen != member.amount_fen or not (copy.reason or "").strip()
-                or not copy.duplicate_source_id or not copy.duplicate_location
+                or copy.period != fact.period
+                or copy.recognition_period not in periods
+                or copy.amount_fen != member.amount_fen
+                or not (copy.reason or "").strip()
+                or not copy.duplicate_source_id
+                or not copy.duplicate_location
             ):
                 break
             targets.add((copy.duplicate_source_id, copy.duplicate_location))
@@ -1605,7 +1633,8 @@ def _group_issues(
     group_reads = _reads or _CompletenessReads(connection, registry)
     if whole_duplicate_targets is None:
         groups = [
-            item for item in group_reads.current_facts(MaterialGroupResolution.kind)
+            item
+            for item in group_reads.current_facts(MaterialGroupResolution.kind)
             if item.subject_id != version.subject_id
         ]
         whole_duplicate_targets = _whole_group_duplicate_targets(
@@ -1787,7 +1816,8 @@ def _group_issues(
             if other.id in whole_duplicate_targets:
                 continue
             if isinstance(other.fact, MaterialResolution) and other.fact.treatment not in {
-                "recognize", "other_period"
+                "recognize",
+                "other_period",
             }:
                 continue
             if current_sources is None:
@@ -1819,11 +1849,13 @@ def _group_issues(
             )
     if whole_duplicate:
         primary = next(
-            item for item in group_reads.current_facts(MaterialGroupResolution.kind)
+            item
+            for item in group_reads.current_facts(MaterialGroupResolution.kind)
             if item.id == whole_duplicate_targets[version.id]
         )
         original_sources = tuple(
-            item for item in group_reads.current_facts(MaterialSource.kind)
+            item
+            for item in group_reads.current_facts(MaterialSource.kind)
             if item.subject_id == primary.fact.source_id
         )
         original_source = original_sources[0] if len(original_sources) == 1 else None
@@ -1831,18 +1863,30 @@ def _group_issues(
             connection.execute(
                 "SELECT content FROM evidence WHERE digest=?",
                 (bytes.fromhex(original_source.fact.evidence_digest),),
-            ).fetchone() if original_source is not None else None
+            ).fetchone()
+            if original_source is not None
+            else None
         )
         original_inspection = (
-            inspect_bytes(raw[0], original_source.fact.specification) if raw is not None
+            inspect_bytes(raw[0], original_source.fact.specification)
+            if raw is not None
             else {"items": [], "control_totals": []}
         )
-        issues.extend(_group_issues(
-            connection, registry, primary, original_source, original_inspection,
-            current=current, current_sources=current_sources,
-            pending_subjects=pending_subjects, competitors_by_subject=competitors_by_subject,
-            whole_duplicate_targets=whole_duplicate_targets, _reads=_reads,
-        ))
+        issues.extend(
+            _group_issues(
+                connection,
+                registry,
+                primary,
+                original_source,
+                original_inspection,
+                current=current,
+                current_sources=current_sources,
+                pending_subjects=pending_subjects,
+                competitors_by_subject=competitors_by_subject,
+                whole_duplicate_targets=whole_duplicate_targets,
+                _reads=_reads,
+            )
+        )
     return issues
 
 
@@ -1978,8 +2022,7 @@ def check_completeness_many(
     if _inspection_cache is not None and _inspection_cache.connection is not connection:
         raise ValueError("material inspection cache belongs to another snapshot connection")
     sql_outcome_batch = (
-        _query_reads._material_sql_outcome_batch(connection)
-        if _query_reads is not None else None
+        _query_reads._material_sql_outcome_batch(connection) if _query_reads is not None else None
     )
     reads = _CompletenessReads(connection, registry, query_reads=_query_reads)
     amount_bases = {}
@@ -2426,9 +2469,7 @@ def check_completeness_many(
         matches = by_group_member.get(key, ())
         if not matches:
             return None
-        if len(matches) != 1 or (
-            key in by_item and matches[0].id not in whole_duplicate_targets
-        ):
+        if len(matches) != 1 or (key in by_item and matches[0].id not in whole_duplicate_targets):
             return [_issue("material_group_overlap", "原行同时存在多个处置归属", location=key[1])]
         group = matches[0]
         if group.id not in group_errors:
@@ -2538,11 +2579,13 @@ def check_completeness_many(
                 # consume the business capacity for a second time.
                 groups = by_group_member.get(target, ())
                 if len(groups) != 1 or target in by_item:
-                    return result + [_issue(
-                        "material_duplicate_basis",
-                        "重复分配须指向唯一联合组的真实原行",
-                        location=key[1],
-                    )]
+                    return result + [
+                        _issue(
+                            "material_duplicate_basis",
+                            "重复分配须指向唯一联合组的真实原行",
+                            location=key[1],
+                        )
+                    ]
                 group_issues = collective(target)
                 if group_issues:
                     return result + group_issues
@@ -2550,20 +2593,24 @@ def check_completeness_many(
                 available = [
                     canonical(link.model_dump(mode="json")) for link in groups[0].fact.links
                 ]
-                if (
-                    len(set(selected)) != len(selected)
-                    or any(available.count(link) != 1 for link in selected)
+                if len(set(selected)) != len(selected) or any(
+                    available.count(link) != 1 for link in selected
                 ):
-                    return result + [_issue(
-                        "material_duplicate_basis",
-                        "重复分配须唯一完整匹配联合组的正式关联，不能拆切金额",
-                        location=key[1],
-                    )]
+                    return result + [
+                        _issue(
+                            "material_duplicate_basis",
+                            "重复分配须唯一完整匹配联合组的正式关联，不能拆切金额",
+                            location=key[1],
+                        )
+                    ]
                 if sum_fen(link.amount_fen for link in fact.links) != amount:
-                    result.append(_issue(
-                        "material_duplicate_amount", "重复分配合计与原行金额不一致",
-                        location=key[1],
-                    ))
+                    result.append(
+                        _issue(
+                            "material_duplicate_amount",
+                            "重复分配合计与原行金额不一致",
+                            location=key[1],
+                        )
+                    )
                 expected_period = item_periods.get(key[0], {}).get(key[1])
                 periods = {link.recognition_period for link in fact.links}
                 if (
@@ -2571,10 +2618,13 @@ def check_completeness_many(
                     or fact.recognition_period not in periods
                     or (expected_period is not None and expected_period not in periods)
                 ):
-                    result.append(_issue(
-                        "material_duplicate_period", "重复分配须属于同一明确业务期间",
-                        location=key[1],
-                    ))
+                    result.append(
+                        _issue(
+                            "material_duplicate_period",
+                            "重复分配须属于同一明确业务期间",
+                            location=key[1],
+                        )
+                    )
                 for link in fact.links:
                     original, _calculation = current(link.subject_id)
                     try:
@@ -2585,9 +2635,9 @@ def check_completeness_many(
                             source_directions=(item.get("funds_direction"),),
                         )
                     except KernelError as error:
-                        result.append(_issue(
-                            error.code, str(error), location=key[1], **error.details
-                        ))
+                        result.append(
+                            _issue(error.code, str(error), location=key[1], **error.details)
+                        )
                 return result
             target_item = parsed_items.get(target[0], {}).get(target[1])
             target_amount = (
@@ -2874,33 +2924,35 @@ def check_completeness_many(
                             )
                         )
                     else:
-                        coverage.append({
-                            "source_id": source_id,
-                            "source_fact_id": source.id,
-                            "location": location,
-                            "amount_fen": item["amount_fen"],
-                            "recognition_period": allocated_period,
-                            "origin_periods": [
-                                str(YearMonth.from_ordinal(value)) for value in sorted(origins)
-                            ],
-                            "review_period": str(period),
-                            "responsibility": (
-                                "unassigned"
-                                if unknown
-                                else "direct"
-                                if review_month in origins
-                                else "closed_followup"
-                            ),
-                            **(
-                                {
-                                    "joint_periods": sorted(shared_periods),
-                                    "group_ids": sorted(group.subject_id for group in groups),
-                                }
-                                if groups
-                                else {}
-                            ),
-                            "complete": not item_issues,
-                        })
+                        coverage.append(
+                            {
+                                "source_id": source_id,
+                                "source_fact_id": source.id,
+                                "location": location,
+                                "amount_fen": item["amount_fen"],
+                                "recognition_period": allocated_period,
+                                "origin_periods": [
+                                    str(YearMonth.from_ordinal(value)) for value in sorted(origins)
+                                ],
+                                "review_period": str(period),
+                                "responsibility": (
+                                    "unassigned"
+                                    if unknown
+                                    else "direct"
+                                    if review_month in origins
+                                    else "closed_followup"
+                                ),
+                                **(
+                                    {
+                                        "joint_periods": sorted(shared_periods),
+                                        "group_ids": sorted(group.subject_id for group in groups),
+                                    }
+                                    if groups
+                                    else {}
+                                ),
+                                "complete": not item_issues,
+                            }
+                        )
             file_summaries.append(
                 {
                     "source_id": source_id,
@@ -3132,13 +3184,14 @@ class Materials:
 
     def inspect(
         self,
-        evidence_digest: str,
+        evidence_digest: EvidenceDigest,
         specification: dict,
         *,
         after: str | None = None,
         limit: PageLimit = 100,
     ):
         """Bounded public rows; the cursor binds original bytes, mapping and parser build."""
+        evidence_digest_bytes(evidence_digest)
         _page_limit(limit)
         spec = Specification.model_validate_json(canonical(specification))
         spec_digest = digest(spec.model_dump(mode="json")).hex()
@@ -3194,10 +3247,11 @@ class Materials:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         request_id: str,
     ):
+        validate_evidence_digests(evidence)
         fact = MaterialSource.model_validate_json(canonical(data))
         inspection = self._inspection(fact.evidence_digest, fact.specification)
         if fact.evidence_digest not in evidence:
@@ -3405,7 +3459,7 @@ class Materials:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         request_id: str,
     ):
@@ -3423,7 +3477,7 @@ class Materials:
         subject_id: str,
         data: dict,
         *,
-        evidence: tuple[str, ...],
+        evidence: tuple[EvidenceDigest, ...],
         expected_revision: int,
         request_id: str,
     ):

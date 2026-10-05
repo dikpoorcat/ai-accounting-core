@@ -78,7 +78,8 @@ def test_composite_bank_row_counts_once_and_binds_both_frozen_sources(bank_book)
     dashboard = Dashboard(engine)
     first = dashboard.funds(MONTH, section="statements", limit=1)
     summary = first["data"]["bank_statement"]
-    assert (summary["transaction_count"], summary["matched_count"]) == (2, 2)
+    assert summary["transaction_count"] == 2
+    assert summary["review_state"] == "complete"
     assert (summary["inflow_fen"], summary["outflow_fen"]) == (7000, 6100)
     page = first["data"]["collections"]["statements"]
     assert page["page"]["total_count"] == page["page"]["filtered_count"] == 2
@@ -94,9 +95,9 @@ def test_composite_bank_row_counts_once_and_binds_both_frozen_sources(bank_book)
     assert not second["page"]["has_more"]
     assert page["items"][0]["id"] != second["items"][0]["id"]
     combined = next(
-        item for item in [*page["items"], *second["items"]] if item["reference"] == "combined"
+        item for item in [*page["items"], *second["items"]] if item["signed_amount_fen"] == -6100
     )
-    assert combined["state"] == "matched"
+    assert not {"state", "reference", "source_check", "party_sources"} & combined.keys()
     assert combined["amount_fen"] == 6100
     assert combined["party"] == "组合付款 · 2 项"
     assert combined["batch_payment"]["bank_row_count"] == 1
@@ -105,19 +106,22 @@ def test_composite_bank_row_counts_once_and_binds_both_frozen_sources(bank_book)
         1100,
         5000,
     ]
-    assert {item["party_id"] for item in combined["party_sources"]} == {
-        "water-provider",
-        "reserve-provider",
-    }
-
     with engine.store.connection(read_only=True) as connection:
         snap = _Snapshot(engine, connection, MONTH)
         read = FundsRead(snap)
-        read.bank_summary(page_request={"after": None, "limit": 10, "where": "1=1", "filters": []})
+        summary = read.bank_summary(
+            page_request={"after": None, "limit": 10, "where": "1=1", "filters": []}
+        )
+        assert summary["matched_count"] == 2
         rows = read.shared_pages["statements"][0]
         read.prepare_bank_items(rows)
         original = next(row for row in rows if row["reference"] == "combined")
+        assert original["state"] == "matched"
         selected = read.bank_match_calculations[original["page_key"]]
+        assert {item["fact"]["data"]["counterparty_id"] for item in selected} == {
+            "water-provider",
+            "reserve-provider",
+        }
         assert {item["subject_id"] for item in selected} == {
             "water-payment",
             "reserve-transfer",

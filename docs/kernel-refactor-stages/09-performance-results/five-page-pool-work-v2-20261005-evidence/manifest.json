@@ -1,0 +1,163 @@
+{
+  "status": "archived_actual_diagnostic_with_first_failure",
+  "archived_at": "2026-10-04T23:37:42.675859+00:00",
+  "files": [
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old.json",
+      "original_bytes": 836083,
+      "original_sha256": "adeedc8e7acb5c1cbc858c921a5d33ac780e87dc46a3c6f11e9df29e7f1042bc",
+      "gzip_bytes": 107834,
+      "gzip_sha256": "6e8353efba7d8483a82552752eb4ef747ed8bf2daef6c4163624b6d68e2d9655"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new.json",
+      "original_bytes": 837023,
+      "original_sha256": "fa8765aea5c70718baffe5844f7308f3d518ff488fbdb5f0d302c640642c3dbe",
+      "gzip_bytes": 108316,
+      "gzip_sha256": "6840989e6582a3a0a406fb03bb9345fe9f5f4380de7ed32832090d1d8895bb44"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-comparison.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-comparison.json",
+      "original_bytes": 1087965,
+      "original_sha256": "38fa19cfa692203a82a3b48ade1aed33d959ce307bff3f528d4c6567267786bf",
+      "gzip_bytes": 145731,
+      "gzip_sha256": "0fd67bb8315ad8afcde8a9f1bb68d2c8f9593df37b8edf18f939cab3e4a33cec"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-controller.log.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-controller.log",
+      "original_bytes": 592,
+      "original_sha256": "1f8386728073c3b5409747dbe34a219264f41fecb25ad9d3db011d83b79aa31f",
+      "gzip_bytes": 136,
+      "gzip_sha256": "1af3456d403a5ee2f471b09d63be8064f8cdd4a73e726b11f6f407078b5c59d1"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old-brief-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old-brief-raw.json",
+      "original_bytes": 181135,
+      "original_sha256": "f80662876b615259c2365a961982af224abba1c7e403021b7b98309a8274665c",
+      "gzip_bytes": 21957,
+      "gzip_sha256": "2628e3f2920ce3da1427761ce38164794e8dce73a43ae6f27cbe83e1aea4c068"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old-funds-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old-funds-raw.json",
+      "original_bytes": 160753,
+      "original_sha256": "cc8902dd963b017f3c081429f99039a057938328e474400433c9649a0a913435",
+      "gzip_bytes": 21388,
+      "gzip_sha256": "8a5dfd6f7426ac2d487ce55e82e450f5562dd2f21fadea57f600a53d16426f3d"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old-employees-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old-employees-raw.json",
+      "original_bytes": 110900,
+      "original_sha256": "aba1c379e07ec0f2dbef5429ac03dd1d64bc049cc0c89a8da70e32866db4860e",
+      "gzip_bytes": 14996,
+      "gzip_sha256": "456a89165f71caa554a870b511c0a95deed1e18ebf8655dc372e7ed91bd5b188"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old-assets-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old-assets-raw.json",
+      "original_bytes": 142616,
+      "original_sha256": "c251ecf65a708d5b0964477f90b4b2447bbb21df408e7a66b09ae8c67c8ead77",
+      "gzip_bytes": 18719,
+      "gzip_sha256": "2d1db8d9cf98715a1dd49df9ee3f59f0d6c313586ebf8ee16dca5e0284e9db97"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-old-quarterly_report-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-old-quarterly_report-raw.json",
+      "original_bytes": 119905,
+      "original_sha256": "fa110ab0815edf396a6d7a06b4aa0d487dfb3e1a0d3ad8559b203152ca9ec098",
+      "gzip_bytes": 16460,
+      "gzip_sha256": "2bb9ca5a1b69dba40f0cc5b17343f3cecaf1d462543913025a83d96bac476fff"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new-brief-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new-brief-raw.json",
+      "original_bytes": 181128,
+      "original_sha256": "4a9a8d416608c59e4a800b65c59ef51b402fb5e479a87a0516aa8e0e1ee12b39",
+      "gzip_bytes": 21954,
+      "gzip_sha256": "1759437766ca27f3aea737b5d31744514be53323266bb9e8e383814274a97b1c"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new-funds-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new-funds-raw.json",
+      "original_bytes": 160784,
+      "original_sha256": "4926bb01c29555ee1cb0150455b8d8eb17eb1cb50c1c2044f702a0a2358ec708",
+      "gzip_bytes": 21375,
+      "gzip_sha256": "fe507f14af36a197994c15e0be9adb44a8226db9f33a61a8bbf3fcad07de8f31"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new-employees-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new-employees-raw.json",
+      "original_bytes": 110931,
+      "original_sha256": "78f0e39f6fb8e3c25ebb850e11569211eabc638df17105a0ff8e00cb6e45295d",
+      "gzip_bytes": 15015,
+      "gzip_sha256": "7a37930cb73b1738b0b9a3ccb02cccc74657503f96da69a97ca81aecce8eb140"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new-assets-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new-assets-raw.json",
+      "original_bytes": 142644,
+      "original_sha256": "da368d9581a6d5bb0c763aa7c7e4168c8757a6f66cfa74cd8d6209139b595b3a",
+      "gzip_bytes": 18778,
+      "gzip_sha256": "7e7834c15612d8615c6f23a2e7700cee8e565dc7a2320955384fa6c38840c1a5"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-v2-20261005-new-quarterly_report-raw.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-v2-20261005-new-quarterly_report-raw.json",
+      "original_bytes": 119785,
+      "original_sha256": "e8ed18e6acabe23a51d056b1b32ccd63353af666100848c66c90d1c4edf30c24",
+      "gzip_bytes": 16410,
+      "gzip_sha256": "c74428aa5f2fc50f74a7ae45d82c493f5a81863d620160ce4ccc63d5d1ef26c2"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-20261005-old.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-20261005-old.json",
+      "original_bytes": 54010,
+      "original_sha256": "dd915053153d1da1f78019098a154fa1771f965f999196ea68bf763635ddf162",
+      "gzip_bytes": 9392,
+      "gzip_sha256": "a392d10480417de49767d609079ccc5114886f2084ccb2b3a7c39059e5f2216b"
+    },
+    {
+      "file": "stage9-index-flow-five-page-work-20261005-controller.log.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-index-flow-five-page-work-20261005-controller.log",
+      "original_bytes": 1393,
+      "original_sha256": "c17f5e68478f99e5a94417f5c078a9db6e2eb04dbfdbdf73da6d3943632eedf9",
+      "gzip_bytes": 521,
+      "gzip_sha256": "ba0db477d189682b2baccf44808ac07de867df2f3644cab17c39b5383154f634"
+    },
+    {
+      "file": "stage9-converged-three-scale-controller-20261005.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-converged-three-scale-controller-20261005.json",
+      "original_bytes": 1081,
+      "original_sha256": "2bab5212fb99ff7c0acd2cdaebc23f14102c6675632fd770cc49cd1667b9ad8c",
+      "gzip_bytes": 655,
+      "gzip_sha256": "0c6df5e962da4e871dbf3afbb977fd55ae64bbaf8a59640817a739ff310a7146"
+    },
+    {
+      "file": "stage9-a5-recovery-work-v2-reviewed-20261005.json.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-a5-recovery-work-v2-reviewed-20261005.json",
+      "original_bytes": 1041,
+      "original_sha256": "2303989e8202047f0d87024357064d72e69548412389904606905b7f0009fca1",
+      "gzip_bytes": 562,
+      "gzip_sha256": "57757901fcacd6e8114e36be59a37081a03cf35533ad03d097f080a485dbe77e"
+    },
+    {
+      "file": "stage9-metrics-pool-adapter-review-v2-20261005.md.gz",
+      "original_private_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-metrics-pool-adapter-review-v2-20261005.md",
+      "original_bytes": 11493,
+      "original_sha256": "2196c567240c1a46632c17977f13b3c43534b5a550d6c23e0c0e2a909dff6cab",
+      "gzip_bytes": 5998,
+      "gzip_sha256": "c135c7edd1e5f1e3f7125480f4cc2bf591345c7c8e7212fe9c7f7d7030e7639a"
+    }
+  ],
+  "original_helper_sha256": "2a45d8dc8a863251cf14616949af68fa175a05747324b1dba122b1add507a35c",
+  "v2_helper_sha256": "25e2fceef9cf099dda8e29d2bad1f80ab45101aa0733a4e61b78ed8fbed1876a",
+  "comparison_sha256": "38fa19cfa692203a82a3b48ade1aed33d959ce307bff3f528d4c6567267786bf",
+  "scope": "Synthetic native instrumented work; not qualification or HTTP/DOM/500ms timing.",
+  "databases_or_secrets_included": false
+}

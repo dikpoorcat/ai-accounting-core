@@ -1,4 +1,8 @@
-"""Draft forward adjustment preserves source ZIPs and produces current portable snapshots."""
+"""Isolated draft fixtures preserve source ZIPs across forward adjustment.
+
+The shared create_old_company helper explicitly constructs a synthetic draft
+target, independently of the installed production release.
+"""
 
 import json
 import zipfile
@@ -9,15 +13,20 @@ import pytest
 from test_development_upgrade import create_old_company, old_business
 
 from ai_accounting.kernel import backup
-from ai_accounting.kernel.offline_development_upgrade import upgrade_company
+from ai_accounting.kernel.offline_development_upgrade import (
+    INDEX_SOURCE_FINGERPRINT, SOURCE_FINGERPRINT, upgrade_company,
+)
 from ai_accounting.kernel.runtime import connect
 
 
 @pytest.mark.parametrize("after_request", ["after-upgrade", "before-upgrade"])
+@pytest.mark.parametrize("source_fingerprint", [SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT])
 def test_upgraded_draft_rollover_and_restore_keep_identity_and_frozen_history(
-    tmp_path, after_request
+    tmp_path, after_request, source_fingerprint
 ):
-    path, source, target = create_old_company(tmp_path / "company.sqlite")
+    path, source, target = create_old_company(
+        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
+    )
     old_business(path, source)
     output = tmp_path / "backups"
     initial = backup.create_portable(path, output, _bundle=source, request_id="before-upgrade")
@@ -67,8 +76,13 @@ def test_upgraded_draft_rollover_and_restore_keep_identity_and_frozen_history(
     assert replay["idempotent_replay"] is True
 
 
-def test_interrupted_upgraded_rollover_verifies_historical_pending_zip(tmp_path, monkeypatch):
-    path, source, target = create_old_company(tmp_path / "company.sqlite")
+@pytest.mark.parametrize("source_fingerprint", [SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT])
+def test_interrupted_upgraded_rollover_verifies_historical_pending_zip(
+    tmp_path, monkeypatch, source_fingerprint,
+):
+    path, source, target = create_old_company(
+        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
+    )
     old_business(path, source)
     output = tmp_path / "backups"
     initial = backup.create_portable(path, output, _bundle=source, request_id="old")

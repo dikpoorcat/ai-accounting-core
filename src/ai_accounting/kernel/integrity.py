@@ -15,7 +15,6 @@ from .content_history_context import month_type, read_type, source_json_loads
 from .content_history_context import source_canonical as canonical
 from .content_history_context import source_checked as checked
 from .content_history_context import source_digest as digest
-from .content_history_context import source_sum_fen as sum_fen
 from .contracts import KernelError
 from .projections import require_projections
 from .schema import sequence_model, table_name
@@ -70,7 +69,10 @@ def _lines(lines, component, ident, *, opening=False):
         checked(credit)
         result.append((account, debit, credit, cashflow))
     if result and (
-        len(result) < 2 or sum_fen(row[1] for row in result) != sum_fen(row[2] for row in result)
+        # Every amount above is an exact nonnegative int64. Only the final
+        # total can exceed int64; keep totals after all per-line checks.
+        len(result) < 2
+        or checked(sum(row[1] for row in result)) != checked(sum(row[2] for row in result))
     ):
         _invalid(component, ident, "unbalanced_lines")
     return result
@@ -188,6 +190,9 @@ def _check_facts(engine, connection, identifiers):
     }
     if sealed != set(facts):
         _invalid("fact", "*", "fact_seal_missing")
+    from .entity_references import verify_fact_entity_types
+
+    verify_fact_entity_types(connection, facts, registry=engine.store.registry)
     evidence_ids = set()
     for row in connection.execute(
         "SELECT e.fact_id,e.evidence_digest FROM fact_evidence e "
@@ -216,6 +221,25 @@ def verify_fact_child_order(engine, connection, kinds):
             )
             if not is_sequence:
                 continue
+            if historical_fields is None:
+                if not fact_ids:
+                    continue
+                # Current child tables are STRICT, with nonnegative INTEGER
+                # positions and PRIMARY KEY(revision_id,item_no). Unique
+                # positions with min=0 and max=count-1 prove the same complete
+                # order without transferring every child row to Python.
+                for child in connection.execute(
+                    f"SELECT c.revision_id FROM json_each(?) ids CROSS JOIN "
+                    f"{table_name(kind)}_{name} c ON c.revision_id=ids.value "
+                    "GROUP BY c.revision_id HAVING "
+                    "sum(CASE WHEN typeof(c.item_no)='integer' AND c.item_no>=0 "
+                    "THEN 0 ELSE 1 END)>0 OR min(c.item_no)!=0 "
+                    "OR max(c.item_no)!=count(*)-1",
+                    (canonical(sorted(fact_ids)),),
+                ):
+                    _invalid("fact", child["revision_id"], "fact_child_order_mismatch")
+                continue
+            # Released v1 preserves its original row interpretation.
             next_numbers = defaultdict(int)
             for child in connection.execute(
                 f"SELECT c.revision_id,c.item_no FROM {table_name(kind)}_{name} c "
@@ -402,7 +426,7 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
         )
     for ident, row in vouchers.items():
         actual = _lines(lines[ident], "voucher", ident)
-        if not actual or sum_fen(line[1] for line in actual) != row["total"]:
+        if not actual or checked(sum(line[1] for line in actual)) != row["total"]:
             _invalid("voucher", ident, "voucher_total_mismatch")
         if row["voucher_id"] not in numbered:
             _invalid("voucher", ident, "voucher_number_missing")
@@ -481,6 +505,22 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
                 asset_membership_reader().frozen_members(connection, ident)
             except KernelError:
                 _invalid("calculation", ident, "asset_membership_mismatch")
+    from .query_reads import verify_open_voucher_scope
+
+    current_subjects = (None if identifiers is None else {
+        row["subject_id"] for row in calculations.values()
+    })
+    from . import publication as current_publication
+
+    if publication_reader() is current_publication:
+        verify_open_voucher_scope(connection, 119999, subject_ids=current_subjects)
+    else:
+        publication_reader().verify_open_voucher_heads(
+            connection, 119999, subject_ids=current_subjects
+        )
+    publication_reader().verify_open_correction_heads(
+        connection, calculations, publications, vouchers
+    )
     return {
         "calculations": calculations,
         "facts": facts,
@@ -771,6 +811,7 @@ def _check_closes(
     require_index_marker=True,
     predecoded_closes=None,
     _return_closes=False,
+    _verified_material_versions=None,
 ):
     from .content_history_context import close_contract, close_reader
 
@@ -812,7 +853,16 @@ def _check_closes(
         if not isinstance(rule, bytes) or len(rule) != 32:
             _invalid("close", period, "material_rule_identity_missing")
         saved = (
-            decode_close(connection, row, require_marker=require_index_marker)
+            decode_close(
+                connection,
+                row,
+                require_marker=require_index_marker,
+                **(
+                    {"_verified_material_versions": _verified_material_versions}
+                    if _verified_material_versions is not None
+                    else {}
+                ),
+            )
             if predecoded_closes is None
             else predecoded_closes[index][1]
         )
@@ -1090,8 +1140,9 @@ def _check_closes(
                 manifest["trial_balance"]
             ):
                 _invalid("close", period, "duplicate_trial_account")
-        if sum_fen(value[0] for value in trial.values()) != sum_fen(
-            value[1] for value in trial.values()
+        # _totals proved exact nonnegative int64 amounts and account totals.
+        if checked(sum(value[0] for value in trial.values())) != checked(
+            sum(value[1] for value in trial.values())
         ):
             _invalid("close", period, "unbalanced_trial_balance")
         if previous_trial is None:
@@ -1183,6 +1234,16 @@ def _check_heads(connection):
 
 def verify_integrity(engine, connection, *, include_projections=True, include_indexes=True):
     """Check all preserved versions in the caller's snapshot, including old ones."""
+    from .runtime import verification_snapshot
+
+    with verification_snapshot(connection):
+        return _verify_integrity_in_snapshot(
+            engine, connection,
+            include_projections=include_projections, include_indexes=include_indexes,
+        )
+
+
+def _verify_integrity_in_snapshot(engine, connection, *, include_projections, include_indexes):
     if include_projections and connection.in_transaction:
         from .verified_source_lease import verified_source_lease
 
@@ -1275,6 +1336,15 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
         report_open_contribution_reader().compare_open_contributions(
             engine, connection, check_bodies=include_projections, verified_source=source
         )
+        material_versions = None
+        if include_projections and connection.in_transaction:
+            from . import close_storage
+            from .content_history_context import close_reader
+
+            if close_reader() is close_storage:
+                from .frozen_material import _verified_material_version_ledger
+
+                material_versions = _verified_material_version_ledger(connection)
         close_result = _check_closes(
             engine,
             connection,
@@ -1282,6 +1352,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
             verify_financial_position=include_projections and include_indexes,
             require_index_marker=include_indexes,
             _return_closes=include_projections and connection.in_transaction,
+            _verified_material_versions=material_versions,
         )
         close_count, limitations = close_result[:2]
         decoded_closes = close_result[2] if len(close_result) == 3 else None
@@ -1341,12 +1412,21 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                         _verified_closes=decoded_closes,
                         _return_verified=True,
                     )
-                    semantics = report_semantics_reader().require_report_semantics(
+                    from . import report_semantics as current_report_semantics
+
+                    semantics_reader = report_semantics_reader()
+                    semantics_options = (
+                        {"_verified_reports": reports}
+                        if semantics_reader is current_report_semantics
+                        else {}
+                    )
+                    semantics = semantics_reader.require_report_semantics(
                         engine,
                         connection,
                         _verified_closes=decoded_closes,
                         _verified_source=verified_calculation_source(connection, source),
                         _return_verified=True,
+                        **semantics_options,
                     )
                     flow_result = report_flow_reader().require_report_flow(
                         engine,
@@ -1391,9 +1471,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                 else:
                     verify_read_indexes(
                         connection,
-                        _verified_closes=_verified_closes_for_indexes(
-                            connection, decoded_closes
-                        ),
+                        _verified_closes=_verified_closes_for_indexes(connection, decoded_closes),
                     )
         return {
             "status": "verified",
@@ -1554,8 +1632,17 @@ def _verify_close_integrity_leased(engine, connection, period):
     from .read_indexes import _close_references
 
     fact_ids, evidence_ids = set(), set()
+    from . import close_storage
+    from .content_history_context import close_reader
     from .verified_close_archive import pack_verified_close
 
+    decode_arguments = {}
+    if close_reader() is close_storage:
+        from .frozen_material import _verified_material_version_ledger
+
+        decode_arguments["_verified_material_versions"] = _verified_material_version_ledger(
+            connection
+        )
     packed_closes = []
     for row in connection.execute(
         "SELECT * FROM period_close WHERE period<=? ORDER BY period", (month,)
@@ -1564,7 +1651,7 @@ def _verify_close_integrity_leased(engine, connection, period):
 
         decode_close = close_reader().decode_close
 
-        manifest = decode_close(connection, row)
+        manifest = decode_close(connection, row, **decode_arguments)
         packed_closes.append((row, pack_verified_close(manifest)))
         from .content_history_context import close_contract
 
@@ -1639,19 +1726,27 @@ def _verify_close_integrity_leased(engine, connection, period):
             _verified_closes=verified_closes,
             _return_verified=True,
         )
+        from . import report_semantics as current_report_semantics
         from .content_history_context import (
             balance_freeze_reader,
             report_flow_reader,
             report_semantics_reader,
         )
 
-        verified_semantics = report_semantics_reader().require_report_semantics(
+        semantics_reader = report_semantics_reader()
+        semantics_options = (
+            {"_verified_reports": verified_reports}
+            if semantics_reader is current_report_semantics
+            else {}
+        )
+        verified_semantics = semantics_reader.require_report_semantics(
             engine,
             connection,
             through_period=month,
             _verified_closes=verified_closes,
             _verified_source=verified_calculation_source(connection, source),
             _return_verified=True,
+            **semantics_options,
         )
         flow_result = report_flow_reader().require_report_flow(
             engine,

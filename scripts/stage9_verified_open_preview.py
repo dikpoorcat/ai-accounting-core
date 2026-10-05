@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
 
 
-def verify_book_open_preview(
+def preview_checkpoint(
     engine,
     *,
     checkpoint_path: Path,
@@ -15,12 +16,11 @@ def verify_book_open_preview(
     snapshots: dict,
     period: str,
     source: Path,
+    dimensions: dict | None = None,
 ):
-    """Keep construction digests intact; attest the current source separately."""
-    from ai_accounting.kernel.periods import Periods
-    from ai_accounting.kernel.versions import database_format
-
-    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    """Retain only exact construction metadata, never its saved result payloads."""
+    raw = checkpoint_path.read_bytes()
+    checkpoint = json.loads(raw.decode("utf-8"))
     expected_state = checkpoint.get("epochs")
     if (
         checkpoint.get("company") != company
@@ -37,6 +37,10 @@ def verify_book_open_preview(
         or engine.store.path.resolve(strict=True) != Path(company["path"]).resolve(strict=True)
     ):
         raise ValueError("Synthetic checkpoint identity or open snapshot changed")
+    if dimensions is not None and any(
+        checkpoint.get(field) != expected for field, expected in dimensions.items()
+    ):
+        raise ValueError("Synthetic checkpoint sample dimensions changed")
     expected_identity = {
         "company_id": company["id"],
         "taxpayer_id": company["taxpayer_id"],
@@ -45,44 +49,82 @@ def verify_book_open_preview(
     # The fixture also saves every historical input/result for construction.
     # None is an input to production verification; retain only the checked
     # state and identity while the full database verifier builds its own proof.
-    del checkpoint
+    return {
+        "state": expected_state,
+        "identity": expected_identity,
+        "checkpoint_path": checkpoint_path,
+        "checkpoint_sha256": hashlib.sha256(raw).hexdigest(),
+    }
 
-    def state_and_identity(connection):
-        state = connection.execute("SELECT * FROM state WHERE id=1").fetchone()
-        identity = connection.execute(
-            "SELECT company_id,taxpayer_id,database_id FROM identity WHERE id=1"
-        ).fetchone()
-        if (
-            state is None
-            or list(state) != expected_state
-            or identity is None
-            or dict(identity) != expected_identity
-        ):
-            raise ValueError("Synthetic company state, repair revision or identity changed")
+
+def require_preview_state(connection, checkpoint):
+    state = connection.execute("SELECT * FROM state WHERE id=1").fetchone()
+    identity = connection.execute(
+        "SELECT company_id,taxpayer_id,database_id FROM identity WHERE id=1"
+    ).fetchone()
+    if (
+        state is None or list(state) != checkpoint["state"]
+        or identity is None or dict(identity) != checkpoint["identity"]
+    ):
+        raise ValueError("Synthetic company state, repair revision or identity changed")
+    with checkpoint["checkpoint_path"].open("rb") as handle:
+        checkpoint_sha256 = hashlib.file_digest(handle, "sha256").hexdigest()
+    if checkpoint_sha256 != checkpoint["checkpoint_sha256"]:
+        raise ValueError("Synthetic checkpoint bytes changed during qualification")
+
+
+def verify_registered_company(engine, checkpoint):
+    """Build an independent proof with the installed registered company verifier."""
+    from ai_accounting.kernel.versions import database_format
 
     started = time.perf_counter()
     bundle = engine.store.bundle
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        state_and_identity(connection)
+        require_preview_state(connection, checkpoint)
         installed = database_format(connection, bundle=bundle)
         integrity = bundle.company_verifiers[installed["version"]](connection, bundle)
-        state_and_identity(connection)
-    if integrity["status"] != "verified" or integrity.get("limitations"):
+        require_preview_state(connection, checkpoint)
+    if (
+        integrity.get("status") != "verified" or integrity.get("limitations") != []
+        or any(integrity.get("coverage", {}).get(section) != "verified" for section in (
+            "sources", "historical_adoption", "projections", "read_indexes"
+        ))
+    ):
         raise ValueError("Synthetic company failed its registered content verifier")
-    integrity_ms = (time.perf_counter() - started) * 1000
+    return {
+        "integrity_contract": installed,
+        "integrity": integrity,
+        "integrity_ms": (time.perf_counter() - started) * 1000,
+    }
+
+
+def verify_book_open_preview(
+    engine, *, checkpoint_path: Path, company: dict, snapshots: dict,
+    period: str, source: Path, dimensions: dict | None = None, preview_close=None,
+):
+    """Keep construction digests intact; optionally dispatch in the resident app."""
+    from ai_accounting.kernel.periods import Periods
+
+    checkpoint = preview_checkpoint(
+        engine, checkpoint_path=checkpoint_path, company=company, snapshots=snapshots,
+        period=period, source=source, dimensions=dimensions,
+    )
+    verified = verify_registered_company(engine, checkpoint)
+    expected_state = checkpoint["state"]
 
     # Periods.preview_close owns a second real read transaction. Exact state
     # and identity checks around it exclude an intervening business/repair write.
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        state_and_identity(connection)
-    preview = Periods(engine).preview_close(
-        period, owner_confirmation=snapshots[period]["owner_confirmation"]
-    )
+        require_preview_state(connection, checkpoint)
+    started = time.perf_counter()
+    dispatch = preview_close or Periods(engine).preview_close
+    preview = dispatch(period, owner_confirmation=snapshots[period]["owner_confirmation"])
+    preview_ms = (time.perf_counter() - started) * 1000
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        state_and_identity(connection)
+        require_preview_state(connection, checkpoint)
     if (
         preview.get("status") != "preview"
         or preview.get("manifest", {}).get("period") != period
@@ -93,9 +135,9 @@ def verify_book_open_preview(
     ):
         raise ValueError("Current synthetic preview differs from its checkpoint state")
     return {
-        "integrity_contract": installed,
-        "integrity": integrity,
-        "integrity_ms": integrity_ms,
+        **verified,
+        "preview_ms": preview_ms,
+        "checkpoint_sha256": checkpoint["checkpoint_sha256"],
         "verified_open_preview": {
             "source": str(source.resolve(strict=True)),
             "company_id": company["id"],

@@ -1,0 +1,131 @@
+{
+  "status": "archived_completed_normal_restart_evidence",
+  "source_sha256": "c063fdbf18975e1a3eab102116014de30f3bb58c8ae99ded406e51afaefeaf99",
+  "source_manifest_sha256": "0c8ac9a2744d8e41ac66a8b03c811b337831660591eead1155cb0eca331a17c0",
+  "package_build_id": "local-kernel-2:34dcf3f83f5d2425a7bb99a5c5d911c2ae82cb811bdca1fdd4e6e60fe334830d",
+  "scope": "normal stop/restart only; no forced kill/inflight/full-tree/human GUI proof",
+  "actual_terminal_exit_codes": {
+    "v2": 1,
+    "v3": 0
+  },
+  "actual_mcp_calls_each_attempt": 10,
+  "private_helpers": [
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal_restart_mcp.py",
+      "source_sha256": "697d9b950863608f51124ebbeb75da09d95f48743063413ceecf7551412dc706",
+      "representation": "private_helper_sha_only"
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal_restart_mcp_v2.py",
+      "source_sha256": "2fdb99d7962605ded6278be18fb9a5842aa11d84a220a91fb801cf8d90146223",
+      "representation": "private_helper_sha_only"
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal_restart_mcp_v3.py",
+      "source_sha256": "fe7a664dfca8497aa6542066067c0335989b277116836f8a71aa391faf62cf2f",
+      "representation": "private_helper_sha_only"
+    }
+  ],
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v2-receipt.json",
+      "source_sha256": "b1839df2bc3e2f9e8a46b08e499ab03490c04433b5d4ab25da452631d3652c2d",
+      "source_bytes": 81808,
+      "archive": "00-normal-restart-mcp-v2-receipt.json.gz",
+      "redacted_sha256": "2746beb497031552c91fdb308d3f02b8cf3b881782250bcafe7ea363c13eb683",
+      "gzip_sha256": "11bdac1b824cbd31929543acd036c3743833877f7cf5186b662add2b4523ef4e",
+      "gzip_bytes": 15954,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v2-actual-exit.json",
+      "source_sha256": "770311ea03bb936e35b7c1750b5188cbdfd8aba74a4c240ef761aa252837d95a",
+      "source_bytes": 916,
+      "archive": "01-normal-restart-mcp-v2-actual-exit.json.gz",
+      "redacted_sha256": "e7b3095ca92d96a21d53dff368f0547c1dd89c25f09b23541c4e32f098a630e2",
+      "gzip_sha256": "ca991123172a6430a68426c74c5439488e7ba96a1a938c4523340bbda055b878",
+      "gzip_bytes": 583,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v2-before_restart-daemon.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "02-normal-restart-mcp-v2-before_restart-daemon.log.gz",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v2-after_restart-daemon.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "03-normal-restart-mcp-v2-after_restart-daemon.log.gz",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal_restart_mcp_v2-static-review.md",
+      "source_sha256": "adcfbe167a45fc70882afcf3113fba1af16c6d7a01c3addd407c9da686f32b8f",
+      "source_bytes": 2431,
+      "archive": "04-normal_restart_mcp_v2-static-review.md.gz",
+      "redacted_sha256": "adcfbe167a45fc70882afcf3113fba1af16c6d7a01c3addd407c9da686f32b8f",
+      "gzip_sha256": "2ca31af3bda7d251991752f047b3d2a87e91465acfe313ffbcffaf24fe0a5f74",
+      "gzip_bytes": 1564,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v3-receipt.json",
+      "source_sha256": "fae5342275eb672a96f4957ced3ef2bc86cd309327adf0a45a1d76788a1fe5a1",
+      "source_bytes": 122840,
+      "archive": "05-normal-restart-mcp-v3-receipt.json.gz",
+      "redacted_sha256": "a806d03d06dcba6165e50302772d3e0e7ec957cc89858c6c4c836b85a8954e01",
+      "gzip_sha256": "53627ecb21f3ef68077603d80cfa5edda844ac1926f610c86c169bf44a420f53",
+      "gzip_bytes": 24596,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v3-actual-exit.json",
+      "source_sha256": "8490e593e6e91c032d3fcdb20941e74789f58976588b5bde03979411fc10527f",
+      "source_bytes": 948,
+      "archive": "06-normal-restart-mcp-v3-actual-exit.json.gz",
+      "redacted_sha256": "3bcd9e86d72e303cedd8726aa5e439e1e6d4ac4254774b4eaf485cd5dc3fbd45",
+      "gzip_sha256": "3cbccf6b966d89e7fd01158e95de9f48e171b3aade3c8277e86b9400a4b940d5",
+      "gzip_bytes": 580,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v3-before_restart-daemon.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "07-normal-restart-mcp-v3-before_restart-daemon.log.gz",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal-restart-mcp-v3-after_restart-daemon.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "08-normal-restart-mcp-v3-after_restart-daemon.log.gz",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-summary-lifecycle-c063-20261005/normal_restart_mcp_v3-static-review.md",
+      "source_sha256": "0fad778d14e6406707a07f770ce2ed73c8d6ab6bf00b744f1f48052d18ebc4cf",
+      "source_bytes": 2408,
+      "archive": "09-normal_restart_mcp_v3-static-review.md.gz",
+      "redacted_sha256": "0fad778d14e6406707a07f770ce2ed73c8d6ab6bf00b744f1f48052d18ebc4cf",
+      "gzip_sha256": "812498430ed8df9300e3275369b509859c3a7cf6741e3ea30371858764ebc9a9",
+      "gzip_bytes": 1567,
+      "roundtrip_equal": true
+    }
+  ]
+}

@@ -1,0 +1,617 @@
+{
+  "created_utc": "2026-10-02T16:07:35.038988+00:00",
+  "scope": "failed pure main48 browser and separately contended instrumented request diagnostics plus static historical readiness; no new execution or database/checkpoint copy",
+  "prior_manifests": [
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-manifest.json",
+      "sha256": "8a7ed50dd805cbc5113921d859f530390a08ab6bfafbd2c89fe4c7a132c88d9b",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-content-upgrade-history-manifest.json",
+      "sha256": "18314770b534d9a0c07ecdb652e25fb4e73be615702fc6ebe89e27a108102baa",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r73-manifest.json",
+      "sha256": "194148d8ec2719e2a0c328c28eff13fb8407acb26fef5893b0123b55c1ef954e",
+      "unchanged": true
+    }
+  ],
+  "fixed_source_identity": {
+    "sha256": "420ceb395fc5aec17ddaedf8914c7fc8de640da9f08cb35aded8a3a99a4eb7f4",
+    "backend_build_id": "local-kernel-2:3953feaab7372f1e975836c7d9ab4558d32261e68b77e27346a0e874e5196f98",
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r73-release",
+    "static_asset_hash_binding": [
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/AssetsView-ChTicRN0.css",
+        "browser_sha256": "dbda77383e693fc7a3160bc278d3d91bd883a28582cab45320317df9b32b95b4",
+        "snapshot_sha256": "dbda77383e693fc7a3160bc278d3d91bd883a28582cab45320317df9b32b95b4",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/AssetsView-Cwlr_MKz.js",
+        "browser_sha256": "e9a1f070cfdd60b2b8dedd0007c1c230455f741434f0e9cee84d5b7842b566ae",
+        "snapshot_sha256": "e9a1f070cfdd60b2b8dedd0007c1c230455f741434f0e9cee84d5b7842b566ae",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BackgroundJobsPanel-B1JY505s.js",
+        "browser_sha256": "7979e202c1e5acb56e4a39e6e41088a9428f8ea0ec861987317dc778ebcf7408",
+        "snapshot_sha256": "7979e202c1e5acb56e4a39e6e41088a9428f8ea0ec861987317dc778ebcf7408",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BackgroundJobsPanel-CiDlz4gc.css",
+        "browser_sha256": "b8edbaea8a1914501f37afbc22e69d994b6a86a8c1d2758d321c6600d3558297",
+        "snapshot_sha256": "b8edbaea8a1914501f37afbc22e69d994b6a86a8c1d2758d321c6600d3558297",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BriefView-BdUmfROR.js",
+        "browser_sha256": "f5e0ab3a6d7ac2e2aad2190d96adb6152be5ebd5d2ec6f1eb67b82ad7fc5ecb0",
+        "snapshot_sha256": "f5e0ab3a6d7ac2e2aad2190d96adb6152be5ebd5d2ec6f1eb67b82ad7fc5ecb0",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BriefView-D0YDDljm.css",
+        "browser_sha256": "4705a556fcfae78961be48f2347c50ab567aad6176f051081d504f0e08520bf8",
+        "snapshot_sha256": "4705a556fcfae78961be48f2347c50ab567aad6176f051081d504f0e08520bf8",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/browserJobs-PPJAp_iM.js",
+        "browser_sha256": "eb2dc5fcc17400653fc7ea6f62415ade47421cac23330e505f777c805447225b",
+        "snapshot_sha256": "eb2dc5fcc17400653fc7ea6f62415ade47421cac23330e505f777c805447225b",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BusinessStatusDetails-8dk-IRSj.css",
+        "browser_sha256": "b496f409b38e309d86b9a5637f9d81e2488b3eca96b436e1350e5f9e1af0eb99",
+        "snapshot_sha256": "b496f409b38e309d86b9a5637f9d81e2488b3eca96b436e1350e5f9e1af0eb99",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BusinessStatusDetails-DPyfY9Vy.js",
+        "browser_sha256": "c59efb92f6ddda76a1b82f67fb1bb69560be183b0460fff90eefd4934e853978",
+        "snapshot_sha256": "c59efb92f6ddda76a1b82f67fb1bb69560be183b0460fff90eefd4934e853978",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/dashboardBusinessStatus-fIDH6ElL.js",
+        "browser_sha256": "f2b7dce2c8f94bcb99949df33c2b6bdc96bb4d323012d9b36c54e014b7e2ed15",
+        "snapshot_sha256": "f2b7dce2c8f94bcb99949df33c2b6bdc96bb4d323012d9b36c54e014b7e2ed15",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/EmployeesView-CNLcSFds.css",
+        "browser_sha256": "3ec9837c8ca0481fac944565ceefa4d0351a3bcee053af992517287b51dd5e86",
+        "snapshot_sha256": "3ec9837c8ca0481fac944565ceefa4d0351a3bcee053af992517287b51dd5e86",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/EmployeesView-D4oW0gQF.js",
+        "browser_sha256": "6be6f483f6ed263e92a063552a1fde96103c28ca88bbe1ca8d9b3aac74037a64",
+        "snapshot_sha256": "6be6f483f6ed263e92a063552a1fde96103c28ca88bbe1ca8d9b3aac74037a64",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/FundsView-CwBN2vbY.js",
+        "browser_sha256": "b5e0040734dc166ba8941fdccf0a8f35026a92d1e44d7da01389d67c288e84f1",
+        "snapshot_sha256": "b5e0040734dc166ba8941fdccf0a8f35026a92d1e44d7da01389d67c288e84f1",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/FundsView-DHCcRa4H.css",
+        "browser_sha256": "2bee3d674f9eb3bc6f9de8ba154f419c57bb69072968a3eb95aeff0c704bd496",
+        "snapshot_sha256": "2bee3d674f9eb3bc6f9de8ba154f419c57bb69072968a3eb95aeff0c704bd496",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/index-GkAoHQfL.js",
+        "browser_sha256": "7146f2131bcc938bdda5babc4e7ed615ea078a5982edebaf8973676f1adfe5fa",
+        "snapshot_sha256": "7146f2131bcc938bdda5babc4e7ed615ea078a5982edebaf8973676f1adfe5fa",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/main-D4r8ChYH.js",
+        "browser_sha256": "48fbce0e03a5095a46e1dbbc2a9a0e3132dfb340aa02dce1d1ceae0307d51f7b",
+        "snapshot_sha256": "48fbce0e03a5095a46e1dbbc2a9a0e3132dfb340aa02dce1d1ceae0307d51f7b",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/main-sEWac9LI.css",
+        "browser_sha256": "aaf0c83b0ebd13a436a723509bb1fcb9d27d0731d22fc287b73545a4539945fa",
+        "snapshot_sha256": "aaf0c83b0ebd13a436a723509bb1fcb9d27d0731d22fc287b73545a4539945fa",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/reportExportReceipt-Bf-vyB-E.js",
+        "browser_sha256": "096b64116ed0a5be94897574c11925c014d3f1a86ef58807ba214190a6c04f4f",
+        "snapshot_sha256": "096b64116ed0a5be94897574c11925c014d3f1a86ef58807ba214190a6c04f4f",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/reports-DzbFRAF8.js",
+        "browser_sha256": "182179b07d3dbcedd7f056410027be8eaa068a4d243a65cea8df34cc9ea0ca3d",
+        "snapshot_sha256": "182179b07d3dbcedd7f056410027be8eaa068a4d243a65cea8df34cc9ea0ca3d",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/ReportsView-Cnhsb5Na.css",
+        "browser_sha256": "9b293114117c61efa693382027b1f4bcfd75b837fe6e6c3111eae13f523234da",
+        "snapshot_sha256": "9b293114117c61efa693382027b1f4bcfd75b837fe6e6c3111eae13f523234da",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/ReportsView-DJOuiyI-.js",
+        "browser_sha256": "ec0a76b0ba37da17f6536bb5a6166f5e7ecec6919c9e1ee3d08d39869118158c",
+        "snapshot_sha256": "ec0a76b0ba37da17f6536bb5a6166f5e7ecec6919c9e1ee3d08d39869118158c",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/useDashboardSections-CsVm1N0_.css",
+        "browser_sha256": "56fc37e4b579f14c3c6a43d49669977580f222a2b2e832d63dc1f46592d3af0f",
+        "snapshot_sha256": "56fc37e4b579f14c3c6a43d49669977580f222a2b2e832d63dc1f46592d3af0f",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/useDashboardSections-tS-HPW6a.js",
+        "browser_sha256": "50e8737fea9654aceac397117f28463bbad7ecb1e38f78fdb27d4c8a35e05e87",
+        "snapshot_sha256": "50e8737fea9654aceac397117f28463bbad7ecb1e38f78fdb27d4c8a35e05e87",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/index.html",
+        "browser_sha256": "ad7dd396a5150b40dda171ddf1ef0dbf1e19b5606f64ede8d478ff4e306b9b4e",
+        "snapshot_sha256": "ad7dd396a5150b40dda171ddf1ef0dbf1e19b5606f64ede8d478ff4e306b9b4e",
+        "matches": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/local.html",
+        "browser_sha256": "16b10c1953941362a7120055143d2f42122687c7a979a09d0ee5d1d51fb211fe",
+        "snapshot_sha256": "16b10c1953941362a7120055143d2f42122687c7a979a09d0ee5d1d51fb211fe",
+        "matches": true
+      }
+    ]
+  },
+  "browser": {
+    "status": "over_target",
+    "measurement_mode": "page_timing",
+    "successful_samples": 150,
+    "slow_total": 79,
+    "pages": {
+      "brief": {
+        "median_ms": 636.5999999940395,
+        "p95_ms": 697,
+        "max_ms": 735.3000000119209,
+        "over_500_ms": 30
+      },
+      "funds": {
+        "median_ms": 436.7999999821186,
+        "p95_ms": 535.5999999940395,
+        "max_ms": 536.2999999821186,
+        "over_500_ms": 4
+      },
+      "employees": {
+        "median_ms": 316.7000000178814,
+        "p95_ms": 471.90000000596046,
+        "max_ms": 473.2000000178814,
+        "over_500_ms": 0
+      },
+      "assets": {
+        "median_ms": 515.9000000059605,
+        "p95_ms": 596.2999999821186,
+        "max_ms": 715.4000000059605,
+        "over_500_ms": 17
+      },
+      "reports": {
+        "median_ms": 556.7999999821186,
+        "p95_ms": 615.0999999940395,
+        "max_ms": 616,
+        "over_500_ms": 28
+      }
+    },
+    "navigation": {
+      "first_load_ms": 7873.699999988079,
+      "first_render_epoch_ms": 1790956635271,
+      "cold_open_ms": {
+        "brief": 1156.5999999940395,
+        "funds": 605.7999999821186,
+        "employees": 612.7000000178814,
+        "assets": 815.3000000119209,
+        "reports": 737.7999999821186
+      },
+      "company_switch": {
+        "status": "unavailable",
+        "reason": "single_eligible_company"
+      },
+      "browser_launch_to_first_render_ms": 9006.82470703125
+    }
+  },
+  "request_diagnostic_limitations": [
+    "instrumented browser affected by concurrent main48 setup, not pure acceptance",
+    "Python3.12 concurrent cProfile call graphs unsuitable for per-request attribution",
+    "sequential endpoints accurately preserve mandatory scope counts; timing does not close security revalidation",
+    "missing independent logs not fabricated"
+  ],
+  "historical_readiness": {
+    "status": "static_ready_runtime_guards_mandatory",
+    "scope": "read-only pins/paths/static DDL readiness; no SQL, copies, construction, tests, verification or preview executed",
+    "limitations": [
+      "main120 full JSON source guard remains deferred; exact original report/checkpoint SHA and full historical source manifest bytes checked",
+      "source SQLite contents/identity/FK and frozen row digests not read in readiness",
+      "main120 and independent48 retain built_not_verified source status",
+      "disk budget is a conservative planning estimate, not a resource acceptance test",
+      "Historical source manifests use original declared inventory; current r73 still uses unchanged current full snapshot guard"
+    ],
+    "initial_snapshot_failure_classification": "Historical inventory reinterpreted by current required-file list: frontend/local-api-proxy.ts",
+    "guard_status": "passed",
+    "negative": [
+      {
+        "case": "healthy",
+        "accepted": true,
+        "proof": {
+          "file_count": 6,
+          "bytes": 68722,
+          "sha256": "7326e324b88441df6b77f037b2b5a9d4bacdd6fde99aad7ce1301721db00d40d"
+        },
+        "expectation_met": true
+      },
+      {
+        "case": "delete_declared_file",
+        "accepted": false,
+        "error_type": "FileNotFoundError",
+        "error": "[WinError 2] 系统找不到指定的文件。: 'D:\\\\GitHub\\\\ai-accounting-core\\\\.tmp\\\\stage9-r73-historical-manifest-guard-fixtures\\\\delete_declared_file\\\\pyproject.toml'",
+        "expectation_met": true
+      },
+      {
+        "case": "change_byte",
+        "accepted": false,
+        "error_type": "ValueError",
+        "error": "Historical snapshot actual bytes differ from its CASE",
+        "expectation_met": true
+      },
+      {
+        "case": "wrong_aggregate",
+        "accepted": false,
+        "error_type": "ValueError",
+        "error": "Historical snapshot marker or CASE identity changed",
+        "expectation_met": true
+      },
+      {
+        "case": "path_escape",
+        "accepted": false,
+        "error_type": "ValueError",
+        "error": "Historical manifest path or byte hash is invalid",
+        "expectation_met": true
+      }
+    ],
+    "unknown_case_dispatcher_rejected": true,
+    "limitation": "source guard only, no constructor/SQLite/content/preview; checkpoint and databases excluded"
+  },
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-owner-main48-browser-r73.json",
+      "scope": "actual main48 pure browser failure, 150success/79slow",
+      "raw_sha256": "b80a7ba20352185a57dffd2875040e26b58d499de7f2c9604d776e73175e30c7",
+      "raw_bytes": 9005,
+      "raw_mtime_ns": 1790956738982747700,
+      "raw_mtime_utc": "2026-10-02T15:58:58.982748+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-001-stage9-owner-main48-browser-r73.json.gz",
+      "archive_sha256": "1f1415b0d853c22ca838cd655aedd258248a340dc63275f410640ec81d2da8aa",
+      "archive_bytes": 2895,
+      "archive_mtime_ns": 1790957254746846900,
+      "archive_mtime_utc": "2026-10-02T16:07:34.746847+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main48-browser-r73.log",
+      "scope": "actual main48 pure browser failure, 150success/79slow",
+      "raw_sha256": "02ae1375268a2bb924fe79afd6e649a8626cfde93d3c4b2014f2e3638eb7042d",
+      "raw_bytes": 245,
+      "raw_mtime_ns": 1790956738989753100,
+      "raw_mtime_utc": "2026-10-02T15:58:58.989753+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-002-stage9-owner-main48-browser-r73.log.gz",
+      "archive_sha256": "2105d6c880c70463e9875b73a278626c9dbada7b77ca732995545a020c9c6196",
+      "archive_bytes": 153,
+      "archive_mtime_ns": 1790957254753844600,
+      "archive_mtime_utc": "2026-10-02T16:07:34.753844+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-request-scope-browser-diagnostic.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "bb0ced15df06408aa0cf8893c528b0fa46f396a960548c65166a495464882da1",
+      "raw_bytes": 4752,
+      "raw_mtime_ns": 1790955725867496100,
+      "raw_mtime_utc": "2026-10-02T15:42:05.867496+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-003-stage9-r73-request-scope-browser-diagnostic.json.gz",
+      "archive_sha256": "e57d7f190bdd72348315a8be4ad59fb45c969f72a50ccb44545419fa76f577b2",
+      "archive_bytes": 2286,
+      "archive_mtime_ns": 1790957254761747000,
+      "archive_mtime_utc": "2026-10-02T16:07:34.761747+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-request-scope-browser-diagnostic-attempt2.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "2fccf078ddfda06bc8cfb1cbbd7206bc8e335110233a6dddb21588763e93628f",
+      "raw_bytes": 274864,
+      "raw_mtime_ns": 1790955865983143300,
+      "raw_mtime_utc": "2026-10-02T15:44:25.983143+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-004-stage9-r73-request-scope-browser-diagnostic-attempt2.json.gz",
+      "archive_sha256": "97ecef57094c87d886988e2cc7c67a861e24e02281e3bf738e547a2bb2710399",
+      "archive_bytes": 32080,
+      "archive_mtime_ns": 1790957254782450300,
+      "archive_mtime_utc": "2026-10-02T16:07:34.782450+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-request-scope-browser-diagnostic-attempt3.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "b7b0e59983816d048aed839722c230ab0c6a9747ed02d0d245f7fc6357b5ac06",
+      "raw_bytes": 858770,
+      "raw_mtime_ns": 1790956006854140600,
+      "raw_mtime_utc": "2026-10-02T15:46:46.854141+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-005-stage9-r73-request-scope-browser-diagnostic-attempt3.json.gz",
+      "archive_sha256": "43586a40e24985b9642bd491c8e47c18426b00a63fcf6b255efbdcd4a370aaa3",
+      "archive_bytes": 97456,
+      "archive_mtime_ns": 1790957254834279000,
+      "archive_mtime_utc": "2026-10-02T16:07:34.834279+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-request-scope-sequential-diagnostic.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "efed4ef3a5089089f5ae38fe2446b95f9b655b2a055117b4759f8004c52a7cf6",
+      "raw_bytes": 4629,
+      "raw_mtime_ns": 1790956197481857200,
+      "raw_mtime_utc": "2026-10-02T15:49:57.481857+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-006-stage9-r73-request-scope-sequential-diagnostic.json.gz",
+      "archive_sha256": "ad04547dbacd19a10bda069f6bfd85e3e74aae3a0b4f9cf7e9381461b596f862",
+      "archive_bytes": 2193,
+      "archive_mtime_ns": 1790957254845959900,
+      "archive_mtime_utc": "2026-10-02T16:07:34.845960+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-request-scope-sequential-diagnostic-attempt2.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "d153d615130d789153e5339a13144f17866ca88b9f1d053de4e076f917b04b21",
+      "raw_bytes": 314812,
+      "raw_mtime_ns": 1790956331967351300,
+      "raw_mtime_utc": "2026-10-02T15:52:11.967351+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-007-stage9-r73-request-scope-sequential-diagnostic-attempt2.json.gz",
+      "archive_sha256": "b530811ea4b2727e5c2f8a9a1064a4afaba535660c7847f52a83bdf2b7b7207b",
+      "archive_bytes": 36199,
+      "archive_mtime_ns": 1790957254867959100,
+      "archive_mtime_utc": "2026-10-02T16:07:34.867959+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/r73-request-scope-browser-runner.py",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "8b690b7571e2daf74413aab758affe6b1348f8a8b7808a31ee585ee2de41c770",
+      "raw_bytes": 2180,
+      "raw_mtime_ns": 1790955892122645800,
+      "raw_mtime_utc": "2026-10-02T15:44:52.122646+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-008-r73-request-scope-browser-runner.py.gz",
+      "archive_sha256": "9f1fa9c0f20c52461cde1fe50f7c91ede63a9f6b9c75a9bf905d2807fb3efd00",
+      "archive_bytes": 816,
+      "archive_mtime_ns": 1790957254877009600,
+      "archive_mtime_utc": "2026-10-02T16:07:34.877010+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/r73-request-scope-sequential-runner.py",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "56420cbdc516d3214c976225e7fc683b52e33a44846e81db5d29cb3680dc8cb6",
+      "raw_bytes": 3342,
+      "raw_mtime_ns": 1790956234954968200,
+      "raw_mtime_utc": "2026-10-02T15:50:34.954968+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-009-r73-request-scope-sequential-runner.py.gz",
+      "archive_sha256": "bfebddbd6eee130b6d6decb588ad5c87469fc21d402998c55cf81cccef094bf8",
+      "archive_bytes": 1289,
+      "archive_mtime_ns": 1790957254885903500,
+      "archive_mtime_utc": "2026-10-02T16:07:34.885904+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/r73-request-scope-analyze.py",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "2170c8b75595b09a2a5d02696c78b23399bfd7329e61aeb1ababa78239c63d12",
+      "raw_bytes": 1613,
+      "raw_mtime_ns": 1790955938867210300,
+      "raw_mtime_utc": "2026-10-02T15:45:38.867210+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-010-r73-request-scope-analyze.py.gz",
+      "archive_sha256": "c1ded2b6ebae001f3ff5c2ea6aa75d47f9ede9a8206000fbd1d5fcf8d7a2841d",
+      "archive_bytes": 754,
+      "archive_mtime_ns": 1790957254893902600,
+      "archive_mtime_utc": "2026-10-02T16:07:34.893903+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/r73-request-scope-summary.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "b2d2c142b7b146cf41222e705fb8170e6b11fba8ece29c7772e95d6a92f82ce6",
+      "raw_bytes": 103112,
+      "raw_mtime_ns": 1790956042224444000,
+      "raw_mtime_utc": "2026-10-02T15:47:22.224444+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-011-r73-request-scope-summary.json.gz",
+      "archive_sha256": "972aeb00dbd22520b2f53dd5e3985ca82656da85ceeb24af9084d5c690efb8e2",
+      "archive_bytes": 9417,
+      "archive_mtime_ns": 1790957254905163600,
+      "archive_mtime_utc": "2026-10-02T16:07:34.905164+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/r73-request-scope-sequential-summary.json",
+      "scope": "instrumented request diagnostic including original failed attempts and runners; not pure timing or per-request concurrent profile authority",
+      "raw_sha256": "4eed910a8e78b8355fa77d436acf230e2da30118aab8d4f14011a05d9cde8cac",
+      "raw_bytes": 6616,
+      "raw_mtime_ns": 1790956401792185300,
+      "raw_mtime_utc": "2026-10-02T15:53:21.792185+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-012-r73-request-scope-sequential-summary.json.gz",
+      "archive_sha256": "e1e72fc80febf7f96af42cc721556e6714aae75e24bdf0cec408b4247c9b5b78",
+      "archive_bytes": 918,
+      "archive_mtime_ns": 1790957254912947700,
+      "archive_mtime_utc": "2026-10-02T16:07:34.912948+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-rebase-owner-r73.py",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "291b331a32be2c055a61042b7ed9426af5cf91ebcc199f9103555c1b56899bef",
+      "raw_bytes": 11057,
+      "raw_mtime_ns": 1790956093200671100,
+      "raw_mtime_utc": "2026-10-02T15:48:13.200671+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-013-stage9-rebase-owner-r73.py.gz",
+      "archive_sha256": "3a31209390ba4c48244489ec5d1366f18b233c8b25f97d9beb9b691ac60baba8",
+      "archive_bytes": 3893,
+      "archive_mtime_ns": 1790957254919947600,
+      "archive_mtime_utc": "2026-10-02T16:07:34.919948+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-rebase-owner-r73-readiness.json",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "4308ceb94dc4cf86c58727795a89f898f3ac3b0feedb3873eea246659be36903",
+      "raw_bytes": 30556,
+      "raw_mtime_ns": 1790956417592854200,
+      "raw_mtime_utc": "2026-10-02T15:53:37.592854+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-014-stage9-rebase-owner-r73-readiness.json.gz",
+      "archive_sha256": "572a2484d848574f90399db783225685ed3bd2850e0efa154963f54576e19eff",
+      "archive_bytes": 4659,
+      "archive_mtime_ns": 1790957254927947000,
+      "archive_mtime_utc": "2026-10-02T16:07:34.927947+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-rebase-owner-r73-readiness.md",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "56d34c4f314d86e13b6eefef4d38f26e59fb6502621fe7720760b2a100f6ca74",
+      "raw_bytes": 4051,
+      "raw_mtime_ns": 1790956417592854200,
+      "raw_mtime_utc": "2026-10-02T15:53:37.592854+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-015-stage9-rebase-owner-r73-readiness.md.gz",
+      "archive_sha256": "3e52f488fdcfbe78e730b90dd27b7508386dd6d635d96588fee2e0273c76aab0",
+      "archive_bytes": 2337,
+      "archive_mtime_ns": 1790957254934951000,
+      "archive_mtime_utc": "2026-10-02T16:07:34.934951+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-historical-manifest-guard-probe.py",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "c7ee8451f8443925b7bb5527756f5442979bf9aa018e0a119dffb634d7afc4e0",
+      "raw_bytes": 5309,
+      "raw_mtime_ns": 1790956212022702100,
+      "raw_mtime_utc": "2026-10-02T15:50:12.022702+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-016-stage9-r73-historical-manifest-guard-probe.py.gz",
+      "archive_sha256": "ac768ed1f22231e26df76eea22827d97cacfe7dff5876df382126ea2be505a09",
+      "archive_bytes": 1835,
+      "archive_mtime_ns": 1790957254944066100,
+      "archive_mtime_utc": "2026-10-02T16:07:34.944066+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-historical-manifest-guard.json",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "a1c015f67c0c6fb57f98011596685696f3839353f5a7f5d39664844149260c1c",
+      "raw_bytes": 2578,
+      "raw_mtime_ns": 1790956238438402400,
+      "raw_mtime_utc": "2026-10-02T15:50:38.438402+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-017-stage9-r73-historical-manifest-guard.json.gz",
+      "archive_sha256": "26ab7d98f01d20ca1170b9d8ca97828ee13b1e233a8b0d00df16d99be2011a27",
+      "archive_bytes": 1007,
+      "archive_mtime_ns": 1790957254950065700,
+      "archive_mtime_utc": "2026-10-02T16:07:34.950066+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r73-historical-manifest-guard.log",
+      "scope": "static historical source guard readiness and small file-negative fixtures; not construction/SQLite/fullverify",
+      "raw_sha256": "e2190c4068b4d2f3adad11405aaf303cd89534790b394bd54426663f35bd5a95",
+      "raw_bytes": 4157,
+      "raw_mtime_ns": 1790956238437401600,
+      "raw_mtime_utc": "2026-10-02T15:50:38.437402+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-018-stage9-r73-historical-manifest-guard.log.gz",
+      "archive_sha256": "59e06b5766d7dc527c018918f51ede383a033a9676b0c6d6a7562488178a56b9",
+      "archive_bytes": 1142,
+      "archive_mtime_ns": 1790957254965068700,
+      "archive_mtime_utc": "2026-10-02T16:07:34.965069+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/source-manifest.json",
+      "scope": "fixed source manifest identity",
+      "raw_sha256": "d462182c0c157f24d32678dad4e9fd361b5e162b0ae2b69ad9f88c85a92b0277",
+      "raw_bytes": 76373,
+      "raw_mtime_ns": 1790952745267394800,
+      "raw_mtime_utc": "2026-10-02T14:52:25.267395+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-019-source-manifest.json.gz",
+      "archive_sha256": "a5c9d2ad5be0a7b75b7a701296ef9ba1f45b5c46cb7e8d41037f03a35ed039ac",
+      "archive_bytes": 30605,
+      "archive_mtime_ns": 1790957254975284000,
+      "archive_mtime_utc": "2026-10-02T16:07:34.975284+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-candidate-owner-r73/candidate-provenance.json",
+      "scope": "fixed candidate source/contracts identity",
+      "raw_sha256": "fc01d0365e48abff7f1a8353f59fab916f7a3ba5ed5f376fae33d7bbdee23262",
+      "raw_bytes": 77528,
+      "raw_mtime_ns": 1790952745290391600,
+      "raw_mtime_utc": "2026-10-02T14:52:25.290391+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-020-candidate-provenance.json.gz",
+      "archive_sha256": "0f8d6bad4a297e40b0d497362b10e3c7b27e6ca4c55eae68d10b39f963b08b5c",
+      "archive_bytes": 31095,
+      "archive_mtime_ns": 1790957254987283100,
+      "archive_mtime_utc": "2026-10-02T16:07:34.987283+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-http-request-and-readiness-r73.md",
+      "scope": "concentrated issue-type record",
+      "raw_sha256": "da640f2c117f643a19ad6b27723a215af649ae6a7ea23420ab827cf057254f7a",
+      "raw_bytes": 3939,
+      "raw_mtime_ns": 1790957254743845000,
+      "raw_mtime_utc": "2026-10-02T16:07:34.743845+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-021-owner-http-request-and-readiness-r73.md.gz",
+      "archive_sha256": "07e32b282301616bb735e66e3e5198f93edeb294f9742edcb806bd323fb4618d",
+      "archive_bytes": 2429,
+      "archive_mtime_ns": 1790957255000286100,
+      "archive_mtime_utc": "2026-10-02T16:07:35.000286+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-and-release.md",
+      "scope": "current main48 failed browser status",
+      "raw_sha256": "f8b8d31b346a296959b10c2e06eccbecba7e0677cd0ab27ed163c263582401e6",
+      "raw_bytes": 32460,
+      "raw_mtime_ns": 1790957254744846000,
+      "raw_mtime_utc": "2026-10-02T16:07:34.744846+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-022-09-performance-and-release.md.gz",
+      "archive_sha256": "3b5b3c8c8a2860d9224ec12441b1c2b478b7dc5667cdf3d7da3d2edb0fdd57c2",
+      "archive_bytes": 14215,
+      "archive_mtime_ns": 1790957255015623200,
+      "archive_mtime_utc": "2026-10-02T16:07:35.015623+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/release-remaining-gates.md",
+      "scope": "current main48 failed browser status",
+      "raw_sha256": "7bd38b1bf62cd4a0f19fa9757e0c52057e8a64ad8b6731871ea453cfb3e564b4",
+      "raw_bytes": 23703,
+      "raw_mtime_ns": 1790957254745846200,
+      "raw_mtime_utc": "2026-10-02T16:07:34.745846+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-browser-request-readiness-023-release-remaining-gates.md.gz",
+      "archive_sha256": "ec597275efd84dd1734d7576eae352716db67ce5f5d4d559d75a84336b2a9678",
+      "archive_bytes": 10289,
+      "archive_mtime_ns": 1790957255030623800,
+      "archive_mtime_utc": "2026-10-02T16:07:35.030624+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

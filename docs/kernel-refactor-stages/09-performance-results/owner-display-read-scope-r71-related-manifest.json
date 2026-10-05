@@ -1,0 +1,89 @@
+{
+  "created_utc": "2026-10-02T11:54:31.563295+00:00",
+  "scope": "r71 bank-related84 regression; includes prior9; excludes asset/formalv1/performance",
+  "prior_manifest": {
+    "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-manifest.json",
+    "sha256": "c81a88da0eb42650fd7af78c0589510e94a4f14aceb29544fdd7a7e677d40998",
+    "unchanged": true
+  },
+  "receipt": {
+    "session": 59274,
+    "exit_code": 0,
+    "tests": 84,
+    "warnings": 4,
+    "stdout_seconds": 480.21,
+    "xml_suite_seconds": 479.776,
+    "module_counts": {
+      "tests.kernel.test_owner_funds_summary_scope": 9,
+      "tests.kernel.test_funds_bounded_reads": 6,
+      "tests.kernel.test_bank_identity_witness_scope": 21,
+      "tests.kernel.test_funds_historical_account_identities": 20,
+      "tests.kernel.test_owner_brief_amounts": 25,
+      "tests.kernel.test_dashboard_opening_position_scope": 2,
+      "tests.kernel.test_owner_brief_slim": 1
+    },
+    "command": ".tmp-kernel-venv/Scripts/python.exe -X utf8 -m pytest tests/kernel/test_owner_funds_summary_scope.py tests/kernel/test_funds_bounded_reads.py tests/kernel/test_bank_identity_witness_scope.py tests/kernel/test_funds_historical_account_identities.py tests/kernel/test_owner_brief_amounts.py tests/kernel/test_dashboard_opening_position_scope.py tests/kernel/test_owner_brief_slim.py::test_brief_default_is_bounded_and_does_not_load_technical_payload -q -ra --junitxml=.tmp/stage9-r71-brief-funds-related.xml",
+    "prior9_included_no_sum": true
+  },
+  "limitations": {
+    "asset": "first new fixture failed; not passed/not included",
+    "formal_v1": "not included/not verified",
+    "native_browser_500ms": "not run/no claim"
+  },
+  "author_scope_note": "raw initial9 author statement preserved; new84 proof in actual log/XML and revised group doc",
+  "document_sha256": "ad82eae5630858d0389428a30c567ec00ab8ccc29e700bc9537251a612d04a4d",
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-r71-brief-funds-related.log",
+      "raw_sha256": "6da011caab9c87b35a9ee77eb33a7bbec41af69f3f2380e9d65585ae06307063",
+      "raw_bytes": 1497,
+      "raw_mtime_ns": 1790941881258168300,
+      "raw_mtime_utc": "2026-10-02T11:51:21.258168+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-001-stage9-r71-brief-funds-related.log.gz",
+      "archive_sha256": "0a1f4cb504dc984a32edb31196709518426706e5dc38adedaf030617b796d7c1",
+      "archive_bytes": 473,
+      "archive_mtime_ns": 1790942071523293800,
+      "archive_mtime_utc": "2026-10-02T11:54:31.523294+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-brief-funds-related.xml",
+      "raw_sha256": "8f95aa281bf641c6bf7c4ace7642176e262a28d072e11e63f6501a233e725f01",
+      "raw_bytes": 22347,
+      "raw_mtime_ns": 1790941880602217900,
+      "raw_mtime_utc": "2026-10-02T11:51:20.602218+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-002-stage9-r71-brief-funds-related.xml.gz",
+      "archive_sha256": "00f9c2a954287e703148a11d92e21b96922b051c4a568e3a46732392a136c667",
+      "archive_bytes": 3096,
+      "archive_mtime_ns": 1790942071532294700,
+      "archive_mtime_utc": "2026-10-02T11:54:31.532295+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-brief-bank-scope.md",
+      "raw_sha256": "f7798dc9f2e4c67353e281f1a230739d69a3295870f3df2f7a64bb7e126f5dec",
+      "raw_bytes": 4537,
+      "raw_mtime_ns": 1790941120070202200,
+      "raw_mtime_utc": "2026-10-02T11:38:40.070202+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-003-stage9-r71-brief-bank-scope.md.gz",
+      "archive_sha256": "f425e3fdb01c7782e4d221d49f11bc6a986e38453805ebd10830cefb72eac7f0",
+      "archive_bytes": 2610,
+      "archive_mtime_ns": 1790942071541295600,
+      "archive_mtime_utc": "2026-10-02T11:54:31.541296+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71.md",
+      "raw_sha256": "ad82eae5630858d0389428a30c567ec00ab8ccc29e700bc9537251a612d04a4d",
+      "raw_bytes": 6556,
+      "raw_mtime_ns": 1790942071522293600,
+      "raw_mtime_utc": "2026-10-02T11:54:31.522294+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-004-owner-display-read-scope-r71.md.gz",
+      "archive_sha256": "ab9b8925f01785b5fa755b95db1de1d79f784aefc0e153d0be950da088dcf55c",
+      "archive_bytes": 3469,
+      "archive_mtime_ns": 1790942071555294800,
+      "archive_mtime_utc": "2026-10-02T11:54:31.555295+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

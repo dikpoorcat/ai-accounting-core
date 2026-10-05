@@ -46,14 +46,24 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     assert "generated_at" not in empty and empty["current_company"] is None
     assert samples["company_without_period"]["response"]["periods"] == []
     assert samples["funds_without_period"]["response"]["data"] is None
-    assert samples["deferred_funds"]["response"]["data"]["period_preparation"] is None
+    assert "period_preparation" not in samples["deferred_funds"]["response"]["data"]
     assert "movement_page" not in samples["page_accounts"]["response"]["data"]
     assert "page" not in samples["page_accounts"]["response"]["data"]["bank_statement"]
     brief = samples["brief"]["response"]["data"]
-    assert brief["adopted_basis"]["scope"] == "current_voucher_page"
-    assert brief["adopted_basis"]["calculation_ids"] == [
-        item["calculation_id"] for item in brief["collections"]["vouchers"]["items"]
-    ]
+    assert "adopted_basis" not in brief
+    vouchers = brief["collections"]["vouchers"]
+    assert vouchers["page"]["returned_count"] == len(vouchers["items"])
+    assert brief["voucher_count"] == brief["activity_count"]
+    for voucher in vouchers["items"]:
+        assert {
+            "number", "voucher_version_id", "subject_id", "amount_fen", "lines"
+        } <= voucher.keys()
+        assert not {
+            "field_sources", "evidence", "components", "funds", "settlements"
+        } & voucher.keys()
+    assert brief["collections"]["activity"]["page"]["returned_count"] == len(
+        brief["collections"]["activity"]["items"]
+    )
 
 
 def _personnel_date_value(response, sample):
@@ -62,13 +72,15 @@ def _personnel_date_value(response, sample):
     return response["data"]["collections"]["employees"]["items"][0]
 
 
-@pytest.mark.parametrize("sample,field", [
-    ("employees_month_dates", "employment_start_date"),
-    ("employees_month_dates", "employment_end_date"),
-    ("employees_month_dates", "tax_withholding_start_date"),
-    ("business_month_dates", "employment_start"),
-    ("business_month_dates", "employment_end"),
-])
+@pytest.mark.parametrize(
+    "sample,field",
+    [
+        ("employees_month_dates", "employment_start_date"),
+        ("employees_month_dates", "employment_end_date"),
+        ("business_month_dates", "employment_start"),
+        ("business_month_dates", "employment_end"),
+    ],
+)
 @pytest.mark.parametrize(
     "date_value", ["2026-03", "2026-03-20", None, "2026-13", "2026-00", 202603, True]
 )
@@ -95,32 +107,23 @@ def test_live_personnel_dates_keep_frozen_and_supplemental_precision(samples):
         samples["employees_mixed_dates"]["response"], "employees_mixed_dates"
     )
     assert monthly["employment_start_date"] == "2025-12"
-    assert monthly["tax_withholding_start_date"] == "2026-01"
     assert monthly["employment_end_date"] is None
     assert mixed["employment_start_date"] == "2025-12"
     assert mixed["employment_end_date"] == "2026-04-20"
-    assert mixed["field_sources"]["employment_start_date"]["basis"] == "frozen"
-    assert mixed["field_sources"]["employment_end_date"]["basis"] == "current_supplement"
     conflict = _personnel_date_value(
         samples["employees_date_conflict"]["response"], "employees_date_conflict"
     )
     assert conflict["in_period"] is None
-    assert conflict["field_conflicts"] == [{
-        "code": "employment_interval_conflict",
-        "fields": ["employment_start", "employment_end"],
-    }]
+    for item in (monthly, mixed, conflict):
+        assert "field_sources" not in item and "field_conflicts" not in item
 
 
-@pytest.mark.parametrize("conflict", [
-    {"code": "unknown", "fields": ["employment_start", "employment_end"]},
-    {"code": "employment_interval_conflict", "fields": ["private-field"]},
-    {"fields": ["employment_start", "employment_end"]},
-    {"code": "employment_interval_conflict"},
-    {"field": "employment_start", "values": [], "sources": []},
-])
-def test_employee_interval_conflict_rejects_unsupported_shapes(samples, conflict):
+@pytest.mark.parametrize(
+    "field", ["field_sources", "field_conflicts", "source_history", "tax_withholding_start_date"]
+)
+def test_employee_contract_rejects_technical_fields(samples, field):
     response = copy.deepcopy(samples["employees_date_conflict"]["response"])
-    _personnel_date_value(response, "employees_date_conflict")["field_conflicts"] = [conflict]
+    _personnel_date_value(response, "employees_date_conflict")[field] = []
     for validate in (validate_response, http_response):
         with pytest.raises(KernelError) as failure:
             validate("dashboard_employees", response)
@@ -132,7 +135,7 @@ def test_labor_source_uses_named_person_without_duplicate_party(samples):
     item = response["data"]["collections"]["labor_sources"]["items"][0]
     assert item["name"] == "合成劳务人员"
     assert "party" not in item
-    assert item["field_sources"]["name"]["field"] == "display_name"
+    assert "field_sources" not in item
     wire = http_response("dashboard_employees", response)
     encoded = wire["data"]["collections"]["labor_sources"]["items"][0]
     assert encoded["name"] == item["name"] and encoded["gross_fen"] == str(item["gross_fen"])
@@ -195,8 +198,7 @@ def test_native_work_contracts_enforce_nested_money(samples, command, sample):
 
 @pytest.mark.parametrize("amount", [None, 0, 2**53 + 1, 2**63 - 1, -(2**63)])
 def test_native_and_http_int64_money_in_nested_issues(samples, amount):
-    value = copy.deepcopy(samples["cash_funds"]["response"])
-    value["data"]["total_fen"] = amount
+    value = copy.deepcopy(samples["period_preparation"]["response"])
     issue = {
         "field": "materials",
         "message": "synthetic mismatch",
@@ -205,20 +207,16 @@ def test_native_and_http_int64_money_in_nested_issues(samples, amount):
         "pages": 2,
     }
     value["data"]["period_preparation"]["current_followups"]["materials"]["issues"] = [issue]
-    native = validate_response("dashboard_funds", value)
-    wire = http_response("dashboard_funds", value)
+    native = validate_response("dashboard_period_preparation", value)
+    wire = http_response("dashboard_period_preparation", value)
     assert native == value
-    assert wire["data"]["total_fen"] == (str(amount) if amount is not None else None)
     wire_issue = wire["data"]["period_preparation"]["current_followups"]["materials"]["issues"][0]
     assert wire_issue["expected_fen"] == (str(amount) if amount is not None else None)
     assert wire_issue["actual_fen"] == "0" and type(wire_issue["pages"]) is int
-    assert wire["data"]["collections"]["movements"]["items"][0]["amount_fen"] == str(
-        value["data"]["collections"]["movements"]["items"][0]["amount_fen"]
-    )
 
 
 def test_material_category_and_actual_money_candidate_diagnostics_are_typed(samples):
-    value = copy.deepcopy(samples["cash_funds"]["response"])
+    value = copy.deepcopy(samples["period_preparation"]["response"])
     issue = {
         "field": "materials.transactions",
         "message": "原件需要归属核对",
@@ -236,19 +234,19 @@ def test_material_category_and_actual_money_candidate_diagnostics_are_typed(samp
         ],
     }
     value["data"]["period_preparation"]["readiness"]["issues"] = [issue]
-    assert validate_response("dashboard_funds", value) == value
-    assert http_response("dashboard_funds", value)["data"]["period_preparation"]["readiness"][
-        "issues"
-    ] == [issue]
+    assert validate_response("dashboard_period_preparation", value) == value
+    assert http_response("dashboard_period_preparation", value)["data"]["period_preparation"][
+        "readiness"
+    ]["issues"] == [issue]
     issue["unexpected_amount_fen"] = 1
     with pytest.raises(KernelError) as error:
-        validate_response("dashboard_funds", value)
+        validate_response("dashboard_period_preparation", value)
     assert error.value.code == "response_contract_mismatch"
 
 
 @pytest.mark.parametrize("amount", [0, 2**53 + 1, 2**63 - 1])
 def test_tax_file_followup_has_explicit_money_and_never_changes_close_readiness(samples, amount):
-    value = copy.deepcopy(samples["cash_funds"]["response"])
+    value = copy.deepcopy(samples["period_preparation"]["response"])
     preparation = value["data"]["period_preparation"]
     readiness = copy.deepcopy(preparation["readiness"])
     preparation["current_followups"]["tax_import_mapping"] = {
@@ -267,8 +265,8 @@ def test_tax_file_followup_has_explicit_money_and_never_changes_close_readiness(
             }
         ],
     }
-    assert validate_response("dashboard_funds", value) == value
-    wire = http_response("dashboard_funds", value)
+    assert validate_response("dashboard_period_preparation", value) == value
+    wire = http_response("dashboard_period_preparation", value)
     assert wire["data"]["period_preparation"]["current_followups"]["tax_import_mapping"]["issues"][
         0
     ]["amount_fen"] == str(amount)
@@ -276,7 +274,7 @@ def test_tax_file_followup_has_explicit_money_and_never_changes_close_readiness(
     for invalid in (True, 1.0, 2**63, "1"):
         preparation["current_followups"]["tax_import_mapping"]["issues"][0]["amount_fen"] = invalid
         with pytest.raises(KernelError, match="读取结果不符合接口合同"):
-            validate_response("dashboard_funds", value)
+            validate_response("dashboard_period_preparation", value)
 
 
 @pytest.mark.parametrize("bad", [1.0, True, False, "1", 2**63, -(2**63) - 1])
@@ -309,9 +307,9 @@ def test_contract_mismatch_is_a_program_error(samples, mutation):
     elif mutation == "bool_count":
         value["data"]["account_count"] = True
     else:
-        value["data"]["collections"]["movements"]["items"][0]["field_sources"][
-            "private-company-file"
-        ] = {"amount_fen": 1}
+        value["data"]["collections"]["movements"]["items"][0]["field_sources"] = {
+            "private-company-file": {"amount_fen": 1}
+        }
     with pytest.raises(KernelError) as failure:
         validate_response("dashboard_funds", value)
     message = json.dumps(failure.value.response())
@@ -439,14 +437,25 @@ def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
         ("assets", "assets", {"period": "2026-01"}),
         ("business-status", "business_status", {"period": "2026-01", "subject_id": "sample"}),
         ("quarterly-report", "quarterly_report", {"year": 2026, "quarter": 1}),
-        ("period-preparation", "period_preparation", {
-            "period": "2026-01", "expected_read_version": "sample", "as_of": "2026-02-25",
-        }),
+        (
+            "period-preparation",
+            "period_preparation",
+            {
+                "period": "2026-01",
+                "expected_read_version": "sample",
+                "as_of": "2026-02-25",
+            },
+        ),
         ("close-review", None, {"period": "2026-01"}),
     ],
 )
 def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
-    resident, samples, monkeypatch, action, sample, extra,
+    resident,
+    samples,
+    monkeypatch,
+    action,
+    sample,
+    extra,
 ):
     """Observe the common HTTP boundary with current kernel-generated responses."""
     import ai_accounting.kernel.response_contracts as contracts
@@ -458,7 +467,8 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
     payload = {"company_id": company, **extra}
     value = (
         copy.deepcopy(samples[sample]["response"])
-        if sample else service.dispatch(command, payload, session_token=token)
+        if sample
+        else service.dispatch(command, payload, session_token=token)
     )
     original_validate = contracts.validate_response
     adapter_type = type(RESPONSE_ADAPTERS[command])
@@ -488,7 +498,8 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
     expected_wire = json.loads(original_dump(RESPONSE_ADAPTERS[command], native))
     observed.clear()
     status, _, _, result = http.request(
-        f"/api/dashboard/{action}?{urlencode(payload)}", headers=headers,
+        f"/api/dashboard/{action}?{urlencode(payload)}",
+        headers=headers,
     )
     assert status == 200 and result == expected_wire
     assert observed == [("validate", command), ("encode", command)]
@@ -498,7 +509,8 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
     value["private-data"] = "do-not-disclose"
     observed.clear()
     status, _, _, result = http.request(
-        f"/api/dashboard/{action}?{urlencode(payload)}", headers=headers,
+        f"/api/dashboard/{action}?{urlencode(payload)}",
+        headers=headers,
     )
     assert status == 500 and result["code"] == "response_contract_mismatch"
     assert "do-not-disclose" not in json.dumps(result)
@@ -506,7 +518,7 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
     assert observed == [("validate", command)]
 
 
-def test_invalid_numeric_mapping_keys_are_not_reported_as_list_positions(samples):
+def test_retired_provenance_mapping_rejects_without_reporting_private_numeric_keys(samples):
     value = copy.deepcopy(samples["cash_funds"]["response"])
     value["data"]["collections"]["accounts"]["items"][0]["field_sources"] = {
         6222021234567890123: {}
@@ -515,7 +527,7 @@ def test_invalid_numeric_mapping_keys_are_not_reported_as_list_positions(samples
         validate_response("dashboard_funds", value)
     assert "6222021234567890123" not in json.dumps(failure.value.response())
     assert all(
-        path.startswith("data.collections.accounts.items.0.field_sources.<key>")
+        path == "data.collections.accounts.items.0.<extra>"
         for path in failure.value.details["paths"]
     )
 
@@ -523,7 +535,7 @@ def test_invalid_numeric_mapping_keys_are_not_reported_as_list_positions(samples
 def test_existing_report_and_material_diagnostics_remain_business_issues(samples):
     from ai_accounting.kernel.materials import _issue
 
-    value = copy.deepcopy(samples["cash_funds"]["response"])
+    value = copy.deepcopy(samples["period_preparation"]["response"])
     position = classify_financial_position(
         [{"account": "1122", "amount": 100, "party_state": "unresolved"}]
     )
@@ -545,17 +557,19 @@ def test_existing_report_and_material_diagnostics_remain_business_issues(samples
     followups = value["data"]["period_preparation"]["current_followups"]
     followups["close_requirements"]["issues"] = position["issues"]
     followups["materials"]["issues"] = materials
-    response = http_response("dashboard_funds", value)
+    response = http_response("dashboard_period_preparation", value)
     actual = response["data"]["period_preparation"]["current_followups"]
     assert actual["close_requirements"]["issues"] == position["issues"]
     assert actual["materials"]["issues"] == materials
     assert materials[0]["dimension"] == "bank" and position["issues"][0]["line_no"] is None
 
 
-@pytest.mark.parametrize("part,key", [("closure", "digest"), ("frozen_readiness", "readiness")])
-def test_frozen_branch_cannot_omit_its_required_basis(samples, part, key):
+@pytest.mark.parametrize(
+    "field", ["period_preparation", "fact_issues", "source_history", "adopted_basis"]
+)
+def test_owner_funds_reject_technical_contract_fields(samples, field):
     value = copy.deepcopy(samples["frozen_funds"]["response"])
-    del value["data"]["period_preparation"][part][key]
+    value["data"][field] = {}
     with pytest.raises(KernelError) as failure:
         validate_response("dashboard_funds", value)
     assert failure.value.code == "response_contract_mismatch"
@@ -591,6 +605,17 @@ def test_today_backend_samples_pass_generated_browser_validators(samples, tmp_pa
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("sample_name, command", [
+    ("first_account_funds", "dashboard_funds"), ("asset_payment_summary", "dashboard_assets"),
+])
+def test_new_page_versions_require_native_integers(samples, sample_name, command):
+    value = copy.deepcopy(samples[sample_name]["response"])
+    value["schema_version"] = 9.0
+    with pytest.raises(KernelError) as failure:
+        validate_response(command, value)
+    assert failure.value.code == "response_contract_mismatch"
 
 
 def test_schema_check_detects_changed_model_without_writing(tmp_path, monkeypatch):

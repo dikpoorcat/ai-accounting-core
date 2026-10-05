@@ -72,6 +72,11 @@
     },
     {
       "type": "index",
+      "name": "close_reference_direct_adoption",
+      "sql": "CREATE INDEX close_reference_direct_adoption ON close_reference(\n reference_type,reference_id,path,close_period,position)\n WHERE path='adopted_results[*].fact_id' OR path='adopted_results[*].calculation_id'"
+    },
+    {
+      "type": "index",
       "name": "close_reference_lookup",
       "sql": "CREATE INDEX close_reference_lookup ON close_reference(reference_type,reference_id,close_period)"
     },
@@ -5271,5 +5276,5 @@
       "sql": "CREATE TRIGGER source_change_retained BEFORE DELETE ON source_change BEGIN SELECT RAISE(ABORT,'retained source change'); END"
     }
   ],
-  "sha256": "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+  "sha256": "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
 }

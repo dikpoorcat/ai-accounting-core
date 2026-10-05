@@ -19,7 +19,7 @@ from typing_extensions import TypedDict
 from .account_definitions import PROFIT_ACCOUNTS
 from .contracts import KernelError
 from .query_reads import QueryReads
-from .response_types import Version1, WireFen
+from .response_types import Version2, WireFen
 from .types import YearMonth, canonical, digest
 
 PRESENTATION_CONTRACT = "ai-accounting-kernel/2/close-review/1"
@@ -194,8 +194,93 @@ class CloseReviewCollection(_StrictObject):
     page: CloseReviewPage
 
 
+class OwnerReviewAmounts(_StrictObject):
+    month_revenue_fen: WireFen
+    month_expense_fen: WireFen
+    month_result_fen: WireFen
+    funds_total_fen: WireFen | None
+    actual_receipts_fen: WireFen
+    actual_payments_fen: WireFen
+
+
+class OwnerReviewBusiness(_StrictObject):
+    label: str
+    action: Literal["business", "correction", "opening", "state"]
+    reversal: bool
+    count: int
+    amount_label: str
+    business_amount_fen: WireFen | None
+
+
+class OwnerReviewMaterials(_StrictObject):
+    label: str
+    expected: int
+    received: int
+    no_business: bool
+
+
+class PublicOwnerReview(_StrictObject):
+    period: str
+    amounts: OwnerReviewAmounts
+    businesses: list[OwnerReviewBusiness]
+    materials: list[OwnerReviewMaterials]
+    status: Literal["ready", "ai_reviewing"]
+    followup_count: int
+
+
+def public_owner_review(value):
+    """Project only owner conclusions from the exact stored review, never live totals."""
+    return _public_owner_review(require_owner_review(value))
+
+
+def _public_owner_review(review):
+    """Project an internally checked source; independent callers use the public entry."""
+    accounting = review["accounting_summary"]
+    followups = review["followup_summary"]
+    labels = {
+        "transactions": "业务资料",
+        "payroll": "工资资料",
+        "bank": "银行与资金资料",
+        "tax": "税务资料",
+        "assets": "资产资料",
+        "financing": "融资资料",
+    }
+    return {
+        "period": review["period"],
+        "amounts": {key: accounting[key] for key in OwnerReviewAmounts.__annotations__},
+        "businesses": [
+            {key: item[key] for key in OwnerReviewBusiness.__annotations__}
+            for item in review["business_summary"]
+        ],
+        "materials": [
+            {
+                "label": labels.get(item["category"], "月度资料"),
+                "expected": item["expected"],
+                "received": item["received"],
+                "no_business": item["no_business"],
+            }
+            for item in review["material_summary"]
+        ],
+        "status": "ready"
+        if accounting["voucher_balanced"]
+        and accounting["financial_position_complete"]
+        and accounting["financial_position_balanced"] is True
+        and not any(
+            followups[key]
+            for key in (
+                "close_issue_count",
+                "settlement_issue_count",
+                "external_issue_count",
+                "file_issue_count",
+            )
+        )
+        else "ai_reviewing",
+        "followup_count": followups["followup_count"],
+    }
+
+
 class DashboardCloseReviewResponse(_StrictObject):
-    schema_version: Version1
+    schema_version: Version2
     company_id: str
     database_id: str
     period: str
@@ -204,8 +289,7 @@ class DashboardCloseReviewResponse(_StrictObject):
     close_digest: str | None
     reason: str | None
     covered_by: CloseReviewCoveredBy | None
-    owner_review: OwnerReview | None
-    collection: CloseReviewCollection | None
+    owner_review: PublicOwnerReview | None
 
 
 DASHBOARD_CLOSE_REVIEW_ADAPTER = TypeAdapter(DashboardCloseReviewResponse)
@@ -385,7 +469,8 @@ def business_adopted_basis(connection, engine, calculation_ids, *, reads=None):
         row["id"]: dict(row)
         for row in connection.execute(
             f"SELECT id,fact_id,kind,{outcome_sql},digest FROM calculation WHERE id IN "
-            "(SELECT value FROM json_each(?)) ORDER BY id", parameters,
+            "(SELECT value FROM json_each(?)) ORDER BY id",
+            parameters,
         )
     }
     if reads is not None:
@@ -959,11 +1044,14 @@ def build_owner_review(
         {"account": row["account"], "amount": row["debit"] - row["credit"]}
         for row in manifest["trial_balance"]
     ]
-    position = (
-        _position(_Snapshot(engine, connection, manifest["period"]))
-        if _frozen_position is None
-        else _frozen_position
-    )
+    if _frozen_position is None:
+        snapshot = _Snapshot(engine, connection, manifest["period"])
+        try:
+            position = _position(snapshot)
+        finally:
+            snapshot.release()
+    else:
+        position = _frozen_position
     movement = defaultdict(int)
     for row in line_rows:
         movement[row["account"]] += row["debit"] - row["credit"]
@@ -1383,22 +1471,51 @@ class CloseReview:
     def __init__(self, service, engine):
         self.service, self.engine = service, engine
 
-    def _response(self, *, period, state, **fields):
-        return DASHBOARD_CLOSE_REVIEW_ADAPTER.validate_python(
-            {
-                "schema_version": 1,
-                "company_id": self.engine.store.company_id,
-                "database_id": self.engine.store.database_id,
-                "period": period,
-                "state": state,
-                "preview_digest": fields.get("preview_digest"),
-                "close_digest": fields.get("close_digest"),
-                "reason": fields.get("reason"),
-                "covered_by": fields.get("covered_by"),
-                "owner_review": fields.get("owner_review"),
-                "collection": fields.get("collection"),
+    def owner_review_request(self, snapshot):
+        """Locate a ready intent using the brief's existing read snapshot."""
+        if snapshot.owner_month_state != "open":
+            return None
+        company_id, database_id = self.engine.store.company_id, self.engine.store.database_id
+        with self.service.security.authorization_gate:
+            selected = self.service.active_close_previews.get(
+                (company_id, database_id, snapshot.period)
+            )
+            if selected is None:
+                return None
+            try:
+                prepared, review = self.service.require_active_close_preview(
+                    company_id, database_id, snapshot.period, selected
+                )
+            except KernelError as exc:
+                if exc.code != "preview_expired":
+                    raise
+                return None
+            # Authenticate the intent before considering freshness. A damaged
+            # signed conclusion remains a content error, even after a write.
+            current = {
+                **snapshot.epochs,
+                "read_repair_revision": snapshot.read_repair_revision,
             }
-        )
+            if prepared.read_version_values() != current or review["status"] != "ready":
+                return None
+            return {"preview_digest": selected}
+
+    def _response(self, *, period, state, **fields):
+        # The read branches authenticate the stored source once. Service owns
+        # public response validation so malformed projections use its safe error
+        # classification, including native and HTTP serialization boundaries.
+        return {
+            "schema_version": 2,
+            "company_id": self.engine.store.company_id,
+            "database_id": self.engine.store.database_id,
+            "period": period,
+            "state": state,
+            "preview_digest": fields.get("preview_digest"),
+            "close_digest": fields.get("close_digest"),
+            "reason": fields.get("reason"),
+            "covered_by": fields.get("covered_by"),
+            "owner_review": fields.get("owner_review"),
+        }
 
     def read(
         self,
@@ -1409,6 +1526,8 @@ class CloseReview:
         cursor: str | None = None,
         limit: int = 50,
     ) -> dict:
+        if section is not None or cursor is not None:
+            raise KernelError("invalid_command", "月度核对仅提供业务结论")
         try:
             month = YearMonth(period).ordinal
         except ValueError as exc:
@@ -1433,34 +1552,12 @@ class CloseReview:
                     )
                 binding = exact["digest"].hex()
                 review = require_owner_review(read_section(connection, header, "owner_review"))
-                collection = (
-                    read_collection(
-                        connection,
-                        self.engine,
-                        None,
-                        binding,
-                        section,
-                        cursor,
-                        limit,
-                        _validated_review=review,
-                        _render_cards=lambda section, keys: _render_frozen_keys(
-                            connection,
-                            self.engine,
-                            header,
-                            section,
-                            keys,
-                        ),
-                    )
-                    if section is not None
-                    else None
-                )
                 return self._response(
                     period=period,
                     state="closed",
                     preview_digest=reviewed,
                     close_digest=binding,
-                    owner_review=review,
-                    collection=collection,
+                    owner_review=_public_owner_review(review),
                 )
             covering = connection.execute(
                 "SELECT period,digest FROM period_close WHERE period>? ORDER BY period LIMIT 1",
@@ -1491,52 +1588,37 @@ class CloseReview:
                 )
             selected = preview_digest or active
             try:
-                prepared = self.service.require_active_close_preview(
+                prepared, review = self.service.require_active_close_preview(
                     self.engine.store.company_id,
                     self.engine.store.database_id,
                     period,
                     selected,
                 )
-            except KernelError:
+            except KernelError as exc:
+                if exc.code != "preview_expired":
+                    raise
                 return self._response(
                     period=period,
                     state="stale",
                     preview_digest=selected,
                     reason="preview_replaced",
                 )
-            manifest = prepared["manifest"]
-            review = require_owner_review(manifest["owner_review"])
             from .read_state import repair_revision
 
             current = {
                 **self.engine.store.epochs(connection),
                 "read_repair_revision": repair_revision(connection),
             }
-            if manifest["read_version"] != current:
+            if prepared.read_version_values() != current:
                 return self._response(
                     period=period,
                     state="stale",
                     preview_digest=selected,
                     reason="snapshot_changed",
                 )
-            collection = (
-                read_collection(
-                    connection,
-                    self.engine,
-                    manifest,
-                    selected,
-                    section,
-                    cursor,
-                    limit,
-                    _validated_review=review,
-                )
-                if section is not None
-                else None
-            )
             return self._response(
                 period=period,
                 state="prepared",
                 preview_digest=selected,
                 owner_review=review,
-                collection=collection,
             )

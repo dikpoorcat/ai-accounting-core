@@ -25,7 +25,8 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
   globalThis.document = { getElementById: () => null };
-  const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "")
+    .replace("let mounted = true", "let mounted = false");
   const prefix = `
     const environment = globalThis.${key};
     const { ref, shallowRef, computed, nextTick, watch } = environment.Vue;
@@ -35,13 +36,15 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
     const useDashboardContext = () => ({ context: environment.dashboardContext, load: environment.refreshContext, refresh: environment.refreshContext });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchCompleteBrief = environment.fetch, fetchDeferredBrief = environment.fetch, fetchDeferredQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
-    const prefetchCloseReview = (companyId, period) => ({ companyId, period, result: Promise.resolve({ status: "fulfilled", value: {} }) });
     const fetchPeriodPreparation = () => new Promise(() => {});
     const dashboardErrorMessage = error => error.message; const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = value => BigInt(value ?? 0), formatFen = String, formatPositiveFen = String;
+    const rememberFundAccounts = () => {};
+    const fundAccountLabel = () => null;
   `;
   const config = views[name];
-  const suffix = `\nmounted = true; ${name === "Funds" ? 'selectedPeriod.value = "2026-01";' : ''} export { ${config.load} as load, ${config.response} as response, ${config.error} as error, loading, refresh };`;
+  const recoveryExports = name === "Reports" ? "" : ", loadMore, refreshChanged, updateNotice";
+  const suffix = `\nmounted = true; ${name === "Funds" ? 'selectedPeriod.value = "2026-01";' : ''} export { ${config.load} as load, ${config.response} as response, ${config.error} as error, loading, refresh ${recoveryExports} };`;
   const { outputText } = ts.transpileModule(prefix + source + suffix, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   return { ...await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`), route, calls, dashboardContext, unmount: () => unmount.forEach(callback => callback()), replaces };
 }
@@ -50,7 +53,7 @@ function result(name, marker) {
   if (name === "Funds") {
     const collection = () => ({ items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } });
     return { schema_version: 6, snapshot_version: "same", selected_period: { key: "2026-01", label: "一月" }, data: {
-      marker, period_preparation: null, collections: { accounts: collection(), movements: collection(), statements: collection(), investment_products: collection(), investment_events: collection() },
+      marker, collections: { accounts: collection(), movements: collection(), statements: collection(), investment_products: collection(), investment_events: collection() },
       investments: {}, bank_statement: {},
     } };
   }
@@ -97,16 +100,14 @@ for (const name of Object.keys(views)) {
   });
 }
 
-test("Brief: a distant voucher deep link requests one exact projection without loading preceding pages", async () => {
-  const view = await harness("Brief");
-  view.route.query.voucher = "10009";
+test("Brief: an exact business deep link requests one projection without preceding pages", async () => {
+  const view = await harness("Brief", async () => {}, null, { voucher: "10009" });
   const pending = view.load("2026-01");
-  assert.equal(view.calls[0].args[3].voucher_number, 10009);
-  view.calls[0].resolve({ ...result("Brief", "direct"), data: { workforce_cost: { has_activity: false }, vouchers: [], collections: {}, focused_voucher: { voucher_version_id: "exact" }, voucher_page: { has_more: true } } });
+  assert.equal(view.calls[0].args[4].voucher_number, 10009);
+  view.calls[0].resolve({ ...result("Brief", "direct"), data: { collections: {}, focused_activity: { subject_id: "business-10009" } } });
   await pending;
   assert.equal(view.calls.length, 1);
-  assert.equal(view.response.value.data.focused_voucher.voucher_version_id, "exact");
-  assert.deepEqual(view.response.value.data.vouchers, []);
+  assert.equal(view.response.value.data.focused_activity.subject_id, "business-10009");
   view.unmount();
 });
 
@@ -143,6 +144,142 @@ test("a failed context check cannot mark a concurrent Employees response complet
   assert.equal(view.error.value, "context failed");
   assert.equal(view.loading.value, false);
   view.unmount();
+});
+
+test("same-selection refresh retains hidden data until both new response and context succeed", async () => {
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", year: 2026, month: 1 }], quarters: [{ key: "2026-Q1" }] };
+  for (const name of Object.keys(views)) {
+    let releaseContext;
+    const view = await harness(name, () => new Promise(resolve => { releaseContext = resolve; }), current,
+      name === "Reports" ? { quarter: "2026-Q1" } : {});
+    const first = view.load(period(name, 1));
+    view.calls[0].resolve(result(name, "before")); await first;
+    const before = view.response.value;
+    assert(before, name);
+    const pending = view.refresh();
+    assert.equal(view.loading.value, true, name);
+    assert.equal(view.response.value, before, `${name}: preserve the mounted projection while hidden`);
+    view.calls[1].resolve(result(name, "after"));
+    await Vue.nextTick();
+    assert.equal(view.response.value, before, `${name}: an unchecked context cannot expose a new projection`);
+    releaseContext(current); await pending;
+    assert.equal(view.response.value.marker, "after", name);
+    assert.equal(view.loading.value, false, name);
+    view.unmount();
+  }
+});
+
+test("retained refresh data is cleared on errors and immediate selection changes", async () => {
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", year: 2026, month: 1 }], quarters: [{ key: "2026-Q1" }] };
+  for (const name of Object.keys(views)) {
+    const view = await harness(name, async () => current, current, name === "Reports" ? { quarter: "2026-Q1" } : {});
+    const seed = view.load(period(name, 1));view.calls[0].resolve(result(name, "before"));await seed;
+    const failure = view.refresh();view.calls[1].reject(new Error("read failed"));await failure;
+    assert.equal(view.response.value, null, `${name}: old amounts cannot reappear after failure`);
+    assert.equal(view.loading.value, false, name);
+    const reseed = view.load(period(name, 1));view.calls[2].resolve(result(name, "before"));await reseed;
+    const abandoned = view.refresh();
+    view.route.query.company_id = "company-b";
+    assert.equal(view.response.value, null, `${name}: scope changes clear immediately`);
+    view.calls[3].resolve(result(name, "late"));await abandoned;
+    assert.equal(view.response.value, null, `${name}: late same-selection refresh cannot restore old data`);
+    view.unmount();
+  }
+});
+
+test("a removed period in refreshed context clears retained amounts instead of exposing the old result", async () => {
+  const current = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", year: 2026, month: 1 }], quarters: [{ key: "2026-Q1" }] };
+  for (const name of Object.keys(views)) {
+    const view = await harness(name, async () => ({ ...current, periods: [] }), current, name === "Reports" ? { quarter: "2026-Q1" } : {});
+    const seed = view.load(period(name, 1));view.calls[0].resolve(result(name, "before"));await seed;
+    const pending = view.refresh();view.calls[1].resolve(result(name, "unchecked"));await pending;
+    assert.equal(view.response.value, null, name);
+    assert.equal(view.loading.value, false, name);
+    assert.match(view.error.value, /期间已变化/, name);
+    view.unmount();
+  }
+});
+
+const recoveryContext = { current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", year: 2026, month: 1 }] };
+const recoveryCollection = () => ({ items: [], page: { total_count: 2, filtered_count: 2, returned_count: 0, has_more: true, next_cursor: "next" } });
+function recoveryResult(name, marker) {
+  const value = result(name, marker);
+  value.snapshot_version = "v1";
+  value.read_context = { company_id: "company-a" };
+  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_sources", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
+  return value;
+}
+const recoveryPaths = [
+  ["Brief", "activity"], ["Brief", "open_items"],
+  ["Funds", "book"], ["Funds", "bank"], ["Funds", "investment"], ["Funds", "accounts"], ["Funds", "investment_products"],
+  ["Employees", "employees"], ["Employees", "labor_sources"],
+  ["Assets", "assets"], ["Assets", "projects"],
+];
+function continueRecovery(view, section) {
+  return view.loadMore(section);
+}
+
+test("all continuation recovery paths clear invalid projections and wait for the new main response after context", async () => {
+  for (const [name, section] of recoveryPaths) {
+    const label = `${name}/${section}`;
+    let releaseContext;
+    const view = await harness(name, () => new Promise(resolve => { releaseContext = resolve; }), recoveryContext);
+    const seed = view.load("2026-01"); view.calls[0].resolve(recoveryResult(name, "before")); await seed;
+    const pending = continueRecovery(view, section);
+    assert.equal(view.calls.length, 2, label);
+    view.calls[1].reject(Object.assign(new Error("changed"), { code: "dashboard_snapshot_changed" }));
+    await Vue.nextTick();
+    assert.equal(view.response.value, null, `${label}: known-invalid data clears immediately`);
+    assert.equal(view.loading.value, true, label);
+    assert.equal(view.calls.length, 3, `${label}: exactly one replacement main request`);
+    releaseContext(recoveryContext); await Vue.nextTick();
+    assert.equal(view.response.value, null, `${label}: fresh context alone cannot restore amounts`);
+    assert.equal(view.loading.value, true, label);
+    assert.equal(view.updateNotice.value, "资料已更新，正在重新读取。", label);
+    view.calls[2].resolve(recoveryResult(name, "after")); await pending;
+    assert.equal(view.response.value.marker, "after", label);
+    assert.equal(view.loading.value, false, label);
+    view.unmount();
+  }
+});
+
+test("late continuation failures from A-B-A cannot trigger recovery or replace the new projection", async () => {
+  for (const [name, section] of recoveryPaths) {
+    const view = await harness(name, async () => recoveryContext, recoveryContext);
+    const seed = view.load("2026-01"); view.calls[0].resolve(recoveryResult(name, "old")); await seed;
+    const late = continueRecovery(view, section);
+    view.route.query.company_id = "company-b"; view.route.query.company_id = "company-a";
+    const latest = view.load("2026-01"); view.calls[2].resolve(recoveryResult(name, "latest")); await latest;
+    view.calls[1].reject(Object.assign(new Error("late changed"), { code: "dashboard_snapshot_changed" })); await late;
+    assert.equal(view.response.value.marker, "latest", `${name}/${section}`);
+    assert.equal(view.calls.length, 3, "abandoned continuation cannot initiate another request");
+    assert.equal(view.loading.value, false);
+    view.unmount();
+  }
+});
+
+test("detail version-change notifications and explicit mismatched continuation versions clear before refreshing", async () => {
+  for (const name of ["Brief", "Funds", "Employees", "Assets"]) {
+    const view = await harness(name, async () => recoveryContext, recoveryContext);
+    const seed = view.load("2026-01"); view.calls[0].resolve(recoveryResult(name, "before")); await seed;
+    const pending = view.refreshChanged();
+    assert.equal(view.response.value, null, name);
+    assert.equal(view.loading.value, true, name);
+    view.calls[1].resolve(recoveryResult(name, "after")); await pending;
+    assert.equal(view.response.value.marker, "after", name);
+    view.unmount();
+  }
+  for (const [name, section] of [["Employees", "employees"], ["Assets", "assets"]]) {
+    const view = await harness(name, async () => recoveryContext, recoveryContext);
+    const seed = view.load("2026-01"); view.calls[0].resolve(recoveryResult(name, "before")); await seed;
+    const pending = view.loadMore(section);
+    view.calls[1].resolve({ ...recoveryResult(name, "wrong"), snapshot_version: "v2" }); await Vue.nextTick();
+    assert.equal(view.response.value, null, name);
+    assert.equal(view.loading.value, true, name);
+    view.calls[2].resolve(recoveryResult(name, "after")); await pending;
+    assert.equal(view.response.value.marker, "after", name);
+    view.unmount();
+  }
 });
 
 const modules = new Map();

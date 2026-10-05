@@ -108,6 +108,31 @@ def test_old_checkpoint_gets_new_read_only_preview_and_state_guard(tmp_path, mon
     assert checkpoint.read_bytes() == checkpoint_bytes
     assert book.snapshots == snapshots_before
     assert _closed_storage_bytes(book, "2016-01") == closed_bytes
+
+    dispatches = []
+
+    def resident_preview(selected_period, *, owner_confirmation):
+        dispatches.append((selected_period, owner_confirmation))
+        return Periods(book.engine).preview_close(
+            selected_period, owner_confirmation=owner_confirmation
+        )
+
+    same_process = verify_book_open_preview(
+        book.engine, checkpoint_path=checkpoint, company=book.company,
+        snapshots=book.snapshots, period=period, source=tmp_path,
+        dimensions={"month_stats": book.month_stats, "employees_count": 1, "businesses": 26},
+        preview_close=resident_preview,
+    )
+    assert dispatches == [(period, book.snapshots[period]["owner_confirmation"])]
+    assert same_process["verified_open_preview"] == current
+    assert same_process["checkpoint_sha256"] == verified["checkpoint_sha256"]
+    with pytest.raises(ValueError, match="sample dimensions"):
+        verify_book_open_preview(
+            book.engine, checkpoint_path=checkpoint, company=book.company,
+            snapshots=book.snapshots, period=period, source=tmp_path,
+            dimensions={"employees_count": 2}, preview_close=resident_preview,
+        )
+    assert len(dispatches) == 1
     assert (
         Periods(book.engine).preview_close(
             period, owner_confirmation=book.snapshots[period]["owner_confirmation"]
@@ -186,3 +211,38 @@ def test_old_checkpoint_gets_new_read_only_preview_and_state_guard(tmp_path, mon
     assert checkpoint.read_bytes() == checkpoint_bytes
     assert book.snapshots == snapshots_before
     assert _closed_storage_bytes(book, "2016-01") == closed_bytes
+
+
+@pytest.mark.parametrize("section", (
+    "sources", "historical_adoption", "projections", "read_indexes", "limitations",
+))
+def test_registered_qualification_refuses_missing_proof_before_preview(monkeypatch, section):
+    from contextlib import nullcontext
+
+    from ai_accounting.kernel import versions
+
+    integrity = {
+        "status": "verified", "limitations": [],
+        "coverage": dict.fromkeys(
+            ("sources", "historical_adoption", "projections", "read_indexes"), "verified"
+        ),
+    }
+    if section == "limitations":
+        integrity.pop("limitations")
+    else:
+        integrity["coverage"].pop(section)
+    calls = []
+    connection = SimpleNamespace(execute=lambda _: None)
+    engine = SimpleNamespace(store=SimpleNamespace(
+        bundle=SimpleNamespace(company_verifiers={1: lambda *_: integrity}),
+        connection=lambda **_: nullcontext(connection),
+    ))
+    monkeypatch.setattr(versions, "database_format", lambda *_, **__: {"version": 1})
+    monkeypatch.setattr(stage9_verified_open_preview, "preview_checkpoint", lambda *_, **__: {})
+    monkeypatch.setattr(stage9_verified_open_preview, "require_preview_state",
+                        lambda *_: calls.append("state"))
+    with pytest.raises(ValueError, match="registered content verifier"):
+        verify_book_open_preview(engine, checkpoint_path=None, company={}, snapshots={},
+                                 period="2016-02", source=None,
+                                 preview_close=lambda *_, **__: calls.append("preview"))
+    assert calls == ["state", "state"]

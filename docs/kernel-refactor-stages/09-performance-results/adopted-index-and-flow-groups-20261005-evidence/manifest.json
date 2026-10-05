@@ -1,0 +1,509 @@
+{
+  "scope": "Current unfrozen index/migration and reportflow groups; archive-only source hashes observed twice, not source snapshot freeze or proof these bytes were test-run bytes. Separate42/3/87 PASS and earlier failures retained. Historical ed96 TEMP/path-first profiles remain their original scopes.",
+  "source_frozen": false,
+  "source_hash_scope": "Archive-time selected18 code/contracts/tests paths; compared before/after archive, no full inventory hash or DB validation",
+  "source_sha256_by_path": {
+    "src/ai_accounting/kernel/dashboard_reads.py": "398cf4e2f75834412b7c7995315e53e435e2ab56d0429b7fdb627859dec22885",
+    "src/ai_accounting/kernel/read_indexes.py": "b5e20a9eed47ae8a78da662ebf7d74145c6a3185e181714489d74913c8353477",
+    "src/ai_accounting/kernel/offline_development_upgrade.py": "dd52074bb1c6ad6096e4987c9ae6ae0f3c6ef359d7a774ac46d0b7a98189e86f",
+    "src/ai_accounting/kernel/schema_bundle.py": "af4d43526d82c1feef9de313d2426b498f9b5e1b005888cd8d182ff6373605da",
+    "src/ai_accounting/kernel/schema_contracts/company/draft.json": "418c59ffd3d02565087045acd283e83de1acff4e69939ac4bd94e59d4a43df0a",
+    "src/ai_accounting/kernel/schema_contracts/development/company/c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb.json": "5c482214409e18353617927932b6f6c261653ad6b1902d4cf02cb3689fa8d00a",
+    "scripts/prepare_stage9_draft_book.py": "898611332e534a5b30ee3b63a5163f73b8f6f0f5066972bffdb8556e28b254bc",
+    "scripts/rebase_stage9_synthetic_book.py": "1a023025567db506caae69cb68ee7d7805d85e06e55e6fc6d41d0a13a23fc687",
+    "src/ai_accounting/kernel/report_flow.py": "244fe66ed708c0fe9bd4e94550f666f12ca688fa986814784b9c9aa6a0954b24",
+    "src/ai_accounting/kernel/reports.py": "be40e0a4f49c7b56bcbad7569bd09790bd374a6bfe3b1c870f6a467261cff88d",
+    "tests/kernel/test_direct_adoption_index.py": "5f080785000aa500bb9efdc497e236467ed3a890790769037ba3dff20d1dc1c1",
+    "tests/kernel/test_direct_adoption_development_upgrade.py": "e743eba73e18846aba0425671618bd04d94e191cfda74d9b36055b29a001fc8a",
+    "tests/kernel/test_direct_adoption_v1_isolation.py": "bbb3c376b637176ccaeb5db6cafa02c85b950273dbffe51dbb21ff55a5874d08",
+    "tests/kernel/test_report_flow_classification_scope.py": "0c6bf946fbd7c59b00e06c8015bb9d99947da5137d934e0c536635840ba00d65",
+    "tests/kernel/test_report_flow_header_aggregate.py": "5a65ee45db53a9ff0b3b902a0dbbed950defc6b6c0679eb94370d190201a9124",
+    "tests/kernel/test_payroll_head_line_scope.py": "5848f9418ae2b22df46309e9d676ae87a9b2301e93ab4549a625d33bd5ecdfca",
+    "tests/kernel/test_development_upgrade.py": "a12d8e1a7c76b92e0e7bc5363c8ec0a5dc62115466fd36c890753ee38e9adc3c",
+    "tests/kernel/test_development_backup_rollover.py": "c120d3cedd69e1c3a2166259e60730819d360495a981d0c4faca3105226bd6f3"
+  },
+  "gzip_mtime": 0,
+  "items": [
+    {
+      "private_source_path": ".tmp/direct-adoption-dummy-sql-20261005.log",
+      "source_sha256": "964a0f553dfb5b8b5648886ba6c5fc3668459284e16de37b481a413887d7a7fd",
+      "source_bytes": 100,
+      "archive": "direct-adoption-dummy-sql-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "964a0f553dfb5b8b5648886ba6c5fc3668459284e16de37b481a413887d7a7fd",
+      "redacted_bytes": 100,
+      "gzip_sha256": "77e1920c5649d7bd261ddd3899d51e1aad1b5d37c79976f03dca9a3dd8f5cc60",
+      "gzip_bytes": 53,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-final-20261005.log",
+      "source_sha256": "49fbaaae92fd7b988c78bacda9fb97343f3bf2ebf9f5db732bf084e680273306",
+      "source_bytes": 112,
+      "archive": "direct-adoption-final-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "49fbaaae92fd7b988c78bacda9fb97343f3bf2ebf9f5db732bf084e680273306",
+      "redacted_bytes": 112,
+      "gzip_sha256": "8432c13d98b5875617b023f036c0b881b9485db37b79b7793cc9f9d79e0b0bf0",
+      "gzip_bytes": 65,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-identity-final-20261005.log",
+      "source_sha256": "d63c0826bb612339b44e0ab2ad0a755b620ada51f64aa006019e7b947e04be17",
+      "source_bytes": 112,
+      "archive": "direct-adoption-identity-final-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "d63c0826bb612339b44e0ab2ad0a755b620ada51f64aa006019e7b947e04be17",
+      "redacted_bytes": 112,
+      "gzip_sha256": "73899f4b15eee92845b9a13f9e8f8364e4f61ae994d9220eaee251f490791760",
+      "gzip_bytes": 65,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-query-repair-20261005.log",
+      "source_sha256": "47b2137e9013aee7c3096add3b26fd6f33db2cb1e78fdeceb4aa82fb7ba930a3",
+      "source_bytes": 101,
+      "archive": "direct-adoption-query-repair-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "47b2137e9013aee7c3096add3b26fd6f33db2cb1e78fdeceb4aa82fb7ba930a3",
+      "redacted_bytes": 101,
+      "gzip_sha256": "000df676b1883493c7b478c0cfdf7fd12e0721abd4f195d862a59d950a537e41",
+      "gzip_bytes": 54,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-step2-20261005.log",
+      "source_sha256": "abd7785c76c77db68ebeef18394c16fc77a43ac320d5306e156bad253862745a",
+      "source_bytes": 10164,
+      "archive": "direct-adoption-step2-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "a2d128cf8f942dbbaeca3dd1d21bb663626e7031d335d84992e8d85cd7dad9ae",
+      "redacted_bytes": 10129,
+      "gzip_sha256": "647759d30453d8fae8fb793958b2d44010f96d241b90ed592664c69daaae712c",
+      "gzip_bytes": 1767,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-step2-repair-20261005.log",
+      "source_sha256": "09c9ca77e3ab1d90ce3c65c2f8c756fcf8a30dc0ab732c72f86e7eb2e9216bee",
+      "source_bytes": 100,
+      "archive": "direct-adoption-step2-repair-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "09c9ca77e3ab1d90ce3c65c2f8c756fcf8a30dc0ab732c72f86e7eb2e9216bee",
+      "redacted_bytes": 100,
+      "gzip_sha256": "26038f448a25cfbfbba6a7677fd6cfa3d49df26ebde80146ffbc718fdf17f6ba",
+      "gzip_bytes": 53,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-targeted-20261005.log",
+      "source_sha256": "201cd8fe6014d071f666e97089ce509a599293deb7d3140f3f03ca8f70797bb6",
+      "source_bytes": 112,
+      "archive": "direct-adoption-targeted-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "201cd8fe6014d071f666e97089ce509a599293deb7d3140f3f03ca8f70797bb6",
+      "redacted_bytes": 112,
+      "gzip_sha256": "bdeddb89b8aadc17e624297ea041d1cf555ea96f577f52bb2f5d34ae76224e10",
+      "gzip_bytes": 64,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-v1-20261005.log",
+      "source_sha256": "9138ba114a99d4fb1166762c09f4352eb8799009077c41d4d14e681e6be3ca3e",
+      "source_bytes": 452,
+      "archive": "direct-adoption-v1-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "4d5ee683c1517f031f030898fceead81b0f6cbd967f191a6ca94e41289c14f13",
+      "redacted_bytes": 438,
+      "gzip_sha256": "aa0ff1677b7f3dbd33938e41cd426e60815de9672cfda727cb86bbc5746d7652",
+      "gzip_bytes": 292,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-dummy-sql-20261005.xml",
+      "source_sha256": "4d0b885ccba4ed89c6bb4ff8bcaaf1a7039691cdd802a75b7174d57f5dae6070",
+      "source_bytes": 683,
+      "archive": "direct-adoption-dummy-sql-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "4d0b885ccba4ed89c6bb4ff8bcaaf1a7039691cdd802a75b7174d57f5dae6070",
+      "redacted_bytes": 683,
+      "gzip_sha256": "908ed6f5fb2205ae7b72f83782f6d87b236668ddceee0c76fe52aeb18b3ce4ae",
+      "gzip_bytes": 340,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-final-20261005.xml",
+      "source_sha256": "21da3c22b1d21abdc30d1bba192b151812c5758d06784d0b8bcf2a9e5ad9b34a",
+      "source_bytes": 5777,
+      "archive": "direct-adoption-final-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "21da3c22b1d21abdc30d1bba192b151812c5758d06784d0b8bcf2a9e5ad9b34a",
+      "redacted_bytes": 5777,
+      "gzip_sha256": "8a99482fd9499f9412e0853bbc29950fcb31deda1371ee64c5b817dba9baa606",
+      "gzip_bytes": 1333,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-identity-final-20261005.xml",
+      "source_sha256": "9aea9827aa5850665a4f7128bba7ba45c2013c3d86a0fc00da3ec9366a66d737",
+      "source_bytes": 7540,
+      "archive": "direct-adoption-identity-final-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "9aea9827aa5850665a4f7128bba7ba45c2013c3d86a0fc00da3ec9366a66d737",
+      "redacted_bytes": 7540,
+      "gzip_sha256": "0cc37d6a93581b0f73942c925a2064a0e93675b74e573e2be7ceeef35a2fd055",
+      "gzip_bytes": 1584,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-query-repair-20261005.xml",
+      "source_sha256": "0c6e332d59be6aeceae2335b4069f2bff733d3a4880efa54c2cbd6877656fbcb",
+      "source_bytes": 1140,
+      "archive": "direct-adoption-query-repair-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "0c6e332d59be6aeceae2335b4069f2bff733d3a4880efa54c2cbd6877656fbcb",
+      "redacted_bytes": 1140,
+      "gzip_sha256": "b6905ff38418a9c7614a8e6e6ba442534a7ee8dd89ad6c5997e6c64acde624ed",
+      "gzip_bytes": 377,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-step2-20261005.xml",
+      "source_sha256": "60d18b085d54f858fd0764b84a701d62e37960c05e6c62b37789ae1919a9e05b",
+      "source_bytes": 13478,
+      "archive": "direct-adoption-step2-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "c3744405afc8068ac9146ff501bde8d96d4e0365f1169cb804bf6eb0f9cec25d",
+      "redacted_bytes": 13443,
+      "gzip_sha256": "5a07d1368e7fd3809d7e0dcb45282a2629e1e287b9a3264832f23bbec0627a43",
+      "gzip_bytes": 2455,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-step2-repair-20261005.xml",
+      "source_sha256": "682deeb00f44b8efb25e6d84a64ee17960d399f0807f6e991b26df469c0e1188",
+      "source_bytes": 1439,
+      "archive": "direct-adoption-step2-repair-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "682deeb00f44b8efb25e6d84a64ee17960d399f0807f6e991b26df469c0e1188",
+      "redacted_bytes": 1439,
+      "gzip_sha256": "891d4d22a5252aa7c2a90e969dcee2e7566326c8076fea1ef488cd156b8e415c",
+      "gzip_bytes": 490,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-targeted-20261005.xml",
+      "source_sha256": "967e9b4d3f3a6abb2b8ccce82f7ba04a574bdbd712ffdf072fd33465507c1c45",
+      "source_bytes": 6583,
+      "archive": "direct-adoption-targeted-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "967e9b4d3f3a6abb2b8ccce82f7ba04a574bdbd712ffdf072fd33465507c1c45",
+      "redacted_bytes": 6583,
+      "gzip_sha256": "ebf3371966c34feaab010413f243bdcf1f47982c215f2b0798eef8f32802c630",
+      "gzip_bytes": 1481,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/direct-adoption-v1-20261005.xml",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "direct-adoption-v1-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "redacted_bytes": 0,
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-flow-object-scope-directed-20261005.log",
+      "source_sha256": "7552be9b6d3ff394c13e1b7edf3eaf1369d8572348926c6d6aa65b2707c49d74",
+      "source_bytes": 799,
+      "archive": "stage9-flow-object-scope-directed-20261005.log.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "f00ca8091823b415ff8d20ea7b911876ebe206c05505d60a5cc20a0e2f92d923",
+      "redacted_bytes": 771,
+      "gzip_sha256": "2592ed55ac3cac85be677583ac48fc7894a52bc89eefd10dc738d46f390c09c1",
+      "gzip_bytes": 361,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-flow-object-scope-directed-20261005.xml",
+      "source_sha256": "45cf3d997744ce833e1d43231c20070b196b7fbbf1581ffdb3d56ea1fd4a1ed1",
+      "source_bytes": 18068,
+      "archive": "stage9-flow-object-scope-directed-20261005.xml.gz",
+      "representation": "redacted_text; complete failures and outcomes retained, private roots/IDs/PID/address redacted",
+      "redacted_sha256": "45cf3d997744ce833e1d43231c20070b196b7fbbf1581ffdb3d56ea1fd4a1ed1",
+      "redacted_bytes": 18068,
+      "gzip_sha256": "99d6810f25e0b64e6b4c2bc8b5dbfea78e70c069ac53dabf4aa906f5822177a3",
+      "gzip_bytes": 1870,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-adopted-index-shadow-diagnostic-20261005.json",
+      "source_sha256": "89f4e2fbc54898a3aaa27e114ddf74711d1503f7ede4d24b1039839f678ae0e2",
+      "source_bytes": 274379,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation",
+      "recorded_status": "diagnostic_complete",
+      "recorded_source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-path-first-diagnostic-20261005.json",
+      "source_sha256": "b15f0942c2d2282f7ae18e2b7fbe5e5c7d0b390c7de40269e187cba4ad36a233",
+      "source_bytes": 302433,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation",
+      "recorded_status": "diagnostic_failed",
+      "recorded_source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-path-first-memory-continuation-20261005.json",
+      "source_sha256": "3c0204728c4c7f39e1ac8641e7862be5961437f7dce98b01dbfdaa52966345a4",
+      "source_bytes": 735520,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation",
+      "recorded_status": "memory_diagnostic_complete",
+      "recorded_source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8"
+    },
+    {
+      "private_source_path": ".tmp/stage9-owned-read-remaining-cost-profile-20261005.json",
+      "source_sha256": "4b61281de2a0011e5cd26062524f9d10ac43092f7f0b6743a97283fabbad1c3f",
+      "source_bytes": 2884456,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation",
+      "recorded_status": "diagnostic_complete",
+      "recorded_source_sha256": "ed96dfd296cd96d4279745eb0ac26a9422db450c10d3bb9f8e7def11e2f9d8c8"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-index-shadow-diagnostic-20261005.py",
+      "source_sha256": "c1c779e34cb70645fe43084b48703c2dc1361965e15b7e4d04ed3182d6b70fb1",
+      "source_bytes": 7385,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-path-first-diagnostic-20261005-first-run.py",
+      "source_sha256": "a2a848bfab1c3dfe2034b029fea8f2737fafbe936f1fcd332029ccf564d4dac9",
+      "source_bytes": 18204,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation"
+    },
+    {
+      "private_source_path": ".tmp/stage9-adopted-path-first-diagnostic-20261005.py",
+      "source_sha256": "be7a1935a7d749d049f6d229cdbacd6f2782ebf59df262693bfa29e11d44ff0f",
+      "source_bytes": 19468,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation"
+    },
+    {
+      "private_source_path": ".tmp/refactor_stage9_report_flows.py",
+      "source_sha256": "034e2331c31cf5828f201ed16bf837dc653dc9b286a6056534d0e7dcf973bb94",
+      "source_bytes": 1361,
+      "reason": "Helper private SHA only; JSON already sealed in prior diagnostic archives; not rerun or new-source validation"
+    }
+  ],
+  "xml_observed_results": [
+    {
+      "file": "direct-adoption-dummy-sql-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "3",
+          "time": "1.347",
+          "timestamp": "2026-10-05T02:19:23.714535+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_payroll_head_line_scope"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-final-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "32",
+          "time": "73.734",
+          "timestamp": "2026-10-05T02:07:56.309238+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_development_backup_rollover",
+        "tests.kernel.test_development_upgrade",
+        "tests.kernel.test_direct_adoption_development_upgrade",
+        "tests.kernel.test_direct_adoption_v1_isolation"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-identity-final-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "42",
+          "time": "83.312",
+          "timestamp": "2026-10-05T02:15:33.698103+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_development_backup_rollover",
+        "tests.kernel.test_development_upgrade",
+        "tests.kernel.test_direct_adoption_development_upgrade",
+        "tests.kernel.test_direct_adoption_index",
+        "tests.kernel.test_direct_adoption_v1_isolation"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-query-repair-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "5",
+          "time": "15.149",
+          "timestamp": "2026-10-05T02:03:25.820265+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_direct_adoption_index"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-step2-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "5",
+          "skipped": "0",
+          "tests": "21",
+          "time": "37.479",
+          "timestamp": "2026-10-05T02:00:16.366235+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_development_backup_rollover",
+        "tests.kernel.test_direct_adoption_development_upgrade",
+        "tests.kernel.test_direct_adoption_index"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-step2-repair-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "7",
+          "time": "7.101",
+          "timestamp": "2026-10-05T02:02:18.289451+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_direct_adoption_development_upgrade"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-targeted-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "41",
+          "time": "61.636",
+          "timestamp": "2026-10-05T01:57:15.976222+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_development_backup_rollover",
+        "tests.kernel.test_development_upgrade",
+        "tests.kernel.test_draft_schema_history",
+        "tests.kernel.test_package_contract_selection"
+      ],
+      "properties": {}
+    },
+    {
+      "file": "direct-adoption-v1-20261005.xml",
+      "empty": true,
+      "reason": "No-space run did not produce XML result; not a PASS"
+    },
+    {
+      "file": "stage9-flow-object-scope-directed-20261005.xml",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "87",
+          "time": "8.517",
+          "timestamp": "2026-10-05T01:58:05.714147+08:00",
+          "hostname": "MD01"
+        }
+      ],
+      "modules": [
+        "tests.kernel.test_report_flow_classification_scope",
+        "tests.kernel.test_report_flow_header_aggregate"
+      ],
+      "properties": {
+        "report_4932_twelve_month_array_sql_calls": "12",
+        "report_4932_twelve_month_array_returned_rows": "12",
+        "report_4932_twelve_month_array_returned_value_bytes": "288",
+        "report_4932_twelve_month_array_sql_parameter_bytes": "448920",
+        "report_4932_twelve_month_array_sqlite_vm_steps": "266763",
+        "report_4932_twelve_month_object_sql_calls": "12",
+        "report_4932_twelve_month_object_returned_rows": "12",
+        "report_4932_twelve_month_object_returned_value_bytes": "288",
+        "report_4932_twelve_month_object_sql_parameter_bytes": "439056",
+        "report_4932_twelve_month_object_sqlite_vm_steps": "222267",
+        "report_4932_twelve_month_named_headers": "4932",
+        "report_header_former_returned_rows": "400",
+        "report_header_former_returned_value_bytes": "36000",
+        "report_header_former_sql_parameter_bytes": "6401",
+        "report_header_former_sqlite_vm_steps": "15221",
+        "report_header_same_month_returned_rows": "1",
+        "report_header_same_month_returned_value_bytes": "24",
+        "report_header_same_month_sql_parameter_bytes": "33209",
+        "report_header_same_month_sqlite_vm_steps": "18030",
+        "report_header_without_vouchers_returned_rows": "1",
+        "report_header_without_vouchers_returned_value_bytes": "24",
+        "report_header_without_vouchers_sql_parameter_bytes": "33209",
+        "report_header_without_vouchers_sqlite_vm_steps": "18027",
+        "report_header_more_vouchers_returned_rows": "1",
+        "report_header_more_vouchers_returned_value_bytes": "24",
+        "report_header_more_vouchers_sql_parameter_bytes": "33209",
+        "report_header_more_vouchers_sqlite_vm_steps": "18027",
+        "report_header_grown_returned_rows": "1",
+        "report_header_grown_returned_value_bytes": "24",
+        "report_header_grown_sql_parameter_bytes": "33209",
+        "report_header_grown_sqlite_vm_steps": "18027",
+        "report_4932_same_month_sqlite_vm_steps": "221991",
+        "report_4932_same_month_all_returned_rows": "3"
+      }
+    }
+  ],
+  "selected_source_hashes_unchanged_during_archive": true
+}

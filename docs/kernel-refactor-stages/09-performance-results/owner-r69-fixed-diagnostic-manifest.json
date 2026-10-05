@@ -1,0 +1,814 @@
+{
+  "created_utc": "2026-10-02T09:04:32.163376+00:00",
+  "scope": "Fixed r69 native/profile/SQL diagnostic evidence; not browser/fullverify/stage acceptance",
+  "source_sha256": "600fc82ccf6437c28c81c03ff56d04ddb0abaf07446782535ffb0dc29baa8af8",
+  "source_manifest_file_sha256": "47dc53495bd3a1d7474d562efe7e7a99098e5b3dc37907a21efcab9be7c94b5a",
+  "source_manifest_recorded_file_count": 622,
+  "current_source_full_integrity": "not_run",
+  "prior_verification_source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r63-release",
+  "limitations": [
+    "Repository remains draft/0; isolated released/1 candidate only.",
+    "Prior r63 full integrity does not certify current r69 source.",
+    "Not a browser refresh or whole-stage acceptance; brief/employees/reports still have >500ms native samples.",
+    "Test receipts overlap and are not summed; first failures and focused repairs are retained separately.",
+    "Employee 24239 probes are withdrawn; only typed 24227 replacement is same-parameter evidence.",
+    "Raw evidence and gzip archives remain separate; no existing archive was overwritten."
+  ],
+  "native_samples": {
+    "context": [
+      11.084199999459088,
+      11.564399988856167,
+      10.46739998855628
+    ],
+    "brief": [
+      603.0058999895118,
+      554.0647000016179,
+      532.1896999957971
+    ],
+    "funds": [
+      231.7868000245653,
+      229.95749997789972,
+      225.64859999693
+    ],
+    "employees": [
+      541.5846999967471,
+      567.708099988522,
+      592.8895000251941
+    ],
+    "assets": [
+      362.6452999887988,
+      340.45940000214614,
+      346.4930999907665
+    ],
+    "reports": [
+      512.8576999995857,
+      479.3459000065923,
+      501.0647000162862
+    ]
+  },
+  "test_receipts_not_summed": [
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "1",
+        "skipped": "0",
+        "tests": "12",
+        "time": "63.193",
+        "timestamp": "2026-10-02T16:32:01.626675+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [
+        "test_role_locator_work_does_not_scan_unrelated_facts_or_months"
+      ],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69-growth-repair.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "1",
+        "time": "212.471",
+        "timestamp": "2026-10-02T16:33:55.585550+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-first.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "48",
+        "time": "211.735",
+        "timestamp": "2026-10-02T16:05:35.309733+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-followup.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "1",
+        "skipped": "0",
+        "tests": "4",
+        "time": "30.064",
+        "timestamp": "2026-10-02T16:13:19.403283+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [
+        "test_open_terminal_cannot_hide_behind_an_existing_frozen_account[redirected]"
+      ],
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-pointer-repair.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "2",
+        "time": "13.557",
+        "timestamp": "2026-10-02T16:15:14.587658+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-directed.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "40",
+        "time": "148.475",
+        "timestamp": "2026-10-02T16:44:12.876796+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-focused.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "1",
+        "skipped": "0",
+        "tests": "18",
+        "time": "12.500",
+        "timestamp": "2026-10-02T16:38:59.074928+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [
+        "test_report_selected_publication_relationship_damage_never_publishes_batch_success[digest]"
+      ],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-repair1.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "20",
+        "time": "16.419",
+        "timestamp": "2026-10-02T16:39:54.518409+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-converged.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "23",
+        "time": "28.584",
+        "timestamp": "2026-10-02T16:44:34.610791+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-compact.xml",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "15",
+        "time": "12.336",
+        "timestamp": "2026-10-02T16:46:56.037064+08:00",
+        "hostname": "MD01"
+      },
+      "failed_case_names": [],
+      "status": "retained_raw_evidence"
+    }
+  ],
+  "files": [
+    {
+      "source": ".tmp/stage9-candidate-owner-r69.log",
+      "source_mtime_ns": 1790931400431818000,
+      "archive": "owner-r69-fixed-stage9-candidate-owner-r69.log.gz",
+      "bytes": 1145,
+      "sha256": "a817429e9d743df971aa520289651433e166176369e5f0d77d799e047fd20187",
+      "archive_bytes": 604,
+      "archive_sha256": "a037786fa11007d3f41d6dd2476aa391c7efb318c435210e241866104c71745c",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-profile.py",
+      "source_mtime_ns": 1790930602613286400,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-profile.py.gz",
+      "bytes": 194,
+      "sha256": "8f053fae1ccb3e26736d6324cc23b273605682a20e578ad73f0e5b5c3f1dabf9",
+      "archive_bytes": 167,
+      "archive_sha256": "52e2f5eb4d96d27ac0f73424b9e5501cd7212bde2a60d31ec3f621743653c399",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r64-main48-profile.py",
+      "source_mtime_ns": 1790914902350423400,
+      "archive": "owner-r69-fixed-stage9-resident-r64-main48-profile.py.gz",
+      "bytes": 3162,
+      "sha256": "403cf292485625f35499a01fe6b3276be6b300f8ab38883cafa75eac57fb05c8",
+      "archive_bytes": 1382,
+      "archive_sha256": "75600ad84a0632baf13ac058df608f4af41b70e73d0fc02919e5c569842f319e",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-profile.json",
+      "source_mtime_ns": 1790931461694994500,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-profile.json.gz",
+      "bytes": 710641,
+      "sha256": "7c9d886d48bb8488140c2dc105d582fe2d982050fd1d7d9aac2896f5bb53cf39",
+      "archive_bytes": 91744,
+      "archive_sha256": "a83dcedffcd1e983e9a1f1e1c26dadf4bdc5c36d2cd773367b48d8517fd8754a",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-profile.log",
+      "source_mtime_ns": 1790931461674304200,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-profile.log.gz",
+      "bytes": 4197,
+      "sha256": "d53846b179e9b5d0bc370eacb8afa24f077f464cbec280618fa48dea564b7c7f",
+      "archive_bytes": 890,
+      "archive_sha256": "038e860830125e1d0c2f3a0c9f6bf60b16209f565441e62577d3005cd6c218b8",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-context.prof",
+      "source_mtime_ns": 1790931425646020200,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-context.prof.gz",
+      "bytes": 23173,
+      "sha256": "9f7b01ae19c968916ab69197ec897ad2fb344c41497d3e3e907688bdac4e8d55",
+      "archive_bytes": 8027,
+      "archive_sha256": "6a69bb9d1d54b22a8e61dbaf3be97cfb3d3be3b2ee1cb365c6fd95cecc3d21a4",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-brief.prof",
+      "source_mtime_ns": 1790931430249103300,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-brief.prof.gz",
+      "bytes": 120122,
+      "sha256": "a1fbfd088de0f60c6a5fd8df43165077968cc338951dfd91ab081dedb3b9141b",
+      "archive_bytes": 39991,
+      "archive_sha256": "b255d2e92b0294e7821d0103d32a63133afd8ba831246a9f168033a3007c04c3",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-funds.prof",
+      "source_mtime_ns": 1790931437293536000,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-funds.prof.gz",
+      "bytes": 96212,
+      "sha256": "7a731cff37e98538ba165ae10b9c59fa2b13eda5a8a77c8250bdb89f65e89beb",
+      "archive_bytes": 31673,
+      "archive_sha256": "7a031ad461bceb74d4c5140b492430916003a3250dd39e969045ef1c1373baa7",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-employees.prof",
+      "source_mtime_ns": 1790931443143993400,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-employees.prof.gz",
+      "bytes": 70498,
+      "sha256": "32b35270e98f695803cbbb4cf78f0e22fc49510385a296e33ccdac310ea57049",
+      "archive_bytes": 23317,
+      "archive_sha256": "c9ea1300449ec61dc9697b23f1cc8ef815224072bd16f126cadb31ade271e0fd",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-assets.prof",
+      "source_mtime_ns": 1790931447993899800,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-assets.prof.gz",
+      "bytes": 102579,
+      "sha256": "bc8b06ccd8567d3da66d7e114055210d53032da8cd39963970dc1aa5952f2361",
+      "archive_bytes": 35093,
+      "archive_sha256": "1a4d7e027a0279d16b792f5b961ed69f00f2b4b0e5803d7ec8238043d3660fe6",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-resident-r69-main48-reports.prof",
+      "source_mtime_ns": 1790931456226101900,
+      "archive": "owner-r69-fixed-stage9-resident-r69-main48-reports.prof.gz",
+      "bytes": 82335,
+      "sha256": "a6cc95876ab7033ffe8fef8374f0e921fbd758552d4d3634969766682bc8c4a3",
+      "archive_bytes": 27950,
+      "archive_sha256": "9c8c4527bf0a51b616f3a92b578be2e77a888d94f7587da0e1fd5b8dc968f166",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-plan-r69.py",
+      "source_mtime_ns": 1790929916941412300,
+      "archive": "owner-r69-fixed-stage9-bank-role-plan-r69.py.gz",
+      "bytes": 2767,
+      "sha256": "6614a4f388dbc949f0b34d42ed786863aee1752470c465ed7c3e0adcdb75d66d",
+      "archive_bytes": 1229,
+      "archive_sha256": "0176a13f893052f64a9869f8dd1644adf15a2b98c04fd25c86ae80ab6252c38c",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-plan-r69.json",
+      "source_mtime_ns": 1790929921119639000,
+      "archive": "owner-r69-fixed-stage9-bank-role-plan-r69.json.gz",
+      "bytes": 4075,
+      "sha256": "8f5e8996105d4bcd6d5d9eb282ef0ae9495b517ebf33820d52b56a7fa4cd223e",
+      "archive_bytes": 765,
+      "archive_sha256": "80c091a790772c1b055a9378ba029fc87132c1d99cef8e9bd3aa3ee6d9295ddb",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-plan-r69.log",
+      "source_mtime_ns": 1790929921143656000,
+      "archive": "owner-r69-fixed-stage9-bank-role-plan-r69.log.gz",
+      "bytes": 4077,
+      "sha256": "748848ef2007da89e233d4ad36609c13ddad9d0c3504dc30d3dbf4875a438088",
+      "archive_bytes": 766,
+      "archive_sha256": "367236369e4654526d5f0ac7ef6a7d3529906b4edfd4b9a8336debe3cfef8878",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-consumer-plans-r69.json",
+      "source_mtime_ns": 1790929798597561600,
+      "archive": "owner-r69-fixed-stage9-bank-role-consumer-plans-r69.json.gz",
+      "bytes": 859,
+      "sha256": "af310d9ad709f4261457bbd0199bd51b78e7c257c2a980ce091b9899932142ee",
+      "archive_bytes": 301,
+      "archive_sha256": "06af433de74fc739960b79c04f6126860fceb41fe12708c171b12a52ecd3f111",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-current-hits-plan-r69.json",
+      "source_mtime_ns": 1790930111890960500,
+      "archive": "owner-r69-fixed-stage9-bank-role-current-hits-plan-r69.json.gz",
+      "bytes": 359,
+      "sha256": "fc642d65cb3aed1965aefbf73d8c296feeda1e4a83af9ed81240480426ece1e0",
+      "archive_bytes": 216,
+      "archive_sha256": "72d47eb79d7af8b07d3180a73777d559b54a5aa0b194e3818ea1851896c1737f",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-entity-plan-r69.json",
+      "source_mtime_ns": 1790929979357603600,
+      "archive": "owner-r69-fixed-stage9-bank-role-entity-plan-r69.json.gz",
+      "bytes": 1107,
+      "sha256": "6c2c4741cd72b03c9df7c924bcf9fd03f735bfcdf5b412cbec8fe26f01943b72",
+      "archive_bytes": 341,
+      "archive_sha256": "33c94b520d9d84011d702e50a14a45bc3f43ec9ed1ecd4fd3fe9160b7d3c465d",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69.log",
+      "source_mtime_ns": 1790929985215207000,
+      "archive": "owner-r69-fixed-stage9-bank-role-locator-r69.log.gz",
+      "bytes": 6098,
+      "sha256": "47d2abce0c205604651365748853d1989881c98f1ee17e46f4b0df3138582088",
+      "archive_bytes": 2163,
+      "archive_sha256": "1fc4fc650c75e0f817fcc526f7b187d31d9126d467281c7555160e503e1fa78c",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69.xml",
+      "source_mtime_ns": 1790929984820272500,
+      "archive": "owner-r69-fixed-stage9-bank-role-locator-r69.xml.gz",
+      "bytes": 7955,
+      "sha256": "ce43826125c0e2c232971c6e41cff3d6e47c17ed52994b6aa09aefc458fd861b",
+      "archive_bytes": 2487,
+      "archive_sha256": "2a6d5c378d47a110d11b689c67c30bdbccb7a02e031729d171720f353dd089e6",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69-growth-repair.log",
+      "source_mtime_ns": 1790930248392260000,
+      "archive": "owner-r69-fixed-stage9-bank-role-locator-r69-growth-repair.log.gz",
+      "bytes": 858,
+      "sha256": "8b243daf605c67a01c92b0956ada6926982966ae688e33a9e0bfb23eee49b129",
+      "archive_bytes": 400,
+      "archive_sha256": "ea13e12a0b42ba374ab8dffa1507c12049ccfd22471bec282a4ddfde3b5dd999",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-role-locator-r69-growth-repair.xml",
+      "source_mtime_ns": 1790930248057349200,
+      "archive": "owner-r69-fixed-stage9-bank-role-locator-r69-growth-repair.xml.gz",
+      "bytes": 3953,
+      "sha256": "312638bea8872db56ee694c182b85555e125607b4279926c03037f335fd66a50",
+      "archive_bytes": 953,
+      "archive_sha256": "2ad8d7b2c6e1e78dd00bae84287c9d745614ca72b6afed0344ad72caa94f7c2b",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-first.log",
+      "source_mtime_ns": 1790928547476821100,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-first.log.gz",
+      "bytes": 915,
+      "sha256": "141cc9ed505fe6abe44a0cc9283656160f43a18187f9c2cc518137b8987bc440",
+      "archive_bytes": 428,
+      "archive_sha256": "5ff7ac0dc42667547a534b8fb6a856ad3847965cb1352c4ae9a2a17f3438c678",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-first.xml",
+      "source_mtime_ns": 1790928547045479600,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-first.xml.gz",
+      "bytes": 9746,
+      "sha256": "925a54ff61895576c38d62c81c13f4c090b9c59962c147f4facdcdcc056eb078",
+      "archive_bytes": 1668,
+      "archive_sha256": "96a03734e89d39198c8a7df146abe0bbcafaaf36619caa87c0d74973ff5e6037",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-followup.log",
+      "source_mtime_ns": 1790928830024072900,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-followup.log.gz",
+      "bytes": 3253,
+      "sha256": "ca7df75a772f0be56f8f379d91c78992d62b5d4a5815699632a1fffdf915f86e",
+      "archive_bytes": 1189,
+      "archive_sha256": "396238b3b75ff0e3fe2a3856188fe4282676388590921792cc2de82d111d03fc",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-followup.xml",
+      "source_mtime_ns": 1790928829468221600,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-followup.xml.gz",
+      "bytes": 4515,
+      "sha256": "4486695a65b854b255750f53e9cff90921677dfa494a7549b63b1ce2c7a68960",
+      "archive_bytes": 1447,
+      "archive_sha256": "7519b49b23b7964a24d4dfb6c70d4e9b0c174cb980bf6e09ece2aa3b26d0cc2d",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-pointer-repair.log",
+      "source_mtime_ns": 1790928928578596300,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-pointer-repair.log.gz",
+      "bytes": 338,
+      "sha256": "4ca06c5b4e528945c326d0ea418083b6f3aa9509d27ce4d8044166f44e5bf935",
+      "archive_bytes": 224,
+      "archive_sha256": "686694c7a8b108908a8d1defcdbd86af07751b846470197e05a1c743a1700959",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-pointer-repair.xml",
+      "source_mtime_ns": 1790928928144356800,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-pointer-repair.xml.gz",
+      "bytes": 572,
+      "sha256": "f5904ce8ab8eb6eb742b099ba1e0d98e6f44f29a7e1e6026e12a15b16b88d9d7",
+      "archive_bytes": 296,
+      "archive_sha256": "f3f42679e7ee56c0e9bbc9c0cf78d20f9ba704bb0e350c10c09fe7e9d299adda",
+      "decompress_byte_equivalent": true,
+      "status": "prior_r68_scope_receipt_not_r69_regression"
+    },
+    {
+      "source": ".tmp/stage9-bank-identity-witness-final.log",
+      "source_mtime_ns": 1790928798844093200,
+      "archive": "owner-r69-fixed-stage9-bank-identity-witness-final.log.gz",
+      "bytes": 962,
+      "sha256": "1a58f70192f8d0fdbedb8e867359243f7a7bf3755758e1cf0acedf746dd2d6e8",
+      "archive_bytes": 439,
+      "archive_sha256": "066d8da7b92e40e99de41316cae52bca5731d96c99195e9780564285a5fb39e5",
+      "decompress_byte_equivalent": true,
+      "status": "interrupted_no_final_result"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm-typed.py",
+      "source_mtime_ns": 1790931002125342300,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm-typed.py.gz",
+      "bytes": 4076,
+      "sha256": "f21604fb8ee3061e14a2be86605d5df6c642faa6664c04f74acf6a2d4722629c",
+      "archive_bytes": 1789,
+      "archive_sha256": "4e00cfd853a52731daec3f0d681445a0c9ee34e348ef250d18c6efc20bb3a41b",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm-typed.json",
+      "source_mtime_ns": 1790931014955648600,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm-typed.json.gz",
+      "bytes": 95530,
+      "sha256": "6386dd811321b48116257c9f6e0cc644ce5964bf8e0cdc7225f55f24d37ef910",
+      "archive_bytes": 6778,
+      "archive_sha256": "61424bbb1a980953ee82aca20139f5e4fbcce72933869f6e227b48a605a9eebb",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm-typed.log",
+      "source_mtime_ns": 1790931014953648700,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm-typed.log.gz",
+      "bytes": 2241,
+      "sha256": "27aa350ef0b3802d384ffac5491029c385f8a01e5037a298552a1ac2a42b354f",
+      "archive_bytes": 418,
+      "archive_sha256": "f58020bef2996405d14967525c65d9bf2a6071e8ee4408fd7e72fb93be202ebe",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-directed.command.txt",
+      "source_mtime_ns": 1790931002125342300,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-directed.command.txt.gz",
+      "bytes": 2147,
+      "sha256": "5825549d3c34f386013ff1e1f1931a42b519981acefc4b810ee9ecead4fb8f3f",
+      "archive_bytes": 910,
+      "archive_sha256": "d5126bb709ed5f9a304a3d4718027858645c03d6f4f660aaac0c2329cae6701e",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-directed.log",
+      "source_mtime_ns": 1790930801670488800,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-directed.log.gz",
+      "bytes": 1272,
+      "sha256": "0521564975f8ecf456050daab29b56423152c8ab2e0a4f698788ecec4edf5a81",
+      "archive_bytes": 367,
+      "archive_sha256": "8e891639a2ff566f107523f66b5f00ee9e7458ff219d209a39ce0fc3366d2f04",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-directed.xml",
+      "source_mtime_ns": 1790930801352288800,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-directed.xml.gz",
+      "bytes": 7276,
+      "sha256": "6f1699e4d880a2a868622dde8667523ef519abbd48f2adbbddfefc771f297e1d",
+      "archive_bytes": 1019,
+      "archive_sha256": "b908d432c940bcf4b820350062eb098c837f5fae8b50bd226cb078644a90f69f",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r67-head-locator-explain.json",
+      "source_mtime_ns": 1790927879429190700,
+      "archive": "owner-r69-fixed-stage9-r67-head-locator-explain.json.gz",
+      "bytes": 221210,
+      "sha256": "7b083095c1c51c5e98690601088774e8e369c51f5051fdbb452b895656f0e84e",
+      "archive_bytes": 98196,
+      "archive_sha256": "de03b92c04ef1636872cce10f3923fa79df630eb1a46548c98dffbee53e715b9",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r67-head-locator-explain-after.json",
+      "source_mtime_ns": 1790928809100953900,
+      "archive": "owner-r69-fixed-stage9-r67-head-locator-explain-after.json.gz",
+      "bytes": 204308,
+      "sha256": "bfaac0d0fdac4cf062ab6d6876a9e68d98571f94c190d370b2ed963ea7064f4f",
+      "archive_bytes": 97022,
+      "archive_sha256": "5a8b4fffb7eb420eca1f5ba3004ec27e9375f431d44b6db37a260dad98bea31d",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm.json",
+      "source_mtime_ns": 1790929711030241400,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm.json.gz",
+      "bytes": 130293,
+      "sha256": "63035249d478e1f249d1cb62da60ea9d2bf218510fd91021aaf2425451307a66",
+      "archive_bytes": 7229,
+      "archive_sha256": "7132c9e12a028b226ac0f111e4a05ffc961069b92fad6bd300234f76c934f830",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm.log",
+      "source_mtime_ns": 1790929711027238900,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm.log.gz",
+      "bytes": 2900,
+      "sha256": "800dc4ac8719bbebab70a711f1c0f0737c0fcc4a97d7d77e691c91ed9c882c03",
+      "archive_bytes": 414,
+      "archive_sha256": "d5443f189f5b2ba9f6fca292b6f26f168ed1880f2d845a43c9465aabd48b8580",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm-dedupe.json",
+      "source_mtime_ns": 1790930016577748400,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm-dedupe.json.gz",
+      "bytes": 55444,
+      "sha256": "10d7324c81a40f3f7e52396bbb000488efca93251e534d3f024d4c3fed76e61a",
+      "archive_bytes": 4589,
+      "archive_sha256": "c53522490adef2449b408c9b661373cc8b5ce3202bc587d68b4da82ef6086b52",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-r68-employee-locator-vm-dedupe.log",
+      "source_mtime_ns": 1790930016575747500,
+      "archive": "owner-r69-fixed-stage9-r68-employee-locator-vm-dedupe.log.gz",
+      "bytes": 1279,
+      "sha256": "6cfc8bf113ea5d07bc99fe955ca72892da0803c5b1c8edb7f3e8bd58106e7af4",
+      "archive_bytes": 284,
+      "archive_sha256": "b6e4ccfd4aa380a60cebf6ab0be2a42129cf8734a657255671026dbd36ae1afc",
+      "decompress_byte_equivalent": true,
+      "status": "withdrawn_wrong_24239_parameter_not_same_scope_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan-first.py",
+      "source_mtime_ns": 1790930683876349900,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan-first.py.gz",
+      "bytes": 5005,
+      "sha256": "90b200ca1ecc23a72405668106593d5444f8fc3fe12745d32077f488fbc203ad",
+      "archive_bytes": 1790,
+      "archive_sha256": "8cd77cf28bbf4feb29f0f848ff141c8662435906a6ff59838281b258899f267e",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan-first.json",
+      "source_mtime_ns": 1790930702633916600,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan-first.json.gz",
+      "bytes": 279162,
+      "sha256": "0b4ae7f086d1ac886a5789a78028928fcdc6450673f3f387d4655edf0d3de88b",
+      "archive_bytes": 128042,
+      "archive_sha256": "1ff174beca2eee1694ac0f9252bd4ad0c4fe151fa6fc06922119eded29783178",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan-first.log",
+      "source_mtime_ns": 1790930702643920200,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan-first.log.gz",
+      "bytes": 836,
+      "sha256": "e60e420330fa565c2d342e65252ec7d9844b9612227da2725c2918fe1bc4c5e8",
+      "archive_bytes": 414,
+      "archive_sha256": "922d2fcc075e0b45dc138065e9e0e5369d798991e81e48a0b0004eac56dab13c",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan.py",
+      "source_mtime_ns": 1790930683876349900,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan.py.gz",
+      "bytes": 5005,
+      "sha256": "90b200ca1ecc23a72405668106593d5444f8fc3fe12745d32077f488fbc203ad",
+      "archive_bytes": 1790,
+      "archive_sha256": "8cd77cf28bbf4feb29f0f848ff141c8662435906a6ff59838281b258899f267e",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan.json",
+      "source_mtime_ns": 1790930830381022000,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan.json.gz",
+      "bytes": 279181,
+      "sha256": "14646b1ee8139fc5161fe654c1c8567960755f5649d407062987273bf592f879",
+      "archive_bytes": 128050,
+      "archive_sha256": "310b200791f802385fbae6e0e3e80eb4d6749735a40581d4028048c93f4f57a6",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-plan.log",
+      "source_mtime_ns": 1790930830391554200,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-plan.log.gz",
+      "bytes": 836,
+      "sha256": "1d91ad70f734dbe11e954bc5fcd836260904d267b1c442cfcb3508ba1923ae1f",
+      "archive_bytes": 414,
+      "archive_sha256": "9156e8e2644e816249e86b619ec9d2f4d1f4ba241d7ed5d71cee3b71f58b12ec",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-focused.log",
+      "source_mtime_ns": 1790930351907253100,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-focused.log.gz",
+      "bytes": 4541,
+      "sha256": "150a2a9def7cff95c5e53e4f893a84bdb08d4b31836ffcb580896c1ac0c59881",
+      "archive_bytes": 1398,
+      "archive_sha256": "c278d057de3b60c88336ac5932bdc34792219b3b6805675524da9d63c56a5c3d",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-focused.xml",
+      "source_mtime_ns": 1790930351575974500,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-focused.xml.gz",
+      "bytes": 7580,
+      "sha256": "0d61cfc098fabfeb06ea17eced40125da9782d399daf18850d9913ed8b56f20e",
+      "archive_bytes": 1716,
+      "archive_sha256": "ac53d5b572321fd08d2479e576f092fdcc7f4663cd08cdfebfeb8430bc8cf7fb",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-repair1.log",
+      "source_mtime_ns": 1790930411290747500,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-repair1.log.gz",
+      "bytes": 634,
+      "sha256": "77c26601d36538ffd317b2beef292b2dcf88366984353f8a4f333d2348286ef7",
+      "archive_bytes": 309,
+      "archive_sha256": "ad1dd90cc320949ba56eaf9069b2522aeb2ef6000ee63b659301714e57e045eb",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-repair1.xml",
+      "source_mtime_ns": 1790930410938094300,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-repair1.xml.gz",
+      "bytes": 4099,
+      "sha256": "6eca8b3a2aad38df52aea02f092f7dac0532e04bea369e57a12fa48771bb4a60",
+      "archive_bytes": 696,
+      "archive_sha256": "aedb9b82b6d85509bdba3ee186e9ea34acce42b0e6aef9dae226a390898e5c33",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-converged.log",
+      "source_mtime_ns": 1790930703690001600,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-converged.log.gz",
+      "bytes": 639,
+      "sha256": "bbea7de466784d4a0c59ca90b89c697a043b4067f749a3a21b68911125cbffe4",
+      "archive_bytes": 316,
+      "archive_sha256": "d9faa83d6e3fcc3ed47290e7b5c6f28fa35d6b8162fa27d0f80128155482acf2",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-converged.xml",
+      "source_mtime_ns": 1790930703195898400,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-converged.xml.gz",
+      "bytes": 4331,
+      "sha256": "5da16a8aa9a199ee06b2f129df25bc832be041887f1211c31dccfeacdd383e48",
+      "archive_bytes": 994,
+      "archive_sha256": "712052ebad5780259c91d0ee68b52b63ec36a9e8e2ffdf6def7308f3fcf6f63d",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-compact.log",
+      "source_mtime_ns": 1790930828696467700,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-compact.log.gz",
+      "bytes": 634,
+      "sha256": "6d541f6e196086ccf1624b8c166d8c7dd10c8662248c1990864fc0d01ecc62c7",
+      "archive_bytes": 309,
+      "archive_sha256": "1bbce72e0af65472b85bc2267a78805aaf06dfb3bf440da3819df00042934943",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-report-selector-r69-compact.xml",
+      "source_mtime_ns": 1790930828373772100,
+      "archive": "owner-r69-fixed-stage9-report-selector-r69-compact.xml.gz",
+      "bytes": 3286,
+      "sha256": "53b82d97f4a17efe7fe6d3024baf347bc5a59bf528997477de4f0acce9210137",
+      "archive_bytes": 592,
+      "archive_sha256": "99b7185877d89671a7a3746952ad4cb060072e4b56c9b28dc316ad04bf81ab9b",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    },
+    {
+      "source": ".tmp/stage9-build-source-owner-r69-release/source-manifest.json",
+      "source_mtime_ns": 1790931400403819800,
+      "archive": "owner-r69-fixed-source-manifest.json.gz",
+      "bytes": 75025,
+      "sha256": "47dc53495bd3a1d7474d562efe7e7a99098e5b3dc37907a21efcab9be7c94b5a",
+      "archive_bytes": 30741,
+      "archive_sha256": "97c95632e82dd066d438972ddac3542136b9d70fe30800662183c7edb7d246ac",
+      "decompress_byte_equivalent": true,
+      "status": "retained_raw_evidence"
+    }
+  ]
+}

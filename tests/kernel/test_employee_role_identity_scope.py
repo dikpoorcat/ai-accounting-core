@@ -1,16 +1,19 @@
 """A closed employee list must prove every role used to assign a wage head."""
 
 import pytest
+from test_integrity_content import verify
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 from test_payroll_corrections import Company
 
+from ai_accounting.kernel.backup import BackupError, verify_file
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 
 
 @pytest.mark.parametrize("gross_fen", [0, 1_000_000], ids=["old-zero-line", "old-posted"])
+@pytest.mark.parametrize("subject", ["january-a", "february-a"])
 def test_closed_historical_payroll_role_must_be_proved_before_employee_selection(
-    tmp_path, gross_fen
+    tmp_path, gross_fen, subject
 ):
     company = Company(tmp_path / f"closed-payroll-role-{gross_fen}.sqlite")
     for fact, subject in (
@@ -64,14 +67,15 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
     employees = baseline["data"]["collections"]["employees"]["items"]
     assert {row["employee_id"] for row in employees} == {"employee", "employee-a"}
     baseline_a = dashboard.employees(
-        "2026-02", section="payroll_sources", employee_id="employee-a", preparation="deferred"
-    )["data"]["collections"]["payroll_sources"]["items"]
-    assert len(baseline_a) == 2
+        "2026-02", section="employees", employee_id="employee-a", preparation="deferred"
+    )["data"]["collections"]["employees"]["items"]
+    assert len(baseline_a) == 1
     with company.engine.store.connection() as connection:
         row = connection.execute(
             "SELECT r.* FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
             "JOIN entity_reference_recorded r ON r.fact_id=c.fact_id AND r.role='employee' "
-            "WHERE h.subject_id='january-a'"
+            "WHERE h.subject_id=?",
+            (subject,),
         ).fetchone()
         assert row is not None
         jan_lines = connection.execute(
@@ -94,9 +98,28 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
                 (bad, original["fact_id"]),
             )
         try:
-            with pytest.raises(KernelError) as failure:
-                dashboard.employees("2026-02", preparation="deferred")
-            assert failure.value.code == "entity_reference_corrupt"
+            if subject == "january-a":
+                # Neither list nor focused card adopts this unused historical
+                # role. Frozen money comes from its independently sealed basis.
+                assert dashboard.employees("2026-02", preparation="deferred")["data"][
+                    "employees"
+                ] == baseline["data"]["employees"]
+                assert dashboard.employees(
+                    "2026-02", section="employees", employee_id="employee-a",
+                    preparation="deferred",
+                )["data"]["collections"]["employees"]["items"] == baseline_a
+                with pytest.raises(KernelError) as failure:
+                    verify(company.engine)
+                assert failure.value.code == "entity_reference_corrupt"
+                with pytest.raises(BackupError):
+                    verify_file(company.engine.store.path)
+            else:
+                # The current role is required by both the list and the focused
+                # card, and cannot be skipped just because history UI is gone.
+                for kwargs in ({}, {"section": "employees", "employee_id": "employee-a"}):
+                    with pytest.raises(KernelError) as failure:
+                        dashboard.employees("2026-02", preparation="deferred", **kwargs)
+                    assert failure.value.code == "entity_reference_corrupt"
         finally:
             with company.engine.store.connection() as connection:
                 connection.execute(
@@ -105,6 +128,6 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
                     (original[field], original["fact_id"]),
                 )
     restored_a = dashboard.employees(
-        "2026-02", section="payroll_sources", employee_id="employee-a", preparation="deferred"
-    )["data"]["collections"]["payroll_sources"]["items"]
+        "2026-02", section="employees", employee_id="employee-a", preparation="deferred"
+    )["data"]["collections"]["employees"]["items"]
     assert restored_a == baseline_a

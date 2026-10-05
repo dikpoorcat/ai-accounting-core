@@ -219,7 +219,7 @@ def test_scoped_accounting_batch_matches_serial_and_business_selection(engine, m
     original = QueryReads.close_accounting_many
     monkeypatch.setattr(
         QueryReads, "close_accounting_many",
-        lambda self, rows, *, subjects: tuple(
+        lambda self, rows, *, subjects, subjects_by_period=None: tuple(
             self.close_accounting(row, subjects=subjects) for row in rows
         ),
     )

@@ -339,14 +339,12 @@ def test_selected_content_decodes_cached_raw_not_mutable_display_object(engine):
 
 
 def test_failed_calculation_batch_does_not_seed_raw_outcomes(engine, monkeypatch):
-    from ai_accounting.kernel import query_reads
-
     save(engine)
     save(engine, subject="second", request="second")
     _, result = publish(engine, ["charge", "second"])
     ids = [item["calculation_id"] for item in result["results"]]
     with QueryReads.snapshot(engine) as reads:
-        actual_loads = json.loads
+        actual_loads = QueryReads._stored_outcome
         decoded = 0
 
         def fail_second_outcome(raw):
@@ -357,7 +355,7 @@ def test_failed_calculation_batch_does_not_seed_raw_outcomes(engine, monkeypatch
             return actual_loads(raw)
 
         with monkeypatch.context() as patch:
-            patch.setattr(query_reads.json, "loads", fail_second_outcome)
+            patch.setattr(QueryReads, "_stored_outcome", staticmethod(fail_second_outcome))
             with pytest.raises(ValueError, match="outcome decode failure"):
                 reads.calculations(ids)
         assert decoded == 2

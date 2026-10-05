@@ -10,7 +10,7 @@ import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
 
-from pydantic_core import from_json
+from pydantic_core import SchemaValidator, ValidationError, core_schema, from_json
 
 from .account_definitions import RECLASS
 from .contracts import KernelError
@@ -395,6 +395,109 @@ def _source_bindings(connection, identifiers):
     ]
 
 
+_BINDING_ID = core_schema.str_schema(strict=True, min_length=1)
+_BINDING_DIGEST = core_schema.str_schema(strict=True, pattern="^[0-9a-f]{64}$")
+_OWN_SOURCE_CONTENT = SchemaValidator(core_schema.typed_dict_schema({
+    "format": core_schema.typed_dict_field(core_schema.literal_schema([
+        "ai-accounting-kernel/2/report-open-contribution/1",
+    ])),
+    "publication_id": core_schema.typed_dict_field(_BINDING_ID),
+    "calculation_id": core_schema.typed_dict_field(_BINDING_ID),
+    "result_digest": core_schema.typed_dict_field(_BINDING_DIGEST),
+    "fact_id": core_schema.typed_dict_field(_BINDING_ID),
+    "source_bindings": core_schema.typed_dict_field(core_schema.list_schema(
+        core_schema.tuple_schema([
+            _BINDING_ID, _BINDING_DIGEST, _BINDING_ID, _BINDING_DIGEST,
+        ]), strict=True,
+    )),
+}, strict=True, extra_behavior="ignore"))
+
+
+def verify_published_source_bindings(reads, calculation_ids):
+    """Authenticate only exact selected sources through their own publications.
+
+    This proves saved calculation/fact bytes, not dependency inputs, current
+    selection or frozen adoption. The caller retains those selection checks.
+    Returned IDs have a healthy immutable publication/anchor but no repairable
+    contribution body: the caller must use ``verify_saved_input_identity`` for
+    them before interpreting their results. Missing publications or anchors
+    never fall back, including unpublished asset members on this narrow path.
+    """
+
+    connection = reads.connection
+    if not reads._snapshot_active or not connection.in_transaction:
+        raise ValueError("published source proof requires an owned read snapshot")
+    identifiers = set(calculation_ids)
+    if not identifiers:
+        return frozenset()
+    candidates = {
+        row["selected_id"]: dict(row)
+        for row in connection.execute(
+            "SELECT c.id selected_id,c.subject_id selected_subject,p.*,"
+            "a.calculation_id anchor_calculation_id,a.content_digest anchor_digest,"
+            "d.content,d.content_digest body_digest "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
+            "LEFT JOIN report_open_contribution_anchor a ON a.publication_id=p.id "
+            "LEFT JOIN report_open_contribution d ON d.publication_id=p.id",
+            (canonical(sorted(identifiers)),),
+        )
+    }
+    if candidates.keys() != identifiers:
+        raise KernelError("content_integrity_failed", "本次读取的核算来源缺失")
+    for ident, row in candidates.items():
+        if row["id"] is None:
+            _invalid(ident, "own_publication_missing")
+    reads.verify_publication_records(candidates.values())
+    bindings = []
+    fallback = set()
+    for ident in sorted(identifiers):
+        row = candidates[ident]
+        if row["subject_id"] != row["selected_subject"]:
+            _invalid(row["id"], "publication_subject_mismatch")
+        if row["anchor_digest"] is None:
+            _invalid(row["id"], "own_anchor_missing")
+        if row["anchor_calculation_id"] != ident:
+            _invalid(row["id"], "anchor_calculation_mismatch")
+        if row["content"] is None:
+            # A missing repairable body cannot authenticate even the saved
+            # anchor checksum. Rebuild only this exceptional contribution,
+            # read-only, before allowing the complete original input proof.
+            rebuilt = prepare_open_contribution(reads.engine, connection, row)
+            if rebuilt.checksum != row["anchor_digest"]:
+                _invalid(row["id"], "missing_body_anchor_digest_mismatch")
+            fallback.add(ident)
+            continue
+        checksum = _checksum(row["content"])
+        if checksum != row["anchor_digest"] or checksum != row["body_digest"]:
+            _invalid(row["id"], "body_anchor_digest_mismatch")
+        try:
+            # The native JSON validator skips unrelated contribution rows,
+            # relation resolution and parents instead of materializing them.
+            content = _OWN_SOURCE_CONTENT.validate_json(row["content"], strict=True)
+        except ValidationError as exc:
+            raise KernelError(
+                "content_integrity_failed", "当前报表来源绑定格式不一致"
+            ) from exc
+        if (
+            content["publication_id"] != row["id"]
+            or content["calculation_id"] != ident
+        ):
+            _invalid(row["id"], "own_content_identity_mismatch")
+        own = [item for item in content["source_bindings"] if item[0] == ident]
+        if len(own) != 1:
+            _invalid(row["id"], "own_binding_not_unique")
+        binding = own[0]
+        if (content["result_digest"], content["fact_id"]) != (binding[1], binding[2]):
+            _invalid(row["id"], "source_header_mismatch")
+        bindings.append(binding)
+    if bindings:
+        reads._verify_anchored_source_bytes(_AnchoredSourceProof(
+            _SOURCE_PROOF_SEAL, connection, reads, tuple(bindings),
+        ))
+    return frozenset(fallback)
+
+
 def read_open_contributions(engine, connection, calculation_ids, *, reads):
     """Authenticate selected saved contributions without trusting their selection.
 
@@ -414,7 +517,7 @@ def read_open_contributions(engine, connection, calculation_ids, *, reads):
     )
     key = "report_open_contributions"
     stored = cache.setdefault(key, {}) if cache is not None else {}
-    missing = identifiers - stored.keys()
+    missing = {ident for ident in identifiers if ident not in stored}
     if missing:
         candidates = {
             row["calculation_id"]: row

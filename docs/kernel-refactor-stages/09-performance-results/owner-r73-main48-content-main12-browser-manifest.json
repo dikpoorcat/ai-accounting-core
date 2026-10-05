@@ -1,0 +1,472 @@
+{
+  "created_utc": "2026-10-02T15:43:17.879566+00:00",
+  "scope": "completed main48 current content+actual preview and failed main12 pure browser performance only; no main48 browser intermediate artifacts copied",
+  "prior_manifests": [
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r73-manifest.json",
+      "sha256": "194148d8ec2719e2a0c328c28eff13fb8407acb26fef5893b0123b55c1ef954e",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-content-upgrade-history-manifest.json",
+      "sha256": "18314770b534d9a0c07ecdb652e25fb4e73be615702fc6ebe89e27a108102baa",
+      "unchanged": true
+    }
+  ],
+  "fixed_source_identity": {
+    "snapshot_sha256": "420ceb395fc5aec17ddaedf8914c7fc8de640da9f08cb35aded8a3a99a4eb7f4",
+    "file_count": 633,
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r73-release",
+    "backend_build_id": "local-kernel-2:3953feaab7372f1e975836c7d9ab4558d32261e68b77e27346a0e874e5196f98",
+    "contracts": {
+      "catalog\\v1.json": {
+        "sha256": "ca7ea76f47f9339ca168acdc28f780fb9e8412fb4ce3a683de508072b19d3971",
+        "fingerprint": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+      },
+      "company\\v1.json": {
+        "sha256": "b729080164e04dc9ddb3eaf80ba2d6a8a7fbed410dbabc9f4360cc35b005f3b7",
+        "fingerprint": "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+      },
+      "content-v1.json": {
+        "sha256": "57b9d93c8dd768c9ba6a9e5b32c35da79b8309231bf57694767f53fed48c7478",
+        "fingerprint": "8abdbad6e6dca035c948daaf8a254743282c72a2198fd28caa852d9593b895a1"
+      },
+      "development\\company\\923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json": {
+        "sha256": "fe72acdc5cd23b95766ed58c2cc0a174ef27b4dcb974b32906b6e24d0dec9680",
+        "fingerprint": "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+      }
+    },
+    "repository_status": "draft/0; candidate released/1 isolated, not repository final freeze"
+  },
+  "frontend_static_identity": {
+    "frontend_static_build": "release",
+    "asset_directory": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r73-release\\src\\ai_accounting\\static\\dashboard",
+    "reported_hashes_compared_to_saved_snapshot_manifest": [
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/AssetsView-ChTicRN0.css",
+        "browser_report_sha256": "dbda77383e693fc7a3160bc278d3d91bd883a28582cab45320317df9b32b95b4",
+        "snapshot_manifest_sha256": "dbda77383e693fc7a3160bc278d3d91bd883a28582cab45320317df9b32b95b4",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/AssetsView-Cwlr_MKz.js",
+        "browser_report_sha256": "e9a1f070cfdd60b2b8dedd0007c1c230455f741434f0e9cee84d5b7842b566ae",
+        "snapshot_manifest_sha256": "e9a1f070cfdd60b2b8dedd0007c1c230455f741434f0e9cee84d5b7842b566ae",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BackgroundJobsPanel-B1JY505s.js",
+        "browser_report_sha256": "7979e202c1e5acb56e4a39e6e41088a9428f8ea0ec861987317dc778ebcf7408",
+        "snapshot_manifest_sha256": "7979e202c1e5acb56e4a39e6e41088a9428f8ea0ec861987317dc778ebcf7408",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BackgroundJobsPanel-CiDlz4gc.css",
+        "browser_report_sha256": "b8edbaea8a1914501f37afbc22e69d994b6a86a8c1d2758d321c6600d3558297",
+        "snapshot_manifest_sha256": "b8edbaea8a1914501f37afbc22e69d994b6a86a8c1d2758d321c6600d3558297",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BriefView-BdUmfROR.js",
+        "browser_report_sha256": "f5e0ab3a6d7ac2e2aad2190d96adb6152be5ebd5d2ec6f1eb67b82ad7fc5ecb0",
+        "snapshot_manifest_sha256": "f5e0ab3a6d7ac2e2aad2190d96adb6152be5ebd5d2ec6f1eb67b82ad7fc5ecb0",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BriefView-D0YDDljm.css",
+        "browser_report_sha256": "4705a556fcfae78961be48f2347c50ab567aad6176f051081d504f0e08520bf8",
+        "snapshot_manifest_sha256": "4705a556fcfae78961be48f2347c50ab567aad6176f051081d504f0e08520bf8",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/browserJobs-PPJAp_iM.js",
+        "browser_report_sha256": "eb2dc5fcc17400653fc7ea6f62415ade47421cac23330e505f777c805447225b",
+        "snapshot_manifest_sha256": "eb2dc5fcc17400653fc7ea6f62415ade47421cac23330e505f777c805447225b",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BusinessStatusDetails-8dk-IRSj.css",
+        "browser_report_sha256": "b496f409b38e309d86b9a5637f9d81e2488b3eca96b436e1350e5f9e1af0eb99",
+        "snapshot_manifest_sha256": "b496f409b38e309d86b9a5637f9d81e2488b3eca96b436e1350e5f9e1af0eb99",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/BusinessStatusDetails-DPyfY9Vy.js",
+        "browser_report_sha256": "c59efb92f6ddda76a1b82f67fb1bb69560be183b0460fff90eefd4934e853978",
+        "snapshot_manifest_sha256": "c59efb92f6ddda76a1b82f67fb1bb69560be183b0460fff90eefd4934e853978",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/dashboardBusinessStatus-fIDH6ElL.js",
+        "browser_report_sha256": "f2b7dce2c8f94bcb99949df33c2b6bdc96bb4d323012d9b36c54e014b7e2ed15",
+        "snapshot_manifest_sha256": "f2b7dce2c8f94bcb99949df33c2b6bdc96bb4d323012d9b36c54e014b7e2ed15",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/EmployeesView-CNLcSFds.css",
+        "browser_report_sha256": "3ec9837c8ca0481fac944565ceefa4d0351a3bcee053af992517287b51dd5e86",
+        "snapshot_manifest_sha256": "3ec9837c8ca0481fac944565ceefa4d0351a3bcee053af992517287b51dd5e86",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/EmployeesView-D4oW0gQF.js",
+        "browser_report_sha256": "6be6f483f6ed263e92a063552a1fde96103c28ca88bbe1ca8d9b3aac74037a64",
+        "snapshot_manifest_sha256": "6be6f483f6ed263e92a063552a1fde96103c28ca88bbe1ca8d9b3aac74037a64",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/FundsView-CwBN2vbY.js",
+        "browser_report_sha256": "b5e0040734dc166ba8941fdccf0a8f35026a92d1e44d7da01389d67c288e84f1",
+        "snapshot_manifest_sha256": "b5e0040734dc166ba8941fdccf0a8f35026a92d1e44d7da01389d67c288e84f1",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/FundsView-DHCcRa4H.css",
+        "browser_report_sha256": "2bee3d674f9eb3bc6f9de8ba154f419c57bb69072968a3eb95aeff0c704bd496",
+        "snapshot_manifest_sha256": "2bee3d674f9eb3bc6f9de8ba154f419c57bb69072968a3eb95aeff0c704bd496",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/index-GkAoHQfL.js",
+        "browser_report_sha256": "7146f2131bcc938bdda5babc4e7ed615ea078a5982edebaf8973676f1adfe5fa",
+        "snapshot_manifest_sha256": "7146f2131bcc938bdda5babc4e7ed615ea078a5982edebaf8973676f1adfe5fa",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/main-D4r8ChYH.js",
+        "browser_report_sha256": "48fbce0e03a5095a46e1dbbc2a9a0e3132dfb340aa02dce1d1ceae0307d51f7b",
+        "snapshot_manifest_sha256": "48fbce0e03a5095a46e1dbbc2a9a0e3132dfb340aa02dce1d1ceae0307d51f7b",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/main-sEWac9LI.css",
+        "browser_report_sha256": "aaf0c83b0ebd13a436a723509bb1fcb9d27d0731d22fc287b73545a4539945fa",
+        "snapshot_manifest_sha256": "aaf0c83b0ebd13a436a723509bb1fcb9d27d0731d22fc287b73545a4539945fa",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/reportExportReceipt-Bf-vyB-E.js",
+        "browser_report_sha256": "096b64116ed0a5be94897574c11925c014d3f1a86ef58807ba214190a6c04f4f",
+        "snapshot_manifest_sha256": "096b64116ed0a5be94897574c11925c014d3f1a86ef58807ba214190a6c04f4f",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/reports-DzbFRAF8.js",
+        "browser_report_sha256": "182179b07d3dbcedd7f056410027be8eaa068a4d243a65cea8df34cc9ea0ca3d",
+        "snapshot_manifest_sha256": "182179b07d3dbcedd7f056410027be8eaa068a4d243a65cea8df34cc9ea0ca3d",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/ReportsView-Cnhsb5Na.css",
+        "browser_report_sha256": "9b293114117c61efa693382027b1f4bcfd75b837fe6e6c3111eae13f523234da",
+        "snapshot_manifest_sha256": "9b293114117c61efa693382027b1f4bcfd75b837fe6e6c3111eae13f523234da",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/ReportsView-DJOuiyI-.js",
+        "browser_report_sha256": "ec0a76b0ba37da17f6536bb5a6166f5e7ecec6919c9e1ee3d08d39869118158c",
+        "snapshot_manifest_sha256": "ec0a76b0ba37da17f6536bb5a6166f5e7ecec6919c9e1ee3d08d39869118158c",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/useDashboardSections-CsVm1N0_.css",
+        "browser_report_sha256": "56fc37e4b579f14c3c6a43d49669977580f222a2b2e832d63dc1f46592d3af0f",
+        "snapshot_manifest_sha256": "56fc37e4b579f14c3c6a43d49669977580f222a2b2e832d63dc1f46592d3af0f",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/assets/useDashboardSections-tS-HPW6a.js",
+        "browser_report_sha256": "50e8737fea9654aceac397117f28463bbad7ecb1e38f78fdb27d4c8a35e05e87",
+        "snapshot_manifest_sha256": "50e8737fea9654aceac397117f28463bbad7ecb1e38f78fdb27d4c8a35e05e87",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/index.html",
+        "browser_report_sha256": "ad7dd396a5150b40dda171ddf1ef0dbf1e19b5606f64ede8d478ff4e306b9b4e",
+        "snapshot_manifest_sha256": "ad7dd396a5150b40dda171ddf1ef0dbf1e19b5606f64ede8d478ff4e306b9b4e",
+        "hashes_match": true
+      },
+      {
+        "relative_path": "src/ai_accounting/static/dashboard/local.html",
+        "browser_report_sha256": "16b10c1953941362a7120055143d2f42122687c7a979a09d0ee5d1d51fb211fe",
+        "snapshot_manifest_sha256": "16b10c1953941362a7120055143d2f42122687c7a979a09d0ee5d1d51fb211fe",
+        "hashes_match": true
+      }
+    ],
+    "limitation": "compares saved reported hashes to saved source inventory, no new full-tree hash scan"
+  },
+  "main48_content": {
+    "status": "complete",
+    "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r73-release",
+    "integrity": {
+      "status": "verified",
+      "coverage": {
+        "sources": "verified",
+        "historical_adoption": "verified",
+        "projections": "verified",
+        "read_indexes": "verified"
+      },
+      "limitations": [],
+      "counts": {
+        "facts": 121593,
+        "calculations": 50519,
+        "vouchers": 49245,
+        "closes": 47,
+        "evidence": 337
+      }
+    },
+    "integrity_ms": 1064237.932499993,
+    "verified_open_preview": {
+      "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r73-release",
+      "company_id": "c73e4f4d144340c98ade475b8dd8c8b9",
+      "database_id": "6cc5f6cbe6cd402ebdfd072195398780",
+      "period": "2019-12",
+      "construction_preview_digest": "e685e144e52f11d20c9f83dc678abb88377862f959046c9ec7cbe014178f8f8f",
+      "digest": "5b93cc1477b74a296008302bd654c452848b7b91677d06f095c8da788abcccf6",
+      "epochs": {
+        "accounting": 2065,
+        "material": 1164,
+        "management": 152
+      },
+      "state": [
+        1,
+        2065,
+        1164,
+        152,
+        48238,
+        0
+      ]
+    },
+    "limitation": "integrity_ms is integrity phase only, not whole runner elapsed or pure timing; content verified is not performance accepted"
+  },
+  "main12_browser": {
+    "status": "over_target",
+    "exit_code_reported": 1,
+    "measurement_mode": "page_timing",
+    "sample_scope": "main_page_candidate",
+    "warmups": 3,
+    "sample_count_each": 30,
+    "successful_samples_total": 150,
+    "slow_total": 5,
+    "pages": {
+      "brief": {
+        "median_ms": 476.59999999403954,
+        "p95_ms": 536.2999999821186,
+        "max_ms": 556.1999999880791,
+        "over_500_ms": 5
+      },
+      "funds": {
+        "median_ms": 336.5,
+        "p95_ms": 397.69999998807907,
+        "max_ms": 415.60000002384186,
+        "over_500_ms": 0
+      },
+      "employees": {
+        "median_ms": 236.80000001192093,
+        "p95_ms": 256.90000000596046,
+        "max_ms": 257,
+        "over_500_ms": 0
+      },
+      "assets": {
+        "median_ms": 256.59999999403954,
+        "p95_ms": 296.30000001192093,
+        "max_ms": 355.80000001192093,
+        "over_500_ms": 0
+      },
+      "reports": {
+        "median_ms": 436.69999998807907,
+        "p95_ms": 457.09999999403954,
+        "max_ms": 457.2999999821186,
+        "over_500_ms": 0
+      }
+    },
+    "navigation": {
+      "first_load_ms": 1401.199999988079,
+      "first_render_epoch_ms": 1790955283840,
+      "cold_open_ms": {
+        "brief": 607.7999999821186,
+        "funds": 502.5,
+        "employees": 374.09999999403954,
+        "assets": 394.89999997615814,
+        "reports": 654.8000000119209
+      },
+      "company_switch": {
+        "status": "unavailable",
+        "reason": "single_eligible_company"
+      },
+      "browser_launch_to_first_render_ms": 3146.197021484375
+    },
+    "synthetic_credentials_revoked": true,
+    "limitation": "hot refresh failed; cold values separately recorded, company switch unavailable single eligible company; no all-page acceptance"
+  },
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-owner-main48-r73-verified.json",
+      "scope": "current registered main48 full content verification and actual preview, not performance",
+      "raw_sha256": "5b02872b048f0aed526130ce1bbe368c7f9bafe92d458ad5933123a1c1304518",
+      "raw_bytes": 28089,
+      "raw_mtime_ns": 1790955165924676000,
+      "raw_mtime_utc": "2026-10-02T15:32:45.924676+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-001-stage9-owner-main48-r73-verified.json.gz",
+      "archive_sha256": "dc0c5c9aa24233c0a04ac703716c7c067399581066b689542c91900db9d604b2",
+      "archive_bytes": 6646,
+      "archive_mtime_ns": 1790955797685023600,
+      "archive_mtime_utc": "2026-10-02T15:43:17.685024+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main48-r73-verified.log",
+      "scope": "current registered main48 full content verification and actual preview, not performance",
+      "raw_sha256": "d8975a769488fb486efbf4d30a81ee3f55bbf60f81c999c326bc443261e7517b",
+      "raw_bytes": 81,
+      "raw_mtime_ns": 1790955165931678500,
+      "raw_mtime_utc": "2026-10-02T15:32:45.931679+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-002-stage9-owner-main48-r73-verified.log.gz",
+      "archive_sha256": "df7ab3fb8badf212e274fc41706793541f3b0f6cc758ac83052882784dccc52a",
+      "archive_bytes": 98,
+      "archive_mtime_ns": 1790955797703745800,
+      "archive_mtime_utc": "2026-10-02T15:43:17.703746+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main12-browser-r73.json",
+      "scope": "actual main12 pure browser30 each page, 150 successful responses/5 slow samples, failed performance",
+      "raw_sha256": "c7190e50ddcb61d7f5fbe9adc695fb353bd4f204f63db5f4452082bb328c6837",
+      "raw_bytes": 9192,
+      "raw_mtime_ns": 1790955360339314000,
+      "raw_mtime_utc": "2026-10-02T15:36:00.339314+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-003-stage9-owner-main12-browser-r73.json.gz",
+      "archive_sha256": "ff641d54e8869e7c0dd218e1661a8cccd6e34320a59d4d90fafdaeae7af44e56",
+      "archive_bytes": 2857,
+      "archive_mtime_ns": 1790955797712434600,
+      "archive_mtime_utc": "2026-10-02T15:43:17.712435+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-owner-main12-browser-r73.log",
+      "scope": "actual main12 pure browser30 each page, 150 successful responses/5 slow samples, failed performance",
+      "raw_sha256": "42a671748debb889bb8228959fc02e39b8eeb2c361c6fc875a9e019f7e6cba88",
+      "raw_bytes": 244,
+      "raw_mtime_ns": 1790955360340312900,
+      "raw_mtime_utc": "2026-10-02T15:36:00.340313+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-004-stage9-owner-main12-browser-r73.log.gz",
+      "archive_sha256": "b8370920ef417d5cabae0cb5ed15afb63d8dc0e543822de16f7e1abdd8761b4d",
+      "archive_bytes": 152,
+      "archive_mtime_ns": 1790955797723566900,
+      "archive_mtime_utc": "2026-10-02T15:43:17.723567+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/source-manifest.json",
+      "scope": "fixed r73 current source identity",
+      "raw_sha256": "d462182c0c157f24d32678dad4e9fd361b5e162b0ae2b69ad9f88c85a92b0277",
+      "raw_bytes": 76373,
+      "raw_mtime_ns": 1790952745267394800,
+      "raw_mtime_utc": "2026-10-02T14:52:25.267395+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-005-source-manifest.json.gz",
+      "archive_sha256": "a5c9d2ad5be0a7b75b7a701296ef9ba1f45b5c46cb7e8d41037f03a35ed039ac",
+      "archive_bytes": 30605,
+      "archive_mtime_ns": 1790955797733566800,
+      "archive_mtime_utc": "2026-10-02T15:43:17.733567+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-candidate-owner-r73/candidate-provenance.json",
+      "scope": "isolated candidate source/contract transform identity",
+      "raw_sha256": "fc01d0365e48abff7f1a8353f59fab916f7a3ba5ed5f376fae33d7bbdee23262",
+      "raw_bytes": 77528,
+      "raw_mtime_ns": 1790952745290391600,
+      "raw_mtime_utc": "2026-10-02T14:52:25.290391+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-006-candidate-provenance.json.gz",
+      "archive_sha256": "0f8d6bad4a297e40b0d497362b10e3c7b27e6ca4c55eae68d10b39f963b08b5c",
+      "archive_bytes": 31095,
+      "archive_mtime_ns": 1790955797746567200,
+      "archive_mtime_utc": "2026-10-02T15:43:17.746567+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/src/ai_accounting/kernel/schema_contracts/catalog/v1.json",
+      "scope": "fixed candidate contract raw bytes and fingerprints",
+      "raw_sha256": "ca7ea76f47f9339ca168acdc28f780fb9e8412fb4ce3a683de508072b19d3971",
+      "raw_bytes": 9163,
+      "raw_mtime_ns": 1790952737607648200,
+      "raw_mtime_utc": "2026-10-02T14:52:17.607648+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-007-v1.json.gz",
+      "archive_sha256": "126eadfb4878e41cef612b1ab3fb7cb7f30f244a343a1b4a74374af1de090bff",
+      "archive_bytes": 1781,
+      "archive_mtime_ns": 1790955797757888800,
+      "archive_mtime_utc": "2026-10-02T15:43:17.757889+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/src/ai_accounting/kernel/schema_contracts/company/v1.json",
+      "scope": "fixed candidate contract raw bytes and fingerprints",
+      "raw_sha256": "b729080164e04dc9ddb3eaf80ba2d6a8a7fbed410dbabc9f4360cc35b005f3b7",
+      "raw_bytes": 369411,
+      "raw_mtime_ns": 1790952737608648500,
+      "raw_mtime_utc": "2026-10-02T14:52:17.608649+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-008-v1.json.gz",
+      "archive_sha256": "09555d3b6948b19bf89ca167d590dbe7406bf78b894a7b61dd8f2b10137408a9",
+      "archive_bytes": 27921,
+      "archive_mtime_ns": 1790955797774405800,
+      "archive_mtime_utc": "2026-10-02T15:43:17.774406+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/src/ai_accounting/kernel/schema_contracts/content-v1.json",
+      "scope": "fixed candidate contract raw bytes and fingerprints",
+      "raw_sha256": "57b9d93c8dd768c9ba6a9e5b32c35da79b8309231bf57694767f53fed48c7478",
+      "raw_bytes": 614297,
+      "raw_mtime_ns": 1790952737609648000,
+      "raw_mtime_utc": "2026-10-02T14:52:17.609648+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-009-content-v1.json.gz",
+      "archive_sha256": "00557dd969beb6745e281344949b995fe7067d0b47a020ab67aec964001afe0c",
+      "archive_bytes": 45829,
+      "archive_mtime_ns": 1790955797811406500,
+      "archive_mtime_utc": "2026-10-02T15:43:17.811407+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-build-source-owner-r73-release/src/ai_accounting/kernel/schema_contracts/development/company/923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json",
+      "scope": "fixed candidate contract raw bytes and fingerprints",
+      "raw_sha256": "fe72acdc5cd23b95766ed58c2cc0a174ef27b4dcb974b32906b6e24d0dec9680",
+      "raw_bytes": 360980,
+      "raw_mtime_ns": 1790952737612648700,
+      "raw_mtime_utc": "2026-10-02T14:52:17.612649+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-010-923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json.gz",
+      "archive_sha256": "ac1a8192679f37196518c2d6629d196625e371d6b19e899f455ba13ff8686272",
+      "archive_bytes": 27650,
+      "archive_mtime_ns": 1790955797832744000,
+      "archive_mtime_utc": "2026-10-02T15:43:17.832744+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-and-release.md",
+      "scope": "current content/browser result revision",
+      "raw_sha256": "fafd8b763e3ec46368a868fa1138cb45e30e9ce10e85d972f23e64f86a621a38",
+      "raw_bytes": 32218,
+      "raw_mtime_ns": 1790955797682048500,
+      "raw_mtime_utc": "2026-10-02T15:43:17.682049+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-011-09-performance-and-release.md.gz",
+      "archive_sha256": "359567342b3da2f0b44e32008ca24f4abca664d834f04aa209c8c296e121b3ca",
+      "archive_bytes": 14143,
+      "archive_mtime_ns": 1790955797855743800,
+      "archive_mtime_utc": "2026-10-02T15:43:17.855744+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/release-remaining-gates.md",
+      "scope": "current remaining gates revision",
+      "raw_sha256": "057716503b612fddcc241d9de1f15309c33f0caea9c125cb12e4533fba651c9b",
+      "raw_bytes": 23486,
+      "raw_mtime_ns": 1790955797683022100,
+      "raw_mtime_utc": "2026-10-02T15:43:17.683022+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-r73-main48-content-main12-browser-012-release-remaining-gates.md.gz",
+      "archive_sha256": "9e2a4887a6c6d0a09c3fc0ec059603441263f112bbc9eb8bb23970a5fb441978",
+      "archive_bytes": 10214,
+      "archive_mtime_ns": 1790955797870746400,
+      "archive_mtime_utc": "2026-10-02T15:43:17.870746+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

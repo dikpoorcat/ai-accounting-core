@@ -1,0 +1,146 @@
+{
+  "source_sha256": "9ac1ddcc2ee3b4d5d4758aff091d5b33c12e1f54a482c4f6ab83ecd6853bcd2d",
+  "source_manifest_sha256": "5398ce88ec9b8bc1878cc425046f1d9764d42383720e46706a8aca4dfeea2a1b",
+  "source_files": 770,
+  "main_original_sha256": "330d9c92cc1b5c2a2efbddf3842627ac2ec8c5166cdd3f8dd368e579839e58a9",
+  "qualification_original_sha256": "f90b99f83d7b86fb57262209bb9f03876824a0d200a875645833973ec9c90174",
+  "gzip_mtime": 0,
+  "scope": "Fresh actual-browser qualification and actual open preview followed by isolated page timing; 150 successful samples, 17 >=500ms; no gate pass. Partial memory observer is not whole lifecycle/tree/absolute peak.",
+  "representation": "Public redacted analysis retains every page sample, ResourceTiming, slow sample and memory sample. Roots/PIDs/auth redacted; private before/after guards canonical-SHA only. Helpers private path/SHA only. No DB/ZIP/credential bytes.",
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004.json",
+      "source_sha256": "330d9c92cc1b5c2a2efbddf3842627ac2ec8c5166cdd3f8dd368e579839e58a9",
+      "source_bytes": 417190,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "d5f81018700e08cca6bf5a02a8f4c84ab1548c99b9e74a16620c57f87ca63f83",
+      "redacted_bytes": 407372,
+      "gzip_sha256": "ee9d769690106687f71fcd546e2686adc9cf11f34986c579ea81c1e107da7003",
+      "gzip_bytes": 35746,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004.log",
+      "source_sha256": "8bf419239551c796898c5dd1469803338d4a1a989dcfbf8b360382bcbdc65853",
+      "source_bytes": 309,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "d99b5642acb8a19c0e8447e3e0dc043af935a9ad6c4155ffad0af071ced75771",
+      "redacted_bytes": 293,
+      "gzip_sha256": "b648da8822057a2decae821f1602ad0975739023b169c8914cc881f55112ba9d",
+      "gzip_bytes": 171,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004-qualified.json",
+      "source_sha256": "f90b99f83d7b86fb57262209bb9f03876824a0d200a875645833973ec9c90174",
+      "source_bytes": 61826,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004-qualified.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "ecd8645b49e2959c8974a56ad15362d221ca69ffb561ff86dcc86c9025c2297d",
+      "redacted_bytes": 59861,
+      "gzip_sha256": "c124b9b7a0af17ec6ed2cdadcc3963330154e2b68f27b2cd2b218a3f9aa66e7b",
+      "gzip_bytes": 14871,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004-runner.json",
+      "source_sha256": "ff7d3d76149acd3d1a5cf79fb8b90038b8e70f4eee7e6ad5bcd7798d52800fdd",
+      "source_bytes": 12416,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004-runner.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "fbdbebf268d74617a3ff3fd75a2e7d409c57dde2ad41e41602c1d5a7a83e464d",
+      "redacted_bytes": 3001,
+      "gzip_sha256": "d54c4601631af0b081b16ded8521c794faeccc96086ee67f5d0fe1cca482f6ff",
+      "gzip_bytes": 1377,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004-ready.json",
+      "source_sha256": "94c84cc6917e32f408ed84789e8f24ffbf13b76ecdb74c7939a41ccafa18c155",
+      "source_bytes": 160,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004-ready.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "88edaacd3380e3e0fd2a47502225fc4ef63628c76ebb4fcc99fe8814c03a11d4",
+      "redacted_bytes": 171,
+      "gzip_sha256": "0d70fa33842022d916e42638f7335be4f0d439ccca7c54806d17d98d887b8150",
+      "gzip_bytes": 155,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-browser-20261004-start.json",
+      "source_sha256": "056cc6f5576ca7a38f89312b6cb960144bc074b24b0531d38981772594f41c7d",
+      "source_bytes": 811,
+      "archive": "stage9-directory-test-repair-converged-main120-browser-20261004-start.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "056cc6f5576ca7a38f89312b6cb960144bc074b24b0531d38981772594f41c7d",
+      "redacted_bytes": 811,
+      "gzip_sha256": "fa9d0b2860f0f503b6f6c8c3d37183d31272af1b42bb2cfa1a00fb54678888d4",
+      "gzip_bytes": 526,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-main120-partial-memory-20261004.json",
+      "source_sha256": "4cdca3f1d6a705726eba00809ec90af8668b712ecd918a3183cc883983ec8a1c",
+      "source_bytes": 107898,
+      "archive": "stage9-directory-test-repair-converged-main120-partial-memory-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "b8f72289750c68e4e0619c9e66da38dac5a7dea854d817442cd6789a2c2f261f",
+      "redacted_bytes": 104281,
+      "gzip_sha256": "0bef66d4c2545337c92574270c8f4b799aed1c4a4153cfdffc39543b8834cfbf",
+      "gzip_bytes": 16391,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-build-source-directory-test-repair-converged-20261004/source-manifest.json",
+      "source_sha256": "5398ce88ec9b8bc1878cc425046f1d9764d42383720e46706a8aca4dfeea2a1b",
+      "source_bytes": 92991,
+      "archive": "source-manifest.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "148aae93f643418acd0b387258f7607a7dd9788b04bb718eacb857539074a907",
+      "redacted_bytes": 92180,
+      "gzip_sha256": "08f6ee3fc72aa69884584f3d5c2e62848e195b664b5c44805448ee7275fb8fe9",
+      "gzip_bytes": 41240,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-directory-test-repair-converged-browser-20261004-runner.py",
+      "source_sha256": "c7c47b93fefdc5c63dfd863a5305c7e3d55a67f5afb190006e0fe90e8f6af32e",
+      "source_bytes": 15137,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    },
+    {
+      "private_source_path": ".tmp/stage9-release-converged-browser-window-20261004.py",
+      "source_sha256": "606141c22414de87e1ede84a05adcbe3ae4fe5698bc0751869cb19c99a29b3c0",
+      "source_bytes": 4185,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-qualification-memory-watch-20261004.ps1",
+      "source_sha256": "87cc8b0d8a0001e0cbcb776deb8e579146cfc6611a013b31b73e4aaef94a36d6",
+      "source_bytes": 2661,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    },
+    {
+      "private_source_path": ".tmp/prepare-directory-test-repair-browser-20261004.py",
+      "source_sha256": "5f60ccd9a8ed15e022c514cb9833980e33ead96a9934dcdf28b6761ec30e1cdb",
+      "source_bytes": 2352,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    },
+    {
+      "private_source_path": ".tmp/stage9-build-source-directory-test-repair-converged-20261004/scripts/benchmark_stage9_browser.py",
+      "source_sha256": "0a6bc5120cb578058a3605cdd3488bd67bde7d0acfad31bb6b78207fca83122b",
+      "source_bytes": 39035,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    },
+    {
+      "private_source_path": ".tmp/stage9-build-source-directory-test-repair-converged-20261004/scripts/stage9_verified_open_preview.py",
+      "source_sha256": "ae247f1ee5c2b11619cb583763c4dcaa896fe5f5edbba7da86f1b39e4cc03ac5",
+      "source_bytes": 6411,
+      "reason": "Source helper/harness SHA only; may contain synthetic credential or private-root details; content not published"
+    }
+  ]
+}

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from contextlib import contextmanager
+from collections import ChainMap
+from contextlib import contextmanager, nullcontext
 
 from . import stored_json
 from .contracts import KernelError
@@ -76,15 +77,56 @@ class _MaterialSqlOutcomeBatch:
         if ident not in self._identifiers and ident not in self._reads._verified_sql_outcomes:
             # No caller-provided success flag: an exact earlier check in this
             # read snapshot, or this batch's own strict check, proves the row.
-            stored_json.verify_outcome_bytes(
-                row["stored_outcome"], row["result_digest"], ident
-            )
+            stored_json.verify_outcome_bytes(row["stored_outcome"], row["result_digest"], ident)
         self._identifiers.add(ident)
 
     def commit(self):
         self._require_active()
         self._reads._verified_sql_outcomes.update(self._identifiers)
         self._committed = True
+
+
+class _OpenVoucherScopeHeads:
+    """Physical rows carried only from this owned scope's actual SQL read."""
+
+    def __init__(self, reads, rows):
+        self.reads = reads
+        self.connection = reads.connection
+        self.token = reads._snapshot_token
+        self.rows = tuple(rows)
+
+    def require(self, connection, publications, reads):
+        if (
+            reads is not self.reads
+            or connection is not self.connection
+            or reads._snapshot_token is not self.token
+            or not _owns_current_selector_snapshot(reads, connection)
+            or len(publications) != len(self.rows)
+            or any(not isinstance(row, sqlite3.Row) for row in self.rows)
+            or any(a is not b for a, b in zip(publications, self.rows, strict=True))
+        ):
+            raise KernelError("content_integrity_failed", "开放凭证头读取快照已失效")
+        return self.rows
+
+
+def _current_voucher_publication_headers(connection, identifiers):
+    """Keep the independent ID lookup's missing/current/closed semantics."""
+    if not identifiers:
+        return []
+    selected = list(connection.execute(
+        "SELECT ids.value requested_id,v.id,v.voucher_id,v.calculation_id,"
+        "v.reverses_id,v.period,c.subject_id,h.version_id current_version_id,"
+        "closes.closed_through "
+        "FROM json_each(?) ids LEFT JOIN voucher_version v ON v.id=ids.value "
+        "LEFT JOIN calculation c ON c.id=v.calculation_id "
+        "LEFT JOIN voucher_current h ON h.version_id=v.id "
+        "CROSS JOIN (SELECT coalesce(max(period),-1) closed_through "
+        "FROM period_close) closes",
+        (canonical(sorted(identifiers)),),
+    ))
+    if len(selected) != len(identifiers) or any(row["id"] is None for row in selected):
+        raise KernelError("content_integrity_failed", "选中凭证版本缺少权威来源")
+    return selected
 
 
 def verify_current_voucher_publications(connection, voucher_ids):
@@ -98,30 +140,411 @@ def verify_current_voucher_publications(connection, voucher_ids):
 
     identifiers = set(voucher_ids)
     if not identifiers:
-        return
-    selected = list(
-        connection.execute(
-            "SELECT ids.value requested_id,v.id,v.voucher_id,v.calculation_id,"
-            "v.reverses_id,v.period,"
-            "c.subject_id,h.version_id current_version_id,"
-            "closes.closed_through "
-            "FROM json_each(?) ids LEFT JOIN voucher_version v ON v.id=ids.value "
-            "LEFT JOIN calculation c ON c.id=v.calculation_id "
-            "LEFT JOIN voucher_current h ON h.version_id=v.id "
-            "CROSS JOIN (SELECT coalesce(max(period),-1) closed_through "
-            "FROM period_close) closes",
-            (canonical(sorted(identifiers)),),
-        )
-    )
-    if len(selected) != len(identifiers) or any(row["id"] is None for row in selected):
-        raise KernelError("content_integrity_failed", "选中凭证版本缺少权威来源")
+        return {}
+    reads = _active_fact_reads.get()
+    owned = _owns_current_selector_snapshot(reads, connection)
+    cached = reads._verified_current_voucher_publications if owned else {}
+    missing = {ident for ident in identifiers if ident not in cached}
+    reusable = {}
+    for ident in identifiers - missing:
+        reusable.update(cached[ident][1])
+    if not missing:
+        return reusable
+    selected = _current_voucher_publication_headers(connection, missing)
     current = [
         row
         for row in selected
         if row["current_version_id"] is not None and row["period"] > row["closed_through"]
     ]
-    if not current:
+    publications = _verify_current_voucher_publication_rows(connection, current)
+    if owned:
+        # The ID lookup also checked absent/current/closed filtering. Preserve
+        # that exact empty result, without claiming a frozen adoption proof.
+        active_ids = {row["id"] for row in current}
+        cached.update((row["id"], (None, {})) for row in selected
+                      if row["id"] not in active_ids)
+    return reusable | publications
+
+
+def verify_current_publication_voucher_heads(connection, publications):
+    """Prove open publications' expected heads before candidate selection.
+
+    This is a forward relationship check, not an outcome/adoption proof. A
+    cleared result can keep its reserved voucher number without a current
+    version; only that exceptional source requires its complete saved body.
+    """
+    publications = tuple(publications)
+    if not publications:
         return
+    reads = _active_fact_reads.get()
+    owned = _owns_current_selector_snapshot(reads, connection)
+    _verify_publication_voucher_head_batch(connection, publications, reads if owned else None)
+
+
+def _verify_publication_voucher_head_batch(connection, publications, reads, scope_heads=None):
+    """Publish record proofs only after this entire head batch succeeds."""
+    pending_records = (
+        {row["id"] for row in publications
+         if row["id"] not in reads._verified_publication_ids}
+        if reads is not None else set()
+    )
+    try:
+        _verify_current_publication_voucher_heads(
+            connection, publications, reads, scope_heads,
+        )
+    except Exception:
+        # Authentication is provisional until every original/current head and
+        # correction relationship in this selected batch succeeds. Only this
+        # batch's new record proofs are withdrawn; earlier independent success
+        # survives. The checkpoint is bounded by the input, not the whole cache.
+        for ident in pending_records:
+            reads._verified_publication_ids.pop(ident, None)
+        raise
+
+
+def _verify_current_publication_voucher_heads(connection, publications, reads, scope_heads=None):
+    from .content_history_context import publication_reader
+
+    owned = reads is not None
+    if owned:
+        reads.verify_publication_records(publications)
+    else:
+        for publication in publications:
+            publication_reader().verify_record(publication)
+    by_id = {row["id"]: row for row in publications}
+    expected_calculations = {row["id"]: row["calculation_id"] for row in publications}
+    review_ids = {row["id"] for row in publications if row["mode"] == "review_no_impact"}
+    if review_ids:
+        chains = list(connection.execute(
+            "WITH RECURSIVE reviewed(root,id,previous_publication_id,mode) AS ("
+            "SELECT p.id,p.id,p.previous_publication_id,p.mode FROM json_each(?) ids "
+            "JOIN calculation_publication p ON p.id=ids.value UNION "
+            "SELECT r.root,p.id,p.previous_publication_id,p.mode FROM reviewed r "
+            "JOIN calculation_publication p ON p.id=r.previous_publication_id "
+            "WHERE r.mode='review_no_impact') SELECT r.root,p.* FROM reviewed r "
+            "JOIN calculation_publication p ON p.id=r.id",
+            (canonical(sorted(review_ids)),),
+        ))
+        resolved = set()
+        for row in chains:
+            publication_reader().verify_record(row)
+            current = by_id[row["root"]]
+            if (row["subject_id"], row["posting_period"], row["voucher_id"]) != (
+                current["subject_id"], current["posting_period"], current["voucher_id"]
+            ):
+                raise KernelError("content_integrity_failed", "无影响复核改变了凭证归属")
+            if row["mode"] != "review_no_impact":
+                expected_calculations[row["root"]] = row["calculation_id"]
+                resolved.add(row["root"])
+        if resolved != review_ids:
+            raise KernelError("content_integrity_failed", "无影响复核缺少原始发布")
+    selected = (
+        scope_heads.require(connection, publications, reads)
+        if scope_heads is not None else list(connection.execute(
+            "SELECT p.id,p.calculation_id,p.voucher_id,p.posting_period,"
+            "h.version_id,v.id version_exists,v.voucher_id version_voucher,"
+            "v.period version_period,v.reverses_id,v.calculation_id version_calculation "
+            "FROM json_each(?) ids LEFT JOIN calculation_publication p ON p.id=ids.value "
+            "LEFT JOIN voucher_current h ON h.voucher_id=p.voucher_id "
+            "LEFT JOIN voucher_version v ON v.id=h.version_id",
+            (canonical(sorted(by_id)),),
+        ))
+    )
+    if {row["id"] for row in selected} != by_id.keys():
+        raise KernelError("content_integrity_failed", "正式发布来源缺失")
+    versions, cleared = set(), set()
+    for row in selected:
+        publication = by_id[row["id"]]
+        if (row["calculation_id"], row["voucher_id"], row["posting_period"]) != (
+            publication["calculation_id"], publication["voucher_id"],
+            publication["posting_period"],
+        ):
+            raise KernelError("content_integrity_failed", "正式发布与读取依据不一致")
+        if row["voucher_id"] is None:
+            continue
+        if row["version_id"] is None:
+            cleared.add(row["calculation_id"])
+        elif (row["version_exists"] is None
+              or row["version_voucher"] != row["voucher_id"]
+              or row["version_period"] != row["posting_period"]
+              or row["reverses_id"] is not None
+              or row["version_calculation"] != expected_calculations[row["id"]]):
+            raise KernelError("content_integrity_failed", "当前正式发布凭证头不匹配")
+        else:
+            versions.add(row["version_id"])
+    if cleared:
+        rows = list(connection.execute(
+            "SELECT c.id,c.outcome,c.digest FROM json_each(?) ids "
+            "LEFT JOIN calculation c ON c.id=ids.value",
+            (canonical(sorted(cleared)),),
+        ))
+        if {row["id"] for row in rows} != cleared:
+            raise KernelError("content_integrity_failed", "当前正式发布核算来源缺失")
+        for row in rows:
+            outcome = stored_json.verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+            if (not isinstance(outcome, dict) or not isinstance(outcome.get("lines"), list)
+                    or outcome["lines"]):
+                raise KernelError("content_integrity_failed", "非零正式发布缺少当前凭证头")
+    # A missing reversal version cannot define its own absence. The authenticated
+    # correction segment independently determines the versions that must exist.
+    # Same-month replacements may legitimately retain an earlier reversal.
+    versions.update(publication_reader().verify_open_correction_publication_heads(
+        connection, publications
+    ))
+    # No-impact review can adopt a version from the prior calculation. Retain
+    # the original/current publication proof rather than equating their IDs.
+    if scope_heads is None:
+        verify_current_voucher_publications(connection, versions)
+    else:
+        # Only ordinary normal heads reuse the actual physical lookup above.
+        # Review owners and independent correction reversals keep their ID read.
+        normal, pending = _stage_open_scope_normal_relations(
+            connection, publications, reads, scope_heads, versions,
+        )
+        independent = _current_voucher_publication_headers(
+            connection, versions - normal,
+        )
+        # One relationship batch: a failed review/reversal must not leave the
+        # ordinary heads newly marked successful before it is checked.
+        _verify_current_voucher_publication_rows(connection, [
+            row for row in independent
+            if row["current_version_id"] is not None
+            and row["period"] > row["closed_through"]
+        ])
+        reads._verified_current_voucher_publications.update(pending)
+
+
+def _stage_open_scope_normal_relations(connection, publications, reads, scope_heads, versions):
+    """Stage normal reverse pairs proved by this exact terminal/current SQL.
+
+    The carrier owns actual rows and their terminal selection in this snapshot.
+    Record authentication and the opposite missing-source guard precede this
+    call; neither a caller flag nor a source-content proof supplies the relation.
+    """
+    from .publication import CONTENT_FIELDS
+
+    normal, pending = set(), {}
+    for row in scope_heads.require(connection, publications, reads):
+        if row["version_id"] not in versions or row["mode"] == "review_no_impact":
+            continue
+        if (
+            row["subject_id"] is None
+            or row["version_subject"] != row["subject_id"]
+            or row["current_id"] != row["calculation_id"]
+            or row["version_calculation"] != row["calculation_id"]
+            or row["version_exists"] != row["version_id"]
+            or row["version_voucher"] != row["voucher_id"]
+            or row["version_period"] != row["posting_period"]
+            or row["reverses_id"] is not None
+            or reads._verified_publication_ids.get(row["id"]) != row["posting_period"]
+        ):
+            raise KernelError("content_integrity_failed", "当前凭证缺少正式发布采用")
+        signature = (
+            row["version_id"], row["version_voucher"], row["version_calculation"],
+            row["reverses_id"], row["version_period"], row["version_subject"],
+        )
+        cached = reads._verified_current_voucher_publications.get(row["version_id"])
+        if cached is not None:
+            if cached[0] != signature:
+                raise KernelError("content_integrity_failed", "凭证头与本次已核内容不一致")
+        else:
+            # Match the independent p.*,has_successor contract exactly. Physical
+            # source/head support columns belong only to the private carrier.
+            publication = {key: row[key] for key in ("id", *CONTENT_FIELDS)}
+            publication["has_successor"] = 0
+            pending[row["version_id"]] = (
+                signature, {row["calculation_id"]: publication},
+            )
+        normal.add(row["version_id"])
+    return normal, pending
+
+
+def verify_open_voucher_scope(connection, through_period, *, posting_period=None,
+                              subject_ids=None):
+    """Independently locate open terminal sources before narrowing vouchers."""
+    # Fixed released readers own their historical rules. The corresponding v1
+    # source boundary must use its fixed implementation, never current models.
+    from . import publication
+    from .content_history_context import publication_reader
+
+    if publication_reader() is not publication:
+        return
+    if subject_ids is not None:
+        # An explicit empty selector has no sources in either direction. Keep
+        # None as the independent whole-prefix check, and consume an iterable
+        # once so both publication and voucher queries see the same IDs.
+        subject_ids = frozenset(subject_ids)
+        if not subject_ids:
+            return
+    reads = _active_fact_reads.get()
+    owned = subject_ids is None and _owns_current_selector_snapshot(reads, connection)
+    scopes = reads._verified_open_voucher_scopes if owned else {}
+    if any(scopes.get(key, -1) >= through_period for key in (None, posting_period)):
+        return
+    closed_through = connection.execute(
+        "SELECT coalesce(max(period),-1) FROM period_close"
+    ).fetchone()[0]
+    restrictions = [
+        "p.posting_period<=?",
+        "p.posting_period>?",
+        "NOT EXISTS(SELECT 1 FROM calculation_publication later "
+        "WHERE later.previous_publication_id=p.id)",
+    ]
+    parameters = [through_period, closed_through]
+    if posting_period is not None:
+        restrictions.append("p.posting_period=?")
+        parameters.append(posting_period)
+    if subject_ids is not None:
+        restrictions.append("p.subject_id IN (SELECT value FROM json_each(?))")
+        parameters.append(canonical(sorted(set(subject_ids))))
+    rows = list(connection.execute(
+        "SELECT p.*,a.calculation_id current_id,c.id calculation_exists,"
+        "c.subject_id calculation_subject,c.kind calculation_kind,c.period source_period,"
+        "f.id fact_exists,f.subject_id fact_subject,f.period fact_period,s.kind fact_kind "
+        + (",h.version_id,v.id version_exists,v.voucher_id version_voucher,"
+           "v.period version_period,v.reverses_id,v.calculation_id version_calculation,"
+           "vc.subject_id version_subject " if owned else "")
+        + "FROM calculation_publication p "
+        "LEFT JOIN calculation_current a ON a.subject_id=p.subject_id "
+        "LEFT JOIN calculation c ON c.id=p.calculation_id "
+        "LEFT JOIN fact_revision f ON f.id=c.fact_id LEFT JOIN subject s ON s.id=f.subject_id "
+        + ("LEFT JOIN voucher_current h ON h.voucher_id=p.voucher_id "
+           "LEFT JOIN voucher_version v ON v.id=h.version_id "
+           "LEFT JOIN calculation vc ON vc.id=v.calculation_id " if owned else "")
+        + "WHERE " + " AND ".join(restrictions), parameters,
+    ))
+    publications = []
+    for row in rows:
+        # The heads checker authenticates the complete owned non-withdrawn
+        # batch below. Withdrawals never enter it and need their own digest.
+        # Failed source selection cannot publish a record or relationship proof.
+        if not owned or row["mode"] == "withdrawn":
+            publication_reader().verify_record(row)
+        if row["mode"] == "withdrawn":
+            if (row["calculation_id"] is not None or row["voucher_id"] is not None
+                    or row["current_id"] is not None):
+                raise KernelError("content_integrity_failed", "撤去发布与当前业务头不一致")
+            continue
+        if (row["calculation_exists"] is None or row["fact_exists"] is None
+                or row["current_id"] != row["calculation_id"]
+                or row["calculation_subject"] != row["subject_id"]
+                or (row["calculation_subject"], row["calculation_kind"], row["source_period"])
+                != (row["fact_subject"], row["fact_kind"], row["fact_period"])):
+            raise KernelError("content_integrity_failed", "正式发布缺少精确当前核算来源")
+        publications.append(row)
+    # The opposite direction keeps a removed publication/current calculation
+    # from disappearing out of the terminal-publication driver. This bounded
+    # physical open-voucher range is independent of the consumer's account or
+    # business filter, and reads no historical result bodies.
+    voucher_restrictions = [
+        "v.period<=?",
+        "v.period>?",
+        "(c.id IS NULL OR a.calculation_id IS NULL OR p.id IS NULL "
+        "OR p.subject_id IS NOT c.subject_id OR p.posting_period IS NOT v.period)",
+    ]
+    voucher_parameters = [through_period, closed_through]
+    if posting_period is not None:
+        voucher_restrictions.append("v.period=?")
+        voucher_parameters.append(posting_period)
+    if subject_ids is not None:
+        voucher_restrictions.append("c.subject_id IN (SELECT value FROM json_each(?))")
+        voucher_parameters.append(canonical(sorted(set(subject_ids))))
+    missing = connection.execute(
+        "SELECT v.id FROM voucher_version v INDEXED BY voucher_period "
+        "CROSS JOIN voucher_current h ON h.version_id=v.id "
+        "LEFT JOIN calculation c ON c.id=v.calculation_id "
+        "LEFT JOIN calculation_current a ON a.subject_id=c.subject_id "
+        "LEFT JOIN calculation_publication p ON p.calculation_id=a.calculation_id "
+        "WHERE " + " AND ".join(voucher_restrictions) + " LIMIT 1", voucher_parameters,
+    ).fetchone()
+    if missing is not None:
+        raise KernelError("content_integrity_failed", "当前开放凭证缺少正式发布来源")
+    if owned:
+        publications = tuple(publications)
+        _verify_publication_voucher_head_batch(
+            connection, publications, reads, _OpenVoucherScopeHeads(reads, publications),
+        )
+    else:
+        verify_current_publication_voucher_heads(connection, publications)
+    if owned:
+        scopes[posting_period] = max(through_period, scopes.get(posting_period, -1))
+        if posting_period == through_period and closed_through == through_period - 1:
+            # The actual closed boundary makes the exact-month range equal to
+            # the entire open prefix. Request labels alone cannot prove this.
+            scopes[None] = max(through_period, scopes.get(None, -1))
+
+
+def _owns_current_selector_snapshot(reads, connection):
+    """Limit selector-header reuse to the active current reader and connection."""
+    from . import close_storage, publication
+    from .content_history_context import close_reader, publication_reader
+
+    return (
+        isinstance(reads, QueryReads)
+        and reads.connection is connection
+        and reads._snapshot_active
+        and connection.in_transaction
+        and _active_fact_reads.get() is reads
+        and getattr(reads.store.registry, "content_version", None) != 1
+        and close_reader() is close_storage
+        and publication_reader() is publication
+    )
+
+
+def _selected_current_voucher_publications(reads, rows, *, period, cutoff):
+    """Reuse actual open-month selector headers in their owned current snapshot.
+
+    The selector's checked absence of all frozen references and its actual
+    current-version predicate prove the omitted header lookup. Other scopes
+    retain the independent ID entry point; publication relationships below
+    still come from their own physical records.
+    """
+    if (
+        not _owns_current_selector_snapshot(reads, getattr(reads, "connection", None))
+        or reads._report_snapshot_cache.get(("open_voucher_period", cutoff, period)) is not True
+        or any(
+            not isinstance(row, sqlite3.Row)
+            or row["period"] != period
+            or row["close_period"] is not None
+            for row in rows
+        )
+    ):
+        return None
+    closed_through = reads.connection.execute(
+        "SELECT coalesce(max(period),-1) FROM period_close"
+    ).fetchone()[0]
+    current = [
+        {"id": row["id"], "voucher_id": row["voucher_id"],
+         "calculation_id": row["calculation_id"], "reverses_id": row["reverses_id"],
+         "period": row["period"], "subject_id": row["voucher_subject_id"]}
+        for row in rows if row["period"] > closed_through
+    ]
+    return _verify_current_voucher_publication_rows(reads.connection, current)
+
+
+def _verify_current_voucher_publication_rows(connection, current):
+    """Prove original/current publication relations for physical current heads."""
+    if not current:
+        return {}
+    reads = _active_fact_reads.get()
+    owned = _owns_current_selector_snapshot(reads, connection)
+    cached = reads._verified_current_voucher_publications if owned else {}
+    reusable, pending = {}, []
+    pending_signatures = []
+    for row in current:
+        proof = cached.get(row["id"])
+        signature = _current_voucher_signature(row)
+        if proof is None:
+            pending.append(row)
+            if owned:
+                pending_signatures.append(signature)
+        elif proof[0] != signature:
+            raise KernelError("content_integrity_failed", "凭证头与本次已核内容不一致")
+        else:
+            reusable.update(proof[1])
+    current = pending
+    if not current:
+        return reusable
     subjects = {row["subject_id"] for row in current}
     if None in subjects:
         raise KernelError("content_integrity_failed", "当前凭证缺少业务身份")
@@ -148,7 +571,6 @@ def verify_current_voucher_publications(connection, voucher_ids):
     # A balance or settlement read may already have authenticated the complete
     # publication rows for these periods. Reuse only that controlled read
     # snapshot's successful digest proof; selection and head checks still run.
-    reads = _active_fact_reads.get()
     verified_publications = (
         {
             item["id"]
@@ -161,6 +583,18 @@ def verify_current_voucher_publications(connection, voucher_ids):
         and connection.in_transaction
         else set()
     )
+    if (
+        reads is not None
+        and reads.connection is connection
+        and reads._snapshot_active
+        and connection.in_transaction
+    ):
+        verified_publications.update(
+            publication["id"]
+            for publication in publications.values()
+            if publication["id"] in reads._verified_publication_ids
+            and reads._verified_publication_ids[publication["id"]] == publication["posting_period"]
+        )
     for row in current:
         head_id = heads.get(row["subject_id"])
         original = publications.get(row["calculation_id"])
@@ -188,6 +622,36 @@ def verify_current_voucher_publications(connection, voucher_ids):
             if publication["id"] not in verified_publications:
                 verify_record(publication)
                 verified_publications.add(publication["id"])
+    if (
+        reads is not None
+        and reads.connection is connection
+        and reads._snapshot_active
+        and connection.in_transaction
+    ):
+        # Selection and every record succeeded. The exact identity is reusable,
+        # while later callers still check their own source/head relationships.
+        reads._verified_publication_ids.update(
+            (publication["id"], publication["posting_period"])
+            for publication in publications.values()
+            if publication["id"] in verified_publications
+        )
+    if owned:
+        # Each version owns only its actual original/current pair, not a copy
+        # of the complete batch. Publish after every relationship and digest
+        # succeeds; a failed batch never publishes partial relationship proof.
+        cached.update((row["id"], (
+            signature,
+            {ident: publications[ident] for ident in
+             {row["calculation_id"], heads[row["subject_id"]]}},
+        )) for row, signature in zip(current, pending_signatures, strict=True))
+    return reusable | publications
+
+
+def _current_voucher_signature(row):
+    return (
+        row["id"], row["voucher_id"], row["calculation_id"],
+        row["reverses_id"], row["period"], row["subject_id"],
+    )
 
 
 def selected_voucher_sql(
@@ -240,8 +704,9 @@ def selected_voucher_sql(
     elif kinds is not None:
         prefix += (
             "scoped_vouchers AS (SELECT original.id FROM json_each(?) selected_kinds "
-            "CROSS JOIN calculation sc INDEXED BY calculation_kind_period "
-            "ON sc.kind=selected_kinds.value CROSS JOIN voucher_version original "
+            "CROSS JOIN subject ss INDEXED BY subject_kind ON ss.kind=selected_kinds.value "
+            "CROSS JOIN calculation sc INDEXED BY calculation_subject "
+            "ON sc.subject_id=ss.id CROSS JOIN voucher_version original "
             "INDEXED BY voucher_calculation ON original.calculation_id=sc.id), "
         )
         parameters.append(canonical(sorted(set(kinds))))
@@ -299,7 +764,13 @@ def selected_voucher_sql(
         subjects = canonical(sorted({subject_ids} if isinstance(subject_ids, str) else subject_ids))
         parameters.extend((subjects, subjects))
     if kinds is not None:
-        sql += " AND vc.kind IN (SELECT value FROM json_each(?))"
+        # A calculation header has not yet been authenticated. Its kind must
+        # not hide a voucher from the consumer that proves that header.
+        sql += (
+            " AND EXISTS(SELECT 1 FROM subject selected_subject "
+            "WHERE selected_subject.id=vc.subject_id "
+            "AND selected_subject.kind IN (SELECT value FROM json_each(?)))"
+        )
         parameters.append(canonical(sorted(kinds)))
     # A proven open scope or explicit current-head read needs this lookup for
     # every selected voucher.  Resolve it once per candidate instead of
@@ -346,6 +817,24 @@ def selected_voucher_sql(
     return sql, parameters
 
 
+def _selected_voucher_path_references(connection, frozen):
+    """Keep malformed type prefixes visible at the exact voucher adoption path."""
+    return connection.execute(
+        "WITH RECURSIVE types(value) AS ("
+        "SELECT min(reference_type) FROM close_reference UNION ALL "
+        "SELECT (SELECT min(reference_type) FROM close_reference "
+        "WHERE reference_type>types.value) FROM types WHERE types.value IS NOT NULL"
+        "), wanted(id,close_period) AS MATERIALIZED ("
+        "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?)"
+        ") SELECT r.* FROM types CROSS JOIN wanted "
+        "CROSS JOIN close_reference r INDEXED BY close_reference_lookup "
+        "ON r.reference_type=types.value AND r.reference_id=wanted.id "
+        "AND r.close_period=wanted.close_period WHERE r.path='vouchers[*].id' "
+        "AND r.reference_type<>'voucher'",
+        (canonical(sorted([ident, period] for ident, period in frozen.items())),),
+    ).fetchall()
+
+
 class QueryReads:
     @staticmethod
     def _stored_outcome(raw):
@@ -365,6 +854,8 @@ class QueryReads:
         self._snapshot_token = object()
         self._verified_close_references = set()
         self._verified_close_storage_parts = {}
+        self._verified_frozen_voucher_headers = {}
+        self._verified_selected_voucher_adoptions = set()
         self._verified_settlement_periods = set()
         self._settlement_history_summaries = {}
         self._frozen_settlement_scopes = {}
@@ -376,6 +867,9 @@ class QueryReads:
         self._verified_balance_period_scopes = set()
         self._verified_publications = {}
         self._verified_publication_ids = {}
+        self._verified_open_voucher_scopes = {}
+        self._verified_current_voucher_publications = {}
+        self._frozen_asset_owner_discovery = None
         self._fact_versions = {}
         self._raw_fact_data = {}
         self._facts = {}
@@ -390,6 +884,7 @@ class QueryReads:
         self._relation_sources = {}
         self._report_direct_relations = {}
         self._verified_source_contents = {}
+        self._verified_saved_input_identities = set()
         self._anchored_source_bytes = {}
         self._verified_sql_outcomes = set()
         self._raw_relation_sources = {}
@@ -400,6 +895,7 @@ class QueryReads:
         self._close_headers = {}
         self._close_manifests = {}
         self._close_accounting_slices = {}
+        self._close_adopted_result_slices = {}
         self._close_accounting_positions = {}
         self._close_sections = {}
         self._report_snapshot_cache = {}
@@ -413,9 +909,12 @@ class QueryReads:
     @contextmanager
     def snapshot(cls, engine):
         """Own one read-only transaction; no memo survives an exit or transaction change."""
-        with engine.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
-            reads = cls(engine, connection)
+        from .runtime import _OwnedReadConnection, _owned_read_transaction
+
+        with engine.store._snapshot_connection() as connection:
+            owned = type(connection) is _OwnedReadConnection
+            if not owned:
+                connection.execute("BEGIN")
 
             def keep_snapshot(action, *_):
                 # in_transaction alone cannot distinguish COMMIT followed by BEGIN.
@@ -426,15 +925,20 @@ class QueryReads:
                     else sqlite3.SQLITE_OK
                 )
 
-            connection.set_authorizer(keep_snapshot)
-            reads._snapshot_active = True
-            token = _active_fact_reads.set(reads)
-            try:
-                yield reads
-            finally:
-                _active_fact_reads.reset(token)
-                reads._reset()
-                connection.set_authorizer(None)
+            transaction = _owned_read_transaction(connection) if owned else nullcontext()
+            with transaction:
+                reads = cls(engine, connection)
+                if not owned:
+                    connection.set_authorizer(keep_snapshot)
+                reads._snapshot_active = True
+                token = _active_fact_reads.set(reads)
+                try:
+                    yield reads
+                finally:
+                    _active_fact_reads.reset(token)
+                    reads._reset()
+                    if not owned:
+                        connection.set_authorizer(None)
 
     def verify_close_references(self, references):
         """Reuse exact successful leaf checks, never an independent adoption proof."""
@@ -464,8 +968,9 @@ class QueryReads:
         if pending:
             verified = {
                 period: self._close_manifests[period]
-                for period in self._closes.keys() | self._authoritative_closes.keys()
+                for period in {reference["close_period"] for reference in pending}
                 if period in self._close_manifests
+                and (period in self._closes or period in self._authoritative_closes)
             }
             verify_close_references(
                 self.connection,
@@ -477,19 +982,149 @@ class QueryReads:
             self._verified_close_references.update(keys)
 
     def verify_selected_voucher_adoptions(self, rows, *, through_period):
-        """Check each selected frozen voucher hit before consuming its result."""
-        from .read_indexes import selected_voucher_references
+        """Bind selected live voucher headers to their exact frozen adoption.
 
+        Narrow projections supply id/close_period; their actual complete heads
+        are read in one batch. A basis calculation is never the original voucher
+        calculation. This proves returned heads, not a caller's selection scope.
+        """
+        from . import close_storage
+        from .content_history_context import close_reader
+        from .read_indexes import selected_voucher_references, verify_close_references
+
+        rows = tuple(rows)
         frozen = {row["id"]: row["close_period"] for row in rows if row["close_period"] is not None}
         if not frozen:
             return
+        active = _owns_current_selector_snapshot(self, self.connection)
+        scope_keys = {
+            ident: (ident, period, type(through_period), through_period)
+            for ident, period in frozen.items()
+        }
+        requested = {
+            ident: period for ident, period in frozen.items()
+            if not active or scope_keys[ident] not in self._verified_selected_voucher_adoptions
+            or (period, ident) not in self._verified_frozen_voucher_headers
+        }
         references = selected_voucher_references(
-            self.connection, sorted(frozen), through_period=through_period
+            self.connection, sorted(requested), through_period=through_period
+        )
+        if requested:
+            references.extend(_selected_voucher_path_references(self.connection, requested))
+        fresh_parts, fresh_headers = {}, {}
+        parts = ChainMap(fresh_parts, self._verified_close_storage_parts if active else {})
+        headers = ChainMap(fresh_headers, self._close_headers if active else {})
+        fields = (
+            "close_period", "path", "position", "reference_type", "reference_id", "related_id",
+        )
+        keys, pending = set(), []
+        for reference in references:
+            values = tuple(reference[field] for field in fields)
+            key = tuple(map(type, values)) + values
+            if not active or key not in self._verified_close_references:
+                if key not in keys:
+                    pending.append(reference)
+                    keys.add(key)
+        # Stage mirror, bucket and header success until every live head binds.
+        verify_close_references(
+            self.connection, pending,
+            _verified_manifests=self._close_manifests if active else None,
+            _verified_headers=headers, _verified_storage_parts=parts,
         )
         found = {(row["reference_id"], row["close_period"]) for row in references}
-        if any((ident, period) not in found for ident, period in frozen.items()):
+        if any((ident, period) not in found for ident, period in requested.items()):
             raise KernelError("content_integrity_failed", "冻结凭证采用来源缺失")
-        self.verify_close_references(references)
+        cached = self._verified_frozen_voucher_headers if active else {}
+        missing = {
+            ident: period for ident, period in frozen.items() if (period, ident) not in cached
+        }
+        staged = {}
+        if missing:
+            actual = {row["id"]: dict(row) for row in self.connection.execute(
+                "SELECT v.id,v.voucher_id,v.calculation_id,v.period,v.reverses_id,v.total,n.number "
+                "FROM json_each(?) ids JOIN voucher_version v ON v.id=ids.value "
+                "JOIN voucher n ON n.id=v.voucher_id",
+                (canonical(sorted(missing)),),
+            )}
+            if actual.keys() != missing.keys():
+                raise KernelError("content_integrity_failed", "冻结凭证实际来源缺失")
+            reader = close_reader()
+            periods = {period for period in missing.values() if period not in headers}
+            close_rows = list(self.connection.execute(
+                "SELECT p.* FROM json_each(?) periods "
+                "JOIN period_close p ON p.period=periods.value",
+                (canonical(sorted(periods)),),
+            )) if periods else []
+            if {row["period"] for row in close_rows} != periods:
+                raise KernelError("content_integrity_failed", "冻结凭证关账来源缺失")
+            checked = (
+                close_storage.verified_headers(self.connection, close_rows)
+                if reader is close_storage else
+                tuple(reader.verified_header(self.connection, row) for row in close_rows)
+            )
+            headers.update((header.period, header) for header in checked)
+            selected = {}
+            for reference in references:
+                ident, period = reference["reference_id"], reference["close_period"]
+                if (ident in missing and period == missing[ident]
+                        and reference["path"] == "vouchers[*].id"):
+                    selected.setdefault(period, []).append(
+                        (reference["path"], int(reference["position"]), ident)
+                    )
+            if {(period, ident) for period, refs in selected.items() for _, _, ident in refs} != {
+                (period, ident) for ident, period in missing.items()
+            }:
+                raise KernelError("content_integrity_failed", "冻结凭证精确采用来源缺失")
+            if reader is close_storage:
+                leaves = close_storage.voucher_reference_headers(
+                    self.connection, [(headers[period], refs) for period, refs in selected.items()],
+                    parts=parts,
+                )
+            else:
+                # Fixed readers retain their decoder and complete section rules.
+                leaves = {}
+                for period, refs in selected.items():
+                    vouchers = reader.read_section(self.connection, headers[period], "vouchers")
+                    for _, position, ident in refs:
+                        item = vouchers[position]
+                        if item["id"] != ident:
+                            raise KernelError("content_integrity_failed", "冻结凭证精确采用不匹配")
+                        leaves[period, ident] = item
+            for ident, period in missing.items():
+                live, leaf = actual[ident], leaves[period, ident]
+                if live["period"] != period or any(
+                    live[field] != leaf[field]
+                    for field in (
+                        "id", "voucher_id", "calculation_id", "number", "total", "reverses_id",
+                    )
+                ):
+                    raise KernelError(
+                        "content_integrity_failed", "实际凭证头与冻结采用不一致",
+                        component="voucher", record_id=ident,
+                        reason="frozen_voucher_header_mismatch",
+                    )
+                staged[period, ident] = live
+        for row in rows:
+            if row["close_period"] is None:
+                continue
+            live = staged.get((row["close_period"], row["id"])) or cached.get(
+                (row["close_period"], row["id"])
+            )
+            if live is None or any(
+                row[field] != live[field]
+                for field in ("voucher_id", "number", "total", "reverses_id", "period")
+                if field in row.keys()
+            ) or (
+                "voucher_calculation_id" in row.keys()
+                and row["voucher_calculation_id"] != live["calculation_id"]
+            ):
+                raise KernelError("content_integrity_failed", "所选凭证头与实际来源不一致")
+        if active:
+            self._verified_close_references.update(keys)
+            self._verified_close_storage_parts.update(fresh_parts)
+            self._close_headers.update(fresh_headers)
+            self._verified_frozen_voucher_headers.update(staged)
+            self._verified_selected_voucher_adoptions.update(scope_keys.values())
 
     def verify_settlement_periods(self, periods):
         """Reuse successful period seals only within this read snapshot."""
@@ -505,23 +1140,64 @@ class QueryReads:
 
     def verify_publication_periods(self, periods):
         """Verify immutable publication identities once in this read snapshot."""
-        from .publication import verified_period_headers
+        from . import close_storage, publication
+        from .content_history_context import close_reader, publication_reader
 
         periods = set(periods)
-        pending = periods - self._verified_publications.keys()
+        active = (
+            self._snapshot_active and self.connection.in_transaction
+            and _active_fact_reads.get() is self
+            and getattr(self.store.registry, "content_version", None) != 1
+            and close_reader() is close_storage and publication_reader() is publication
+        )
+        cached = self._verified_publications if active else {}
+        pending = {period for period in periods if period not in cached}
         grouped = {period: [] for period in pending}
         if pending:
-            for value in verified_period_headers(self.connection, pending):
+            headers = (
+                publication._verified_period_headers(
+                    self.connection, pending, self._verified_publication_ids
+                ) if active else publication.verified_period_headers(self.connection, pending)
+            )
+            for value in headers:
                 grouped[value["posting_period"]].append(value)
-            if self._snapshot_active:
+            if active:
                 self._verified_publications.update(
                     {period: tuple(rows) for period, rows in grouped.items()}
+                )
+                self._verified_publication_ids.update(
+                    (row["id"], row["posting_period"]) for rows in grouped.values() for row in rows
                 )
         return [
             row
             for period in sorted(periods)
-            for row in self._verified_publications.get(period, grouped.get(period, ()))
+            for row in cached.get(period, grouped.get(period, ()))
         ]
+
+    def verify_publication_records(self, rows):
+        """Reuse an exact record digest, never publication selection or adoption."""
+        from .content_history_context import publication_reader
+
+        rows = tuple(rows)
+        active = self._snapshot_active and self.connection.in_transaction
+        verified = self._verified_publication_ids if active else {}
+        pending = {}
+        for row in rows:
+            ident, period = row["id"], row["posting_period"]
+            if ident in verified:
+                if verified[ident] != period:
+                    raise KernelError("content_integrity_failed", "正式发布期间与已核内容不一致")
+                continue
+            publication_reader().verify_record(row)
+            pending[ident] = period
+        if active:
+            self._verified_publication_ids.update(pending)
+
+    def verify_open_voucher_scope(self, through_period, *, posting_period=None):
+        """Reuse only a complete scope check in this owned read-only snapshot."""
+        verify_open_voucher_scope(
+            self.connection, through_period, posting_period=posting_period
+        )
 
     def verify_balance_scope(self, through_period, category=None):
         """Cache only a successful seal/source check in this snapshot."""
@@ -596,39 +1272,174 @@ class QueryReads:
     def fact(self, ident):
         return self.facts((ident,))[ident]
 
-    def metadata(self, identifiers, *, state=True, outcomes=None):
+    def verify_fact_versions(self, identifiers):
+        """Authenticate exact raw facts, then reuse this call's checked inputs.
+
+        Typed presentation is built only after the original stored data, child
+        order, identity, seals and evidence have passed the ordinary verifier.
+        A model dump is never used to authenticate the stored source. Released
+        v1 and unowned reads retain their existing storage adapter path.
+        """
+        from .contracts import FactVersion
+        from .integrity import verify_sources
+        from .storage import _validation_json
+
         identifiers = set(identifiers)
+        checked = verify_sources(
+            self.engine, self.connection, fact_ids=identifiers, _return_facts=True
+        )
+        if (
+            not self._snapshot_active or not self.connection.in_transaction
+            or getattr(self.store.registry, "content_version", None) == 1
+        ):
+            return
+        staged = {}
+        for ident, row in checked.items():
+            model = self.store.registry.models[row["kind"]]
+            staged[ident] = FactVersion(
+                ident, row["subject_id"], row["revision"],
+                model.model_validate_json(_validation_json(row["data"])),
+                tuple(sorted(row["evidence"])),
+            )
+        # Typed construction can fail even after a raw proof succeeds. No
+        # half-batch typed cache is published in that case.
+        self._fact_versions.update(staged)
+
+    def calculation_identity_headers(self, identifiers):
+        """Read exact calculation/fact/publication identities in one batch.
+
+        This does not prove result contents or frozen adoption. The identity
+        consumer still authenticates the publication and its precise frozen
+        leaf or current terminal; no successful body marker is populated here.
+        """
+        identifiers = set(identifiers)
+        if not identifiers:
+            return {}
+        cursor = self.connection.execute(
+            "SELECT p.*,c.id source_id,c.subject_id source_subject,c.kind source_kind,"
+            "c.period source_period,c.fact_id source_fact_id,c.digest source_digest,"
+            "c.program_version source_program_version,f.revision fact_revision,"
+            "f.subject_id fact_subject,f.period fact_period,s.kind fact_kind,"
+            "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) cs,"
+            "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=f.id) fs,"
+            "h.calculation_id current_id,"
+            "EXISTS(SELECT 1 FROM calculation_publication n "
+            "WHERE n.previous_publication_id=p.id) has_successor "
+            "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+            "JOIN fact_revision f ON f.id=c.fact_id JOIN subject s ON s.id=f.subject_id "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
+            "LEFT JOIN calculation_current h ON h.subject_id=p.subject_id",
+            (canonical(sorted(identifiers)),),
+        )
+        names = tuple(item[0] for item in cursor.description)
+        headers = {}
+        for row in cursor:
+            value = dict(zip(names, row, strict=True))
+            if value["source_id"] in headers or (
+                value["source_subject"], value["source_kind"], value["source_period"]
+            ) != (value["fact_subject"], value["fact_kind"], value["fact_period"]):
+                raise KernelError("content_integrity_failed", "核算元数据与来源事实身份不一致")
+            if value["id"] is None:
+                raise KernelError("content_integrity_failed", "采用来源缺少正式发布")
+            headers[value["source_id"]] = value
+        if headers.keys() != identifiers:
+            raise KernelError("content_integrity_failed", "核算元数据与来源事实身份不一致")
+        return headers
+
+    def metadata(self, identifiers, *, state=True, outcomes=None, _decoded_outcomes=None):
+        # A consumer needing this exact body can receive the strictly checked
+        # object during the same metadata read. It lives only in the caller's
+        # local batch, never in a second snapshot body cache or an identity proof.
+        if _decoded_outcomes is not None and not state:
+            raise ValueError("decoded metadata requires result-state verification")
+        if _decoded_outcomes is not None and outcomes is not None:
+            raise ValueError("choose decoded or raw metadata output")
+        decode_selected = _decoded_outcomes is not None
+        identifiers = set(identifiers)
+        reusable = (
+            identifiers & self._verified_source_contents.keys()
+            if decode_selected and self._snapshot_active and self.connection.in_transaction
+            else set()
+        )
         missing = {
             ident
             for ident in identifiers
             if ident not in self._metadata
             or (state and "line_count" not in self._metadata[ident])
             or outcomes is not None
+            or decode_selected
         }
         if missing:
-            if state:
+            if state and not decode_selected:
                 self.verify_sql_outcomes(missing)
             expressions = (
                 "json_array_length(c.outcome,'$.lines') AS line_count,"
                 "coalesce(json_extract(c.outcome,'$.opening'),0) AS opening "
-                if state
+                if state and not decode_selected
                 else "NULL AS line_count,NULL AS opening "
             )
-            for row in self.connection.execute(
-                "SELECT c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,c.program_version,"
-                "f.revision AS fact_revision,"
-                "p.id AS publication_id,p.mode AS publication_mode,"
-                "p.posting_period,p.voucher_id,"
-                + ("c.outcome AS outcome," if outcomes is not None else "")
-                + expressions
-                + "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
-                "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
-                "JOIN fact_revision f ON f.id=c.fact_id",
-                (canonical(sorted(missing)),),
+            # An existing complete-source proof can supply this exact body,
+            # but metadata and new bodies still form one staged batch. Neither
+            # half publishes success before all identities and bodies pass.
+            body_expression = (
+                "CASE WHEN c.id IN (SELECT value FROM json_each(?)) "
+                "THEN NULL ELSE c.outcome END AS outcome,"
+                if reusable
+                else "c.outcome AS outcome,"
+            ) if outcomes is not None or decode_selected else ""
+            parameters = (
+                (canonical(sorted(reusable)), canonical(sorted(missing)))
+                if reusable else (canonical(sorted(missing)),)
+            )
+            rows = list(
+                self.connection.execute(
+                    "SELECT c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,c.program_version,"
+                    "f.revision AS fact_revision,"
+                    "f.subject_id fact_subject,f.period fact_period,s.kind fact_kind,"
+                    "p.id AS publication_id,p.mode AS publication_mode,"
+                    "p.posting_period,p.voucher_id,"
+                    + body_expression
+                    + expressions
+                    + "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+                    "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
+                    "JOIN fact_revision f ON f.id=c.fact_id JOIN subject s ON s.id=f.subject_id",
+                    parameters,
+                )
+            )
+            if {row["id"] for row in rows} != missing or any(
+                (row["subject_id"], row["kind"], row["period"])
+                != (row["fact_subject"], row["fact_kind"], row["fact_period"])
+                for row in rows
             ):
+                raise KernelError("content_integrity_failed", "核算元数据与来源事实身份不一致")
+            staged, staged_outcomes, staged_decoded = {}, {}, {}
+            for row in rows:
                 value = dict(row)
-                if outcomes is not None:
-                    outcomes[value["id"]] = value.pop("outcome")
+                if decode_selected:
+                    decoded = (
+                        self._verified_source_contents[value["id"]]
+                        if value["id"] in reusable else stored_json.verify_outcome_bytes(
+                            value["outcome"], value["digest"], value["id"]
+                        )
+                    )
+                    if (
+                        not isinstance(decoded, dict)
+                        or not isinstance(decoded.get("lines"), list)
+                        or type(decoded.get("opening")) is not bool
+                    ):
+                        raise KernelError("content_integrity_failed", "已保存的核算结果结构不一致")
+                    # Do not let JSON1 interpret unchecked bytes. These two
+                    # fields have fixed Outcome types; this is the same state
+                    # projection as JSON1 for every valid stored result.
+                    value["line_count"] = len(decoded["lines"])
+                    value["opening"] = int(decoded["opening"])
+                    staged_decoded[value["id"]] = decoded
+                for field in ("fact_subject", "fact_kind", "fact_period"):
+                    value.pop(field)
+                if outcomes is not None or decode_selected:
+                    raw = value.pop("outcome")
+                    if outcomes is not None:
+                        staged_outcomes[value["id"]] = raw
                 if value["posting_period"] is None and value["kind"] not in {
                     "asset_activation",
                     "asset_consumption",
@@ -653,7 +1464,14 @@ class QueryReads:
                     for field in ("line_count", "opening"):
                         if field in prior:
                             value[field] = prior[field]
-                self._metadata[value["id"]] = value
+                staged[value["id"]] = value
+            self._metadata.update(staged)
+            if outcomes is not None:
+                outcomes.update(staged_outcomes)
+            if decode_selected:
+                _decoded_outcomes.update(staged_decoded)
+                if self._snapshot_active and self.connection.in_transaction:
+                    self._verified_sql_outcomes.update(missing - reusable)
             if any(ident not in self._metadata for ident in missing) or (
                 outcomes is not None and any(ident not in outcomes for ident in missing)
             ):
@@ -661,14 +1479,23 @@ class QueryReads:
         return {ident: self._metadata[ident] for ident in identifiers}
 
     def verify_sql_outcomes(self, identifiers):
+        """Reuse only exact successful JSON/content proof in this owned snapshot."""
         identifiers = set(identifiers)
+        active = self._snapshot_active and self.connection.in_transaction
         missing = (
-            identifiers - self._verified_sql_outcomes
-            if self._snapshot_active else identifiers
+            {
+                ident
+                for ident in identifiers
+                if ident not in self._verified_sql_outcomes
+                and ident not in self._verified_source_contents
+                and ident not in self._anchored_source_bytes
+            }
+            if active
+            else identifiers
         )
         if missing:
             verify_sql_outcomes(self.connection, missing)
-            if self._snapshot_active:
+            if active:
                 self._verified_sql_outcomes.update(missing)
 
     def _material_sql_outcome_batch(self, connection):
@@ -682,14 +1509,18 @@ class QueryReads:
         self.asset_members_many((owner_calculation_id,))
         return self._asset_members[owner_calculation_id]
 
-    def asset_members_many(self, owner_calculation_ids):
+    def asset_members_many(self, owner_calculation_ids, *, _decoded_owners=None):
         """Validate selected frozen owners together and retain successful snapshot reads."""
         owner_ids = tuple(dict.fromkeys(owner_calculation_ids))
         missing = tuple(ident for ident in owner_ids if ident not in self._asset_members)
         if missing:
             from .asset_batches import frozen_members_many
 
-            verified = frozen_members_many(self.connection, missing)
+            reusable = {
+                ident: _decoded_owners[ident] for ident in missing
+                if ident in (_decoded_owners or {}) and ident in self._verified_sql_outcomes
+            } if _owns_current_selector_snapshot(self, self.connection) else {}
+            verified = frozen_members_many(self.connection, missing, _owner_outcomes=reusable)
             self._asset_members.update(
                 {ident: tuple(members) for ident, members in verified.items()}
             )
@@ -701,11 +1532,17 @@ class QueryReads:
         if missing:
             # Read the full result alongside its publication and fact identity.
             # State-only JSON scalars are not needed by this complete decoder.
+            reusable = (
+                {ident for ident in missing if ident in self._verified_source_contents}
+                if self._snapshot_active and self.connection.in_transaction
+                else set()
+            )
             outcomes = {}
-            metadata = self.metadata(missing, state=False, outcomes=outcomes)
+            metadata = self.metadata(missing - reusable, state=False, outcomes=outcomes)
+            metadata.update(self.metadata(reusable, state=False))
             facts = self.facts({row["fact_id"] for row in metadata.values()})
             prepared = {}
-            for ident, outcome in outcomes.items():
+            for ident in missing:
                 value = metadata[ident]
                 prepared[ident] = {
                     key: item
@@ -713,7 +1550,11 @@ class QueryReads:
                     if key not in {"line_count", "opening", "fact_revision"}
                 } | {
                     "fact_data": facts[value["fact_id"]]["data"],
-                    "outcome": self._stored_outcome(outcome),
+                    "outcome": (
+                        self._verified_source_contents[ident]
+                        if ident in reusable
+                        else self._stored_outcome(outcomes[ident])
+                    ),
                 }
             # Retain the exact text returned by the same SELECT only after the
             # complete typed batch succeeds. It is input for a later hash check,
@@ -735,23 +1576,52 @@ class QueryReads:
         identifiers = set(identifiers)
         missing = {ident for ident in identifiers if ident not in self._raw_calculations}
         if missing:
-            metadata = self.metadata(missing)
+            combined = (
+                self._snapshot_active and self.connection.in_transaction
+                and getattr(self.store.registry, "content_version", None) != 1
+            )
+            decoded = {}
+            metadata = (
+                self.metadata(missing, _decoded_outcomes=decoded)
+                if combined else self.metadata(missing)
+            )
             facts = self.store.fact_data_many(
                 self.connection, {row["fact_id"] for row in metadata.values()}
             )
-            for row in self.connection.execute(
-                "SELECT c.id,c.outcome FROM json_each(?) ids JOIN calculation c ON c.id=ids.value",
-                (canonical(sorted(missing)),),
-            ):
-                value = metadata[row["id"]]
-                self._raw_calculations[row["id"]] = {
+            reusable = (
+                missing if combined else
+                {ident for ident in missing if ident in self._verified_source_contents}
+                if self._snapshot_active and self.connection.in_transaction
+                else set()
+            )
+            outcomes = (
+                {
+                    row["id"]: row["outcome"]
+                    for row in self.connection.execute(
+                        "SELECT c.id,c.outcome FROM json_each(?) ids "
+                        "JOIN calculation c ON c.id=ids.value",
+                        (canonical(sorted(missing - reusable)),),
+                    )
+                }
+                if missing - reusable
+                else {}
+            )
+            prepared = {}
+            for ident in missing:
+                value = metadata[ident]
+                prepared[ident] = {
                     key: item
                     for key, item in value.items()
                     if key not in {"line_count", "opening", "fact_revision"}
                 } | {
                     "fact_data": facts[value["fact_id"]],
-                    "outcome": self._stored_outcome(row["outcome"]),
+                    "outcome": (
+                        decoded[ident] if combined else self._verified_source_contents[ident]
+                        if ident in reusable
+                        else self._stored_outcome(outcomes[ident])
+                    ),
                 }
+            self._raw_calculations.update(prepared)
         return {ident: self._raw_calculations[ident] for ident in identifiers}
 
     def prime_parents(self, identifiers):
@@ -974,7 +1844,7 @@ class QueryReads:
         Callers still select exact publications and verify their used relations.
         """
         identifiers = set(identifiers)
-        missing = identifiers - self._verified_source_contents.keys()
+        missing = {ident for ident in identifiers if ident not in self._verified_source_contents}
         if not missing:
             return {ident: self._verified_source_contents[ident] for ident in identifiers}
         reusable = (
@@ -1003,30 +1873,19 @@ class QueryReads:
             )
         if headers.keys() != missing:
             raise KernelError("content_integrity_failed", "本次读取的核算来源缺失")
-        from .integrity import _object, verify_fact_child_order
-        from .storage import _snapshot_fact_hashes, _snapshot_fact_raws
+        from .integrity import _object
 
-        fact_ids = {row["fact_id"] for row in headers.values()}
-        raw_hashes = _snapshot_fact_hashes(self.store, self.connection, fact_ids)
-        facts = _snapshot_fact_raws(self.store, self.connection, fact_ids)
-        try:
-            facts.update(self.store.fact_data_many(self.connection, fact_ids - facts.keys()))
-        except (KeyError, ValueError) as error:
-            raise KernelError("content_integrity_failed", "本次读取的事实内容无法解码") from error
-        except KernelError as error:
-            if error.code != "unknown_fact":
-                raise
-            raise KernelError("content_integrity_failed", "本次读取的事实内容缺失") from error
-        if facts.keys() != fact_ids:
-            raise KernelError("content_integrity_failed", "本次读取的事实内容缺失")
-        kinds = {}
         for header in headers.values():
-            kinds.setdefault(header["fact_kind"], set()).add(header["fact_id"])
-        verify_fact_child_order(self.engine, self.connection, kinds)
+            if (
+                not header["calculation_sealed"]
+                or not header["fact_sealed"]
+                or (header["subject_id"], header["kind"], header["period"])
+                != (header["fact_subject"], header["fact_kind"], header["fact_period"])
+            ):
+                raise KernelError("content_integrity_failed", "本次读取的核算来源封签不一致")
+        self._verify_selected_fact_bodies(headers.values())
         verified = {}
         for ident, header in headers.items():
-            fact_id = header["fact_id"]
-            fact = facts[fact_id]
             raw_outcome = (
                 self._raw_calculation_outcomes[ident]
                 if ident in reusable
@@ -1046,21 +1905,9 @@ class QueryReads:
                     record_id=ident,
                     reason="invalid_json",
                 ) from error
-            if (
-                not header["calculation_sealed"]
-                or not header["fact_sealed"]
-                or (header["subject_id"], header["kind"], header["period"])
-                != (header["fact_subject"], header["fact_kind"], header["fact_period"])
-                or fact.get("period") != str(YearMonth.from_ordinal(header["fact_period"]))
-                or (
-                    raw_hashes.get(fact_id) != header["fact_digest"]
-                    and digest(fact) != header["fact_digest"]
-                )
-                # The writer already stores canonical JSON. Hash those bytes
-                # directly; retain canonical comparison for an equivalent
-                # stored representation, rather than changing its semantics.
-                or not outcome_digest_matches
-            ):
+            # The writer stores canonical JSON; equivalent noncanonical
+            # content still uses the strict decoded comparison above.
+            if not outcome_digest_matches:
                 raise KernelError("content_integrity_failed", "本次读取的核算来源封签不一致")
             verified[ident] = outcome
         if self._snapshot_active:
@@ -1070,6 +1917,169 @@ class QueryReads:
             for ident in identifiers
         }
 
+    def _verify_selected_fact_bodies(self, headers):
+        """Prove exact physical facts without decoding unused scalar values.
+
+        Scalar SQL encodes the same stored fields and child order as the writer.
+        A byte hash is only an equality fast path: composite, noncanonical and
+        fixed-version historical facts retain the original complete decoder.
+        Header identity/seals are checked by each caller before reaching here.
+        """
+        from .integrity import verify_fact_child_order
+        from .schema import table_name
+        from .storage import _scalar_fact_hashes, _snapshot_fact_hashes, _snapshot_fact_raws
+
+        headers = tuple(headers)
+        kinds, fact_periods, fact_digests = {}, {}, {}
+        for header in headers:
+            ident = header["fact_id"]
+            kinds.setdefault(header["fact_kind"], set()).add(ident)
+            fact_periods[ident] = header["fact_period"]
+            fact_digests[ident] = header["fact_digest"]
+        verify_fact_child_order(self.engine, self.connection, kinds)
+        for kind, identifiers in kinds.items():
+            physical = dict(
+                self.connection.execute(
+                    f"SELECT f.revision_id,f.period FROM json_each(?) ids "
+                    f"CROSS JOIN {table_name(kind)} f ON f.revision_id=ids.value",
+                    (canonical(sorted(identifiers)),),
+                )
+            )
+            if physical.keys() != identifiers or any(
+                physical[ident] != fact_periods[ident] for ident in identifiers
+            ):
+                raise KernelError("content_integrity_failed", "本次读取的事实期间不一致")
+        fact_ids = set(fact_periods)
+        raw_hashes = _snapshot_fact_hashes(self.store, self.connection, fact_ids)
+        raw_hashes.update(
+            _scalar_fact_hashes(
+                self.store,
+                self.connection,
+                {kind: ids - raw_hashes.keys() for kind, ids in kinds.items()},
+            )
+        )
+        fallback_ids = {ident for ident in fact_ids if raw_hashes.get(ident) != fact_digests[ident]}
+        if not fallback_ids:
+            return
+        facts = _snapshot_fact_raws(self.store, self.connection, fallback_ids)
+        try:
+            facts.update(self.store.fact_data_many(self.connection, fallback_ids - facts.keys()))
+        except (KeyError, ValueError) as error:
+            raise KernelError("content_integrity_failed", "本次读取的事实内容无法解码") from error
+        except KernelError as error:
+            if error.code != "unknown_fact":
+                raise
+            raise KernelError("content_integrity_failed", "本次读取的事实内容缺失") from error
+        if facts.keys() != fallback_ids or any(
+            fact.get("period") != str(YearMonth.from_ordinal(fact_periods[ident]))
+            or digest(fact) != fact_digests[ident]
+            for ident, fact in facts.items()
+        ):
+            raise KernelError("content_integrity_failed", "本次读取的事实内容封签不一致")
+
+    def verify_saved_input_identity(self, identifiers):
+        """Bind consumed result bodies to their saved calculation identities.
+
+        Read only the requested IDs' saved scopes and dependency version IDs,
+        never ancestor result bodies. This is the existing core's two exact
+        input-digest variants, not a current-head or adoption assertion.
+        """
+        from collections import defaultdict
+        from dataclasses import asdict
+
+        from .content_history_context import month_type, read_type, source_digest
+        from .integrity import _invalid
+
+        identifiers = set(identifiers)
+        outcomes = self.verify_selected_content(identifiers)
+        missing = (
+            identifiers - self._verified_saved_input_identities
+            if self._snapshot_active
+            else identifiers
+        )
+        if not missing:
+            return outcomes
+        encoded = canonical(sorted(missing))
+        headers = {
+            row["id"]: row
+            for row in self.connection.execute(
+                "SELECT c.id,c.fact_id,c.program_version FROM json_each(?) ids "
+                "JOIN calculation c ON c.id=ids.value",
+                (encoded,),
+            )
+        }
+        if headers.keys() != missing:
+            _invalid("calculation", "*", "referenced_calculation_missing")
+        dependencies, dependency_facts, saved_reads = (
+            defaultdict(set),
+            defaultdict(set),
+            defaultdict(list),
+        )
+        for row in self.connection.execute(
+            "SELECT d.calculation_id,d.upstream_id,c.id found FROM json_each(?) ids "
+            "JOIN dependency_calculation d ON d.calculation_id=ids.value "
+            "LEFT JOIN calculation c ON c.id=d.upstream_id",
+            (encoded,),
+        ):
+            if row["found"] is None or row["upstream_id"] == row["calculation_id"]:
+                _invalid("calculation", row["calculation_id"], "invalid_calculation_dependency")
+            dependencies[row["calculation_id"]].add(row["upstream_id"])
+        for row in self.connection.execute(
+            "SELECT d.calculation_id,d.fact_id,f.id found FROM json_each(?) ids "
+            "JOIN dependency_fact d ON d.calculation_id=ids.value "
+            "LEFT JOIN fact_revision f ON f.id=d.fact_id",
+            (encoded,),
+        ):
+            if row["found"] is None:
+                _invalid("fact", row["fact_id"], "referenced_fact_missing")
+            dependency_facts[row["calculation_id"]].add(row["fact_id"])
+        for row in self.connection.execute(
+            "SELECT d.* FROM json_each(?) ids "
+            "JOIN dependency_scope d ON d.calculation_id=ids.value",
+            (encoded,),
+        ):
+            try:
+                saved_reads[row["calculation_id"]].append(
+                    read_type()(
+                        row["source"],
+                        row["kind"],
+                        row["scope_key"],
+                        None
+                        if row["before_period"] == 119988
+                        else month_type().from_ordinal(row["before_period"]),
+                    )
+                )
+            except (ValueError, TypeError) as exc:
+                raise KernelError(
+                    "content_integrity_failed",
+                    "已保存的读取作用域格式错误",
+                    component="calculation",
+                    record_id=row["calculation_id"],
+                ) from exc
+        for ident, row in headers.items():
+            if row["fact_id"] not in dependency_facts[ident]:
+                _invalid("calculation", ident, "own_fact_dependency_missing")
+            versions = dependencies[ident] | (dependency_facts[ident] - {row["fact_id"]})
+            payload = {
+                "fact": row["fact_id"],
+                "outcome": outcomes[ident],
+                "reads": [asdict(read) for read in sorted(saved_reads[ident], key=repr)],
+                "program": row["program_version"],
+            }
+            first_key = "c_" + source_digest({**payload, "versions": sorted(versions)}).hex()
+            if ident != first_key:
+                second_key = (
+                    "c_"
+                    + source_digest(
+                        {**payload, "versions": sorted(versions | {row["fact_id"]})}
+                    ).hex()
+                )
+                if ident != second_key:
+                    _invalid("calculation", ident, "calculation_input_digest_mismatch")
+        if self._snapshot_active:
+            self._verified_saved_input_identities.update(missing)
+        return outcomes
+
     def _verify_anchored_source_bytes(self, proof):
         """Check an already authenticated report anchor's exact saved sources.
 
@@ -1077,10 +2087,8 @@ class QueryReads:
         immutable anchor against its saved body. No decoded result is returned
         or inserted into the ordinary decoded-content cache.
         """
-        from .integrity import _object, verify_fact_child_order
+        from .integrity import _object
         from .report_open_contribution import _require_source_proof
-        from .schema import table_name
-        from .storage import _scalar_fact_hashes, _snapshot_fact_hashes, _snapshot_fact_raws
 
         bindings = _require_source_proof(proof, self)
         expected = {}
@@ -1105,10 +2113,15 @@ class QueryReads:
                 actual[ident] = list(binding)
         if not pending_bindings:
             return actual
+        body_ids = {
+            ident for ident in pending_bindings if ident not in self._verified_source_contents
+        }
         headers = {
             row["id"]: dict(row)
             for row in self.connection.execute(
-                "SELECT c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,c.outcome,"
+                "SELECT c.id,c.subject_id,c.kind,c.period,c.fact_id,c.digest,"
+                "CASE WHEN c.id IN (SELECT value FROM json_each(?)) "
+                "THEN c.outcome END outcome,"
                 "f.subject_id fact_subject,f.period fact_period,f.digest fact_digest,"
                 "s.kind fact_kind,"
                 "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) "
@@ -1116,14 +2129,12 @@ class QueryReads:
                 "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=f.id) fact_sealed "
                 "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
                 "JOIN fact_revision f ON f.id=c.fact_id JOIN subject s ON s.id=f.subject_id",
-                (canonical(sorted(pending_bindings)),),
+                (canonical(sorted(body_ids)), canonical(sorted(pending_bindings))),
             )
         }
         if headers.keys() != pending_bindings.keys():
             raise KernelError("content_integrity_failed", "本次读取的核算来源缺失")
         pending = {}
-        kinds = {}
-        fact_periods = {}
         for ident, header in headers.items():
             binding = [
                 ident,
@@ -1143,58 +2154,11 @@ class QueryReads:
                 raise KernelError("content_integrity_failed", "本次读取的核算来源封签不一致")
             if ident not in self._verified_source_contents:
                 pending[ident] = header
-                kinds.setdefault(header["fact_kind"], set()).add(header["fact_id"])
-                fact_periods[header["fact_id"]] = header["fact_period"]
         if not pending:
             self._anchored_source_bytes.update(pending_bindings)
             return actual
 
-        verify_fact_child_order(self.engine, self.connection, kinds)
-        for kind, fact_ids in kinds.items():
-            physical = {
-                row["revision_id"]: row["period"]
-                for row in self.connection.execute(
-                    f"SELECT f.revision_id,f.period FROM json_each(?) ids "
-                    f"CROSS JOIN {table_name(kind)} f ON f.revision_id=ids.value",
-                    (canonical(sorted(fact_ids)),),
-                )
-            }
-            if physical.keys() != fact_ids or any(
-                physical[ident] != fact_periods[ident] for ident in fact_ids
-            ):
-                raise KernelError("content_integrity_failed", "本次读取的事实期间不一致")
-
-        fact_ids = set(fact_periods)
-        raw_hashes = _snapshot_fact_hashes(self.store, self.connection, fact_ids)
-        raw_hashes.update(
-            _scalar_fact_hashes(
-                self.store,
-                self.connection,
-                {kind: ids - raw_hashes.keys() for kind, ids in kinds.items()},
-            )
-        )
-        fact_digests = {header["fact_id"]: header["fact_digest"] for header in pending.values()}
-        fallback_ids = {ident for ident in fact_ids if raw_hashes.get(ident) != fact_digests[ident]}
-        if fallback_ids:
-            facts = _snapshot_fact_raws(self.store, self.connection, fallback_ids)
-            try:
-                facts.update(
-                    self.store.fact_data_many(self.connection, fallback_ids - facts.keys())
-                )
-            except (KeyError, ValueError) as error:
-                raise KernelError(
-                    "content_integrity_failed", "本次读取的事实内容无法解码"
-                ) from error
-            except KernelError as error:
-                if error.code != "unknown_fact":
-                    raise
-                raise KernelError("content_integrity_failed", "本次读取的事实内容缺失") from error
-            if facts.keys() != fallback_ids or any(
-                fact.get("period") != str(YearMonth.from_ordinal(fact_periods[ident]))
-                or digest(fact) != fact_digests[ident]
-                for ident, fact in facts.items()
-            ):
-                raise KernelError("content_integrity_failed", "本次读取的事实内容封签不一致")
+        self._verify_selected_fact_bodies(pending.values())
 
         for ident, header in pending.items():
             raw = (
@@ -1319,7 +2283,173 @@ class QueryReads:
             self._close_accounting_slices[key] = result
         return result
 
-    def close_accounting_many(self, rows, *, subjects):
+    def close_accounting_many(self, rows, *, subjects, subjects_by_period=None):
+        return self._close_accounting_many(
+            rows, subjects=subjects, adopted_only=False, subjects_by_period=subjects_by_period
+        )
+
+    def close_asset_owner_accounting_many(self, rows, *, subjects):
+        """Read frozen owner slices using their independently committed full roster."""
+        return self._close_accounting_many(
+            rows, subjects=subjects, adopted_only=False,
+            asset_owners=_owns_current_selector_snapshot(self, self.connection),
+        )
+
+    def frozen_bank_account_identities(
+        self, frozen_periods, *, through_period, _decoded_outcomes=None
+    ):
+        """Authenticate historical bank identities, not complete source contents.
+
+        Frozen statement/reconciliation results contain the bank identity without
+        original row children. The independent adoption anchors these exact result
+        bytes; only the consumed scalar fact and registered identity are read.
+        Nothing here enters the complete-content or decoded-calculation caches.
+        """
+        from . import close_storage
+        from .content_history_context import close_reader
+        from .publication import verify_record
+
+        if close_reader() is not close_storage:
+            raise ValueError("historical bank identity reads require the current close reader")
+        identifiers = set(frozen_periods)
+        if not identifiers:
+            return {}
+        # The funds selector can carry its exact strict metadata decode. Bind
+        # the entire object to that result digest before omitting stored bytes;
+        # the independent frozen leaf is checked below before any scalar is
+        # consumed. This local reuse never publishes a body or identity proof.
+        reusable = {}
+        if (
+            _decoded_outcomes is not None and self._snapshot_active
+            and self.connection.in_transaction
+            and getattr(self.store.registry, "content_version", None) != 1
+        ):
+            for ident in identifiers & _decoded_outcomes.keys() & self._verified_sql_outcomes:
+                metadata = self._metadata.get(ident)
+                if metadata is None:
+                    continue
+                try:
+                    result_digest = digest(_decoded_outcomes[ident]).hex()
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if result_digest == metadata["result_digest"]:
+                    reusable[ident] = (_decoded_outcomes[ident], result_digest)
+        outcome_expression = (
+            "CASE WHEN c.id IN (SELECT value FROM json_each(?)) "
+            "THEN NULL ELSE c.outcome END outcome,"
+            if reusable else "c.outcome,"
+        )
+        parameters = (
+            (canonical(sorted(reusable)), canonical(sorted(identifiers)))
+            if reusable else (canonical(sorted(identifiers)),)
+        )
+        headers = {}
+        for row in self.connection.execute(
+            "SELECT p.*,c.id calc_id,c.subject_id calc_subject,c.kind calc_kind,"
+            "c.period calc_period,c.fact_id calc_fact,c.digest calc_digest,"
+            + outcome_expression
+            + "f.subject_id fact_subject,f.period fact_period,s.kind fact_kind,"
+            "CASE s.kind WHEN 'bank_statement' THEN b.bank_account_id "
+            "WHEN 'bank_reconciliation' THEN r.bank_account_id END bank_account_id,"
+            "CASE s.kind WHEN 'bank_statement' THEN b.period "
+            "WHEN 'bank_reconciliation' THEN r.period END scalar_period,"
+            "e.kind entity_kind,e.account_type,"
+            "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) cs,"
+            "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=c.fact_id) fs "
+            "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+            "LEFT JOIN subject s ON s.id=f.subject_id "
+            "LEFT JOIN fact_bank_statement b ON b.revision_id=f.id "
+            "LEFT JOIN fact_bank_reconciliation r ON r.revision_id=f.id "
+            "LEFT JOIN entity e ON e.id=CASE s.kind "
+            "WHEN 'bank_statement' THEN b.bank_account_id "
+            "WHEN 'bank_reconciliation' THEN r.bank_account_id END",
+            parameters,
+        ):
+            ident = row["calc_id"]
+            if (
+                ident in headers
+                or row["id"] is None
+                or not row["cs"]
+                or not row["fs"]
+                or row["calc_kind"] not in {"bank_statement", "bank_reconciliation"}
+                or (row["calc_subject"], row["calc_kind"], row["calc_period"])
+                != (row["fact_subject"], row["fact_kind"], row["fact_period"])
+                or row["scalar_period"] != row["fact_period"]
+                or row["calc_subject"] != row["subject_id"]
+                or row["calc_id"] != row["calculation_id"]
+                or row["posting_period"] != frozen_periods[ident]
+                or not row["calc_period"] < through_period
+                or not row["posting_period"] <= through_period
+                or row["entity_kind"] != "fund_account"
+                or row["account_type"] != "bank"
+            ):
+                raise KernelError("content_integrity_failed", "历史银行账户来源身份不一致")
+            verify_record(row)
+            headers[ident] = row
+        if headers.keys() != identifiers:
+            raise KernelError("content_integrity_failed", "历史银行账户来源缺失")
+        closes = self.authoritative_close_rows(
+            periods=set(frozen_periods.values()), through_period=through_period
+        )
+        if {row["period"] for row in closes} != set(frozen_periods.values()):
+            raise KernelError("content_integrity_failed", "历史银行账户缺少冻结采用")
+        scopes = {row["period"]: set() for row in closes}
+        for ident, period in frozen_periods.items():
+            scopes[period].add(headers[ident]["calc_subject"])
+        adopted = {
+            (part.period, item["calculation_id"]): item
+            for part in self.close_adopted_results_many(
+                closes,
+                subjects={row["calc_subject"] for row in headers.values()},
+                subjects_by_period=scopes,
+            )
+            for item in part.adopted_results
+        }
+        result = {}
+        for ident, row in headers.items():
+            item = adopted.get((frozen_periods[ident], ident))
+            if item is None or any(
+                item[field] != expected
+                for field, expected in (
+                    ("publication_id", row["id"]),
+                    ("subject_id", row["calc_subject"]),
+                    ("fact_id", row["calc_fact"]),
+                    ("source_period", str(YearMonth.from_ordinal(row["calc_period"]))),
+                    ("posting_period", str(YearMonth.from_ordinal(row["posting_period"]))),
+                    ("result_digest", row["calc_digest"].hex()),
+                )
+            ):
+                raise KernelError("content_integrity_failed", "历史银行账户冻结采用不一致")
+            if ident in reusable:
+                outcome, result_digest = reusable[ident]
+                if result_digest != item["result_digest"]:
+                    raise KernelError("content_integrity_failed", "历史银行账户采用正文不一致")
+            else:
+                outcome = stored_json.verify_outcome_bytes(
+                    row["outcome"], bytes.fromhex(item["result_digest"]), ident
+                )
+            if (
+                not isinstance(outcome, dict)
+                or not isinstance(outcome.get("values"), dict)
+                or outcome.get("lines") != []
+                or outcome.get("opening") is not False
+                or outcome["values"].get("bank_account_id") != row["bank_account_id"]
+            ):
+                raise KernelError("content_integrity_failed", "历史银行账户标量与采用来源不一致")
+            result[ident] = row["bank_account_id"]
+        return result
+
+    def close_adopted_results_many(self, rows, *, subjects, subjects_by_period=None):
+        """Read adopted leaves; released v1 keeps its complete accounting proof."""
+        return self._close_accounting_many(
+            rows, subjects=subjects, adopted_only=True, subjects_by_period=subjects_by_period
+        )
+
+    def _close_accounting_many(
+        self, rows, *, subjects, adopted_only, subjects_by_period=None, asset_owners=False
+    ):
         """Stage current-reader groups; retain v1's per-month proof semantics."""
         from . import close_storage
         from .content_history_context import close_reader
@@ -1328,48 +2458,86 @@ class QueryReads:
         if not rows:
             return ()
         subjects = frozenset(subjects)
+        if subjects_by_period is not None:
+            subjects_by_period = {
+                period: frozenset(scope) for period, scope in subjects_by_period.items()
+            }
+            if (
+                set(subjects_by_period) != {row["period"] for row in rows}
+                or any(not scope <= subjects for scope in subjects_by_period.values())
+            ):
+                raise ValueError("accounting scopes must match the requested closes and subjects")
         reader = close_reader()
         if reader is not close_storage:
             # The released v1 reader retains its own historical single-month
             # rule and is never handed a current-version authority package.
             return tuple(self.close_accounting(row, subjects=subjects) for row in rows)
+        cache = self._close_adopted_result_slices if adopted_only else self._close_accounting_slices
         pending = {}
+        requested_keys = []
         for row in rows:
-            key = (row["period"], subjects)
-            if not self._snapshot_active or key not in self._close_accounting_slices:
+            scope = subjects if subjects_by_period is None else subjects_by_period[row["period"]]
+            # Complete scoped slices prove absence against the entire requested
+            # authority universe. A smaller universe's success cannot hide an
+            # omitted publication when the same bucket scope is requested later.
+            key = (
+                (row["period"], scope, subjects)
+                if subjects_by_period is not None and not adopted_only and scope != subjects
+                else (row["period"], scope)
+            )
+            if asset_owners:
+                # The committed owner roster proves this narrower read scope.
+                # It is distinct from the ordinary whole-universe proof, even
+                # though both return the same full subject selection.
+                key = (*key, "asset_owners")
+            requested_keys.append(key)
+            if not self._snapshot_active or key not in cache:
                 pending.setdefault(key, row)
         staged = {}
         staged_headers = {}
         if pending:
+            missing_rows = {
+                row["period"]: row for row in pending.values()
+                if not self._snapshot_active or row["period"] not in self._close_headers
+            }
+            verified = close_storage.verified_headers(self.connection, missing_rows.values())
+            staged_headers.update((header.period, header) for header in verified)
             headers = []
-            for key, row in pending.items():
+            for key in pending:
                 period = key[0]
                 header = (
                     self._close_headers[period]
                     if self._snapshot_active and period in self._close_headers
-                    else reader.verified_header(self.connection, row)
+                    else staged_headers[period]
                 )
                 staged_headers[period] = header
                 headers.append(header)
-            results = reader.read_accounting_many(
-                self.connection, headers, subjects,
+            read_many = (
+                reader.read_adopted_results_many if adopted_only else reader.read_accounting_many
+            )
+            if asset_owners:
+                read_many = reader.read_asset_owner_accounting_many
+            results = read_many(
+                self.connection,
+                headers,
+                subjects,
                 _verified_parts=(
                     self._verified_close_storage_parts if self._snapshot_active else None
                 ),
                 _positions_cache=(
                     self._close_accounting_positions if self._snapshot_active else None
                 ),
+                **(
+                    {"subjects_by_period": {key[0]: key[1] for key in pending}}
+                    if subjects_by_period is not None
+                    else {}
+                ),
             )
             staged.update(zip(pending, results, strict=True))
         if self._snapshot_active:
             self._close_headers.update(staged_headers)
-            self._close_accounting_slices.update(staged)
-        return tuple(
-            self._close_accounting_slices[(row["period"], subjects)]
-            if self._snapshot_active
-            else staged[(row["period"], subjects)]
-            for row in rows
-        )
+            cache.update(staged)
+        return tuple((cache if self._snapshot_active else staged)[key] for key in requested_keys)
 
     def close_material_sources(self, row, *, source_ids):
         from .content_history_context import close_reader
@@ -1402,12 +2570,47 @@ class QueryReads:
         key = (row["period"], "readiness:" + name)
         if self._snapshot_active and key in self._close_sections:
             return self._close_sections[key]
-        result = close_reader().read_readiness_check(
-            self.connection, self.close_header(row), name
-        )
+        result = close_reader().read_readiness_check(self.connection, self.close_header(row), name)
         if self._snapshot_active:
             self._close_sections[key] = result
         return result
+
+    def close_readiness_checks_many(self, rows, name):
+        """Read one checker across exact closes without changing its proof scope."""
+        from . import close_storage
+
+        rows = tuple(rows)
+        if not _owns_current_selector_snapshot(self, self.connection):
+            return tuple(self.close_readiness_check(row, name) for row in rows)
+        periods = [row["period"] for row in rows]
+        if any(type(period) is not int for period in periods) or len(set(periods)) != len(rows):
+            raise ValueError("readiness closes must have distinct integer periods")
+        if type(name) is not str or not name:
+            raise ValueError("readiness checker name must be nonempty")
+        keys = [(period, "readiness:" + name) for period in periods]
+        pending = [
+            row for row, key in zip(rows, keys, strict=True) if key not in self._close_sections
+        ]
+        if pending:
+            fresh = [row for row in pending if row["period"] not in self._close_headers]
+            staged_headers = dict(zip(
+                (row["period"] for row in fresh),
+                close_storage.verified_headers(self.connection, fresh), strict=True,
+            ))
+            headers = tuple(
+                self._close_headers[row["period"]]
+                if row["period"] in self._close_headers else staged_headers[row["period"]]
+                for row in pending
+            )
+            values = close_storage.read_readiness_checks_many(self.connection, headers, name)
+            # A late damaged month must not publish even earlier successful
+            # checker or header proofs from this batch.
+            staged_sections = dict(zip(
+                ((row["period"], "readiness:" + name) for row in pending), values, strict=True,
+            ))
+            self._close_headers.update(staged_headers)
+            self._close_sections.update(staged_sections)
+        return tuple(self._close_sections[key] for key in keys)
 
     def authoritative_close_rows(self, *, periods, through_period=None):
         """Read exact publication periods without trusting reverse directory discovery.
@@ -1425,20 +2628,24 @@ class QueryReads:
                 self.connection, periods=requested, through_period=through_period
             )
             return rows
-        cached = self._closes | self._authoritative_closes
-        missing = [period for period in requested if period not in cached]
+        missing = [
+            period for period in requested
+            if period not in self._authoritative_closes and period not in self._closes
+        ]
         if missing:
             rows, headers = authoritative_close_rows(
                 self.connection, periods=missing, through_period=through_period
             )
             self._authoritative_closes.update({row["period"]: row for row in rows})
             self._close_headers.update(headers)
-        cached = self._closes | self._authoritative_closes
         return [
             cached_row
             for period in requested
             if (through_period is None or period <= through_period)
-            if (cached_row := cached.get(period)) is not None
+            if (cached_row := (
+                self._authoritative_closes[period]
+                if period in self._authoritative_closes else self._closes.get(period)
+            )) is not None
         ]
 
     def job_rows(self, *, subject_id=None, period):
@@ -1486,8 +2693,7 @@ class QueryReads:
         # unrelated outcome fields and must not populate the full-body cache.
         # The other UNION arm is independent of outcome JSON.
         candidate_sql = (
-            "SELECT c.id FROM calculation c WHERE "
-            "c.kind NOT IN (SELECT value FROM json_each(?))"
+            "SELECT c.id FROM calculation c WHERE c.kind NOT IN (SELECT value FROM json_each(?))"
         )
         candidate_parameters = [kinds]
         if period is not None:
@@ -1497,8 +2703,7 @@ class QueryReads:
             )
             candidate_parameters.append(YearMonth(period).ordinal)
         ambiguous = self.connection.execute(
-            candidate_sql
-            + " AND (json_type(c.outcome) IS NOT 'object' "
+            candidate_sql + " AND (json_type(c.outcome) IS NOT 'object' "
             "OR (SELECT count(*) FROM json_each(c.outcome) j WHERE j.key='values')!=1 "
             "OR json_type(c.outcome,'$.values') IS NOT 'object' "
             "OR (SELECT count(*) FROM json_each(c.outcome,'$.values') j "

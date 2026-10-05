@@ -1,0 +1,176 @@
+{
+  "current_runtime_source_sha256": "1836585b091d79999bce32980a42ed919246449d7f493593633cf4cbd0768459",
+  "baseline_runtime_source_sha256": "24b9b8b65723cee8c6982b1f41235dce380e62788db33f100176f92c714571fc",
+  "safety_review": "Each original text checked for passwords, owner private keys, approval/capability/token values and SID/SDDL. Browser and qualification safe original bytes retained. Runner/control command, private PID fields and full environment snapshot removed in explicitly labelled analyses. No DB/ZIP/helper contents published.",
+  "artifacts": [
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-retained-regression-20261004.json",
+      "original_sha256": "781d3593c9733037d1028a34ecc2b9dfd62372c2c02f0efd3c91ae14909102b8",
+      "original_bytes": 25713,
+      "archive": "stage9-three-group-retained-regression-20261004.json.gz",
+      "archive_sha256": "f2c92b86f004cb8747584bc6114edbd8557aa891a565606d5c416873a6363302",
+      "archive_bytes": 9912,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-retained-regression-20261004.xml",
+      "original_sha256": "bbba6900da4e8e189763e338446df567bd4a410915ea41ebc41ee1e2c31b92b8",
+      "original_bytes": 87528,
+      "archive": "stage9-three-group-retained-regression-20261004.xml.gz",
+      "archive_sha256": "0a12d5815c677584157a8b062d2bab435524fba346e2cc2b24e7e1550c4cb9e4",
+      "archive_bytes": 12587,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-three-group-retained-regression-20261004.log",
+      "original_sha256": "7a0003e1b92f3272c102f2616592749b242afe3c97253d43336e7f9d57dca1b8",
+      "original_bytes": 2103,
+      "archive": "stage9-three-group-retained-regression-20261004.log.gz",
+      "archive_sha256": "deebf8ccad4590305bf6a7b5bb117151b0f6181e1564b05656e3bb1f77e56807",
+      "archive_bytes": 551,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-test-style-20261004.json",
+      "original_sha256": "679c57042820379b69b327c8c80d47704fda16b83a808d205958ba183718174c",
+      "original_bytes": 735,
+      "archive": "stage9-two-group-test-style-20261004.json.gz",
+      "archive_sha256": "e7c778c8b499b26ad3b0e043b8f875dc7e38228083092be7051d2f0e8f068539",
+      "archive_bytes": 429,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-live-consumer-validation-20261004.json",
+      "original_sha256": "168812b75afdfd7f2b142309d0da95aec489b216b6ca0e7c8f070ad383a3fa91",
+      "original_bytes": 25957,
+      "archive": "stage9-two-group-live-consumer-validation-20261004.json.gz",
+      "archive_sha256": "960b8b3fdf7015a9c9142cf55aa676a4fb937dc726bd0e3e08bf754e67637c8b",
+      "archive_bytes": 10228,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main12-browser-20261004.json",
+      "original_sha256": "69d24732c1ddddfc02eab2dd30db27b74ed2b92936e4535351c6d2c8808f398e",
+      "original_bytes": 415631,
+      "archive": "stage9-two-group-main12-browser-20261004.json.gz",
+      "archive_sha256": "8bfcccfde1f12a53e70cc96ee72db61a4c1e95ac3cf9f35aba8ee901e9e5c8d1",
+      "archive_bytes": 22067,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main12-browser-20261004-qualified.json",
+      "original_sha256": "2a36088e57760745cb2751941862d5c53401e3881563d68ee26c5dfebc17832b",
+      "original_bytes": 8925,
+      "archive": "stage9-two-group-main12-browser-20261004-qualified.json.gz",
+      "archive_sha256": "e6f2428be5c15068a97d2dfef9d65ff7b26d70c4adcb3a277aa4ae69a33cc9cf",
+      "archive_bytes": 2673,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main12-browser-20261004.json",
+      "original_sha256": "f3c1d12f3e27ff049de4b9eeb1b26fee6f995c86d1abf93f245c268d52f8f06b",
+      "original_bytes": 415657,
+      "archive": "stage9-idle-before-main12-browser-20261004.json.gz",
+      "archive_sha256": "d7ce95bf24e7c8a4bee64ac97b0c0f3c314e9f52411dadd0971d4813d22ba895",
+      "archive_bytes": 22196,
+      "representation": "raw_original_bytes",
+      "redactions": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main12-browser-20261004-runner.json",
+      "original_sha256": "2646c4f42c9abf97969c1a411191d0541dc701ac3283d76ca89239c63e2e611b",
+      "original_bytes": 7487,
+      "archive": "stage9-two-group-main12-browser-20261004-runner-redacted-analysis.json.gz",
+      "archive_sha256": "670f3bb9dc07a68f0c7761069a2e959a1d0a74c4e113cedc728800e4775eb003",
+      "archive_bytes": 1867,
+      "analysis_sha256": "0cc3885dfcfe8a419246f9a228f2cecc53038054dfad08537408b27885a0c4f2",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/command",
+        "/child_pid_private"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main12-browser-20261004-control.json",
+      "original_sha256": "6a935a297343a638276a6c08701f7d5663e8be2a5d404d2459e48f76df170c36",
+      "original_bytes": 4635,
+      "archive": "stage9-two-group-main12-browser-20261004-control-redacted-analysis.json.gz",
+      "archive_sha256": "723c4e3759565ab450553adf4eb6185172ead3a9190705489ac08b1dea26de1c",
+      "archive_bytes": 1175,
+      "analysis_sha256": "9993d75279d65add4eb620aee7e5ce7eaeaa1ca09d478a5862fad4ede69006af",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/primary/launcher_pid",
+        "/primary/actual_pid",
+        "/primary/wrapper_pid",
+        "/environment_before_release"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main12-browser-20261004-runner.json",
+      "original_sha256": "a1c0f60cc80dae3b2390691c0a1ec82adbf5706e3cee507ae2d44d6a4c863a6f",
+      "original_bytes": 8720,
+      "archive": "stage9-idle-before-main12-browser-20261004-runner-redacted-analysis.json.gz",
+      "archive_sha256": "930441d42915c691c9a13a17fba0a731f2b78067605d0c4c6b1d72ac622c456c",
+      "archive_bytes": 2259,
+      "analysis_sha256": "9c4e3492b5c228ce1628e7b698e6cd5cd2dec788ddd2ff0add31084d0caf4fa3",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/command",
+        "/child_pid_private"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main12-browser-20261004-control.json",
+      "original_sha256": "0bf840d4555af18ebfd52a7d95e60bd60e72b3c48f97b8f457f978dff6c14c59",
+      "original_bytes": 4612,
+      "archive": "stage9-idle-before-main12-browser-20261004-control-redacted-analysis.json.gz",
+      "archive_sha256": "fdb4efc62b3a88b42dc3a3e6cc5a50fafa87aec9bcbaf0bb3eac9fd8651d6a74",
+      "archive_bytes": 1161,
+      "analysis_sha256": "fd88cc685b9f1d0674f94f27fb95033f25e9d2171b32d7506ded48570db8847a",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/primary/launcher_pid",
+        "/primary/actual_pid",
+        "/primary/wrapper_pid",
+        "/environment_before_release"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    }
+  ],
+  "controller_preflight_failure_private_original": {
+    "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-browser-20261004-control-pre-recursion-fix.py",
+    "original_sha256": "db83e8c65550ce4d9d46e712887b8f877c8ace8762f6ad3be4a1552289014029",
+    "published": false
+  }
+}

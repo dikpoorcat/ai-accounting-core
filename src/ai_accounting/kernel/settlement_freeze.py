@@ -1,10 +1,10 @@
 """Closed-period settlement state, committed by the private close storage root.
 
 This is a rebuildable projection.  The publication chain remains authoritative.
-The ordered directories prove which content-addressed leaf covers a key or page
-range; a read verifies every directory reference and hydrates only selected
-leaves and state revisions.  Complete integrity checks independently rebuild
-the projection from publications.
+The authenticated root directories prove which content-addressed leaf covers a
+key or page range; ordinary reads hydrate and verify only selected leaves and
+state revisions. Complete integrity checks independently rebuild the projection
+from publications and compare every directory mirror and saved byte.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from dataclasses import field as dataclass_field
 
 from .close_storage import derived_root, verified_header
 from .contracts import KernelError
-from .types import YearMonth, canonical, checked
+from .types import YearMonth, canonical, checked, is_sha256_hex
 
 DDL = """
 CREATE TABLE settlement_freeze_root(
@@ -53,6 +53,13 @@ _COUNTS = (
     "bad_paid_count", "bad_other_count",
 )
 _SUMS = ("remaining_sum", "open_sum", "source_amount_sum", "paid_sum", "other_sum")
+_FIELDS = (*_COUNTS, *_SUMS)
+(
+    _G_OBLIGATION_COUNT, _G_UNKNOWN_COUNT, _G_OPEN_COUNT, _G_OPEN_UNKNOWN_COUNT,
+    _G_MOVEMENT_COUNT, _G_UNRESOLVED_MOVEMENT_COUNT, _G_SOURCE_EVENT_COUNT,
+    _G_BAD_SOURCE_COUNT, _G_BAD_PAID_COUNT, _G_BAD_OTHER_COUNT,
+    _G_REMAINING_SUM, _G_OPEN_SUM, _G_SOURCE_AMOUNT_SUM, _G_PAID_SUM, _G_OTHER_SUM,
+) = range(len(_FIELDS))
 
 
 def _sha(value: str) -> bytes:
@@ -113,28 +120,28 @@ def _group_key(state: dict) -> tuple:
     )
 
 
-def _group_delta(state: dict, direction: int) -> dict:
+def _group_delta(state: dict, direction: int) -> tuple:
     if not state["source_event_count"]:
-        return {}
+        return ()
     remaining = _remaining(state)
     opened = remaining is None or remaining != 0
-    return {
-        "obligation_count": direction,
-        "unknown_count": direction * (remaining is None),
-        "open_count": direction * opened,
-        "open_unknown_count": direction * (opened and remaining is None),
-        "movement_count": direction * state["movement_count"],
-        "unresolved_movement_count": direction * state["unresolved_movement_count"],
-        "source_event_count": direction * state["source_event_count"],
-        "bad_source_count": direction * bool(state["bad_source"]),
-        "bad_paid_count": direction * bool(state["bad_paid"]),
-        "bad_other_count": direction * bool(state["bad_other"]),
-        "remaining_sum": direction * (remaining or 0),
-        "open_sum": direction * (remaining or 0) if opened else 0,
-        "source_amount_sum": direction * state["source_amount"],
-        "paid_sum": direction * state["paid"],
-        "other_sum": direction * state["other_settled"],
-    }
+    return (
+        direction,
+        direction * (remaining is None),
+        direction * opened,
+        direction * (opened and remaining is None),
+        direction * state["movement_count"],
+        direction * state["unresolved_movement_count"],
+        direction * state["source_event_count"],
+        direction * bool(state["bad_source"]),
+        direction * bool(state["bad_paid"]),
+        direction * bool(state["bad_other"]),
+        direction * (remaining or 0),
+        direction * (remaining or 0) if opened else 0,
+        direction * state["source_amount"],
+        direction * state["paid"],
+        direction * state["other_settled"],
+    )
 
 
 def _add_group(groups: dict, state: dict, direction: int) -> None:
@@ -142,25 +149,29 @@ def _add_group(groups: dict, state: dict, direction: int) -> None:
     if not delta:
         return
     key = _group_key(state)
-    group = groups.setdefault(key, {field: 0 for field in (*_COUNTS, *_SUMS)})
-    for field, value in delta.items():
-        group[field] = checked(group[field] + value)
-    if group["obligation_count"] == 0:
-        if any(group.values()):
+    group = groups.get(key)
+    if group is None:
+        group = groups[key] = [0] * len(_FIELDS)
+    for index, value in enumerate(delta):
+        group[index] = checked(group[index] + value)
+    if group[_G_OBLIGATION_COUNT] == 0:
+        if any(group):
             raise ValueError("settlement group was not fully reversed")
         del groups[key]
 
 
 def _groups_from_root(root: dict) -> dict:
-    return {
-        tuple(row[:5]): dict(zip((*_COUNTS, *_SUMS), row[5:], strict=True))
-        for row in root["groups"]
-    }
+    groups = {}
+    for row in root["groups"]:
+        if len(row) != 5 + len(_FIELDS):
+            raise ValueError("settlement group has an invalid field count")
+        groups[tuple(row[:5])] = row[5:]
+    return groups
 
 
 def _groups_for_root(groups: dict) -> list:
     return [
-        [*key, *(values[field] for field in (*_COUNTS, *_SUMS))]
+        [*key, *values]
         for key, values in sorted(groups.items(), key=lambda item: canonical(item[0]))
     ]
 
@@ -338,6 +349,7 @@ def _read_root(connection, period: int) -> dict:
             or not isinstance(root["subject_directory"], list)
             or root["period"] != period
             or root["close_digest"] != bytes(close["digest"]).hex()
+            or not isinstance(root["directories"], dict)
             or set(root["directories"]) != {"all", "open"}
         ):
             _fail("freeze_root_identity_mismatch", period)
@@ -346,44 +358,30 @@ def _read_root(connection, period: int) -> dict:
     root["root_digest"] = expected.hex()
     _validate_directory(root["subject_directory"], period)
     for kind in ("all", "open"):
-        entries = root["directories"][kind]
-        if (
-            not isinstance(entries, list)
-            or [item[0] for item in entries] != list(range(len(entries)))
-            or any(item[1] > item[2] or item[3] <= 0 for item in entries)
-            or any(left[2] >= right[1] for left, right in zip(entries, entries[1:], strict=False))
-        ):
-            _fail("freeze_directory_invalid", period)
-        actual = [
-            [row[0], row[1], row[2], row[3], bytes(row[4]).hex(), row[5]]
-            for row in connection.execute(
-                "SELECT r.ordinal,r.first_key,r.last_key,r.row_count,r.block_digest,"
-                "b.digest FROM settlement_freeze_ref r "
-                "LEFT JOIN settlement_freeze_block b ON b.digest=r.block_digest "
-                "WHERE r.period=? AND r.kind=? ORDER BY r.ordinal", (period, kind),
-            )
-        ]
-        if len(actual) != len(entries) or any(
-            a[:5] != e or a[5] is None for a, e in zip(actual, entries, strict=True)
-        ):
-            _fail("freeze_directory_incomplete", period)
+        _validate_directory(
+            root["directories"][kind], period, reason="freeze_directory_invalid"
+        )
+    # Readers locate leaves by these committed headers, never by the mutable
+    # settlement_freeze_ref mirror. Its completeness belongs to full integrity.
     return root
 
 
-def _validate_directory(entries: list, period: int) -> None:
+def _validate_directory(
+    entries: list, period: int, *, reason: str = "freeze_subject_directory_invalid"
+) -> None:
     if (
         not isinstance(entries, list)
         or any(
             not isinstance(item, list) or len(item) != 5
-            or item[0] != index or not isinstance(item[1], str)
+            or type(item[0]) is not int or item[0] != index or not isinstance(item[1], str)
             or not isinstance(item[2], str) or item[1] > item[2]
             or type(item[3]) is not int or item[3] <= 0
-            or not isinstance(item[4], str) or len(item[4]) != 64
+            or not is_sha256_hex(item[4])
             for index, item in enumerate(entries)
         )
         or any(left[2] >= right[1] for left, right in zip(entries, entries[1:], strict=False))
     ):
-        _fail("freeze_subject_directory_invalid", period)
+        _fail(reason, period)
 
 
 def _read_subject_leaf(connection, period: int, header: list) -> list[list]:
@@ -577,7 +575,7 @@ def _lookup(
         load_block(header) if load_block is not None
         else _read_block(connection, period, header)
     )
-    found = bisect.bisect_left([item[0] for item in items], key)
+    found = bisect.bisect_left(items, key, key=lambda item: item[0])
     if found < len(items) and items[found][0] == key:
         return items[found][1], header
     return None, header
@@ -733,6 +731,9 @@ def prepare_freeze_projection(
     if active_period is not None:
         verify_settlement_periods(connection, {period})
     previous_period = _close_before(connection, period)
+    # Periods._manifest has independently verified every prior frozen root,
+    # mirror, block and revision in this close transaction before preparation.
+    # Reusing the committed headers here does not repeat that whole comparison.
     previous = _read_root(connection, previous_period) if previous_period is not None else None
     by_key = {}
     period_rows = []
@@ -875,9 +876,9 @@ def _verify_late_reviews(connection, period, reviews, *, reads=None, engine=None
             _fail("late_review_accounting_mismatch", period)
 
 
-def _tail_rows(
+def _tail_periods(
     connection, base_root: dict, maximum: int | None, *, reads=None, minimum: int | None = None
-) -> list[dict]:
+) -> set[int]:
     """Verify every authoritative open posting period before reading its rows.
 
     Future postings published before the last close are included by posting
@@ -902,42 +903,60 @@ def _tail_rows(
         verify_settlement_periods(
             connection, {row["posting_period"] for row in late}, reads=reads
         )
-    upper = " AND posting_period<=?" if maximum is not None else ""
-    parameters = (lower, maximum) if maximum is not None else (lower,)
-    periods = {
-        row[0]
-        for row in connection.execute(
-            "SELECT posting_period FROM calculation_publication WHERE posting_period>?"
-            + upper
-            + " UNION SELECT posting_period FROM settlement_change WHERE posting_period>?"
-            + upper
-            + " UNION SELECT posting_period FROM settlement_projection_seal "
-            "WHERE posting_period>?"
-            + upper,
-            parameters * 3,
-        )
-    }
+    from .posting_period_reads import posting_periods
+
+    periods = posting_periods(
+        connection,
+        ("calculation_publication", "settlement_change", "settlement_projection_seal"),
+        after=lower, through=maximum,
+    )
     if periods:
         verify_settlement_periods(connection, periods, reads=reads)
+    return periods
+
+
+def _read_tail_rows(connection, periods, *, subject_ids=None, obligation_keys=None):
     if not periods:
         return []
+    query = (
+        "SELECT s.*,p.sequence,p.calculation_id publication_calculation_id,"
+        "c.kind source_kind,c.fact_id source_fact_id FROM settlement_change s "
+        "JOIN calculation_publication p ON p.id=s.publication_id "
+        "LEFT JOIN calculation c ON c.id=s.source_calculation_id "
+        "WHERE s.posting_period IN (SELECT value FROM json_each(?)) "
+    )
+    parameters = [canonical(sorted(periods))]
+    if subject_ids is not None:
+        query = (
+            query + "AND s.source_subject_id IN (SELECT value FROM json_each(?)) UNION "
+            + query + "AND s.obligation_key IN (SELECT value FROM json_each(?)) "
+        )
+        parameters = [
+            *parameters, canonical(sorted(subject_ids)),
+            *parameters, canonical(sorted(obligation_keys)),
+        ]
     return [
         dict(row)
         for row in connection.execute(
-            "SELECT s.*,p.sequence,p.calculation_id publication_calculation_id,"
-            "c.kind source_kind,c.fact_id source_fact_id FROM settlement_change s "
-            "JOIN calculation_publication p ON p.id=s.publication_id "
-            "LEFT JOIN calculation c ON c.id=s.source_calculation_id "
-            "WHERE s.posting_period IN (SELECT value FROM json_each(?)) "
-            "ORDER BY s.posting_period,p.sequence,s.item_no",
-            (canonical(sorted(periods)),),
+            query + "ORDER BY posting_period,sequence,item_no", parameters,
         )
     ]
 
 
-def _scope(connection, period: str, *, current: bool, reads=None) -> FrozenScope | None:
+def _tail_rows(
+    connection, base_root: dict, maximum: int | None, *, reads=None, minimum: int | None = None
+) -> list[dict]:
+    periods = _tail_periods(connection, base_root, maximum, reads=reads, minimum=minimum)
+    return _read_tail_rows(connection, periods)
+
+
+def _scope(
+    connection, period: str, *, current: bool, reads=None, subject_ids=None
+) -> FrozenScope | None:
     if reads is not None and reads.connection is not connection:
         raise ValueError("frozen settlement reads belong to another snapshot")
+    if subject_ids is not None:
+        return _subject_scope(connection, period, subject_ids, current=current, reads=reads)
     cache = (
         reads._frozen_settlement_scopes
         if reads is not None and getattr(reads, "_snapshot_active", False)
@@ -998,19 +1017,7 @@ def _scope(connection, period: str, *, current: bool, reads=None) -> FrozenScope
             block_cache[key] = _read_block(connection, base_period, header)
         return block_cache[key]
 
-    groups = _groups_from_root(base_root)
-    change_counts = _change_period_counts(base_root)
-    overrides = {}
     tail = []
-    amount_root = (
-        read_root_once(cutoff) if current and cutoff < base_period
-        and connection.execute("SELECT 1 FROM period_close WHERE period=?", (cutoff,)).fetchone()
-        else base_root if cutoff == base_period else None
-    )
-    target_amounts = (
-        {key: (paid, other) for key, paid, other in amount_root["period_amounts"]}
-        if amount_root else {}
-    )
     if current or cutoff > base_period:
         tail_cache = (
             reads._frozen_settlement_tails
@@ -1045,6 +1052,24 @@ def _scope(connection, period: str, *, current: bool, reads=None) -> FrozenScope
             )
             cache[cache_key] = result
             return result
+
+    # An equal counterpart already contains these authenticated aggregates.
+    # Construct them only after checking the complete open tail and deciding
+    # that reuse is impossible. The tail checks above still run independently
+    # when current scope may include a later posting period.
+    groups = _groups_from_root(base_root)
+    change_counts = _change_period_counts(base_root)
+    overrides = {}
+    amount_root = (
+        read_root_once(cutoff) if current and cutoff < base_period
+        and connection.execute("SELECT 1 FROM period_close WHERE period=?", (cutoff,)).fetchone()
+        else base_root if cutoff == base_period else None
+    )
+    target_amounts = (
+        {key: (paid, other) for key, paid, other in amount_root["period_amounts"]}
+        if amount_root else {}
+    )
+    if current or cutoff > base_period:
         grouped = {}
         for row in tail:
             if row["obligation_key"] is not None:
@@ -1127,8 +1152,8 @@ def frozen_followup_summary(
         return None
     totals = {field: 0 for field in (*_COUNTS, *_SUMS)}
     for _, group in _included_groups(scope):
-        for field in totals:
-            totals[field] = checked(totals[field] + group[field])
+        for index, field in enumerate(_FIELDS):
+            totals[field] = checked(totals[field] + group[index])
     unresolved = bool(totals["unknown_count"] or totals["unresolved_movement_count"])
     cutoff_label = str(YearMonth.from_ordinal(scope.through))
     return {
@@ -1230,6 +1255,101 @@ def _subject_proof(connection, scope: FrozenScope, subject_ids: set[str], *, rea
     return source_keys, direct_events
 
 
+def _subject_scope(connection, period, subject_ids, *, current, reads=None):
+    """Check the complete tail range, hydrating only exact subject/key contributions.
+
+    This scope is never published in the global scope or tail maps. Their
+    completeness and cohort measures describe all subjects in the snapshot.
+    """
+    if reads is not None and reads.connection is not connection:
+        raise ValueError("frozen settlement reads belong to another snapshot")
+    active = reads is not None and getattr(reads, "_snapshot_active", False)
+    if active:
+        full_scope = reads._frozen_settlement_scopes.get((period, current))
+        if full_scope is not None:
+            return full_scope
+    root_cache = reads._frozen_settlement_roots if active else {}
+
+    def read_root_once(value):
+        if value not in root_cache:
+            root_cache[value] = _read_root(connection, value)
+        return root_cache[value]
+    cutoff = YearMonth(period).ordinal
+    latest = connection.execute("SELECT max(period) FROM period_close").fetchone()[0]
+    if latest is None:
+        return None
+    base_period = latest if current or cutoff > latest else cutoff
+    if base_period != latest and connection.execute(
+        "SELECT 1 FROM period_close WHERE period=?", (base_period,)
+    ).fetchone() is None:
+        return None
+    root = read_root_once(base_period)
+    scope = FrozenScope(cutoff, cutoff, base_period, root, {}, {}, {}, current)
+    source_keys, _ = _subject_proof(connection, scope, set(subject_ids), reads=reads)
+    if current or cutoff > base_period:
+        periods = _tail_periods(
+            connection, root, None if current else cutoff, reads=reads,
+        )
+        source_keys.update(
+            row[0] for row in connection.execute(
+                "SELECT DISTINCT obligation_key FROM settlement_change "
+                "WHERE source_subject_id IN (SELECT value FROM json_each(?)) "
+                "AND posting_period IN (SELECT value FROM json_each(?)) "
+                "AND posting_period<=? AND change_kind='source' "
+                "AND obligation_key IS NOT NULL",
+                (canonical(sorted(subject_ids)), canonical(sorted(periods)), cutoff),
+            )
+        )
+        scope.tail_rows = _read_tail_rows(
+            connection, periods, subject_ids=subject_ids, obligation_keys=source_keys,
+        )
+    amount_root = (
+        read_root_once(cutoff) if current and cutoff < base_period
+        and connection.execute("SELECT 1 FROM period_close WHERE period=?", (cutoff,)).fetchone()
+        else root if cutoff == base_period else None
+    )
+    scope.period_amounts = {
+        key: (paid, other) for key, paid, other in amount_root["period_amounts"]
+        if key in source_keys
+    } if amount_root else {}
+    grouped = {}
+    for row in scope.tail_rows:
+        key = row["obligation_key"]
+        if key in source_keys:
+            grouped.setdefault(key, []).append(row)
+            if row["posting_period"] == cutoff and row["state"] == "resolved":
+                paid, other = scope.period_amounts.get(key, (0, 0))
+                if row["change_kind"] == "payment":
+                    paid = checked(paid + row["amount"])
+                elif row["change_kind"] == "other":
+                    other = checked(other + row["amount"])
+                scope.period_amounts[key] = paid, other
+    digests = {}
+    block_cache = reads._frozen_settlement_blocks if active else {}
+
+    def load_block(header):
+        cache_key = (base_period, tuple(header))
+        if cache_key not in block_cache:
+            block_cache[cache_key] = _read_block(connection, base_period, header)
+        return block_cache[cache_key]
+
+    for key in grouped:
+        digest_hex, _ = _lookup(
+            connection, base_period, root["directories"]["all"], key, load_block=load_block,
+        )
+        if digest_hex is not None:
+            digests[key] = digest_hex
+    base_states = _read_states(connection, base_period, digests, reads=reads)
+    for key, rows in grouped.items():
+        state = copy.deepcopy(base_states[key]) if key in base_states else _empty_state(key)
+        state["period_paid"] = state["period_other"] = 0
+        state["events"] = []
+        for row in rows:
+            _apply(state, row, row["posting_period"])
+        scope.overrides[key] = state
+    return scope
+
+
 def _key_publications(
     connection, scope: FrozenScope, base_digests: dict[str, str],
     base_states: dict[str, dict], *, reads=None,
@@ -1276,12 +1396,13 @@ def _key_publications(
 
 
 def frozen_subject_summary(
-    connection, period: str, *, subject_ids: set[str], current: bool = False, reads=None
+    connection, period: str, *, subject_ids: set[str], current: bool = False, reads=None,
+    include_history_counts: bool = True,
 ) -> dict | None:
     """Use closed subject membership proof and checked open-tail contributions."""
     from .settlement_projection import _obligation_view
 
-    scope = _scope(connection, period, current=current, reads=reads)
+    scope = _scope(connection, period, current=current, reads=reads, subject_ids=subject_ids)
     if scope is None:
         return None
     source_keys, direct_events = _subject_proof(
@@ -1329,8 +1450,12 @@ def frozen_subject_summary(
         state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
         obligations.append(_obligation_view(state))
     unresolved = any(item["remaining_fen"] is None for item in obligations)
-    publications, historical_source_states, event_sources = _key_publications(
-        connection, scope, base_digests, base_states, reads=reads,
+    # The authenticated current states already carry complete obligation amounts.
+    # Only the full core summary needs the historical chain to count and expose
+    # every contributing publication. Owner employee totals consume no counts.
+    publications, historical_source_states, event_sources = (
+        _key_publications(connection, scope, base_digests, base_states, reads=reads)
+        if include_history_counts else ({}, [], {})
     )
     for row in scope.tail_rows:
         if row["obligation_key"] in source_keys:
@@ -1366,9 +1491,8 @@ def frozen_subject_summary(
         "line_relations": [],
         "issues": ([{"field": "settlements", "message": "存在尚未确立的清偿关系"}]
                    if unresolved else []),
-        "business_count": len(publications),
-        "movement_count": movement_count,
-        "line_relation_count": 0,
+        **({"business_count": len(publications), "movement_count": movement_count,
+            "line_relation_count": 0} if include_history_counts else {}),
         "unestablished_state_selections": [],
         "complete": not unresolved,
     }
@@ -1388,27 +1512,39 @@ def frozen_payroll_period_payments(connection, period: str, *, reads=None) -> li
     the existing obligation view. Such a scope uses the ordinary checked
     reducer so no unknown is lost by selecting only changed keys here.
     """
-    payroll_kinds = {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}
     scope = _scope(connection, period, current=False, reads=reads)
     if scope is None:
         return None
     if any(
-        group["bad_paid_count"] or group["bad_other_count"]
+        group[_G_BAD_PAID_COUNT] or group[_G_BAD_OTHER_COUNT]
         for key, group in _included_groups(scope)
     ):
         return None
+    return [
+        {"subject_id": state["source_subject_id"], "kind": state["source_kind"],
+         "name": state["component"], "period_paid_fen": paid,
+         "period_other_settled_fen": other}
+        for state, paid, other in _payroll_period_payment_states(connection, scope, reads=reads)
+    ]
+
+
+def _payroll_period_payment_states(connection, scope, *, reads=None, keys=None):
+    payroll_kinds = {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}
+    amounts = scope.period_amounts if keys is None else {
+        key: scope.period_amounts[key] for key in keys if key in scope.period_amounts
+    }
     result, states = [], []
     entries = _page_entries(
-        connection, scope, include_settled=True, page_keys=set(scope.period_amounts),
+        connection, scope, include_settled=True, page_keys=set(amounts),
         reads=reads,
     )
     base_states = _read_states(
         connection, scope.base_period,
-        {key: entries[key][0] for key in scope.period_amounts
+        {key: entries[key][0] for key in amounts
          if key in entries and key not in scope.overrides},
         reads=reads,
     )
-    for key, (paid, other) in scope.period_amounts.items():
+    for key, (paid, other) in amounts.items():
         if key not in entries:
             digest_hex, header = _lookup(
                 connection, scope.base_period, scope.base_root["directories"]["all"], key
@@ -1416,7 +1552,7 @@ def frozen_payroll_period_payments(connection, period: str, *, reads=None) -> li
             first = None
             if digest_hex is not None:
                 items = _read_block(connection, scope.base_period, header)
-                index = bisect.bisect_left([item[0] for item in items], key)
+                index = bisect.bisect_left(items, key, key=lambda item: item[0])
                 first = items[index][2]
             if first is None or first <= scope.cutoff:
                 _fail("freeze_period_amount_missing_key", scope.base_period)
@@ -1427,17 +1563,94 @@ def frozen_payroll_period_payments(connection, period: str, *, reads=None) -> li
         if not state["source_event_count"] or state["source_kind"] not in payroll_kinds:
             continue
         states.append(state)
-        result.append(
-            {
-                "subject_id": state["source_subject_id"],
-                "kind": state["source_kind"],
-                "name": state["component"],
-                "period_paid_fen": paid,
-                "period_other_settled_fen": other,
-            }
-        )
+        result.append((state, paid, other))
     _verified_page_sources(connection, scope.base_period, states)
     return result
+
+
+def _payroll_period_keys(scope):
+    """Locate wage keys in the authenticated complete period-amount directory.
+
+    The prefix is the shared obligation_key encoding, only a candidate filter.
+    Each selected state's exact key, source kind, creditor and amount still
+    come from its independently committed revision and source checks.
+    """
+    prefixes = ("payroll:", "payroll_bounded:", "annual_bonus:")
+    return {key for key in scope.period_amounts
+            if key.startswith(prefixes) and key.endswith(":net")
+            or key.startswith("opening_payroll_payable:") and key.endswith(":primary")}
+
+
+def frozen_employee_net_summary(
+    connection, period: str, *, employee_ids, wage_heads=None, reads=None
+):
+    """Project net pay from authenticated wage cohorts, retaining all wage unknowns.
+
+    Current payroll and opening net pay both use account 221101 and the employee
+    as creditor. Other payroll components retain their aggregate completeness
+    warning, without becoming net pay. This is not a full business summary.
+    """
+    from .content_history_context import settlement_reader
+    from .domains.transactions import obligation_key
+
+    if getattr(settlement_reader(), "frozen_subject_summary", None) is not frozen_subject_summary:
+        return None
+    scope = _scope(connection, period, current=False, reads=reads)
+    if scope is None:
+        return None
+    kinds = {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}
+    employees = set(employee_ids)
+    included = list(_included_groups(scope))
+    if any(group[_G_UNKNOWN_COUNT] or group[_G_UNRESOLVED_MOVEMENT_COUNT]
+           for key, group in included if key[4] not in kinds):
+        # A wage can clear another business's obligation. Without its exact
+        # subject-event proof, an unresolved external movement is not attributable.
+        return None
+    groups = [(key, group) for key, group in included if key[4] in kinds]
+    net = {employee: {field: 0 for field in (
+        "remaining_fen", "period_paid_fen", "period_other_settled_fen"
+    )} for employee in employees}
+    unknown_paid, unknown_other = set(), set()
+    for key, group in groups:
+        if key[2] != "221101":
+            continue
+        employee = key[3]
+        if employee not in employees:
+            # A cohort must not guess the wage's owner from an unmatched creditor.
+            return None
+        item = net[employee]
+        if group[_G_UNKNOWN_COUNT]:
+            item["remaining_fen"] = None
+        elif item["remaining_fen"] is not None:
+            item["remaining_fen"] = checked(item["remaining_fen"] + group[_G_REMAINING_SUM])
+        if group[_G_BAD_PAID_COUNT]:
+            unknown_paid.add(employee)
+        if group[_G_BAD_OTHER_COUNT]:
+            unknown_other.add(employee)
+    keys = _payroll_period_keys(scope) if wage_heads is None else {
+        obligation_key(head["kind"], head["subject_id"],
+                       "primary" if head["kind"] == "opening_payroll_payable" else "net")
+        for head in wage_heads
+    }
+    for state, paid, other in _payroll_period_payment_states(
+        connection, scope, reads=reads, keys=keys
+    ):
+        if state["account"] != "221101":
+            continue
+        employee = state["counterparty_id"]
+        if employee not in employees:
+            return None
+        item = net[employee]
+        item["period_paid_fen"] = checked(item["period_paid_fen"] + paid)
+        item["period_other_settled_fen"] = checked(item["period_other_settled_fen"] + other)
+    for employee in unknown_paid:
+        net[employee]["period_paid_fen"] = None
+    for employee in unknown_other:
+        net[employee]["period_other_settled_fen"] = None
+    return {
+        "checking": any(group[_G_UNKNOWN_COUNT] for _, group in groups),
+        "employees": net,
+    }
 
 
 def _category(category, account, source_kind) -> str:
@@ -1607,7 +1820,7 @@ def _page_entries(
             cursor_valid = False
             if digest_hex is not None:
                 items = load_block(header)
-                index = bisect.bisect_left([item[0] for item in items], after)
+                index = bisect.bisect_left(items, after, key=lambda item: item[0])
                 first = items[index][2]
                 cursor_valid = first is not None and first <= scope.cutoff
         if not cursor_valid:
@@ -1692,15 +1905,15 @@ def frozen_dashboard_open(
     obligation_count = 0
     unknown = False
     for key, group in _included_groups(scope):
-        obligation_count += group["obligation_count"]
-        unknown = unknown or bool(group["unknown_count"])
-        if not group["open_count"]:
+        obligation_count += group[_G_OBLIGATION_COUNT]
+        unknown = unknown or bool(group[_G_UNKNOWN_COUNT])
+        if not group[_G_OPEN_COUNT]:
             continue
         label = _category(key[1], key[2], key[4])
         item = categories.setdefault(label, {"count": 0, "amount": 0, "unknown": False})
-        item["count"] += group["open_count"]
-        item["amount"] = checked(item["amount"] + group["open_sum"])
-        item["unknown"] = item["unknown"] or bool(group["open_unknown_count"])
+        item["count"] += group[_G_OPEN_COUNT]
+        item["amount"] = checked(item["amount"] + group[_G_OPEN_SUM])
+        item["unknown"] = item["unknown"] or bool(group[_G_OPEN_UNKNOWN_COUNT])
     category_rows = {
         key: {"count": value["count"], "amount": None if value["unknown"] else value["amount"]}
         for key, value in categories.items()
@@ -1770,9 +1983,9 @@ def frozen_position_rows(
             (account, category, counterparty_id),
             {"remaining": 0, "unknown": False, "known_count": 0},
         )
-        item["remaining"] = checked(item["remaining"] + group["remaining_sum"])
-        item["unknown"] = item["unknown"] or bool(group["unknown_count"])
-        item["known_count"] += group["obligation_count"] - group["unknown_count"]
+        item["remaining"] = checked(item["remaining"] + group[_G_REMAINING_SUM])
+        item["unknown"] = item["unknown"] or bool(group[_G_UNKNOWN_COUNT])
+        item["known_count"] += group[_G_OBLIGATION_COUNT] - group[_G_UNKNOWN_COUNT]
     return [
         {
             "account": key[0], "category": key[1], "counterparty_id": key[2],
@@ -1816,12 +2029,11 @@ def _authoritative_freezes(
             raise ValueError("settlement source verification belongs to another snapshot")
         require_verified_lease(connection, _verified_projection.lease)
         expected = _verified_projection.expected
-    publications = {
-        row["id"]: row
-        for row in connection.execute(
-            "SELECT * FROM calculation_publication"
-        )
-    }
+    publications = {}
+    publications_by_period = {}
+    for publication in connection.execute("SELECT * FROM calculation_publication"):
+        publications[publication["id"]] = publication
+        publications_by_period.setdefault(publication["posting_period"], []).append(publication)
     calculations = {
         row["id"]: row
         for row in connection.execute("SELECT id,kind,fact_id FROM calculation")
@@ -1864,8 +2076,8 @@ def _authoritative_freezes(
         highwater = header.root["small"]["publication_sequence"]
         period_rows = by_period.pop(period, [])
         late = [
-            publication for publication in publications.values()
-            if publication["posting_period"] == period and publication["sequence"] > highwater
+            publication for publication in publications_by_period.get(period, ())
+            if publication["sequence"] > highwater
         ]
         if late:
             if any(publication["mode"] != "review_no_impact" for publication in late):
@@ -1925,20 +2137,7 @@ def _frozen_difference(connection, prepared, blocks, revisions) -> bool:
     }
     if actual_roots != expected_roots:
         return True
-    expected_refs = {
-        (item.period, kind, ordinal): (first, last, count, bytes.fromhex(digest_hex))
-        for item in prepared
-        for kind, directory in json.loads(item.root_json)["directories"].items()
-        for ordinal, first, last, count, digest_hex in directory
-    }
-    actual_refs = {
-        (row[0], row[1], row[2]): (row[3], row[4], row[5], bytes(row[6]))
-        for row in connection.execute(
-            "SELECT period,kind,ordinal,first_key,last_key,row_count,block_digest "
-            "FROM settlement_freeze_ref"
-        )
-    }
-    if actual_refs != expected_refs:
+    if _directory_references_differ(connection, prepared):
         return True
     actual_blocks = {
         bytes(row[0]): row[1]
@@ -1953,6 +2152,28 @@ def _frozen_difference(connection, prepared, blocks, revisions) -> bool:
         )
     }
     return actual_revisions != revisions
+
+
+def _directory_references_differ(connection, prepared: list[PreparedFreeze]) -> bool:
+    """Compare the complete mirror to roots independently rebuilt from sources.
+
+    Full verification and repair also compare every block and revision. Ordinary
+    reads use the committed root headers directly and do not consume this mirror.
+    """
+    expected_refs = {
+        (item.period, kind, ordinal): (first, last, count, bytes.fromhex(digest_hex))
+        for item in prepared
+        for kind, directory in json.loads(item.root_json)["directories"].items()
+        for ordinal, first, last, count, digest_hex in directory
+    }
+    actual_refs = {
+        (row[0], row[1], row[2]): (row[3], row[4], row[5], bytes(row[6]))
+        for row in connection.execute(
+            "SELECT period,kind,ordinal,first_key,last_key,row_count,block_digest "
+            "FROM settlement_freeze_ref"
+        )
+    }
+    return actual_refs != expected_refs
 
 
 def require_frozen_settlement_projection(
@@ -2029,4 +2250,3 @@ def repair_frozen_settlement_projection(engine, connection) -> dict:
     if _frozen_difference(connection, prepared, blocks, revisions):
         _fail("repair_did_not_rebuild_projection", -1)
     return {"changed": True, "periods": len(prepared)}
-

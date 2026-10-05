@@ -178,7 +178,7 @@ def test_report_rare_selected_fact_body_damage_still_rejects(book, subject, tabl
             check_report_readiness(engine.store, connection, YearMonth("2026-03"))
 
 
-def test_context_quarter_coverage_rejects_changed_selected_profile_body(book):
+def test_quarter_report_rejects_damage_without_expanding_context(book):
     reports = scenario(book)
     close_quarter(book)
     engine = book[0]
@@ -196,8 +196,10 @@ def test_context_quarter_coverage_rejects_changed_selected_profile_body(book):
     )
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
         reports.closed_period_coverage(2026, 1)
+    # Context selects a quarter, but does not consume its report profile body.
+    assert Dashboard(engine).context()["quarters"]
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
-        Dashboard(engine).context()
+        Dashboard(engine).quarterly_report(2026, 1)
 
 
 def test_readiness_without_profile_still_verifies_adopted_tax_body(book):
@@ -500,12 +502,9 @@ def test_report_and_browser_sources_share_the_callers_snapshot(book):
         before = reports._report(2026, 1, source="open", connection=connection, reads=reads)
         profile(save, publish, period="2026-02", name="后来名称", subject="later-profile")
         repeated = reports._report(2026, 1, source="open", connection=connection, reads=reads)
-        details = reports.browser_report_details(
-            before, repeated, connection=connection, reads=reads
-        )
         assert repeated["digest"] == before["digest"]
         assert repeated["epochs"] == before["epochs"]
-        assert details["classification_count"] == 1
+        assert repeated["report_fact_ids"] == before["report_fact_ids"]
     assert reports.report(2026, 1)["organization"]["name"] == "后来名称"
 
 

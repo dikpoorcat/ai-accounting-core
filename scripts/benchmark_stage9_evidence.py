@@ -61,18 +61,13 @@ def _windows_memory_api():
 
     kernel = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
-    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
-    kernel.OpenProcess.restype = ctypes.c_void_p
-    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-    kernel.CloseHandle.restype = ctypes.c_int
     psapi = ctypes.WinDLL("Psapi.dll", use_last_error=True)
     psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong]
-    return (Counters, kernel.GetCurrentProcess(), psapi.GetProcessMemoryInfo,
-            kernel.OpenProcess, kernel.CloseHandle)
+    return Counters, kernel.GetCurrentProcess(), psapi.GetProcessMemoryInfo
 
 
 def _windows_rss(handle):
-    counters_type, _, get_memory, _, _ = _windows_memory_api()
+    counters_type, _, get_memory = _windows_memory_api()
     counters = counters_type()
     counters.cb = ctypes.sizeof(counters)
     if not get_memory(handle, ctypes.byref(counters), counters.cb):
@@ -96,50 +91,12 @@ def rss_bytes():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
 
 
-class BriefWorkerMemory:
-    """Live RSS of the three known pool children, with handles opened only once."""
-
-    def __init__(self, pool):
-        self.pids = tuple(process.pid for process in pool._pool)
-        if len(self.pids) != 3 or any(not isinstance(pid, int) or pid <= 0 for pid in self.pids):
-            raise AssertionError("Expected three live brief worker PIDs")
-        self.handles = {}
-        if os.name == "nt":
-            _, _, _, open_process, close_handle = _windows_memory_api()
-            try:
-                for pid in self.pids:
-                    # PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ.
-                    handle = open_process(0x1000 | 0x0010, False, pid)
-                    if not handle:
-                        raise ctypes.WinError()
-                    self.handles[pid] = handle
-            except BaseException:
-                for handle in self.handles.values():
-                    close_handle(handle)
-                raise
-        elif not sys.platform.startswith("linux"):
-            raise OSError("Brief worker RSS requires Windows or Linux")
-
-    def sample(self):
-        if os.name == "nt":
-            return {pid: _windows_rss(self.handles[pid]) for pid in self.pids}
-        return {pid: _linux_rss(pid) for pid in self.pids}
-
-    def close(self):
-        if os.name == "nt":
-            close_handle = _windows_memory_api()[4]
-            for handle in self.handles.values():
-                close_handle(handle)
-            self.handles.clear()
-
-
-def update_memory_peaks(peaks, phase, parent_rss, worker_rss):
-    """Capture a concurrent sum, never a sum of independent per-process peaks."""
+def update_memory_peaks(peaks, phase, process_rss):
+    """Capture live-process RSS together rather than sum their independent peaks."""
     item = peaks[phase]
-    item["parent"] = max(item["parent"], parent_rss)
-    for pid, rss in worker_rss.items():
-        item["workers"][pid] = max(item["workers"].get(pid, 0), rss)
-    item["sum"] = max(item["sum"], parent_rss + sum(worker_rss.values()))
+    for pid, rss in process_rss.items():
+        item["processes"][pid] = max(item["processes"].get(pid, 0), rss)
+    item["sum"] = max(item["sum"], sum(process_rss.values()))
 
 
 def finalize_monitor_result(report, foreground_errors, memory_errors):
@@ -189,8 +146,8 @@ def summary(values):
 def foreground_scope(mode="http"):
     return {
         "entry": "browser_brief_refresh" if mode == "browser" else "GET /api/dashboard/brief",
-        "limit": 100,
-        "preparation": "complete",
+        "limit": 20,
+        "preparation": "deferred",
         "includes_http": True,
         "includes_browser_rendering": mode == "browser",
         "purpose": f"evidence_operations_default_brief_{mode}_contention",
@@ -201,8 +158,8 @@ def read_default_brief_http(port, token, company_id, period):
     query = urlencode({
         "company_id": company_id,
         "period": period,
-        "limit": 100,
-        "preparation": "complete",
+        "limit": 20,
+        "preparation": "deferred",
     })
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     try:
@@ -326,10 +283,12 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         "phases": {},
         "foreground": {"scope": foreground_scope(foreground)},
         "memory_scope": {
-            "processes": "benchmark_parent_and_three_known_brief_worker_pids",
+            "processes": "resident_and_background_operations_same_process",
+            "process_ids": [os.getpid()],
+            "background_execution": "verify_backup_restore_in_resident_process",
             "sampling_interval_ms": 10,
             "total_peak": (
-                "maximum_of_parent_plus_workers_at_each_sample_"
+                "maximum_of_live_process_rss_sum_at_each_sample_"
                 "not_sum_of_independent_peaks"
             ),
             "browser_process_included": False,
@@ -341,17 +300,15 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     phase = ["populate"]
-    peaks = defaultdict(lambda: {"parent": 0, "workers": {}, "sum": 0})
+    peaks = defaultdict(lambda: {"processes": {}, "sum": 0})
     memory_lock = threading.Lock()
-    worker_memory = [None]
     memory_errors = []
     stop_memory = threading.Event()
 
     def capture_memory(name):
-        workers = worker_memory[0].sample() if worker_memory[0] is not None else {}
-        parent = rss_bytes()
+        processes = {os.getpid(): rss_bytes()}
         with memory_lock:
-            update_memory_peaks(peaks, name, parent, workers)
+            update_memory_peaks(peaks, name, processes)
 
     def sample_memory():
         while not stop_memory.wait(0.01):
@@ -366,10 +323,9 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
 
     def measured(name, operation):
         phase[0] = name
-        before_parent = rss_bytes()
-        before_workers = worker_memory[0].sample() if worker_memory[0] else {}
+        before = rss_bytes()
         with memory_lock:
-            update_memory_peaks(peaks, name, before_parent, before_workers)
+            update_memory_peaks(peaks, name, {os.getpid(): before})
         started = time.perf_counter()
         try:
             return operation()
@@ -379,10 +335,9 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
             sampled = peaks[name]
             report["phases"][name] = {
                 "seconds": elapsed,
-                "rss_before_bytes": before_parent,
-                "sampled_peak_rss_bytes": sampled["parent"],
-                "sampled_peak_brief_worker_rss_by_pid_bytes": sampled["workers"],
-                "sampled_peak_parent_plus_brief_workers_rss_bytes": sampled["sum"],
+                "rss_before_bytes": before,
+                "sampled_peak_rss_bytes": sampled["sum"],
+                "sampled_peak_process_rss_by_pid_bytes": sampled["processes"],
             }
             phase[0] = "idle"
             write()
@@ -491,13 +446,10 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         del populate
         book = None  # Do not retain fixture objects during the foreground read loop.
         app = LocalService(
-            root, enable_read_pool=True, enable_parallel_brief=True,
+            root, enable_read_pool=True,
             _static_runtime=static_runtime,
         )
-        if app.brief_parallel is None:
-            raise AssertionError("Evidence foreground needs the resident brief worker pool")
-        worker_memory[0] = BriefWorkerMemory(app.brief_parallel.pool)
-        report["brief_worker_pids"] = list(worker_memory[0].pids)
+        report["resident_process_id"] = os.getpid()
         password = SecretStr("Synthetic-stage9-evidence-only-2026")
         app.security.provision("synthetic-stage9-evidence-owner", password)
         token = app.security.login(
@@ -509,7 +461,7 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         server, _capability = create_server(app, port=0, static_directory=static)
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
-        report["foreground"]["parallel_brief_enabled"] = app.brief_parallel is not None
+        report["foreground"]["resident_read_pool_enabled"] = app.read_pool is not None
         if foreground == "browser":
             from ai_accounting.kernel.daemon import (
                 ServiceClient,
@@ -668,8 +620,6 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
             raise AssertionError("Scale evidence operation has no foreground samples")
         if memory_errors:
             raise AssertionError(f"RSS sampling failed: {memory_errors}")
-        if tuple(process.pid for process in app.brief_parallel.pool._pool) != worker_memory[0].pids:
-            raise AssertionError("Brief worker PIDs changed during RSS measurement")
         with closing(sqlite3.connect(restored_path)) as connection:
             actual = connection.execute(
                 "SELECT count(*), count(DISTINCT digest), coalesce(sum(length(content)),0) "
@@ -698,8 +648,6 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
             reader.join(timeout=5)
         stop_memory.set()
         memory_thread.join(timeout=5)
-        if worker_memory[0] is not None:
-            worker_memory[0].close()
         if "server" in locals():
             server.shutdown()
             server.server_close()
@@ -713,9 +661,6 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         })
         report["foreground"]["errors"] = foreground_errors
         report["sampled_peak_rss_bytes"] = max(
-            (item["parent"] for item in peaks.values()), default=rss_bytes()
-        )
-        report["sampled_peak_parent_plus_brief_workers_rss_bytes"] = max(
             (item["sum"] for item in peaks.values()), default=rss_bytes()
         )
         report["memory_errors"] = memory_errors

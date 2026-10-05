@@ -1,17 +1,21 @@
-"""The full voucher page keeps exact sources while page-local loads stay batched."""
+"""Business activity pages keep exact identities while page-local loads stay batched."""
 
+import json
 from collections import Counter
 from sqlite3 import Row, connect
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from test_banking import book as _bank_book
 from test_dashboard_funds_alignment import _publish_filter_funding
 
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_reads import Journal
 from ai_accounting.kernel.query_reads import selected_voucher_sql
 from ai_accounting.kernel.runtime import _PrivateConnection
+from ai_accounting.kernel.types import YearMonth
 
 bank_book = _bank_book
 
@@ -22,10 +26,13 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
     engine, _, _, _ = bank_book
     _publish_filter_funding(engine, ["bank-a"] * 31)
     calls = Counter()
+    line_batches = []
     original = _PrivateConnection.execute
 
     def observed(connection, sql, *args, **kwargs):
         calls[" ".join(sql.split())] += 1
+        if "JOIN voucher_line l ON l.version_id=ids.value" in sql:
+            line_batches.append(set(json.loads(args[0][0])))
         return original(connection, sql, *args, **kwargs)
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
@@ -33,20 +40,20 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
         "2026-09", limit=30, voucher_number=31, preparation="deferred"
     )
     data = response["data"]
-    page = data["collections"]["vouchers"]
+    page = data["collections"]["activity"]
     assert page["page"]["total_count"] == 31
     assert page["page"]["returned_count"] == len(page["items"]) == 30
-    assert {item["number"] for item in page["items"]} == {str(i) for i in range(1, 31)}
-    assert data["focused_voucher"]["number"] == "31"
-    assert data["focused_voucher"]["voucher_version_id"] not in {
+    assert {item["subject_id"] for item in page["items"]} == {
+        f"filter-2026-09-{index:04}" for index in range(30)
+    }
+    assert data["focused_activity"]["subject_id"] == "filter-2026-09-0030"
+    assert data["focused_activity"]["voucher_version_id"] not in {
         item["voucher_version_id"] for item in page["items"]
     }
-    for index, item in enumerate([*page["items"], data["focused_voucher"]]):
-        assert item["business_amount_fen"] == 1
-        assert item["components"][0]["party_sources"][0]["party_id"] == (
-            f"filter-owner-2026-09-{index:04}"
-        )
-        assert item["evidence"] and item["lines"]
+    for item in [*page["items"], data["focused_activity"]]:
+        assert item["amount_fen"] == 1
+        assert item["group"] == "financing_owner"
+        assert {"components", "evidence", "lines"}.isdisjoint(item)
     assert (
         sum(
             count
@@ -69,16 +76,35 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
             for sql, count in calls.items()
             if "JOIN voucher_line l ON l.version_id=ids.value" in sql
         )
-        <= 2
+        == 1
     )
+    # Owner rows omit lines, but full-month money still needs all posted line proof.
+    with engine.store.connection(read_only=True) as connection:
+        month_versions = {
+            row[0]
+            for row in connection.execute(
+                "SELECT v.id FROM voucher_current h JOIN voucher_version v "
+                "ON v.id=h.version_id WHERE v.period=?",
+                (YearMonth("2026-09").ordinal,),
+            )
+        }
+    assert line_batches == [month_versions]
+    assert len(month_versions) == 31
     assert (
         sum(
             count
             for sql, count in calls.items()
             if "JOIN dependency_fact d ON d.calculation_id=ids.value" in sql
         )
-        == 1
+        == 0
     )
+    # Exact party/source evidence is still available through the accountant contract.
+    for index, item in enumerate([*page["items"], data["focused_activity"]]):
+        core = BusinessQueries(engine).business_status(item["subject_id"], "2026-09")
+        fact = core["latest_fact"]
+        assert fact["data"]["owner_id"] == f"filter-owner-2026-09-{index:04}"
+        assert fact["evidence"]
+        assert core["as_posted"]["voucher_events"][0]["lines"]
 
 
 def test_journal_query_and_count_reuse_stays_inside_one_page_snapshot(bank_book, monkeypatch):
@@ -203,7 +229,6 @@ def test_brief_asset_counts_do_not_load_consumption_histories(tmp_path, monkeypa
     from test_payroll_corrections import Company
 
     from ai_accounting.kernel.business_queries import BusinessQueries
-    from ai_accounting.kernel.dashboard import _long_term_assets
 
     company = Company(tmp_path / "asset-summary.sqlite")
     prepare_batch_assets(company)
@@ -213,17 +238,94 @@ def test_brief_asset_counts_do_not_load_consumption_histories(tmp_path, monkeypa
     def unexpected_charge_history(*args, **kwargs):
         raise AssertionError("card counts must not load consumption history")
 
-    monkeypatch.setattr(BusinessQueries, "_selected_asset_member_heads", unexpected_charge_history)
     dashboard = Dashboard(company.engine)
-    with dashboard._snapshot("2026-04") as snapshot:
-        values = _long_term_assets(snapshot)
     # March and April each charge 120000 / 12 + 30000 / 6.
-    assert values == {
-        "net_fen": 120000,
-        "fixed_net_fen": 120000,
-        "intangible_net_fen": 0,
-        "fixed_active_count": 2,
-        "intangible_active_count": 0,
-        "pending_count": 0,
-        "project_cost_fen": 0,
+    assets = dashboard.assets("2026-04")["data"]
+    assert assets["ledger_net_fen"] == assets["fixed_asset_net_fen"] == 120000
+    assert assets["fixed"]["active_count"] == 2
+    assert assets["intangible_asset_net_fen"] == assets["intangible"]["active_count"] == 0
+    assert assets["pending_fixed_count"] == assets["pending_intangible_count"] == 0
+    assert assets["project_cost_fen"] == 0
+    monkeypatch.setattr(BusinessQueries, "_selected_asset_member_heads", unexpected_charge_history)
+    monkeypatch.setattr("ai_accounting.kernel.dashboard._assets", unexpected_charge_history)
+    brief = dashboard.brief("2026-04")["data"]
+    assert "long_term_assets" not in brief
+    assert brief["position"]["complete"]
+
+
+@pytest.mark.parametrize("month_count", [2, 21])
+def test_brief_month_proof_excludes_unconsumed_history_and_withdrawn_versions(
+    bank_book, monkeypatch, month_count
+):
+    engine, save, publish, _ = bank_book
+    _publish_filter_funding(engine, ["bank-a"] * (month_count - 1))
+    _publish_filter_funding(engine, ["bank-a"] * 23, period="2026-08")
+    subject = "amended-month-cost"
+    expense = {
+        "period": "2026-09",
+        "counterparty_id": "supplier",
+        "amount_fen": 99,
+        "expense_class": "administration",
+        "creditor_kind": "supplier",
     }
+    save("expense", subject, expense)
+    publish(subject)
+    with engine.store.connection(read_only=True) as connection:
+        withdrawn = connection.execute(
+            "SELECT c.outcome FROM calculation_current h JOIN calculation c "
+            "ON c.id=h.calculation_id WHERE h.subject_id=?",
+            (subject,),
+        ).fetchone()[0]
+        history = {
+            row[0]
+            for row in connection.execute(
+                "SELECT outcome FROM calculation WHERE subject_id LIKE 'filter-2026-08-%'"
+            )
+        }
+    save(
+        "expense",
+        subject,
+        {**expense, "amount_fen": 100},
+        revision=1,
+    )
+    publish(subject)
+    with engine.store.connection(read_only=True) as connection:
+        selected = {
+            row[0]
+            for row in connection.execute(
+                "SELECT v.id FROM voucher_current h JOIN voucher_version v "
+                "ON v.id=h.version_id WHERE v.period=?",
+                (YearMonth("2026-09").ordinal,),
+            )
+        }
+    decoded_excluded, line_batches = [], []
+    original_loads, original_execute = json.loads, _PrivateConnection.execute
+
+    def loads(value, *args, **kwargs):
+        if isinstance(value, str) and value in history | {withdrawn}:
+            decoded_excluded.append(value)
+        return original_loads(value, *args, **kwargs)
+
+    def execute(connection, sql, *args, **kwargs):
+        if "JOIN voucher_line l ON l.version_id=ids.value" in sql:
+            line_batches.append(set(original_loads(args[0][0])))
+        return original_execute(connection, sql, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", loads)
+    monkeypatch.setattr(_PrivateConnection, "execute", execute)
+    data = Dashboard(engine).brief("2026-09", preparation="deferred")["data"]
+    page = data["collections"]["activity"]
+    assert len(page["items"]) == page["page"]["returned_count"] == min(20, month_count)
+    assert page["page"]["total_count"] == data["activity_count"] == month_count
+    assert page["page"]["has_more"] is (month_count > 20)
+    assert data["funds_overview"]["inflow_fen"] == month_count - 1
+    assert data["position"] == {
+        "month_revenue_fen": 0,
+        "month_expense_fen": 100,
+        "month_result_fen": -100,
+        "complete": True,
+    }
+    assert all({"components", "evidence", "lines"}.isdisjoint(item) for item in page["items"])
+    assert line_batches == [selected]
+    assert len(selected) == month_count
+    assert decoded_excluded == []

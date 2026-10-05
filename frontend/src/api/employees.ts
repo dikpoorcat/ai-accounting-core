@@ -9,12 +9,11 @@ export type EmployeesSummary = DashboardEmployeesContract.EmployeeSummary;
 export type EmployeeDashboardItem = DashboardEmployeesContract.EmployeeItem | DashboardEmployeesContract.UnestablishedEmployee;
 export type EstablishedEmployeeItem = DashboardEmployeesContract.EmployeeItem;
 export type UnestablishedEmployeeItem = DashboardEmployeesContract.UnestablishedEmployee;
-export type PayrollSource = DashboardEmployeesContract.PayrollSource;
 export type PersonalLaborItem = DashboardEmployeesContract.LaborSource;
-export type WorkforceCost = DashboardEmployeesContract.WorkforceCost;
+export type WorkforceCost = DashboardEmployeesContract.OwnerWorkforceCost;
 
 export interface EmployeesQuery extends DashboardPageQuery {
-  section?: "employees" | "payroll_sources" | "labor_sources" | "settlement_events";
+  section?: "employees" | "labor_sources";
   employee_filter?: "all" | "in_period" | "payroll" | "no_payroll" | "unknown" | "ended";
   employee_id?: string;
 }
@@ -26,6 +25,10 @@ function matchesRequest(url: URL, response: DashboardEmployeesResponse) {
   const section = url.searchParams.get("section");
   return response.read_context.company_id === companyId
     && validDashboardCollections(response.data)
+    && (response.data === null || (
+      response.data.employee_id === url.searchParams.get("employee_id")
+      && response.data.employee_filter === (url.searchParams.get("employee_filter") ?? "all")
+    ))
     && (period === null || response.selected_period?.key === period)
     && (expectedVersion === null || response.snapshot_version === expectedVersion)
     && (section === null || (response.data !== null && section in response.data.collections));

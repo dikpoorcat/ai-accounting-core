@@ -1,0 +1,141 @@
+{
+  "created_utc": "2026-10-02T14:52:04.365209+00:00",
+  "scope": "supplement exact source identity for three previously archived current-hash mismatches; failed 287 group remains 283 passed/4 failed, no new execution",
+  "prior_manifest": {
+    "path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r72-failed-manifest.json",
+    "sha256": "2ff30d2096a4e064b805b9d9026d395609ced8c97bc4377e31cfbb6211550192",
+    "unchanged": true,
+    "prior_current_hash_false_preserved": true
+  },
+  "failed_execution_inventory": {
+    "path": ".tmp/stage9-r72-open-publication-related.json",
+    "raw_sha256": "eb193e34ecc1000b4a12782de6f8333cb9f0e363962a7bd96c834cea33d750b3",
+    "before_sha256": "62f4cd7ce77db7b40cbe24ff7900c74ac91d1c990756d49b60040e5ebd1dffdb",
+    "after_sha256": "62f4cd7ce77db7b40cbe24ff7900c74ac91d1c990756d49b60040e5ebd1dffdb"
+  },
+  "source_checks": [
+    {
+      "execution_relative_path": "src/ai_accounting/kernel/query_reads.py",
+      "execution_before_sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+      "execution_after_sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+      "candidate_observations": [
+        {
+          "path": ".tmp/stage9-build-source-owner-r72-release/src/ai_accounting/kernel/query_reads.py",
+          "exists": true,
+          "sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        },
+        {
+          "path": ".tmp/stage9-build-candidate-owner-r72/src/ai_accounting/kernel/query_reads.py",
+          "exists": true,
+          "sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        }
+      ],
+      "obtained_matching_source": true
+    },
+    {
+      "execution_relative_path": "tests/kernel/test_open_publication_snapshot_work.py",
+      "execution_before_sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+      "execution_after_sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+      "candidate_observations": [
+        {
+          "path": ".tmp/stage9-build-source-owner-r72-release/tests/kernel/test_open_publication_snapshot_work.py",
+          "exists": true,
+          "sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        },
+        {
+          "path": ".tmp/stage9-build-candidate-owner-r72/tests/kernel/test_open_publication_snapshot_work.py",
+          "exists": true,
+          "sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        }
+      ],
+      "obtained_matching_source": true
+    },
+    {
+      "execution_relative_path": "tests/kernel/test_required_money_header_reuse.py",
+      "execution_before_sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+      "execution_after_sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+      "candidate_observations": [
+        {
+          "path": ".tmp/stage9-build-source-owner-r72-release/tests/kernel/test_required_money_header_reuse.py",
+          "exists": true,
+          "sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        },
+        {
+          "path": ".tmp/stage9-build-candidate-owner-r72/tests/kernel/test_required_money_header_reuse.py",
+          "exists": true,
+          "sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+          "matches_execution_before": true,
+          "matches_execution_after": true
+        }
+      ],
+      "obtained_matching_source": true
+    }
+  ],
+  "entries": [
+    {
+      "execution_relative_path": "src/ai_accounting/kernel/query_reads.py",
+      "raw_path": ".tmp/stage9-build-source-owner-r72-release/src/ai_accounting/kernel/query_reads.py",
+      "source_identity": "pre-execution exclusive fixed candidate snapshot bytes match failed-run before and after inventory",
+      "raw_sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+      "raw_bytes": 113815,
+      "raw_mtime_ns": 1790951601461400800,
+      "raw_mtime_utc": "2026-10-02T14:33:21.461401+00:00",
+      "execution_before_sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+      "execution_after_sha256": "1e6036e2017b79ff6c7c6bb5f24df58721e74c8e521493a4f6999e68ce05b988",
+      "matches_both_execution_observations": true,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r72-execution-source-001-query_reads.py.gz",
+      "archive_sha256": "f845f6df29124e72ef5d8dedcc65628b750e21527965618809a74c192f3340bd",
+      "archive_bytes": 23839,
+      "archive_mtime_ns": 1790952724339210000,
+      "archive_mtime_utc": "2026-10-02T14:52:04.339210+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "execution_relative_path": "tests/kernel/test_open_publication_snapshot_work.py",
+      "raw_path": ".tmp/stage9-build-source-owner-r72-release/tests/kernel/test_open_publication_snapshot_work.py",
+      "source_identity": "pre-execution exclusive fixed candidate snapshot bytes match failed-run before and after inventory",
+      "raw_sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+      "raw_bytes": 10290,
+      "raw_mtime_ns": 1790951602038568900,
+      "raw_mtime_utc": "2026-10-02T14:33:22.038569+00:00",
+      "execution_before_sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+      "execution_after_sha256": "1a471aab1dd57fb770e2be9149722ef71caf03d7deae778e4f67d6f0592fa3c0",
+      "matches_both_execution_observations": true,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r72-execution-source-002-test_open_publication_snapshot_work.py.gz",
+      "archive_sha256": "ff627ff1478ff836be122efc1370c547245ececd5f796f0721320d007fb7e60f",
+      "archive_bytes": 2294,
+      "archive_mtime_ns": 1790952724350209500,
+      "archive_mtime_utc": "2026-10-02T14:52:04.350209+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "execution_relative_path": "tests/kernel/test_required_money_header_reuse.py",
+      "raw_path": ".tmp/stage9-build-source-owner-r72-release/tests/kernel/test_required_money_header_reuse.py",
+      "source_identity": "pre-execution exclusive fixed candidate snapshot bytes match failed-run before and after inventory",
+      "raw_sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+      "raw_bytes": 10013,
+      "raw_mtime_ns": 1790951602144568900,
+      "raw_mtime_utc": "2026-10-02T14:33:22.144569+00:00",
+      "execution_before_sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+      "execution_after_sha256": "e76de85c422cb285785ffea601935b27bb46a33e917b5b300080fc377114fde0",
+      "matches_both_execution_observations": true,
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-open-publication-related-r72-execution-source-003-test_required_money_header_reuse.py.gz",
+      "archive_sha256": "6af84872e45e914a2e968d6853acb6e2b4a30f205e48a3bd86f01fa7309289cf",
+      "archive_bytes": 2653,
+      "archive_mtime_ns": 1790952724357210200,
+      "archive_mtime_utc": "2026-10-02T14:52:04.357210+00:00",
+      "decompressed_byte_equal": true
+    }
+  ],
+  "all_three_execution_sources_obtained": true
+}

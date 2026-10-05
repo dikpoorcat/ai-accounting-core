@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import { DashboardApiError, dashboardErrorMessage } from "../api/client";
 import { fetchLocalJob, LocalApiError } from "../api/localKernel";
@@ -23,11 +23,6 @@ interface SummaryCard {
   label: string;
   value: string;
   note: string;
-}
-
-interface TechnicalRow {
-  label: string;
-  value: string | string[];
 }
 
 interface StatementTemplateMeta {
@@ -91,13 +86,14 @@ let previewController: AbortController | null = null;
 let exportController: AbortController | null = null;
 let requestGeneration = 0;
 
-function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id]); }
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]); }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
-function invalidateRequests() {
+function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   previewController?.abort(); exportController?.abort();
   previewController = null; exportController = null;
-  report.value = null; loading.value = false; exporting.value = false;
+  if (!keepContent) report.value = null;
+  loading.value = keepContent; exporting.value = false;
   exportNotice.value = ""; errorMessage.value = "";
 }
 
@@ -106,22 +102,13 @@ const quarterOptions = computed(() =>
     key: quarter.key,
     label: quarter.label,
     status: quarter.key === selectedQuarter.value && report.value
-      ? report.value.close_state : quarter.complete ? "closed" : "open",
+      ? report.value.close_state : undefined,
   })),
 );
-const pendingReadiness = computed(() => report.value?.readiness.filter((item) => item.state !== "pass") ?? []);
-const readinessGroups = computed(() => {
-  const completed = report.value?.readiness.filter((item) => item.state === "pass") ?? [];
-  return [
-    { key: "pending", label: `需要核对的检查（${pendingReadiness.value.length}）`, expanded: true, items: pendingReadiness.value },
-    { key: "completed", label: `已完成 ${completed.length} 项检查`, expanded: false, items: completed },
-  ].filter((group) => group.items.length);
-});
 const sectionLinks = computed(() => {
   if (!report.value) return [];
   return [
     { id: "report-overview", label: "概览" },
-    ...(report.value.carry_forward.options.length || readinessGroups.value.length ? [{ id: "report-checks", label: "核对事项" }] : []),
     ...(report.value.statements.length ? [{ id: "report-statements", label: "财务报表" }] : []),
   ];
 });
@@ -129,18 +116,17 @@ const { activeSection, focusSection } = useDashboardSections(sectionLinks, "repo
 const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
   if (report.value?.export.available) return "已就绪";
-  if (pendingReadiness.value.length) return `还有 ${pendingReadiness.value.length} 项检查需要核对`;
+  if (report.value?.readiness_state === "blocked") return "AI 会计核对中";
   if (report.value?.close_state === "open") return "相关月份结账后可下载报表";
   return "本季度报表暂时无法下载";
 });
 const reportNextStep = computed(() => {
   if (needsRegeneration.value) return "请根据提示重新生成。";
   if (report.value?.export.available) return "可下载 Excel 报表，使用前请复核。";
-  if (pendingReadiness.value.length) return "核对下方事项后刷新报表。";
+  if (report.value?.readiness_state === "blocked") return "AI 会计正在核对资料，如需您补充资料会另列待办。";
   if (report.value?.close_state === "open") return "当前为试算金额，相关月份结账后刷新。";
   return report.value?.message ?? "";
 });
-const needsCarryForward = computed(() => report.value?.technical.requirement_codes.includes("report_carry_forward") ?? false);
 const checkedAt = computed(() => {
   if (!report.value) return "";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -222,34 +208,6 @@ const balanceTemplateRows = computed(() => {
   ];
   return left.map((leftCell, index) => ({ left: leftCell, right: right[index] }));
 });
-const technicalRows = computed<TechnicalRow[]>(() => {
-  const technical = report.value?.technical;
-  if (!technical) return [];
-  const rows: Array<TechnicalRow | null> = [
-    technical.calculation_hash
-      ? { label: "计算哈希", value: technical.calculation_hash }
-      : null,
-    technical.template.file_name
-      ? { label: "Excel 文件", value: technical.template.file_name }
-      : null,
-    technical.template.profile
-      ? { label: "模板版本", value: technical.template.profile }
-      : null,
-    technical.template.sha256
-      ? { label: "模板 SHA-256", value: technical.template.sha256 }
-      : null,
-    technical.rule.version ? { label: "计算规则", value: technical.rule.version } : null,
-    { label: "结账快照", value: `${technical.source_close_hashes.length} 份` },
-    { label: "报表分类", value: technical.classification_count === null ? "未提供" : `${technical.classification_count} 项` },
-    { label: "所得税确认", value: technical.income_tax_confirmation_count === null ? "未提供" : `${technical.income_tax_confirmation_count} 项` },
-    technical.requirement_codes.length
-      ? { label: "待办代码", value: technical.requirement_codes }
-      : null,
-    technical.errors.length ? { label: "错误代码", value: technical.errors } : null,
-  ];
-  return rows.filter((item): item is TechnicalRow => item !== null);
-});
-
 function routeQuarter(): string | null {
   const value = route.query.quarter;
   if (typeof value === "string") return value;
@@ -311,10 +269,6 @@ async function synchronizeQuarter(force = false) {
       latestPeriodForQuarter(currentContext, target)?.key ??
       currentContext.default_period ??
       undefined;
-    if (route.query.carry_forward_fact_id && selectedQuarter.value && target !== selectedQuarter.value) {
-      await router.replace({ query: { ...route.query, carry_forward_fact_id: undefined }, hash: route.hash });
-      return;
-    }
     if (route.query.quarter !== target || route.query.period !== targetPeriod) {
       await router.replace({
         query: {
@@ -346,11 +300,13 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
   previewController = controller;
   const match = /^(\d{4})-Q([1-4])$/.exec(quarterKey);
   if (!match) {
+    report.value = null; loading.value = false;
+    controller.abort(); previewController = null;
     errorMessage.value = "请选择已有会计期间对应的季度。";
     return;
   }
   selectedQuarter.value = quarterKey;
-  report.value = null;
+  if (!contextGate) report.value = null;
   errorMessage.value = "";
   exportNotice.value = "";
   needsRegeneration.value = false;
@@ -362,7 +318,6 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
       Number(match[1]),
       Number(match[2]),
       controller.signal,
-      typeof route.query.carry_forward_fact_id === "string" ? route.query.carry_forward_fact_id : undefined,
     );
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || previewController !== controller) return;
@@ -375,6 +330,7 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
     await nextTick();
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && previewController === controller) {
+      report.value = null;
       const message = dashboardErrorMessage(error);
       if (message) errorMessage.value = message;
     }
@@ -395,12 +351,8 @@ function changeQuarter(value: string) {
   });
 }
 
-function changeCarryForward(value: string) {
-  void router.replace({ query: { ...route.query, carry_forward_fact_id: value || undefined } });
-}
-
 async function refresh() {
-  invalidateRequests();
+  invalidateRequests(true);
   const generation = requestGeneration, selection = selectionKey();
   try {
     const company = route.query.company_id, period = route.query.period, quarter = routeQuarter();
@@ -420,6 +372,7 @@ async function refresh() {
     }
   } catch (error: unknown) {
     if (!isCurrent(generation, selection)) return;
+    report.value = null; loading.value = false;
     const message = dashboardErrorMessage(error);
     if (message) errorMessage.value = message;
   }
@@ -583,7 +536,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [route.query.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id],
+  () => [route.query.company_id, route.query.period, route.query.quarter],
   (value, previous) => {
     if (value.every((item, index) => item === previous[index])) return;
     invalidateRequests();
@@ -591,12 +544,12 @@ watch(
   { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id] as const,
-  ([orgId, period, quarter, source], previous) => {
+  () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter] as const,
+  ([orgId, period, quarter], previous) => {
     if (previous && orgId === previous[0] && period === previous[1]
-      && quarter === previous[2] && source === previous[3]) return;
-    const previousOrgId = previous?.[0], previousSource = previous?.[3];
-    if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId || source !== previousSource);
+      && quarter === previous[2]) return;
+    const previousOrgId = previous?.[0];
+    if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId);
   },
 );
 
@@ -619,7 +572,7 @@ onBeforeUnmount(() => {
         @refresh="refresh"
       >
         <template #navigation>
-          <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="报表内容导航" @select="focusSection" />
+          <DashboardSectionNav v-if="sectionLinks.length" v-show="!loading" :items="sectionLinks" :active="activeSection" label="报表内容导航" @select="focusSection" />
         </template>
       </DashboardModuleHeader>
 
@@ -629,7 +582,7 @@ onBeforeUnmount(() => {
         <span>公司开始记账后，可在这里查看对应季度的财务报表。</span>
       </section>
 
-      <section v-else-if="loading && !report" class="state-panel" aria-live="polite">
+      <section v-else-if="loading" class="state-panel" aria-live="polite">
         <strong>正在整理本季度报表</strong>
         <span>正在读取账务和核对资料，请稍候…</span>
       </section>
@@ -638,10 +591,9 @@ onBeforeUnmount(() => {
         <strong>季度报表读取失败</strong>
         <span>{{ errorMessage }}</span>
         <button type="button" @click="refresh">刷新报表</button>
-        <button v-if="route.query.carry_forward_fact_id" type="button" @click="changeCarryForward('')">采用默认来源重新核对</button>
       </section>
 
-      <section v-else-if="report" class="report-dashboard">
+      <section v-if="report" v-show="!loading && !errorMessage" class="report-dashboard">
         <section id="report-overview" class="report-hero" tabindex="-1" aria-labelledby="report-readiness-title">
           <div class="report-heading">
             <div>
@@ -694,59 +646,13 @@ onBeforeUnmount(() => {
 
 
 
-        <section v-if="report.carry_forward.options.length || readinessGroups.length" id="report-checks" class="report-checks" tabindex="-1" aria-label="报表核对事项">
-          <details v-if="report.carry_forward.options.length" class="panel report-source" :open="needsCarryForward">
-            <summary>报表来源{{ report.carry_forward.selected_fact_id ? ' · 已指定接账前资料' : '' }}</summary>
-            <label>接账前累计资料
-              <select :value="report.carry_forward.selected_fact_id || ''" :disabled="loading || exporting" @change="changeCarryForward(($event.target as HTMLSelectElement).value)">
-                <option value="">采用现有报表资料</option>
-                <option v-for="source in report.carry_forward.options" :key="source.fact_id" :value="source.fact_id">{{ source.label }} · {{ source.evidence_count }} 份附件</option>
-              </select>
-            </label>
-            <p>页面与下载文件采用同一份资料。</p>
-            <details><summary>供核对的资料版本</summary><ul><li v-for="source in report.carry_forward.options" :key="source.fact_id">{{ source.label }}{{ source.used ? ' · 本次已采用' : '' }}：{{ source.fact_id }}</li></ul></details>
-          </details>
-
-          <details v-for="group in readinessGroups" :key="group.key" class="readiness-group" :open="group.expanded">
-            <summary>{{ group.label }}</summary>
-            <div class="readiness">
-            <article
-              v-for="item in group.items"
-              :key="item.key"
-              class="readiness-item"
-              :class="item.state"
-            >
-              <div class="readiness-head">
-                <span>{{ item.state === "pass" ? "✓" : item.state === "pending" ? "…" : "!" }}</span>
-                <strong>{{ item.label }}</strong>
-              </div>
-              <p>{{ item.summary }}</p>
-              <ul v-if="item.details.length">
-                <li v-for="detail in item.details" :key="`${detail.primary}-${detail.secondary}`">
-                  <div><strong>{{ detail.primary }}</strong><span>{{ detail.secondary }}</span></div>
-                  <RouterLink v-if="detail.location?.voucher_number !== undefined && detail.location?.period" :to="{ path: '/', query: { company_id: route.query.company_id, period: detail.location.period, voucher: String(detail.location.voucher_number) } }">查看相关凭证</RouterLink>
-                  <details v-if="detail.location"><summary>供核对的详细信息</summary><pre>{{ JSON.stringify(detail.location, null, 2) }}</pre></details>
-                  <strong v-if="detail.location?.actual_fen != null">实际 {{ formatFen(detail.location.actual_fen) }}</strong>
-                </li>
-              </ul>
-            </article>
-            </div>
-          </details>
-        </section>
-
-        <p v-if="report.draft" class="draft-note">
-          试算金额可能随资料变化，暂不能下载。
-        </p>
-
         <section v-if="report.statements.length" id="report-statements" class="report-review" tabindex="-1" aria-label="完整财务报表">
           <div class="review-heading">
             <div>
               <strong>完整财务报表</strong>
-              <span class="table-scroll-hint">表格可左右滑动</span>
+
             </div>
-            <span class="check-summary">
-              {{ report.checks.total ? `${report.checks.passed} / ${report.checks.total} 项数字核对通过` : "暂无数字核对结果" }}
-            </span>
+
           </div>
 
           <div class="statement-buttons" role="tablist" aria-label="季度财务报表">
@@ -802,7 +708,7 @@ onBeforeUnmount(() => {
                     <span class="template-meta-label">纳税人识别号</span>
                     <strong>{{ report.organization?.taxpayer_identification_number || "—" }}</strong>
                     <span class="template-meta-label">纳税人名称</span>
-                    <strong>{{ report.organization?.name || context?.company || "—" }}</strong>
+                    <strong>{{ report.organization?.name || "—" }}</strong>
                     <span class="template-meta-label">所属期起</span>
                     <strong>{{ templateQuarterStart }}</strong>
                     <span class="template-meta-label">所属期止</span>
@@ -811,7 +717,7 @@ onBeforeUnmount(() => {
 
                   <table
                     v-if="activeStatement.key === 'balance_sheet'"
-                    class="tax-template-table balance-template-table"
+                    class="tax-template-table balance-template-table desktop-template-table"
                   >
                     <thead>
                       <tr>
@@ -866,7 +772,7 @@ onBeforeUnmount(() => {
                     </tbody>
                   </table>
 
-                  <table v-else class="tax-template-table">
+                  <table v-else class="tax-template-table desktop-template-table">
                     <thead>
                       <tr>
                         <th>项目</th><th class="line">行次</th>
@@ -897,6 +803,17 @@ onBeforeUnmount(() => {
                       </template>
                     </tbody>
                   </table>
+                  <table class="tax-template-table mobile-template-table">
+                    <tbody>
+                      <template v-for="row in activeStatement.rows" :key="row.line">
+                        <tr v-if="templateSectionLabel(activeStatement.key, row.line)" class="template-section-row"><td>{{ templateSectionLabel(activeStatement.key, row.line) }}</td></tr>
+                        <tr :class="{ total: row.is_total }">
+                          <td>{{ row.line }} · {{ templateRowName(activeStatement.key, row) }}</td>
+                          <td v-for="column in activeStatement.columns" :key="column.key" class="number" :data-label="column.key === 'current_fen' ? '本期金额' : column.label" :class="{ negative: isNegative(row.values[column.key]) }">{{ templateStatementValue(row.values[column.key]) }}</td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
@@ -904,7 +821,7 @@ onBeforeUnmount(() => {
                 <table>
                   <thead>
                     <tr>
-                      <th>项目</th><th class="line">行次</th>
+                      <th>项目</th>
                       <th v-for="column in activeStatement.columns" :key="column.key" class="number">
                         {{ column.label }}
                       </th>
@@ -912,8 +829,8 @@ onBeforeUnmount(() => {
                   </thead>
                   <tbody>
                     <tr v-for="row in visibleStatementRows" :key="row.line" :class="{ total: row.is_total }">
-                      <td>{{ row.name }}</td><td class="line">{{ row.line }}</td>
-                      <td v-for="column in activeStatement.columns" :key="column.key" class="number">
+                      <td>{{ row.name }}</td>
+                      <td v-for="column in activeStatement.columns" :key="column.key" class="number" :data-label="column.label">
                         {{ statementValue(row.values[column.key]) }}
                       </td>
                     </tr>
@@ -922,30 +839,6 @@ onBeforeUnmount(() => {
               </div>
             </template>
 
-            <details class="disclosure">
-              <summary>
-                <strong>报表数字核对</strong>
-                <span :class="{ failed: report.checks.passed !== report.checks.total }">
-                  {{ report.checks.passed }} / {{ report.checks.total }} 项通过
-                </span>
-              </summary>
-              <div class="check-list">
-                <div v-for="item in report.checks.items" :key="item.code" :class="{ failed: item.passed === false }">
-                  <span>{{ item.passed === null ? "—" : item.passed ? "✓" : "×" }}</span><strong>{{ item.label }}{{ item.passed === null ? '（依据不完整）' : '' }}</strong>
-                </div>
-              </div>
-            </details>
-
-            <details class="disclosure technical">
-              <summary><strong>供核对的技术信息</strong></summary>
-              <dl>
-                <template v-for="item in technicalRows" :key="item.label">
-                  <dt>{{ item.label }}</dt>
-                  <dd v-if="Array.isArray(item.value)"><ul><li v-for="value in item.value" :key="value">{{ value }}</li></ul></dd>
-                  <dd v-else>{{ item.value }}</dd>
-                </template>
-              </dl>
-            </details>
           </div>
         </section>
       </section>
@@ -955,16 +848,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .reports-page { min-height: 100%; }
-.report-source { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
-.report-checks { display: grid; min-width: 0; gap: 12px; }
 [id][tabindex="-1"] { scroll-margin-top: 76px; }
-.table-scroll-hint { display: none; }
-.report-source > summary, .readiness-group > summary { color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer; }
-.report-source label { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; font-weight: 700; }
-.report-source select { max-width: 100%; min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); }
-.report-source p, .report-source details { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-.readiness pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
-.readiness-group > summary { padding: 8px 0; }
 .reports-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
 .state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);  }
 .state-panel span { color: var(--muted); }
@@ -1014,20 +898,6 @@ onBeforeUnmount(() => {
 .export-notice { margin-top: 8px; padding: 10px 13px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: 12px; }
 .export-notice.attention { background: var(--warning-soft); color: var(--warning); }
 .export-notice.error { background: var(--danger-soft); color: var(--danger); }
-.readiness { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
-.readiness-item { position: relative; overflow: hidden; padding: 15px 16px; border: 0; border-radius: var(--radius-control); background: var(--surface-soft);  }
-.readiness-item { min-width: 0; overflow-wrap: anywhere; }
-.readiness-head { display: flex; align-items: center; gap: 8px; }
-.readiness-head > span { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 850; }
-.readiness-item.pending .readiness-head > span { background: var(--info-soft); color: var(--info); }
-.readiness-item.attention .readiness-head > span { background: var(--warning-soft); color: var(--warning); }
-.readiness-item p { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
-.readiness-item ul { display: grid; gap: 7px; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
-.readiness-item li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
-.readiness-item li div { display: grid; gap: 2px; min-width: 0; }
-.readiness-item li > a, .readiness-item li > details { grid-column: 1 / -1; min-width: 0; }
-.readiness-item li span { color: var(--muted); font-size: 11px; }
-.readiness-item li > strong { grid-row: 1 / 3; grid-column: 2; align-self: center; }
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 28px;
   overflow: visible;
 
@@ -1063,7 +933,6 @@ onBeforeUnmount(() => {
 .review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
 .review-heading > div { display: grid; gap: 3px; }
 .review-heading > div > strong { color: var(--text); font-size: 16px; }
-.check-summary { padding: 5px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 750; }
 .statement-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .statement-buttons button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 88px; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--text); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .statement-buttons button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: none; }
@@ -1078,6 +947,32 @@ onBeforeUnmount(() => {
 .statement-buttons button.active .statement-arrow { color: var(--accent); }
 .report-full { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 10px; }
+.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+table { width: 100%; min-width: 0; border-collapse: collapse; background: var(--surface); font-size: 12px; }
+th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
+th { position: sticky; top: 0; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+th:first-child { width: 54%; }
+.number { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { background: var(--surface-soft); font-weight: 750; }
+@media (max-width: 960px) { .statement-buttons { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .report-review { padding: 0; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .statement-buttons button { min-height: 64px; } }
+
+
+.report-hero .summary-grid { margin-top: 32px; }
+.report-hero .summary-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
+.report-hero .summary-grid strong { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .summary-grid, .report-hero .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .table-wrap { overflow: hidden; }
+  table, tbody, tr, td { display: block; width: auto; min-width: 0; }
+  thead { display: none; }
+  tr { padding: 12px; border-bottom: 1px solid var(--line); }
+  td { border: 0; padding: 5px 0; overflow-wrap: anywhere; }
+  td:first-child { font-weight: 750; }
+  td[data-label] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }
+}
 .template-switch { position: relative; display: flex; align-items: center; gap: 10px; color: var(--muted); cursor: pointer; }
 .switch-copy { display: grid; justify-items: end; gap: 1px; }
 .switch-copy strong { color: var(--text); font-size: 12px; }
@@ -1088,14 +983,6 @@ onBeforeUnmount(() => {
 .template-switch input:checked + .switch-track { border-color: var(--accent); background: var(--accent); }
 .template-switch input:checked + .switch-track span { background: var(--surface); transform: translateX(18px); }
 .template-switch input:focus-visible + .switch-track { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
-.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
-table { width: 100%; min-width: 650px; border-collapse: collapse; background: var(--surface); font-size: 12px; }
-th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
-th { position: sticky; top: 0; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
-th:first-child { width: 54%; }
-.line { width: 58px; color: var(--muted); text-align: center; }
-.number { text-align: right; font-variant-numeric: tabular-nums; }
-tr.total td { background: var(--surface-soft); font-weight: 750; }
 .template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: var(--radius-control); background: #e9edf1; }
 .tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
 .tax-template-sheet.balance-sheet { width: 1120px; }
@@ -1121,27 +1008,21 @@ tr.total td { background: var(--surface-soft); font-weight: 750; }
 .tax-template-table td.section, .tax-template-table td.blank, .tax-template-table td.total, .tax-template-table tr.total td, .template-section-row td { background: #e0e0e0; color: #171717; }
 .tax-template-table td.total, .tax-template-table tr.total td, .template-section-row td { font-weight: 700; }
 .template-item { text-align: left; }
-.disclosure { margin-top: 14px; }
-.disclosure summary { display: flex; min-height: 36px; align-items: center; gap: 9px; color: var(--accent); cursor: pointer; }
-.disclosure summary span { padding: 4px 8px; border-radius: 999px; background: var(--accent-soft); font-size: 11px; }
-.disclosure summary span.failed { background: var(--danger-soft); color: var(--danger); }
-.check-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-.check-list div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 9px; padding: 10px 12px; border-radius: 9px; background: var(--surface-soft); }
-.check-list div > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
-.check-list div.failed > span { background: var(--danger-soft); color: var(--danger); }
-.technical dl { display: grid; grid-template-columns: minmax(150px, .45fr) minmax(0, 1.55fr); gap: 7px 16px; margin: 12px 0 0; }
-.technical dt { color: var(--muted); }
-.technical dd { margin: 0; overflow-wrap: anywhere; }
-.technical ul { margin: 0; padding-left: 20px; }
-@media (max-width: 960px) { .statement-buttons { grid-template-columns: 1fr; } .table-scroll-hint { display: block; } }
-@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .report-review { padding: 0; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
 
-
-.report-hero .summary-grid { margin-top: 32px; }
-.report-hero .summary-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
-.report-hero .summary-grid strong { font-variant-numeric: tabular-nums; }
+.mobile-template-table { display: none; }
 @media (max-width: 760px) {
-  .report-hero .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .template-switch { width: 100%; justify-content: space-between; }
+  .switch-copy { justify-items: start; }
+  .template-wrap { overflow: hidden; padding: 8px; }
+  .tax-template-sheet, .tax-template-sheet.balance-sheet { width: 100%; padding: 12px 8px; }
+  .template-title-row { flex-direction: column; gap: 8px; min-height: 0; }
+  .template-title-row h3 { font-size: 16px; white-space: normal; overflow-wrap: anywhere; }
+  .template-title-row span { position: static; white-space: normal; }
+  .template-meta-grid { grid-template-columns: 94px minmax(0, 1fr); }
+  .desktop-template-table { display: none; }
+  .mobile-template-table { display: block; }
+  .mobile-template-table td { height: auto; border: 0; padding: 5px 0; }
+  .mobile-template-table td[data-label] { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+  .mobile-template-table td[data-label]::before { color: #4b5563; }
 }
 </style>

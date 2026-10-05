@@ -1,0 +1,114 @@
+{
+  "current_source_sha256": "1836585b091d79999bce32980a42ed919246449d7f493593633cf4cbd0768459",
+  "baseline_source_sha256": "24b9b8b65723cee8c6982b1f41235dce380e62788db33f100176f92c714571fc",
+  "safety_review": "Each JSON recursively audited for secrets and SID/SDDL. Raw browser/Q texts contain no credential/approval/capability/token values or process IDs. Runner/control remove command, all private PID fields and full environment snapshot; analyses are not original receipts. No DB/ZIP/helper/source original bytes published.",
+  "artifacts": [
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main48-browser-20261004.json",
+      "original_sha256": "91bd4d42581a08701ffcd360a273141545ba8113a0f82406f21c7ef6f31dff40",
+      "original_bytes": 416359,
+      "archive": "stage9-two-group-main48-browser-20261004.json.gz",
+      "archive_sha256": "8d80a33e535482b26c713707ae0dcc6704b58b883fdecf29342a0188135108b9",
+      "archive_bytes": 22084,
+      "payload_sha256": "91bd4d42581a08701ffcd360a273141545ba8113a0f82406f21c7ef6f31dff40",
+      "representation": "raw_original_bytes",
+      "redacted_paths": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main48-browser-20261004-qualified.json",
+      "original_sha256": "4b7c3eab696925aa8d628480ee36afce4c3393820f6b46efe068a26180448dd7",
+      "original_bytes": 26564,
+      "archive": "stage9-two-group-main48-browser-20261004-qualified.json.gz",
+      "archive_sha256": "3b88c4398028b80adfcdfd1fb7467e7820b7376e4b9aeb7e7c7d4fee5c2b802f",
+      "archive_bytes": 6382,
+      "payload_sha256": "4b7c3eab696925aa8d628480ee36afce4c3393820f6b46efe068a26180448dd7",
+      "representation": "raw_original_bytes",
+      "redacted_paths": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main48-browser-20261004-runner.json",
+      "original_sha256": "cef8a62187737415bd6997ffe941d56261cf0bacc5098a70ea40a17c31794fb7",
+      "original_bytes": 7475,
+      "archive": "stage9-two-group-main48-browser-20261004-runner-redacted-analysis.json.gz",
+      "archive_sha256": "f44720019cf395c7a2d6204d5cdf5afa793a7a4ad87fae246387643905d3013d",
+      "archive_bytes": 1903,
+      "payload_sha256": "9a47db01fd7a565d908faa71d9d499c1a54f4c1402dd355e0ff9affc2dfbab50",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/command",
+        "/child_pid_private"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-two-group-main48-browser-20261004-control.json",
+      "original_sha256": "dc5b9082428bb013f8a32bd20261eee1859ee0ae7be60710df3a2f590657b891",
+      "original_bytes": 4631,
+      "archive": "stage9-two-group-main48-browser-20261004-control-redacted-analysis.json.gz",
+      "archive_sha256": "bbeb5291ad2e419edf143ef560f29edd6f1c6c79a7cfcd4a503fc82f0476a9d8",
+      "archive_bytes": 1178,
+      "payload_sha256": "b05290ac25bdec58089914b924f4598f56dee4038312b07de9d7d26544bb9bee",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/primary/launcher_pid",
+        "/primary/actual_pid",
+        "/primary/wrapper_pid",
+        "/environment_before_release"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main48-browser-20261004.json",
+      "original_sha256": "dcd9a534d895b05bee2c98c5e520a326a350944877a35493471ecbbfbe8f3fae",
+      "original_bytes": 416273,
+      "archive": "stage9-idle-before-main48-browser-20261004.json.gz",
+      "archive_sha256": "871819cddb21f17c6fc99551ba295b66d8afc64f3a47a0e8ac11faa0b6c64153",
+      "archive_bytes": 22117,
+      "payload_sha256": "dcd9a534d895b05bee2c98c5e520a326a350944877a35493471ecbbfbe8f3fae",
+      "representation": "raw_original_bytes",
+      "redacted_paths": [],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main48-browser-20261004-runner.json",
+      "original_sha256": "215b580a661e5bbbef23fd3e95608c347ff4884893a36af7af3faf2b0885a2c7",
+      "original_bytes": 8666,
+      "archive": "stage9-idle-before-main48-browser-20261004-runner-redacted-analysis.json.gz",
+      "archive_sha256": "c0cb9c2c7d9a1743d151794b59bd7943a94c4e68bc96ca9ae89beb2844f1ae94",
+      "archive_bytes": 2257,
+      "payload_sha256": "195f506e013ea82089b9bd5b2c8266c43dbc1089359c01f592175ddaefc15590",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/command",
+        "/child_pid_private"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-idle-before-main48-browser-20261004-control.json",
+      "original_sha256": "4ed1186bcc9d90e18464d0468317a65144ec0dc371351801af95aa7047938cd7",
+      "original_bytes": 4585,
+      "archive": "stage9-idle-before-main48-browser-20261004-control-redacted-analysis.json.gz",
+      "archive_sha256": "1691fa8111d339850fa952d8e9c4604c5f8db0aa88028df9ad191de0e44794d5",
+      "archive_bytes": 1159,
+      "payload_sha256": "95f5ffb925435e6a0aa29444801bfb232d8203a118e5d95418301aee4df4e91a",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/primary/launcher_pid",
+        "/primary/actual_pid",
+        "/primary/wrapper_pid",
+        "/environment_before_release"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    }
+  ]
+}

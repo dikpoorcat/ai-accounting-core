@@ -9,7 +9,7 @@ from monthly_close_fixture import ready
 from test_dashboard_transport import authenticated
 from test_resident_service import PASSWORD
 
-from ai_accounting.kernel.close_review import CloseReview
+from ai_accounting.kernel.close_review import CloseReview, public_owner_review
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.read_state import advance_repair_revision
 from ai_accounting.kernel.service import LocalService
@@ -100,14 +100,15 @@ def test_review_uses_exact_preview_and_survives_freeze_and_service_restart(resid
     status, _, _, shown = read(preview_digest=preview["digest"])
     assert status == 200, shown
     assert shown["state"] == "prepared"
-    assert shown["owner_review"]["accounting_summary"]["total_debit_fen"] == "0"
+    assert shown["owner_review"]["amounts"]["month_expense_fen"] == "0"
     native = execute("dashboard_close_review", period="2026-01", preview_digest=preview["digest"])
-    assert native["owner_review"] == preview["manifest"]["owner_review"]
-    assert type(native["owner_review"]["accounting_summary"]["total_debit_fen"]) is int
-    detail = read(preview_digest=preview["digest"], section="evidence", limit=1)[3]
-    assert detail["preview_digest"] == shown["preview_digest"]
-    assert detail["collection"]["page"]["total_count"] >= 1
-    assert detail["collection"]["items"][0]["references"][0]["digest"] == proof
+    assert native["owner_review"] == public_owner_review(preview["manifest"]["owner_review"])
+    assert type(native["owner_review"]["amounts"]["month_expense_fen"]) is int
+    status, _, _, detail = read(preview_digest=preview["digest"], section="evidence", limit=1)
+    assert status == 400 and detail["code"] == "invalid_command"
+    assert "collection" not in shown
+    assert "accounting_summary" not in shown["owner_review"]
+    assert "collections" not in shown["owner_review"]
 
     # A new service has no in-memory preview. It must not reconstruct an owner confirmation.
     restarted = LocalService(service.catalog.root)
@@ -166,9 +167,8 @@ def test_review_uses_exact_preview_and_survives_freeze_and_service_restart(resid
     assert frozen["state"] == "closed" and frozen["close_digest"] == closed["digest"]
     assert frozen["owner_review"] == shown["owner_review"]
     assert frozen["preview_digest"] == preview["digest"]
-    outdated = read(preview_digest="0" * 64, section="evidence", limit=1)[3]
+    outdated = read(preview_digest="0" * 64)[3]
     assert outdated["state"] == "stale" and outdated["owner_review"] is None
-    assert outdated["collection"] is None
     assert (
         restarted.dispatch(
             "dashboard_close_review",
@@ -195,9 +195,9 @@ def test_replaced_preview_is_never_implicitly_selected_by_old_locator(resident):
     )["digest"]
     second = execute("preview_close", period="2026-01", owner_confirmation=other_proof)
     assert first["digest"] != second["digest"]
-    status, _, _, stale = read(preview_digest=first["digest"], section="evidence", limit=1)
+    status, _, _, stale = read(preview_digest=first["digest"])
     assert status == 200 and stale["state"] == "stale"
-    assert stale["owner_review"] is None and stale["collection"] is None
+    assert stale["owner_review"] is None
     assert read(preview_digest=second["digest"])[3]["state"] == "prepared"
     with pytest.raises(KernelError) as rejected:
         service.require_active_close_preview(
@@ -221,7 +221,7 @@ def test_each_revision_invalidates_review_without_exposing_cached_contents(resid
         connection.commit()
     response = read(preview_digest=preview["digest"])[3]
     assert response["state"] == "stale" and response["reason"] == "snapshot_changed"
-    assert response["owner_review"] is None and response["collection"] is None
+    assert response["owner_review"] is None
 
 
 def test_review_contract_failure_is_a_server_error_and_has_no_private_value(resident, monkeypatch):
@@ -230,7 +230,7 @@ def test_review_contract_failure_is_a_server_error_and_has_no_private_value(resi
 
     def malformed(self, *args, **kwargs):
         result = original(self, *args, **kwargs)
-        result["owner_review"]["accounting_summary"]["total_debit_fen"] = "private value"
+        result["owner_review"]["amounts"]["month_expense_fen"] = "private value"
         return result
 
     monkeypatch.setattr(CloseReview, "read", malformed)

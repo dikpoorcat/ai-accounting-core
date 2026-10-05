@@ -191,20 +191,24 @@ def finish_payment(call, references, evidence):
 def assert_dashboard(call, references):
     brief = call("dashboard_brief", period=PERIOD)["data"]
     brief.pop("generated_at")
-    assert brief["voucher_count"] == 3
+    assert brief["activity_count"] == 3
     assert brief["funds_overview"]["cash_fen"] == 87500
-    assert brief["management_commentary"] == COMMENTARY
+    assert brief["management_commentary_details"]["current"]["text"] == COMMENTARY
     assert brief["management_commentary_details"]["status"] == "current"
-    by_kind = {voucher["kind"]: voucher for voucher in brief["collections"]["vouchers"]["items"]}
-    funding, expense = by_kind["cash_funding"], by_kind["expense"]
-    assert funding["components"][0]["parties"] == ["甲出资人"]
-    assert funding["funds"][0]["name"] == "办公室现金"
-    assert expense["components"][0]["parties"] == ["合成办公用品商店"]
-    assert expense["components"][0]["description"] == "原件明确为一月办公支出"
+    by_subject = {item["subject_id"]: item for item in brief["collections"]["activity"]["items"]}
+    funding, expense = by_subject[references["funding"]], by_subject[references["expense"]]
+    assert funding["party"] == "甲出资人"
+    accounts = call("dashboard_funds", period=PERIOD)["data"]["collections"]["accounts"]["items"]
+    assert (
+        next(item for item in accounts if item["account_id"] == references["cash"])["name"]
+        == "办公室现金"
+    )
+    assert expense["party"] == "合成办公用品商店"
+    assert "原件明确为一月办公支出" in expense["description"]
     assert expense["recognition"]["precision"] == "month"
     assert expense["date"] is None
     assert expense["recognition"]["label"] == PERIOD
-    assert expense["evidence_details"][0]["name"] == SOURCE_NAME
+    assert "evidence_details" not in expense
     trace = call("trace", voucher_version_id=expense["voucher_version_id"])
     assert trace["evidence_details"][0]["name"] == SOURCE_NAME
     assert call("company_context")["company_note"]["text"] == COMPANY_NOTE

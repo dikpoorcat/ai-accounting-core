@@ -4,6 +4,7 @@ import json
 
 import pytest
 from close_storage_fixture import stored_manifest
+from test_dashboard_projection import diagnostic_vouchers
 from test_payroll_corrections import Company
 from test_reimbursement_assets import accepted_batch, activation, asset, batch_card
 from test_reimbursement_assets import book as book_fixture
@@ -88,9 +89,7 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     )
     activation_voucher = next(
         row
-        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["collections"][
-            "vouchers"
-        ]["items"]
+        for row in diagnostic_vouchers(engine, "2026-02")
         if row["kind"] == "asset_activation_batch"
     )
     assert {item["asset_id"] for item in activation_voucher["asset_members"]} == {
@@ -98,11 +97,7 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
         "printer",
     }
     acquisition_vouchers = [
-        row
-        for row in Dashboard(engine).brief("2026-02", section="vouchers")["data"]["collections"][
-            "vouchers"
-        ]["items"]
-        if row["kind"] == "reimbursed_asset"
+        row for row in diagnostic_vouchers(engine, "2026-02") if row["kind"] == "reimbursed_asset"
     ]
     assert {row["asset"]["asset_id"] for row in acquisition_vouchers} == {
         "computer",
@@ -119,16 +114,38 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     dashboard = Dashboard(engine)
     cards = dashboard.assets("2026-03")["data"]
     assert cards["month_charge_fen"] == cards["ledger_accumulated_fen"] == 30000
-    assert cards["card_net_fen"] == cards["ledger_net_fen"] == 210000
-    assert cards["reconciled"]
-    voucher = dashboard.brief("2026-03", section="vouchers")["data"]["collections"]["vouchers"][
-        "items"
-    ][0]
+    assert (
+        sum(item["book_value_fen"] for item in cards["collections"]["assets"]["items"])
+        == (cards["ledger_net_fen"])
+        == 210000
+    )
+    assert not cards["checking"]
+    assert {"card_net_fen", "reconciled"}.isdisjoint(cards)
+    brief = dashboard.brief("2026-03")["data"]
+    owner_vouchers = brief["collections"]["vouchers"]
+    assert owner_vouchers["page"]["total_count"] == brief["voucher_count"]
+    assert owner_vouchers["page"]["returned_count"] == len(owner_vouchers["items"])
+    assert not owner_vouchers["page"]["has_more"]
+    assert len({row["voucher_version_id"] for row in owner_vouchers["items"]}) == len(
+        owner_vouchers["items"]
+    )
+    voucher = diagnostic_vouchers(engine, "2026-03")[0]
     assert voucher["kind"] == "asset_consumption_month"
     assert voucher["business_amount_fen"] == 30000
     assert len(voucher["lines"]) == 4
     assert {line["asset"]["asset_id"] for line in voucher["lines"]} == {"computer", "printer"}
     assert {item["amount_fen"] for item in voucher["asset_members"]} == {10000, 20000}
+    owner_voucher = next(
+        row for row in owner_vouchers["items"]
+        if row["voucher_version_id"] == voucher["voucher_version_id"]
+    )
+    assert owner_voucher["business_amount_fen"] == voucher["business_amount_fen"]
+    assert owner_voucher["amount_fen"] == 30000
+    assert sum(line["debit_fen"] for line in owner_voucher["lines"]) == 30000
+    assert sum(line["credit_fen"] for line in owner_voucher["lines"]) == 30000
+    assert {line["asset"]["asset_id"] for line in owner_voucher["lines"]} == {
+        "computer", "printer",
+    }
     with engine.store.connection(read_only=True) as connection:
         reads = QueryReads(engine, connection)
         queries = BusinessQueries(engine, reads=reads)
@@ -160,15 +177,33 @@ def test_selected_asset_members_batches_exact_metadata_and_rejects_missing(monke
         {"calculation_id": "owner-2", "posting_period": "2026-03", "selection_source": "current"},
     ]
     members = {
-        "owner-1": [{"member_calculation_id": "member-1", "asset_id": "asset-1",
-                     "line_start": 1, "line_count": 2}],
+        "owner-1": [
+            {
+                "member_calculation_id": "member-1",
+                "asset_id": "asset-1",
+                "line_start": 1,
+                "line_count": 2,
+            }
+        ],
         "owner-empty": [],
-        "owner-2": [{"member_calculation_id": "member-2", "asset_id": "asset-2",
-                     "line_start": 1, "line_count": 2}],
+        "owner-2": [
+            {
+                "member_calculation_id": "member-2",
+                "asset_id": "asset-2",
+                "line_start": 1,
+                "line_count": 2,
+            }
+        ],
     }
     metadata = {
-        ident: {"id": ident, "subject_id": ident, "fact_id": "fact-" + ident,
-                "kind": "asset_activation", "period": "2026-01", "result_digest": "digest"}
+        ident: {
+            "id": ident,
+            "subject_id": ident,
+            "fact_id": "fact-" + ident,
+            "kind": "asset_activation",
+            "period": "2026-01",
+            "result_digest": "digest",
+        }
         for ident in ("member-1", "member-2")
     }
 
@@ -177,7 +212,8 @@ def test_selected_asset_members_batches_exact_metadata_and_rejects_missing(monke
             self.member_calls = []
             self.metadata_calls = []
 
-        def asset_members_many(self, owner_ids):
+        def asset_members_many(self, owner_ids, *, _decoded_owners=None):
+            assert _decoded_owners is None
             ids = tuple(owner_ids)
             self.member_calls.append(ids)
             return {ident: members[ident] for ident in ids}
@@ -209,14 +245,18 @@ def test_selected_asset_members_batches_exact_metadata_and_rejects_missing(monke
 def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
     company = Company(tmp_path / "asset-card-close.sqlite")
     prepare_batch_assets(company)
-    assert Dashboard(company.engine).assets("2026-02")["data"]["reconciled"] is True
+    assert Dashboard(company.engine).assets("2026-02")["data"]["checking"] is False
 
     company.close("2026-02")
 
     assets = Dashboard(company.engine).assets("2026-02")["data"]
-    assert assets["reconciled"] is True
+    assert assets["checking"] is False
     assert assets["unestablished_count"] == 0
-    assert assets["card_cost_fen"] == assets["ledger_cost_fen"] == 150000
+    assert (
+        sum(item["cost_fen"] for item in assets["collections"]["assets"]["items"])
+        == (assets["ledger_cost_fen"])
+        == 150000
+    )
     with company.engine.store.connection(read_only=True) as connection:
         manifest = stored_manifest(connection, "2026-02")
         assert {item["asset_id"] for item in manifest["asset_card_adoptions"]} == {

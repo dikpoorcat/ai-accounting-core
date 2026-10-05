@@ -9,13 +9,13 @@ import {
   fundAccountDisplayName,
   fundAccountLabel,
   rememberFundAccounts,
-  type BankStatementState,
   type FundAccount,
   type FundsData,
   type FundsQuery,
 } from "../api/funds";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
+import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
@@ -67,12 +67,7 @@ const movements = computed(() => funds.value?.collections.movements?.items ?? []
 const bankRows = computed(() => funds.value?.collections.statements?.items ?? []);
 const investmentProducts = computed(() => funds.value?.collections.investment_products?.items ?? []);
 const investmentEvents = computed(() => funds.value?.collections.investment_events?.items ?? []);
-const visibleMovements = computed(() => {
-  if (!selectedAccount.value) return movements.value;
-  return movements.value.filter(
-    (item) => accountKey(item.account_type, item.account_id) === selectedAccount.value,
-  );
-});
+const visibleMovements = movements;
 const bankAccounts = computed(
   () => accounts.value.filter((account) => account.type === "bank"),
 );
@@ -101,31 +96,20 @@ const movementAccountEntries = computed<MovementAccountEntry[]>(() => {
   }
   return entries;
 });
-const visibleMovementCount = computed(
-  () => selectedAccount.value
-    ? movementAccountEntries.value.find((entry) => entry.value === selectedAccount.value)?.movementCount ?? visibleMovements.value.length
-    : funds.value?.movement_count ?? 0,
-);
+const visibleMovementCount = computed(() => funds.value?.collections.movements?.page.filtered_count ?? 0);
 const selectedMovementAccountLabel = computed(
-  () => movementAccountEntries.value.find((entry) => entry.value === selectedAccount.value)?.label ?? "全部账户",
+  () => movementAccountEntries.value.find((entry) => entry.value === selectedAccount.value)?.label ?? "资金账户",
 );
 const bankAccountOptions = computed(() => {
   const options = bankAccounts.value.map(account => ({ value: account.account_id, label: fundAccountDisplayLabel(account.name, account.code) }));
   if (selectedBankAccount.value && !options.some(option => option.value === selectedBankAccount.value)) options.push({ value: selectedBankAccount.value, label: fundAccountLabel(queryText("company_id"), selectedPeriod.value, "bank", selectedBankAccount.value) ?? "所选银行账户（名称尚未加载）" });
   return options;
 });
-const visibleBankRows = computed(() => {
-  if (!selectedBankAccount.value) return bankRows.value;
-  return bankRows.value.filter((item) => item.account_id === selectedBankAccount.value);
-});
+const visibleBankRows = bankRows;
 const selectedBankAccountLabel = computed(
   () => bankAccountOptions.value.find((option) => option.value === selectedBankAccount.value)?.label ?? "全部银行账户",
 );
-const visibleBankRowCount = computed(() => {
-  if (!selectedBankAccount.value) return funds.value?.bank_statement.transaction_count ?? 0;
-  return bankAccounts.value.find((account) => account.account_id === selectedBankAccount.value)?.statement.transaction_count
-    ?? visibleBankRows.value.length;
-});
+const visibleBankRowCount = computed(() => funds.value?.collections.statements?.page.filtered_count ?? 0);
 const attentionItems = computed(() => {
   if (!funds.value) return [];
   const items: string[] = [];
@@ -144,32 +128,15 @@ const attentionItems = computed(() => {
     }
   }
   const statement = funds.value.bank_statement;
-  if (statement.unmatched_count) {
-    items.push(
-      `${statement.unmatched_count} 笔银行流水尚未完成有效匹配。`,
-    );
-  }
-  if (statement.needs_review_count) {
-    items.push(`${statement.needs_review_count} 笔流水的资料或核对结果待复核。`);
-  }
+  if (statement.review_state === "pending") items.push("AI 会计核对中，如需您补充资料会另列待办。");
   if (statement.missing_account_count) {
     items.push(`${statement.missing_account_count} 个银行账户尚未提供本月流水，不能据此判断没有收支。`);
   }
   return items;
 });
-const bankAttentionCount = computed(() => {
-  const statement = funds.value?.bank_statement;
-  return statement
-    ? statement.unmatched_count + statement.needs_review_count
-    : 0;
-});
 const bankNeedsAttention = computed(() => {
   const statement = funds.value?.bank_statement;
-  return Boolean(statement && (
-    bankAttentionCount.value ||
-    statement.missing_account_count ||
-    ["missing", "partial"].includes(statement.coverage_state)
-  ));
+  return Boolean(statement && (statement.review_state === "pending" || statement.missing_account_count || ["missing", "partial"].includes(statement.coverage_state)));
 });
 const sectionLinks = computed(() => {
   if (!funds.value) return [];
@@ -194,10 +161,6 @@ function routeAccount() {
   const type = queryText("movement_account_type"), id = queryText("movement_account_id");
   return ["bank", "cash", "payment_platform"].includes(type) && id ? accountKey(type, id) : "";
 }
-function voucherTarget(reference: string, period: string) {
-  return /^[1-9]\d*$/.test(reference) && /^\d{4}-\d{2}$/.test(period)
-    ? { path: "/", query: { company_id: queryText("company_id"), period, voucher: reference } } : null;
-}
 function cancelPages() {
   for (const request of pageRequests.values()) request.abort();
   pageRequests.clear();
@@ -205,18 +168,37 @@ function cancelPages() {
 }
 
 function queryFilters(): FundsQuery {
-  return {};
+  const separator = selectedAccount.value.indexOf(":");
+  const type = selectedAccount.value.slice(0, separator);
+  const filters: FundsQuery = {};
+  if (separator > 0 && (type === "bank" || type === "cash" || type === "payment_platform")) {
+    filters.movement_account_type = type;
+    filters.movement_account_id = selectedAccount.value.slice(separator + 1);
+  } else {
+    filters.movement_account_selection = "first";
+  }
+  if (selectedBankAccount.value) filters.statement_account_id = selectedBankAccount.value;
+  return filters;
 }
+let requestedFilters = "";
 
 function selectionKey() {
-  return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value]);
+  return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, selectedBankAccount.value]);
+}
+function pageSelectionKey(kind: PageKind) {
+  return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value,
+    kind === "book" ? selectedAccount.value : kind === "bank" ? selectedBankAccount.value : null]);
+}
+function isPageCurrent(kind: PageKind, generation: number, selection: string) {
+  return mounted && generation === requestGeneration && pageSelectionKey(kind) === selection;
 }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
-function invalidateRequests() {
+function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   activeRequest?.abort(); cancelPages();
   activeRequest = null;
-  snapshotVersion.value = ""; funds.value = null; responsePeriod.value = ""; loading.value = false;
+  if (!keepContent) { snapshotVersion.value = ""; funds.value = null; responsePeriod.value = ""; }
+  loading.value = keepContent;
 }
 
 function selectMovementAccount(value: string) {
@@ -224,32 +206,21 @@ function selectMovementAccount(value: string) {
   selectedAccount.value = value;
 }
 
-/** 摘要卡内“查看核对说明”的内容：只补充摘要结论没有的细节。 */
 function bankOwnerNote() {
   const statement = funds.value?.bank_statement;
   if (!statement) return "正在读取本月银行收支。";
-  if (statement.coverage_state === "not_applicable") return "本月没有需要查看的公司银行流水。";
-  if (statement.missing_account_count) {
-    return `还有 ${statement.missing_account_count} 个银行账户未提供本月流水，上述金额仅包含已提供的资料。`;
-  }
-  if (["missing", "partial"].includes(statement.coverage_state)) {
-    return "当前流水资料尚未齐全，上述金额可能不完整；AI 会计正在继续核对。";
-  }
-  if (bankAttentionCount.value) {
-    return `${bankAttentionCount.value} 笔流水由 AI 会计继续核对；如需您补充资料，会另列待办。`;
-  }
-  if (!statement.transaction_count) return "本月银行流水完整，未发生银行收支。";
-  return `本月共 ${statement.transaction_count} 笔银行流水，均已核对。`;
+  if (statement.coverage_state === "not_applicable") return "本月暂无银行流水。";
+  if (statement.missing_account_count) return `还有 ${statement.missing_account_count} 个银行账户未提供本月流水，金额仅包含已提供的资料。`;
+  if (statement.review_state === "pending") return "AI 会计核对中，如需您补充资料会另列待办。";
+  return statement.transaction_count ? `本月共 ${statement.transaction_count} 笔银行流水。` : "本月银行流水完整，未发生银行收支。";
 }
 
-/** 摘要卡内的流水结论：先给资料是否齐全，再给是否仍需核对。 */
 function bankStatementSummary() {
   const statement = funds.value?.bank_statement;
-  if (!statement) return "银行资料尚未读取";
+  if (!statement) return "正在读取银行资料";
   if (statement.coverage_state === "not_applicable") return "暂无银行流水";
-  if (["missing", "partial"].includes(statement.coverage_state)) return "流水资料可能不完整";
-  if (!statement.transaction_count) return "本月无银行收支";
-  return bankAttentionCount.value ? "部分流水待核对" : "流水已核对";
+  if (["missing", "partial"].includes(statement.coverage_state)) return "流水资料尚未齐全";
+  return statement.review_state === "pending" ? "AI 会计核对中" : "本月银行流水已核对";
 }
 
 function routePeriod(): string | null {
@@ -274,37 +245,33 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   cancelPages();
   activeRequest?.abort();
   const controller = new AbortController();
-  const selection = selectionKey();
+  let selection = selectionKey();
   const filters = queryFilters();
+  requestedFilters = JSON.stringify(filters);
   lockSectionSync();
   const sectionToRestore = activeSection.value;
   const shouldRestoreSection = funds.value !== null;
-  snapshotVersion.value = "";
-  funds.value = null;
+  if (!contextGate) { snapshotVersion.value = ""; funds.value = null; }
   activeRequest = controller;
   loading.value = true;
   requestError.value = "";
   try {
     const request = fetchFundsDashboard(periodKey, controller.signal, filters);
     const response = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
-    const data = response.data;
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
+    const selected = response.data?.selected_movement_account;
+    if (!selectedAccount.value && selected) {
+      selectedAccount.value = accountKey(selected.type, selected.account_id);
+      selection = selectionKey();
+      requestedFilters = JSON.stringify(queryFilters());
+    }
+    const data = response.data;
     funds.value = data;
     if (data) rememberFundAccounts(queryText("company_id"), periodKey, data.collections.accounts?.items ?? []);
-    if (queryText("movement_account_type") || queryText("movement_account_id") || queryText("statement_account_id")) {
-      void router.replace({
-        query: {
-          ...route.query,
-          movement_account_type: undefined,
-          movement_account_id: undefined,
-          statement_account_id: undefined,
-        },
-        hash: route.hash,
-      });
-    }
     snapshotVersion.value = response.snapshot_version;
     responsePeriod.value = response.selected_period?.key ?? "";
     selectedPeriodLabel.value = response.selected_period?.label ?? "";
+    loading.value = false; initializing.value = false;
     await nextTick();
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     const targetSection = sectionLinks.value.some((link) => link.id === sectionToRestore)
@@ -321,6 +288,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
     }
   } catch (error: unknown) {
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
+    funds.value = null; snapshotVersion.value = "";
     requestError.value = dashboardErrorMessage(error);
   } finally {
     if (isCurrent(generation, selection) && activeRequest === controller) {
@@ -337,20 +305,53 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   }
 }
 
+async function loadDetail(kind: "book" | "bank") {
+  if (!funds.value || loading.value || !snapshotVersion.value) return;
+  const section = kind === "book" ? "movements" : "statements";
+  const generation = requestGeneration, selection = pageSelectionKey(kind), version = snapshotVersion.value;
+  pageRequests.get(kind)?.abort();
+  const request = new AbortController(); pageRequests.set(kind, request);
+  const state = pageStates.value[kind]; state.loading = true; state.error = "";
+  // Clear only the changed account's rows; summaries and other collections stay visible.
+  const current = funds.value;
+  const collection = current.collections[section];
+  if (collection) funds.value = { ...current, collections: { ...current.collections, [section]: { ...collection, items: [] } } };
+  const valid = () => isPageCurrent(kind, generation, selection) && pageRequests.get(kind) === request && snapshotVersion.value === version;
+  try {
+    const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
+      { ...queryFilters(), expected_version: version, section });
+    if (!valid() || !next.data || !funds.value || !next.data.collections[section]) return;
+    if (next.snapshot_version !== version) { await refreshChanged(); return; }
+    const latest = funds.value;
+    funds.value = { ...latest,
+      ...(kind === "book" ? { selected_movement_account: next.data.selected_movement_account } : {}),
+      collections: { ...latest.collections, [section]: next.data.collections[section] } };
+  } catch (caught) {
+    if (valid()) {
+      if (isDashboardSnapshotChanged(caught)) await refreshChanged();
+      else state.error = dashboardErrorMessage(caught);
+    }
+  } finally { if (valid()) { pageRequests.delete(kind); state.loading = false; } }
+}
+
 async function loadMore(kind: PageKind) {
+  if ((kind === "book" || kind === "bank") && pageStates.value[kind].error
+    && !funds.value?.collections[kind === "book" ? "movements" : "statements"]?.items.length) {
+    return loadDetail(kind);
+  }
   const current = funds.value;
   const section = kind === "book" ? "movements" : kind === "bank" ? "statements" : kind === "investment" ? "investment_events" : kind;
   const page = current?.collections[section]?.page;
   const state = pageStates.value[kind];
   if (!current || !page?.has_more || !page.next_cursor || state.loading || loading.value) return;
-  const selection = selectionKey();
+  const selection = pageSelectionKey(kind);
   const generation = requestGeneration;
   const version = snapshotVersion.value;
   const request = new AbortController(); pageRequests.set(kind, request); state.loading = true; state.error = "";
   try {
     const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
       { ...queryFilters(), expected_version: snapshotVersion.value, section, cursor: page.next_cursor });
-    if (!isCurrent(generation, selection) || pageRequests.get(kind) !== request || !next.data || !funds.value || snapshotVersion.value !== version) return;
+    if (!isPageCurrent(kind, generation, selection) || pageRequests.get(kind) !== request || !next.data || !funds.value || snapshotVersion.value !== version) return;
     const latest = funds.value;
     const collection = next.data.collections[section];
     const previousCollection = latest.collections[section];
@@ -359,20 +360,26 @@ async function loadMore(kind: PageKind) {
     funds.value = { ...latest, collections: { ...latest.collections, [section]: appended } };
     if (kind === "accounts") rememberFundAccounts(queryText("company_id"), selectedPeriod.value, collection.items);
   } catch (caught) {
-    if (isCurrent(generation, selection) && pageRequests.get(kind) === request) {
-      if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
+    if (isPageCurrent(kind, generation, selection) && pageRequests.get(kind) === request) {
+      if (isDashboardSnapshotChanged(caught)) { await refreshChanged(); }
       else state.error = dashboardErrorMessage(caught);
     }
   }
-  finally { if (isCurrent(generation, selection) && pageRequests.get(kind) === request) { pageRequests.delete(kind); state.loading = false; } }
+  finally { if (isPageCurrent(kind, generation, selection) && pageRequests.get(kind) === request) { pageRequests.delete(kind); state.loading = false; } }
 }
 
 function changePeriod(value: string) {
   void router.push({ query: { company_id: route.query.company_id, period: value || undefined } });
 }
 
-async function refresh() {
-  invalidateRequests();
+function refresh() { return refreshCurrent(true); }
+function refreshChanged() {
+  updateNotice.value = "资料已更新，正在重新读取。";
+  return refreshCurrent(false);
+}
+async function refreshCurrent(keepContent: boolean) {
+  invalidateRequests(keepContent);
+  loading.value = true;
   const generation = requestGeneration;
   const selection = selectionKey();
   const period = selectedPeriod.value;
@@ -391,6 +398,7 @@ async function refresh() {
     }
   } catch (caught) {
     if (isCurrent(generation, selection)) {
+      funds.value = null; snapshotVersion.value = ""; loading.value = false;
       requestError.value = dashboardErrorMessage(caught);
       if (updateNotice.value === "资料已更新，正在重新读取。") updateNotice.value = "资料已更新，请重新读取当前筛选。";
     }
@@ -460,8 +468,6 @@ function bankConcern(account: FundAccount): string {
   ) {
     parts.push(`账面与银行流水相差 ${formatPositiveFen(account.reconciliation.difference_fen)}`);
   }
-  if (account.statement.unmatched_count) parts.push(`${account.statement.unmatched_count} 笔流水待匹配`);
-  if (account.statement.needs_review_count) parts.push(`${account.statement.needs_review_count} 笔流水待复核`);
   if (account.statement.coverage_state === "partial") parts.push("本月流水覆盖尚未完整确认");
   if (!parts.length && reconciliationAttention(account.reconciliation.state)) {
     parts.push(account.reconciliation.label);
@@ -494,9 +500,7 @@ function accountOwnerState(account: FundAccount): { label: string; detail: strin
     return {
       label: account.statement.coverage_state === "missing"
         ? "待补银行流水"
-        : account.statement.unmatched_count || account.statement.needs_review_count
-          ? "有流水待核对"
-          : "本月待对账",
+        : "AI 会计核对中",
       detail: `${bankIssue}。`,
       tone: "attention",
     };
@@ -519,7 +523,7 @@ function accountOwnerState(account: FundAccount): { label: string; detail: strin
     return {
       label: "本月已对账",
       detail: account.statement.transaction_count
-        ? `${account.statement.matched_count} 笔银行流水已全部与账面匹配。`
+        ? "本月银行流水已核对。"
         : "完整银行流水已确认，本月无发生。",
       tone: "ok",
     };
@@ -545,18 +549,6 @@ function movementAmount(direction: "inflow" | "outflow", value: string) {
 /** 银行流水的收支方向只用于列内提示，避免在摘要列重复整列含义。 */
 function bankDirectionLabel(direction: "inflow" | "outflow"): string {
   return direction === "inflow" ? "流入" : "流出";
-}
-
-function bankMatchLabel(state: BankStatementState): string {
-  return {
-    matched: "已匹配",
-    unmatched: "待匹配",
-    needs_review: "需复核",
-  }[state];
-}
-
-function bankMatchMark(state: BankStatementState): string {
-  return { matched: "✓", unmatched: "!", needs_review: "?" }[state];
 }
 
 function selectDetailView(view: "book" | "bank") {
@@ -659,12 +651,26 @@ watch(
 );
 
 watch(
-  accounts,
-  () => {
-    if (!funds.value || !selectedAccount.value || movementAccountEntries.value.some((entry) => entry.value === selectedAccount.value)) return;
-    selectedAccount.value = movementAccountEntries.value[0]?.value ?? "";
+  () => [selectedAccount.value, selectedBankAccount.value],
+  (value, previous) => {
+    if (!selectedPeriod.value || JSON.stringify(queryFilters()) === requestedFilters) return;
+    if (!funds.value || !snapshotVersion.value || activeRequest) {
+      invalidateRequests();
+      void loadFunds(selectedPeriod.value);
+      return;
+    }
+    requestedFilters = JSON.stringify(queryFilters());
+    if (value[0] !== previous[0]) void loadDetail("book");
+    if (value[1] !== previous[1]) void loadDetail("bank");
   },
-  { immediate: true },
+);
+watch(
+  () => [route.query.movement_account_type, route.query.movement_account_id, route.query.statement_account_id],
+  (value, previous) => {
+    if (value.every((item, index) => item === previous[index])) return;
+    selectedAccount.value = routeAccount();
+    selectedBankAccount.value = queryText("statement_account_id");
+  },
 );
 
 onMounted(async () => {
@@ -697,7 +703,7 @@ onBeforeUnmount(() => {
         @refresh="refresh"
       >
         <template #navigation>
-          <DashboardSectionNav v-if="funds"
+          <DashboardSectionNav v-if="funds" v-show="!loading && !initializing"
           :items="sectionLinks"
           :active="activeSection"
           label="资金页面区段"
@@ -716,7 +722,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section
-        v-if="(initializing || loading) && !funds"
+        v-if="initializing || loading"
         class="state-panel loading-state"
         aria-live="polite"
       >
@@ -734,7 +740,7 @@ onBeforeUnmount(() => {
         <span>可以选择其他月份或重新加载。</span>
       </section>
 
-      <template v-else-if="funds">
+      <div v-if="funds" v-show="!loading && !initializing && !pageError" class="funds-result">
 
 
         <div class="funds-dashboard" :aria-busy="loading">
@@ -761,11 +767,7 @@ onBeforeUnmount(() => {
           <div class="reconciliation" :class="{ attention: bankNeedsAttention }">
             <span>银行流水与账面记录</span>
             <strong>{{ bankStatementSummary() }}</strong>
-            <details class="reconciliation-details">
-              <summary>查看核对说明</summary>
-              <p>已匹配流水 {{ funds.bank_statement.matched_count }} / {{ funds.bank_statement.transaction_count }} 笔</p>
-              <p>{{ bankOwnerNote() }}</p>
-            </details>
+            <p class="bank-owner-note">{{ bankOwnerNote() }}</p>
           </div>
           <div class="flow-panel">
           <dl class="flow-summary">
@@ -778,14 +780,6 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="funds.fact_issues?.length" class="historical-source-issues" aria-label="历史资金依据说明">
-          <p role="status">{{ funds.fact_issues.length }} 组历史资金依据需要核对。具体金额与流水核对状态分别见对应区块。</p>
-          <p class="muted">以下保留所选月末读取发现的问题，与当前跟进状态分别列示。</p>
-          <details v-for="(issue, issueIndex) in funds.fact_issues" :key="issueIndex">
-            <summary>查看第 {{ issueIndex + 1 }} 组历史资金依据</summary>
-            <details><summary>问题与原始来源标识</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
-          </details>
-        </section>
         <section
           id="fund-accounts"
           class="panel section-panel section-anchor"
@@ -884,7 +878,7 @@ onBeforeUnmount(() => {
               <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初成本</th><th scope="col" class="number">申购成本变动</th>
               <th scope="col" class="number">赎回成本变动</th><th scope="col" class="number">期末成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
               <tbody><tr v-for="item in investmentProducts" :key="item.fund_id">
-                <td>{{ item.name }}<details><summary>查看产品标识</summary>{{ item.fund_id }}</details></td>
+                <td>{{ item.name }}</td>
                 <td class="number">{{ formatFen(item.opening_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.subscription_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.redemption_cost_fen) }}</td>
@@ -895,16 +889,15 @@ onBeforeUnmount(() => {
           <h3>本月确认及收付款</h3>
           <div v-if="investmentEvents.length" class="table-wrap" role="region" aria-label="基金确认及收付款明细" tabindex="0">
             <table class="investment-table investment-events-table">
-              <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"><col class="reference-column"></colgroup>
+              <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
-              <th scope="col" class="number">确认赎回净款</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th><th scope="col">凭证</th></tr></thead>
+              <th scope="col" class="number">确认赎回净款</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th></tr></thead>
               <tbody><tr v-for="item in investmentEvents" :key="item.id">
-                <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}</td>
+                <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}<BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" /></td>
                 <td class="number">{{ item.cost_fen === null ? "—" : formatFen(item.cost_fen) }}</td>
                 <td class="number">{{ item.net_proceeds_fen === null ? "—" : formatFen(item.net_proceeds_fen) }}</td>
                 <td class="number">{{ item.investment_income_fen === null ? "—" : formatFen(item.investment_income_fen) }}</td>
                 <td class="number">{{ item.settlement_fen === null ? "—" : formatFen(item.settlement_fen) }}</td>
-                <td><RouterLink v-if="voucherTarget(item.reference, item.period)" :to="voucherTarget(item.reference, item.period)!">查看凭证 {{ item.reference }}</RouterLink><span v-else>凭证定位未提供</span></td>
               </tr></tbody></table>
           </div>
           <p v-else class="empty">{{ loading ? "正在读取基金明细…" : "本月没有已确认的申赎或实际收付款。" }}</p>
@@ -920,7 +913,7 @@ onBeforeUnmount(() => {
             <span class="review-action">查看事项 <span aria-hidden="true">⌄</span></span>
           </summary>
           <div class="review-content">
-            <p class="muted">账户问题仅包含已加载 {{ accounts.length }} 个账户；流水覆盖与待匹配数量为全公司范围，两类数量不相加。</p>
+            <p class="muted">账户情况包含已加载 {{ accounts.length }} 个账户；银行资料完整性为全公司范围。</p>
             <ul class="attention-list"><li v-for="(item, index) in attentionItems" :key="`${index}-${item}`">{{ item }}</li></ul>
           </div>
         </details>
@@ -1001,22 +994,9 @@ onBeforeUnmount(() => {
               <nav class="fund-account-index" aria-label="资金账户">
                 <span class="fund-account-heading">资金账户</span>
                 <button
-                  type="button"
-                  title="全部账户 · 查看全部已缓存资金变动"
-                  :aria-current="selectedAccount === '' ? 'true' : undefined"
-                  @click="selectMovementAccount('')"
-                >
-                  <span class="fund-account-copy">
-                    <strong>全部账户</strong>
-                    <small>{{ funds.account_count }} 个资金账户</small>
-                  </span>
-                  <b>{{ funds.movement_count }} 笔</b>
-                </button>
-                <button
                   v-for="account in movementAccountEntries"
                   :key="account.value"
                   type="button"
-                  :title="`${account.label} · ${account.meta}`"
                   :aria-current="selectedAccount === account.value ? 'true' : undefined"
                   @click="selectMovementAccount(account.value)"
                 >
@@ -1037,7 +1017,7 @@ onBeforeUnmount(() => {
               <div class="fund-business-detail" :aria-label="`${selectedMovementAccountLabel}资金明细`" :aria-busy="pageStates.book.loading" aria-live="polite">
             <div v-if="visibleMovements.length" class="book-activity-feed" role="region" aria-label="账面资金明细" tabindex="0">
               <div class="book-list-columns" aria-hidden="true">
-                <span>日期</span><span>业务与对象</span><span>方向</span><span class="book-column-number">金额</span><span class="book-column-action">凭证</span>
+                <span>日期</span><span>业务与对象</span><span>方向</span><span class="book-column-number">金额</span>
               </div>
               <ol class="book-activity-list">
                 <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row">
@@ -1045,47 +1025,17 @@ onBeforeUnmount(() => {
                   <div class="book-movement-copy">
                     <strong>{{ item.list_summary || item.type }}</strong>
                     <small>{{ item.party || "无需往来对象" }}<template v-if="item.internal_transfer"> · 账户互转</template></small>
+                    <BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" />
                   </div>
                   <span class="direction" :class="item.direction">
-                    {{ item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
+                    {{ item.correction ? "更正" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
                   </span>
-                  <strong class="book-movement-amount" :class="item.direction">{{ movementAmount(item.direction, item.amount_fen) }}</strong>
-                  <span v-if="voucherTarget(item.reference, responsePeriod)" class="book-voucher-link">
-                    <RouterLink
-                      class="book-voucher-button"
-                      :to="voucherTarget(item.reference, responsePeriod)!"
-                      :aria-label="`打开凭证 ${item.reference}：${item.list_summary || item.type}`"
-                      :aria-describedby="`fund-voucher-preview-${item.id}`"
-                    >
-                      凭证 {{ item.reference }}
-                    </RouterLink>
-                    <span :id="`fund-voucher-preview-${item.id}`" class="book-voucher-preview" role="tooltip">
-                      <span class="book-preview-heading">
-                        <span>
-                          <small>凭证 {{ item.reference }} · {{ formatDate(item.date) }}</small>
-                          <strong>{{ item.list_summary || item.type }}</strong>
-                        </span>
-                        <b>{{ movementAmount(item.direction, item.amount_fen) }}</b>
-                      </span>
-                      <span class="book-preview-lines">
-                        <span>
-                          <span>{{ fundAccountDisplayName(item.account_name, item.account_code) }}<template v-if="accountCodeAddsInformation(item.account_name, item.account_code)"> · {{ item.account_code }}</template></span>
-                          <strong>{{ item.direction === "inflow" ? "增加" : "减少" }}</strong>
-                        </span>
-                        <span><span>{{ item.party || "无需往来对象" }}</span><strong>{{ item.internal_transfer ? "账户互转" : item.direction === "inflow" ? "收款" : "付款" }}</strong></span>
-                      </span>
-                      <span class="book-preview-footer">
-                        <span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span>
-                        <small>点击打开凭证详情</small>
-                      </span>
-                    </span>
-                  </span>
-                  <span v-else class="book-voucher-missing">凭证未定位</span>
+                  <strong class="book-movement-amount" :class="item.direction">{{ item.correction ? "更正 " + formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong>
                 </li>
               </ol>
             </div>
             <p v-else class="empty">{{ loading || pageStates.book.loading ? "正在读取资金明细…" : selectedAccount ? "该账户本月没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
-            <DashboardPagination compact item-label="笔变动" :page="funds.collections.movements?.page" :loaded="movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
+            <DashboardPagination compact item-label="笔变动" :page="!movements.length && (pageStates.book.loading || pageStates.book.error) ? undefined : funds.collections.movements?.page" :loaded="movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
               </div>
             </div>
           </div>
@@ -1102,7 +1052,7 @@ onBeforeUnmount(() => {
           >
             <div v-if="visibleBankRows.length" class="bank-activity-feed" role="region" aria-label="银行流水明细" tabindex="0">
               <ol class="bank-activity-list">
-                <li v-for="item in visibleBankRows" :key="item.id" class="bank-activity-item" :class="{ attention: item.state !== 'matched' }">
+                <li v-for="item in visibleBankRows" :key="item.id" class="bank-activity-item">
                   <details class="bank-activity-record">
                     <summary class="bank-activity-summary">
                       <time class="bank-activity-date" :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
@@ -1113,10 +1063,6 @@ onBeforeUnmount(() => {
                       <span class="bank-activity-main">
                         <strong>{{ item.memo || item.party || "用途未提供" }}</strong>
                         <small>{{ item.memo ? item.party || "对方名称未提供" : "摘要未提供，仅保留对方名称" }}</small>
-                      </span>
-                      <span class="bank-match-status" :class="item.state">
-                        <span class="bank-match-mark" aria-hidden="true">{{ bankMatchMark(item.state) }}</span>
-                        {{ bankMatchLabel(item.state) }}
                       </span>
                       <span class="bank-activity-amount" :class="item.direction">
                         <small class="bank-amount-direction">{{ bankDirectionLabel(item.direction) }}</small>
@@ -1146,14 +1092,6 @@ onBeforeUnmount(() => {
                           <dt>收支金额</dt>
                           <dd class="bank-record-amount" :class="item.direction">{{ movementAmount(item.direction, item.amount_fen) }}</dd>
                         </div>
-                        <div>
-                          <dt>流水编号</dt>
-                          <dd class="bank-record-reference">{{ item.reference || "编号未提供" }}</dd>
-                        </div>
-                    <div v-if="item.source_check?.message && item.source_check.state !== 'confirmed'">
-                          <dt>核对说明</dt>
-                          <dd>{{ item.source_check.message }}</dd>
-                        </div>
                       </dl>
                       <section v-if="item.batch_payment" class="bank-batch-detail" aria-label="整批付款逐项明细">
                         <p class="bank-batch-heading">
@@ -1176,24 +1114,21 @@ onBeforeUnmount(() => {
                 </li>
               </ol>
             </div>
-            <p v-else class="empty">{{ loading ? "正在读取银行流水…" : selectedBankAccount ? "该账户本月没有已提供的银行流水。" : "本月没有已提供的银行流水。" }}</p>
+            <p v-else class="empty">{{ loading || pageStates.bank.loading ? "正在读取银行流水…" : selectedBankAccount ? "该账户本月没有已提供的银行流水。" : "本月没有已提供的银行流水。" }}</p>
             <button v-if="!visibleBankRows.length && selectedBankAccount" class="control" @click="selectedBankAccount = ''">清除账户筛选</button>
-            <DashboardPagination compact item-label="笔流水" :page="funds.collections.statements?.page" :loaded="bankRows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
+            <DashboardPagination compact item-label="笔流水" :page="!bankRows.length && (pageStates.bank.loading || pageStates.bank.error) ? undefined : funds.collections.statements?.page" :loaded="bankRows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
           </div>
           </div>
         </section>
         </div>
         </div>
-      </template>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.historical-source-issues { margin: 14px 0; padding: 14px 16px; border-left: 3px solid var(--warning); border-radius: 8px; background: var(--warning-soft); font-size: 13px; overflow-wrap: anywhere; }
-.historical-source-issues > p:first-child { color: var(--warning); font-weight: 700; }
-.historical-source-issues summary { min-height: 36px; cursor: pointer; }
-.historical-source-issues pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.funds-result { display: contents; }
 .funds-page {
   min-height: 100%;
 }
@@ -1286,6 +1221,7 @@ onBeforeUnmount(() => {
 
 .funds-total {
   color: var(--accent);
+  overflow-wrap: anywhere;
 }
 
 .muted {
@@ -1621,7 +1557,7 @@ summary {
 }
 
 .book-activity-feed {
-  --book-list-columns: 88px minmax(220px, 1fr) 62px minmax(122px, auto) 86px;
+  --book-list-columns: 88px minmax(220px, 1fr) 62px minmax(122px, auto);
   min-width: 0;
 }
 
@@ -1723,82 +1659,21 @@ summary {
   color: var(--warning);
 }
 
-.book-voucher-link {
-  position: relative;
-  justify-self: end;
-}
 
-.book-voucher-button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  padding: 0 9px;
-  border-radius: 8px;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 750;
-  text-decoration: none;
-  white-space: nowrap;
-}
 
-.book-voucher-button:hover,
-.book-voucher-button:focus-visible {
-  background: var(--accent-soft);
-  outline: none;
-}
 
-.book-voucher-button:focus-visible {
-  box-shadow: 0 0 0 2px var(--accent);
-}
 
-.book-voucher-missing {
-  justify-self: end;
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
 
-.book-voucher-preview {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 10px);
-  z-index: 30;
-  display: grid;
-  width: min(380px, calc(100vw - 48px));
-  gap: 10px;
-  padding: 13px;
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow-overlay);
-  opacity: 0;
-  color: var(--text);
-  pointer-events: none;
-  text-align: left;
-  transform: translate(8px, -50%);
-  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
-  visibility: hidden;
-}
 
-.book-voucher-preview::after {
-  position: absolute;
-  top: calc(50% - 5px);
-  right: -6px;
-  width: 10px;
-  height: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
-  border-right: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
-  background: var(--surface);
-  content: "";
-  transform: rotate(45deg);
-}
 
-.book-voucher-link:hover .book-voucher-preview,
-.book-voucher-link:focus-within .book-voucher-preview {
-  opacity: 1;
-  transform: translate(0, -50%);
-  visibility: visible;
-}
+
+
+
+
+
+
+
+
 
 .book-preview-heading,
 .book-preview-footer,
@@ -1911,7 +1786,7 @@ summary {
 
 
 .bank-activity-feed {
-  --bank-list-columns: 92px minmax(126px, 0.85fr) minmax(230px, 1.7fr) 96px minmax(150px, auto);
+  --bank-list-columns: 92px minmax(126px, 0.85fr) minmax(230px, 1.7fr) minmax(150px, auto);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1924,7 +1799,6 @@ summary {
   outline-offset: 2px;
 }
 
-/* 与经营简报“按凭证查看”的 .voucher-row 保持同一行高与内边距。 */
 .bank-activity-summary {
   position: relative;
   display: grid;
@@ -2037,47 +1911,15 @@ summary {
   white-space: nowrap;
 }
 
-.bank-match-status {
-  display: inline-flex;
-  width: fit-content;
-  min-height: 22px;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 9px 2px 4px;
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 780;
-  white-space: nowrap;
-}
 
-.bank-match-mark {
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, currentcolor 14%, transparent);
-  font-size: 9.5px;
-  font-weight: 850;
-}
 
-.bank-match-status.matched {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 
-.bank-match-status.unmatched {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
 
-.bank-match-status.needs_review {
-  background: var(--info-soft);
-  color: var(--info);
-}
+
+
+
+
+
 
 .bank-record-chevron {
   position: absolute;
@@ -2424,8 +2266,6 @@ tbody tr:last-child td {
 
 
 .funds-hero > .dashboard-hero-eyebrow { grid-column: 1 / -1; margin: 0 0 -12px; }
-/* 等宽两列 + 与资产页相同的基准间隙，核对区块横向对齐资产页的“资产明细与账面记录”。 */
-.funds-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; }
 .flow-panel { grid-column: 1 / -1; }
 .flow-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin: 8px 0 0; }
 .flow-summary div { display: grid; min-width: 0; align-content: start; gap: 6px; }
@@ -2482,12 +2322,12 @@ tbody tr:last-child td {
   .book-activity-row > .direction { grid-row: 1; grid-column: 2; justify-self: end; }
   .book-movement-copy { grid-row: 2; grid-column: 1 / -1; }
   .book-movement-amount { grid-row: 3; grid-column: 1; justify-self: start; }
-  .book-voucher-link,
-  .book-voucher-missing { grid-row: 3; grid-column: 2; justify-self: end; }
+
 }
 @media (max-width: 760px) {
-  .funds-hero { padding: 22px; gap: 24px; }
-  .flow-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 18px; border-top: 1px solid var(--line); }
+  .funds-hero { grid-template-columns: minmax(0, 1fr); padding: 22px; gap: 24px; }
+  .funds-hero > div { min-width: 0; }
+  .flow-summary { grid-template-columns: minmax(0, 1fr); padding-top: 18px; border-top: 1px solid var(--line); }
   .account-card { padding: 0; }
   .account-card-summary { min-height: 0; padding: 16px; }
   .account-name p { min-height: 0; }
@@ -2499,7 +2339,13 @@ tbody tr:last-child td {
   .funds-review > summary > span:nth-child(3) { flex-basis: calc(100% - 32px); order: 2; margin-left: 30px; }
   .fund-business-workbench,
   #fund-detail-panel-bank { min-height: 0; }
-  .fund-business-workbench { grid-template-columns: minmax(0, 1fr); }
+  .fund-detail-panels { display: block; }
+  #fund-detail-panel-book,
+  #fund-detail-panel-bank { display: none; }
+  #fund-detail-panel-book.is-active,
+  #fund-detail-panel-bank.is-active { display: block; }
+  #fund-detail-panel-book > .fund-business-workbench { height: auto; }
+  .fund-business-workbench { grid-template-columns: minmax(0, 1fr); align-items: start; align-content: start; }
   .fund-account-index { padding: 10px; border-right: 0; border-bottom: 1px solid var(--line); }
   .fund-account-index > button { min-height: 44px; padding: 9px 12px; }
   .fund-business-detail { padding: 4px 12px; }
@@ -2512,7 +2358,7 @@ tbody tr:last-child td {
     grid-template-areas:
       "date direction"
       "copy copy"
-      "amount voucher";
+      "amount amount";
     gap: 5px 10px;
     align-items: start;
     padding: 9px 10px;
@@ -2525,10 +2371,9 @@ tbody tr:last-child td {
   .book-movement-copy { grid-area: copy; }
   .book-activity-row > .direction { grid-area: direction; justify-self: end; }
   .book-movement-amount { grid-area: amount; justify-self: start; align-self: center; }
-  .book-voucher-link,
-  .book-voucher-missing { grid-area: voucher; justify-self: end; }
-  .book-voucher-button { min-height: 44px; }
-  .book-voucher-preview { display: none; }
+
+
+
   .bank-activity-feed { overflow: visible; border: 0; background: transparent; }
   .bank-activity-list { display: grid; gap: 10px; }
   .bank-activity-item {
@@ -2541,7 +2386,7 @@ tbody tr:last-child td {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "date amount"
-      "account status"
+      "account account"
       "main main";
     gap: 11px 14px;
     align-items: start;
@@ -2551,7 +2396,7 @@ tbody tr:last-child td {
   .bank-activity-date { grid-area: date; }
   .bank-activity-account { grid-area: account; }
   .bank-activity-main { grid-area: main; }
-  .bank-match-status { grid-area: status; justify-self: end; }
+
   .bank-activity-amount { grid-area: amount; }
   .bank-record-fields > div { grid-template-columns: minmax(84px, 0.32fr) minmax(0, 1fr); }
   .bank-batch-heading { display: grid; gap: 4px; }
@@ -2559,4 +2404,26 @@ tbody tr:last-child td {
   .bank-batch-items { grid-template-columns: 1fr; }
 }
 
+
+.bank-owner-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) {
+  .investment-table, .investment-table tbody, .investment-table tr, .investment-table td { display: block; min-width: 0; width: auto; }
+  .investment-table thead, .investment-table colgroup { display: none; }
+  .investment-table tr { padding: 12px; border-bottom: 1px solid var(--line); }
+  .investment-table td { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(0, 1fr); gap: 10px; padding: 6px 0; border: 0; overflow-wrap: anywhere; }
+  .investment-table td::before { color: var(--muted); text-align: left; }
+  .investment-cost-table td:nth-child(1)::before { content: "产品"; }
+  .investment-cost-table td:nth-child(2)::before { content: "期初成本"; }
+  .investment-cost-table td:nth-child(3)::before { content: "申购成本变动"; }
+  .investment-cost-table td:nth-child(4)::before { content: "赎回成本变动"; }
+  .investment-cost-table td:nth-child(5)::before { content: "期末成本"; }
+  .investment-cost-table td:nth-child(6)::before { content: "本月确认收益"; }
+  .investment-events-table td:nth-child(1)::before { content: "日期／所属月"; }
+  .investment-events-table td:nth-child(2)::before { content: "产品及事项"; }
+  .investment-events-table td:nth-child(3)::before { content: "确认成本"; }
+  .investment-events-table td:nth-child(4)::before { content: "确认赎回净款"; }
+  .investment-events-table td:nth-child(5)::before { content: "确认收益"; }
+  .investment-events-table td:nth-child(6)::before { content: "实际收付款"; }
+  .table-wrap { overflow-x: visible; }
+}
 </style>

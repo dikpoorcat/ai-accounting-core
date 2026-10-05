@@ -1,22 +1,152 @@
 // Hot, whole-page refresh timing against an isolated synthetic service and release build.
 // Input is JSON on stdin: origin, ticket_url, playwright_module, channel,
 // companies [{id, period, state}], optional warmups and repeats. Output is JSON.
+// The strengthened endpoint below covers hot refresh of one fixed synthetic
+// company/period/snapshot only. Navigation/company-switch endpoints retain
+// their existing checks and have not been validated by this correction.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const path = require("node:path");
+
+// Load this harness's own generated contracts once, before browser timing starts.
+const responseSchemas = JSON.parse(fs.readFileSync(
+  path.join(__dirname, "../src/api/generated/dashboardResponseSchemas.json"), "utf8"));
+const responseVersions = Object.freeze(Object.fromEntries([
+  "dashboard_context", "dashboard_brief", "dashboard_funds", "dashboard_employees",
+  "dashboard_assets", "dashboard_business_status", "dashboard_quarterly_report",
+  "dashboard_period_preparation", "dashboard_close_review", "browser_jobs",
+].map(name => {
+  const schema = responseSchemas?.[name];
+  const version = schema?.properties?.schema_version;
+  const expected = version?.const ?? (Array.isArray(version?.enum) && version.enum.length === 1
+    ? version.enum[0] : undefined);
+  assert(schema?.type === "object" && Array.isArray(schema.required)
+    && schema.required.includes("schema_version")
+    && version?.type === "integer" && Number.isSafeInteger(expected) && expected > 0
+    && (!Object.hasOwn(version, "const") || version.const === expected)
+    && (!Object.hasOwn(version, "enum")
+      || (Array.isArray(version.enum) && version.enum.length === 1 && version.enum[0] === expected)),
+  `${name}: missing or invalid generated schema version`);
+  return [name, expected];
+})));
+const mainContractNames = {
+  brief: "dashboard_brief", funds: "dashboard_funds", employees: "dashboard_employees",
+  assets: "dashboard_assets", reports: "dashboard_quarterly_report",
+};
 
 const modules = [
-  { key: "brief", path: "/", action: "brief", heading: /经营简报$/, visible: "#overview, #monthly-review-title" },
+  { key: "brief", path: "/", action: "brief", heading: /经营简报$/, visible: "#overview, #activity, #open-items, #owner-tasks" },
   { key: "funds", path: "/funds", action: "funds", heading: "资金总览", visible: "#funds-overview, #bank-details" },
   { key: "employees", path: "/employees", action: "employees", heading: "员工与薪酬概览", visible: "#employees-overview, #employee-list-title" },
   { key: "assets", path: "/assets", action: "assets", heading: "长期资产概览", visible: "#assets-overview, #asset-list-title" },
   { key: "reports", path: "/reports", action: "quarterly-report", heading: "季度财务报表", visible: "#report-overview, .summary-grid, #report-statements" },
 ];
 const defaultCollections = {
-  brief: ["vouchers", "open_items"],
+  brief: ["activity", "vouchers", "open_items"],
   funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
   employees: ["employees", "labor_sources"],
   assets: ["assets", "projects"],
 };
+// Only the default business result, not global jobs or on-demand details.
+const refreshRoots = {
+  brief: ".brief-content", funds: ".funds-result", employees: ".employee-result",
+  assets: ".asset-result", reports: ".report-dashboard",
+};
+function readRefreshProjection(document, rootSelector) {
+  const root = document.querySelector(rootSelector);
+  if (!root) return null;
+  const visibleText = Array.from(root.children)
+    .filter(node => node.getClientRects().length
+      && document.defaultView.getComputedStyle(node).visibility !== "hidden")
+    .map(node => node.innerText);
+  // Reports' observation time changes on refresh; the period and all business
+  // values remain required. Remove only this known non-business clock value.
+  const clock = root.querySelector(".dashboard-hero-eyebrow");
+  if (clock && clock.innerText.includes(" · 更新于 ")) {
+    const [period] = clock.innerText.split(" · 更新于 ");
+    for (let i = 0; i < visibleText.length; i++) {
+      visibleText[i] = visibleText[i].replace(clock.innerText, period);
+    }
+  }
+  return JSON.stringify({
+    company: document.querySelector(".company-switcher-name")?.innerText,
+    period: document.querySelector(".module-header select")?.value,
+    status: document.querySelector(".module-header .period-status")?.innerText,
+    content: visibleText,
+    controls: Array.from(root.querySelectorAll("select, [aria-current], [aria-pressed], [aria-selected], details"))
+      .map(node => [node.tagName, node.value ?? null, node.open ?? null,
+        node.getAttribute("aria-current"), node.getAttribute("aria-pressed"), node.getAttribute("aria-selected")]),
+  });
+}
+
+const observeHotRefresh = new Function("button", "selection", `
+  const readProjection = ${readRefreshProjection.toString()};
+
+  const briefReady = () => {
+    const content = document.querySelector(".brief-content");
+    const state = content?.getAttribute("data-month-state");
+    const required = content?.getAttribute("data-owner-review-required");
+    const prompt = document.querySelector("#owner-tasks .owner-review-request");
+    return ["open", "closed", "covered"].includes(state)
+      && ["true", "false"].includes(required)
+      && (required === "true" ? state === "open" && prompt?.getClientRects().length
+      && prompt.querySelector("button")?.getClientRects().length : !prompt)
+      && !document.querySelector(".close-review, #monthly-review, #close-review-title");
+  };
+  button.addEventListener("click", () => {
+    const started = performance.now();
+    // ResourceTiming otherwise stops recording after the browser's default
+    // 150 entries, and previous iterations must never satisfy this click.
+    performance.setResourceTimingBufferSize(1000);
+    performance.clearResourceTimings();
+    window.__stage9RefreshStart = started;
+    window.__stage9RenderedAt = null;
+    let completeFrames = 0;
+    const header = document.querySelector(".module-header");
+    let sawBusy = header?.getAttribute("aria-busy") === "true";
+    const busyObserver = new MutationObserver(records => {
+      sawBusy ||= header?.getAttribute("aria-busy") === "true"
+        || records.some(record => record.oldValue === "true");
+    });
+    if (header) busyObserver.observe(header, {
+      attributes: true, attributeFilter: ["aria-busy"], attributeOldValue: true,
+    });
+    const actions = ["context", selection.action];
+    const observed = () => {
+      const resources = performance.getEntriesByType("resource").filter(entry => entry.startTime >= started);
+      const networkComplete = actions.every(action => resources.some(entry => {
+        const url = new URL(entry.name);
+        if (url.pathname !== \`/api/dashboard/\${action}\`
+          || url.searchParams.get("company_id") !== selection.companyId
+          || entry.responseEnd <= started) return false;
+        if (action === "context") return true;
+        if (action === "quarterly-report") {
+          return url.searchParams.get("year") === selection.quarter.slice(0, 4)
+            && url.searchParams.get("quarter") === selection.quarter.slice(-1);
+        }
+        return url.searchParams.get("period") === selection.period;
+      }));
+      const mainReady = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
+        && selection.visible.every(selector => document.querySelector(selector)?.getClientRects().length);
+      const annexReady = selection.key !== "brief" || briefReady();
+      const projectionReady = !selection.projection || (networkComplete && mainReady && annexReady && sawBusy
+        && readProjection(document, selection.root) === selection.projection);
+      completeFrames = networkComplete && mainReady && annexReady && projectionReady ? completeFrames + 1 : 0;
+      if (completeFrames >= 2) {
+        // Timestamp in the page, before any Playwright assertions/RPC delay.
+        window.__stage9RenderedAt = performance.now();
+        busyObserver.disconnect();
+      } else if (performance.now() - started < 30000) requestAnimationFrame(observed);
+      else busyObserver.disconnect();
+    };
+    requestAnimationFrame(observed);
+  }, { once: true, capture: true });
+
+`);
+
+const captureRefreshProjection = new Function("selection",
+  `return (${readRefreshProjection.toString()})(document, selection.root);`);
+
 const percentile = (sorted, proportion) => sorted[Math.ceil(sorted.length * proportion) - 1];
 const sanitize = value => String(value)
   .replace(/https?:\/\/[^\s"']+/g, "[browser URL]")
@@ -28,6 +158,189 @@ function waitForLater(promise) {
   // rejection handled immediately; awaiting the original promise still throws.
   void promise.catch(() => {});
   return promise;
+}
+
+// Pure association/value extraction, also serialized into the final browser
+// evaluate. Resource timing is browser network work, not a source CPU profile.
+function captureRefreshResources(entries, selection, clickStart, renderAt, timeOrigin) {
+  const actions = ["context", selection.action];
+  const resources = Object.fromEntries(actions.map(action => [action, []]));
+  for (const entry of entries) {
+    if (!(entry.startTime >= clickStart)) continue;
+    let url;
+    try { url = new URL(entry.name); } catch { continue; }
+    const action = actions.find(item => url.pathname === `/api/dashboard/${item}`);
+    if (!action || url.searchParams.get("company_id") !== selection.companyId) continue;
+    if (action !== "context") {
+      if (action === "quarterly-report") {
+        if (url.searchParams.get("year") !== selection.quarter.slice(0, 4)
+          || url.searchParams.get("quarter") !== selection.quarter.slice(-1)) continue;
+      } else if (url.searchParams.get("period") !== selection.period) continue;
+    }
+    const query = { company_id: url.searchParams.get("company_id") };
+    for (const key of action === "quarterly-report" ? ["year", "quarter"]
+      : action === "context" ? [] : ["period"]) query[key] = url.searchParams.get(key);
+    const value = { action, path: url.pathname, query };
+    for (const key of ["startTime", "fetchStart", "domainLookupStart", "domainLookupEnd",
+      "connectStart", "secureConnectionStart", "connectEnd", "requestStart", "responseStart",
+      "responseEnd", "duration", "transferSize", "encodedBodySize", "decodedBodySize",
+      "responseStatus"]) value[key] = Number.isFinite(entry[key]) ? entry[key] : null;
+    for (const key of ["initiatorType", "nextHopProtocol"])
+      value[key] = typeof entry[key] === "string" ? entry[key] : null;
+    resources[action].push(value);
+  }
+  const diagnostics = [];
+  if (!Number.isFinite(clickStart) || !Number.isFinite(renderAt) || renderAt < clickStart
+    || !Number.isFinite(timeOrigin)) diagnostics.push("invalid_measurement_timestamps");
+  for (const action of actions) {
+    if (resources[action].length === 0) diagnostics.push(`${action}:missing_resource`);
+    else if (resources[action].length > 1) diagnostics.push(`${action}:duplicate_resources`);
+    for (const entry of resources[action]) {
+      if (entry.responseEnd === null || entry.responseEnd <= clickStart
+        || entry.responseEnd < entry.startTime || entry.responseEnd > renderAt
+        || entry.duration === null || entry.duration < 0)
+        diagnostics.push(`${action}:invalid_resource_timestamps`);
+    }
+  }
+  const responseEnd = diagnostics.length === 0
+    ? Math.max(...actions.map(action => resources[action][0].responseEnd)) : null;
+  return {
+    timeOrigin, clickStart, renderAt, resources, diagnostics,
+    render_tail_ms: responseEnd === null ? null : renderAt - responseEnd,
+    attribution: "Browser ResourceTiming timestamps are relative to timeOrigin; render tail includes response processing, JSON, reactive DOM work and the existing two RAF completion check, not source CPU attribution or isolated paint time.",
+  };
+}
+
+// Constructed in Node, before measurements; browser execution uses no eval and
+// captures diagnostics only after the original completion timestamp is set.
+const captureRefreshMeasurement = new Function("selection", `
+  const capture = ${captureRefreshResources.toString()};
+  const clickStart = window.__stage9RefreshStart;
+  const renderAt = window.__stage9RenderedAt;
+  const measured = renderAt - clickStart;
+  const resources = capture(performance.getEntriesByType("resource").map(entry => entry.toJSON()),
+    selection, clickStart, renderAt, performance.timeOrigin);
+  delete window.__stage9RefreshStart;
+  delete window.__stage9RenderedAt;
+  return { measured, resources };
+`);
+
+function verifyBriefState(data, selected = {}) {
+  assert(["open", "closed", "covered"].includes(data.month_state), "brief: invalid typed month state");
+  const locator = data.owner_review_request;
+  assert(locator === null || (locator && typeof locator === "object"
+    && typeof locator.preview_digest === "string" && /^[a-f0-9]{64}$/.test(locator.preview_digest)),
+    "brief: invalid typed owner review locator");
+  assert(data.month_state === "open" || locator === null, "brief: closed/covered month requests owner review");
+  if (selected.state === "prepared") {
+    assert.equal(data.month_state, "open", "brief: prepared source lost its open month state");
+    assert(locator, "brief: prepared source lost its owner review prompt");
+  } else if (["closed", "covered"].includes(selected.state)) {
+    assert.equal(data.month_state, selected.state, "brief: source month state changed");
+  }
+  if (selected.preview_digest && selected.state === "prepared") {
+    assert.equal(locator.preview_digest, selected.preview_digest, "brief: owner review preview was replaced");
+  }
+}
+
+function wireFen(value, label, nullable = false) {
+  if (nullable && value === null) return null;
+  assert(typeof value === "string" && /^-?(0|[1-9][0-9]*)$/.test(value), `${label}: invalid integer fen`);
+  return BigInt(value);
+}
+function formatFen(value) {
+  if (value === null) return "暂无法确定";
+  const amount = wireFen(value, "display amount"), absolute = amount < 0n ? -amount : amount;
+  return `${amount < 0n ? "−" : ""}¥${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(absolute / 100n)}.${String(absolute % 100n).padStart(2, "0")}`;
+}
+function verifyCollection(collection, label, { cursor = false } = {}) {
+  assert(collection && Array.isArray(collection.items) && collection.page, `${label}: collection missing`);
+  const { page, items } = collection;
+  for (const key of ["total_count", "filtered_count", "returned_count"]) {
+    assert(Number.isSafeInteger(page[key]) && page[key] >= 0, `${label}: invalid ${key}`);
+  }
+  assert(page.filtered_count <= page.total_count, `${label}: filtered count exceeds full count`);
+  assert.equal(items.length, page.returned_count, `${label}: incomplete collection`);
+  assert(items.length <= 20, `${label}: page exceeds default 20`);
+  if (!cursor) assert.equal(items.length, Math.min(20, page.filtered_count), `${label}: first page was truncated`);
+  assert.equal(typeof page.has_more, "boolean", `${label}: missing continuation state`);
+  assert(page.has_more ? typeof page.next_cursor === "string" && page.next_cursor.length > 0
+    : page.next_cursor === null, `${label}: invalid continuation cursor`);
+  if (!cursor) assert.equal(page.has_more, page.filtered_count > items.length, `${label}: continuation differs from full count`);
+}
+function verifyVoucher(voucher) {
+  assert(typeof voucher.number === "string" && /^[1-9][0-9]*$/.test(voucher.number), "voucher: invalid public number");
+  for (const field of ["voucher_version_id", "subject_id", "type", "kind", "summary", "list_summary", "business_amount_label"]) {
+    assert(typeof voucher[field] === "string" && voucher[field], `voucher: missing ${field}`);
+  }
+  assert(["已入账", "冲正"].includes(voucher.state), "voucher: invalid state");
+  assert(voucher.recognition && ["day", "month"].includes(voucher.recognition.precision), "voucher: missing date precision");
+  assert(/^\d{4}-\d{2}$/.test(voucher.recognition.period), "voucher: invalid recognition month");
+  assert.equal(typeof voucher.recognition.label, "string", "voucher: missing date label");
+  assert(voucher.date === null || /^\d{4}-\d{2}-\d{2}$/.test(voucher.date), "voucher: invalid actual date");
+  assert.equal(voucher.date, voucher.recognition.date, "voucher: recognition date differs");
+  assert(voucher.recognition.precision !== "month" || voucher.date === null, "voucher: month precision invented an actual date");
+  wireFen(voucher.business_amount_fen, "voucher business amount", true);
+  const amount = wireFen(voucher.amount_fen, "voucher amount");
+  assert(Array.isArray(voucher.lines) && voucher.lines.length >= 2, "voucher: missing complete entry lines");
+  let debit = 0n, credit = 0n;
+  for (const [index, line] of voucher.lines.entries()) {
+    assert.equal(line.line_number, index + 1, "voucher: missing or reordered line");
+    for (const field of ["code", "account", "party", "source_label"]) assert.equal(typeof line[field], "string", `voucher line: missing ${field}`);
+    assert(line.code && line.account, "voucher line: missing account");
+    const dr = wireFen(line.debit_fen, "voucher debit"), cr = wireFen(line.credit_fen, "voucher credit");
+    assert(dr >= 0n && cr >= 0n && !(dr && cr), "voucher line: invalid debit/credit");
+    debit += dr; credit += cr;
+    assert(Array.isArray(line.parties), "voucher line: missing business objects");
+    assert(["known", "multiple", "name_missing", "not_applicable", "unresolved"].includes(line.party_state), "voucher line: missing object state");
+    for (const party of line.parties) {
+      assert.equal(typeof party.name, "string", "voucher party: missing name");
+      wireFen(party.amount_fen, "voucher party amount", true);
+    }
+  }
+  assert.equal(debit, credit, "voucher: entries do not balance");
+  assert.equal(debit, amount, "voucher: entry total differs from voucher amount");
+  assert(Array.isArray(voucher.asset_members), "voucher: missing asset members");
+  assert(voucher.asset === null || (voucher.asset && typeof voucher.asset.asset_id === "string"), "voucher: missing asset reference state");
+  for (const asset of voucher.asset_members) {
+    assert(typeof asset.asset_id === "string" && ["fixed", "intangible"].includes(asset.asset_type), "voucher: incomplete asset member");
+    wireFen(asset.amount_fen, "voucher asset amount", true);
+  }
+}
+function verifyMainPayload(payload, key, selected, target, { requireVouchers = true } = {}) {
+  assert(Object.hasOwn(mainContractNames, key), `${key}: unknown main response contract`);
+  assert.equal(payload.schema_version, responseVersions[mainContractNames[key]], `${key}: outdated response contract`);
+  assert.equal(payload.read_context?.company_id, selected.id, `${key}: response used another company`);
+  assert(/^\d{4}-\d{2}-\d{2}$/.test(payload.read_context?.as_of), `${key}: missing current-knowledge date`);
+  assert(typeof payload.read_context?.read_version === "string" && payload.read_context.read_version, `${key}: missing read version`);
+  if (key === "reports") {
+    assert.deepEqual(payload.statements?.map(item => item.key), ["balance_sheet", "profit_statement", "cash_flow_statement"], "reports: default statements missing");
+    for (const statement of payload.statements) {
+      assert(statement.columns?.length && statement.rows?.length, "reports: empty full statement");
+      for (const row of statement.rows) for (const column of statement.columns) wireFen(row.values[column.key], "report statement amount", true);
+    }
+    return;
+  }
+  assert.equal(payload.selected_period?.key, selected.period, `${key}: response used another month`);
+  assert(typeof payload.snapshot_version === "string" && payload.snapshot_version, `${key}: missing snapshot`);
+  assert.equal(payload.read_semantics?.knowledge, "current_knowledge", `${key}: wrong knowledge semantics`);
+  assert.equal(payload.read_semantics?.accounting, "as_posted", `${key}: wrong accounting semantics`);
+  assert.equal(payload.read_semantics?.system_time_replay, false, `${key}: unexpected historical replay`);
+  assert(payload.data, `${key}: missing main data`);
+  if (target.searchParams.has("expected_version")) assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), `${key}: local read crossed snapshots`);
+  const section = target.searchParams.get("section"), cursor = target.searchParams.has("cursor");
+  for (const name of section ? [section] : defaultCollections[key]) verifyCollection(payload.data.collections?.[name], `${key}/${name}`, { cursor });
+  if (key === "brief") {
+    verifyBriefState(payload.data, selected);
+    const { vouchers, activity } = payload.data.collections;
+    if (!section) {
+      assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
+      assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
+      if (requireVouchers) assert(vouchers.page.total_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
+    }
+    for (const voucher of vouchers?.items ?? []) verifyVoucher(voucher);
+    if (payload.data.focused_voucher) verifyVoucher(payload.data.focused_voucher);
+  }
 }
 
 async function run(config) {
@@ -45,11 +358,12 @@ async function run(config) {
   const browser = await chromium.launch({ channel: config.channel, headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  const refreshProjections = new Map();
   page.setDefaultTimeout(30000);
-  await page.addInitScript(({ selectedCompany, selectedPeriod, selectedQuarter, selectedState }) => {
+  await page.addInitScript(({ selectedCompany, selectedPeriod, selectedQuarter }) => {
     performance.setResourceTimingBufferSize(1000);
     const specs = {
-      "/": { action: "brief", visible: ["#overview", "#monthly-review-title"] },
+      "/": { action: "brief", visible: ["#overview", "#activity", "#open-items", "#owner-tasks"] },
       "/funds": { action: "funds", visible: ["#funds-overview", "#bank-details"] },
       "/employees": { action: "employees", visible: ["#employees-overview", "#employee-list-title"] },
       "/assets": { action: "assets", visible: ["#assets-overview", "#asset-list-title"] },
@@ -57,10 +371,20 @@ async function run(config) {
     };
     const spec = specs[location.pathname];
     if (!spec) return;
+    const briefReady = () => {
+      const content = document.querySelector(".brief-content");
+      const state = content?.getAttribute("data-month-state");
+      const required = content?.getAttribute("data-owner-review-required");
+      const prompt = document.querySelector("#owner-tasks .owner-review-request");
+      return ["open", "closed", "covered"].includes(state)
+        && ["true", "false"].includes(required)
+        && (required === "true" ? state === "open" && prompt?.getClientRects().length
+          && prompt.querySelector("button")?.getClientRects().length : !prompt)
+        && !document.querySelector(".close-review, #monthly-review, #close-review-title");
+    };
     let frames = 0;
     const observe = () => {
-      const required = ["context", spec.action,
-        ...(spec.action === "brief" ? ["close-review"] : [])];
+      const required = ["context", spec.action];
       const resources = performance.getEntriesByType("resource");
       const networkComplete = required.every(action => resources.some(entry => {
         const url = new URL(entry.name);
@@ -72,24 +396,10 @@ async function run(config) {
             && url.searchParams.get("quarter") === selectedQuarter.slice(-1);
         }
         return url.searchParams.get("period") === selectedPeriod;
-      })) && (spec.action !== "brief" || resources.some(entry => {
-        const url = new URL(entry.name);
-        return url.pathname === "/api/dashboard/brief" && url.searchParams.get("company_id") === selectedCompany
-          && url.searchParams.get("period") === selectedPeriod
-          && (url.searchParams.get("preparation") === "complete" || resources.some(other => {
-            const followup = new URL(other.name);
-            return followup.pathname === "/api/dashboard/period-preparation"
-              && followup.searchParams.get("company_id") === selectedCompany
-              && followup.searchParams.get("period") === selectedPeriod;
-          }));
       }));
       const ready = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
         && spec.visible.every(selector => document.querySelector(selector)?.getClientRects().length)
-        && (spec.action !== "brief" || (
-          document.querySelector(".period-preparation")?.getClientRects().length
-          && document.querySelector(`.close-review .review-state.${selectedState}`)?.getClientRects().length
-          && document.querySelector(".close-review .accounting-summary")?.getClientRects().length
-        ));
+        && (spec.action !== "brief" || briefReady());
       frames = networkComplete && ready ? frames + 1 : 0;
       if (frames >= 2) {
         window.__stage9NavigationRenderedAt = performance.now();
@@ -100,9 +410,12 @@ async function run(config) {
     requestAnimationFrame(observe);
   }, {
     selectedCompany: company.id, selectedPeriod: company.period, selectedQuarter: quarter,
-    selectedState: company.state === "closed" ? "closed" : "prepared",
   });
-  const pageErrors = [], apiFailures = [];
+  const pageErrors = [], apiFailures = [], closeReviewRequests = [];
+  const allowedCloseReviewRequests = new Set();
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === "/api/dashboard/close-review") closeReviewRequests.push(request.url());
+  });
   const allowedNavigationAborts = new Set();
   page.on("pageerror", error => pageErrors.push(sanitize(error.message)));
   page.on("response", response => {
@@ -144,6 +457,7 @@ async function run(config) {
     }));
   }
   function assertNoBrowserFailures() {
+    assert.deepEqual(closeReviewRequests.filter(url => !allowedCloseReviewRequests.has(url)), [], "default page requested close-review");
     assert.deepEqual(pageErrors, [], "browser error");
     assert.deepEqual(apiFailures.filter(failure => !allowedNavigationAborts.has(failure)), [], "API error");
   }
@@ -151,6 +465,12 @@ async function run(config) {
     const target = new URL(reply.url());
     assert.equal(reply.status(), 200, `${module.key}: ${target.pathname} failed`);
     const payload = await reply.json();
+    const auxiliaryContract = {
+      "/api/dashboard/context": "dashboard_context",
+      "/api/dashboard/close-review": "dashboard_close_review",
+    }[target.pathname];
+    if (auxiliaryContract) assert.equal(payload.schema_version, responseVersions[auxiliaryContract],
+      `${auxiliaryContract}: outdated response contract`);
     assert.equal(payload.read_context?.company_id ?? payload.current_company?.company_id ?? payload.company_id, selected.id);
     if (target.pathname === "/api/dashboard/quarterly-report") {
       const selectedQuarter = selected.id === company.id
@@ -160,31 +480,96 @@ async function run(config) {
     } else if (target.pathname !== "/api/dashboard/context") {
       assert.equal(target.searchParams.get("period"), selected.period);
     }
-    if (target.pathname === "/api/dashboard/close-review") {
-      assert.equal(payload.state, selected.state, `${module.key}: close review changed state`);
-      if (selected.preview_digest) {
-        assert.equal(payload.preview_digest, selected.preview_digest, `${module.key}: close preview was replaced`);
-      }
-    }
     if (target.pathname === `/api/dashboard/${module.action}`) {
       const requestedLimit = target.searchParams.get("limit");
-      assert(requestedLimit === null || requestedLimit === "100", `${module.key}: default page limit changed`);
-      if (module.key === "reports") {
-        assert.deepEqual(payload.statements?.map(item => item.key),
-          ["balance_sheet", "profit_statement", "cash_flow_statement"],
-          "reports: default statements missing");
-      } else {
-        assert(payload.data, `${module.key}: missing main data`);
-        for (const section of defaultCollections[module.key]) {
-          const collection = payload.data.collections?.[section];
-          assert(collection, `${module.key}: default ${section} collection missing`);
-          assert.equal(collection.items.length, collection.page.returned_count, `${module.key}: incomplete default ${section} collection`);
-          assert.equal(collection.items.length, Math.min(100, collection.page.filtered_count), `${module.key}: default ${section} collection was truncated`);
+      assert(requestedLimit === null || requestedLimit === "20", `${module.key}: default page limit changed`);
+      verifyMainPayload(payload, module.key, selected, target, { requireVouchers });
+      if (!target.searchParams.has("section") && !target.searchParams.has("cursor")) {
+        await rendered(module, selected);
+        await verifyMainVisible(payload, module);
+        if (selected.id === company.id && selected.period === company.period) {
+          const snapshot = module.key === "reports" ? payload.read_context.read_version : payload.snapshot_version;
+          const established = refreshProjections.get(module.key);
+          if (established) assert.equal(snapshot, established.snapshot,
+            `${module.key}: hot refresh crossed the validated snapshot`);
+          else {
+            const dom = await page.evaluate(
+              captureRefreshProjection,
+              { root: refreshRoots[module.key] });
+            assert(dom && JSON.parse(dom).content.length, `${module.key}: empty refresh projection`);
+            refreshProjections.set(module.key, { dom, snapshot });
+          }
         }
-        if (module.key === "brief" && requireVouchers) assert(payload.data.voucher_count > 0, "brief: synthetic book returned empty vouchers");
       }
     }
     return payload;
+  }
+  async function verifyMainVisible(payload, module) {
+    const data = module.key === "reports" ? payload : payload.data;
+    const amounts = module.key === "brief" ? [
+      ["#overview .hero strong", data.position.month_result_fen],
+      ["#overview .kpi.funds strong", data.funds_overview.total_fen],
+      ["#overview .kpi.receivable strong", data.open_items.receivable_fen],
+      ["#overview .kpi.payable strong", data.open_items.payable_fen],
+    ] : module.key === "funds" ? [[".funds-total", data.total_fen]]
+      : module.key === "employees" ? [[".people-kpi-grid article:nth-child(1) strong", data.employees.ledger_cost_fen],
+        [".people-kpi-grid article:nth-child(2) strong", data.employees.direct_net_payments_fen],
+        [".people-kpi-grid article:nth-child(3) strong", data.employees.outstanding_net_fen]]
+        : module.key === "assets" ? [[".assets-total", data.ledger_net_fen]] : [];
+    for (const [selector, amount] of amounts) {
+      assert.equal((await page.locator(selector).textContent())?.trim(), formatFen(amount), `${module.key}: full-company amount differs`);
+    }
+    if (module.key === "brief") {
+      await verifyBriefVisible(data);
+      assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按业务", "brief: default view changed");
+      assert.equal(await page.locator("#activity .event-row").count(), data.collections.activity.items.length, "brief: default business rows incomplete");
+      assert.equal(await page.locator("#owner-tasks > article:not(.owner-review-request)").count(), data.owner_tasks.length, "brief: owner tasks incomplete");
+    } else if (module.key === "funds") {
+      assert.equal(await page.locator(".account-grid .account-card").count(), data.collections.accounts.items.length, "funds: default accounts incomplete");
+      assert.equal(await page.locator(".investment-summary-table tbody tr").count(), data.collections.investment_products.items.length, "funds: default investments incomplete");
+      const selected = data.selected_movement_account;
+      const current = page.locator(".fund-account-index button[aria-current=true]");
+      assert.equal(await current.count(), selected === null ? 0 : 1, "funds: automatic account selection missing");
+      assert.equal(await page.locator(".book-activity-row").count(), data.collections.movements.items.length, "funds: selected account rows incomplete");
+      if (selected) for (const item of data.collections.movements.items) {
+        assert.equal(item.account_id, selected.account_id, "funds: another account leaked into movements");
+        assert.equal(item.account_type, selected.type, "funds: another account type leaked into movements");
+      }
+    } else if (module.key === "employees") {
+      assert.equal(await page.locator(".employee-grid").first().locator(".employee-card").count(), data.collections.employees.items.length, "employees: default employee rows incomplete");
+      assert.equal(await page.locator("section:has(> #labor-title) .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
+    } else if (module.key === "assets") {
+      assert.equal(await page.locator(".asset-grid .asset-card").count(), data.collections.assets.items.length, "assets: default asset rows incomplete");
+      assert.equal(await page.locator(".project-card").count(), data.collections.projects.items.length, "assets: default project rows incomplete");
+    } else if (module.key === "reports") {
+      const summary = data.summary;
+      assert.equal(await page.locator(".summary-grid article").count(), summary === null ? 0 : 3, "reports: default summary incomplete");
+      if (summary) {
+        for (const [index, value] of [summary.assets_total_fen, summary.current_net_profit_fen, summary.current_cash_change_fen].entries()) {
+          assert.equal((await page.locator(".summary-grid article strong").nth(index).textContent())?.trim(), formatFen(value), "reports: summary amount differs");
+        }
+      }
+    }
+  }
+  async function verifyBriefVisible(data) {
+    await page.waitForFunction(({ state, required }) => {
+      const content = document.querySelector(".brief-content");
+      return document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
+        && content?.getAttribute("data-month-state") === state
+        && content?.getAttribute("data-owner-review-required") === String(required);
+    }, { state: data.month_state, required: data.owner_review_request !== null });
+    const prompt = page.locator("#owner-tasks .owner-review-request");
+    assert.equal(await prompt.count(), data.owner_review_request === null ? 0 : 1,
+      "brief: owner review prompt differs from the authoritative locator");
+    if (data.owner_review_request !== null) {
+      await prompt.waitFor({ state: "visible" });
+      await prompt.getByRole("button", { name: "查看本次核对内容", exact: true }).waitFor({ state: "visible" });
+    }
+    const status = { open: "未关账", closed: "已关账", covered: "由后续关账覆盖" }[data.month_state];
+    assert.equal((await page.locator(".module-header .period-status").textContent())?.trim(), status,
+      "brief: month status differs from the authoritative brief");
+    assert.equal(await page.locator(".close-review, #monthly-review, #close-review-title").count(), 0,
+      "brief: monthly review remains in the default page");
   }
   async function rendered(module, selected = company) {
     await page.getByRole("heading", { name: module.heading }).first().waitFor();
@@ -194,13 +579,10 @@ async function run(config) {
     }
     for (const selector of module.visible.split(", ")) await page.locator(selector).waitFor();
     if (module.key === "brief") {
-      await page.locator(".period-preparation").waitFor();
-      await page.locator(".close-review").waitFor();
-      const reviewState = selected.state === "closed" ? "closed" : selected.state ?? "prepared";
-      await page.locator(`.close-review .review-state.${reviewState}`).waitFor();
-      if (["prepared", "closed"].includes(reviewState)) await page.locator(".close-review .accounting-summary").waitFor();
+      assert.equal(await page.locator(".close-review, #monthly-review, #close-review-title").count(), 0,
+        "brief: monthly review remains in the default page");
     }
-    assert.equal(await page.locator(".state-panel.error, .error-state, .review-error, .preparation-state[role=alert], .report-error").count(), 0, `${module.key}: technical error rendered`);
+    assert.equal(await page.locator("main [role=alert], .state-panel[role=alert], .state-panel.error, .error-state, .review-error, .preparation-state[role=alert], .report-error, .voucher-load-status[role=alert]").count(), 0, `${module.key}: technical error rendered`);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   async function navigationRendered(module) {
@@ -211,84 +593,33 @@ async function run(config) {
       epoch_ms: window.__stage9NavigationRenderedEpochMs,
     }));
   }
-  async function measure(module) {
+  async function measure(module, resourceSamples, requireProjection = Boolean(resourceSamples)) {
+    if (requireProjection) assert(refreshProjections.has(module.key),
+      `${module.key}: formal refresh requires a validated default DOM projection`);
     const contextReply = response("context");
     const mainReply = response(module.action);
-    const reviewReply = module.key === "brief" ? response("close-review") : null;
     const refreshButton = page.locator(".module-header button.refresh");
-    await refreshButton.evaluate((button, selection) => {
-      button.addEventListener("click", () => {
-        // ResourceTiming otherwise stops recording after the browser's default
-        // 150 entries, and previous iterations must never satisfy this click.
-        performance.setResourceTimingBufferSize(1000);
-        performance.clearResourceTimings();
-        const started = performance.now();
-        window.__stage9RefreshStart = started;
-        window.__stage9RenderedAt = null;
-        let completeFrames = 0;
-        const actions = ["context", selection.action,
-          ...(selection.key === "brief" ? ["close-review"] : [])];
-        const observed = () => {
-          const resources = performance.getEntriesByType("resource").filter(entry => entry.startTime >= started);
-          const networkComplete = actions.every(action => resources.some(entry => {
-            const url = new URL(entry.name);
-            if (url.pathname !== `/api/dashboard/${action}`
-              || url.searchParams.get("company_id") !== selection.companyId
-              || entry.responseEnd <= started) return false;
-            if (action === "context") return true;
-            if (action === "quarterly-report") {
-              return url.searchParams.get("year") === selection.quarter.slice(0, 4)
-                && url.searchParams.get("quarter") === selection.quarter.slice(-1);
-            }
-            return url.searchParams.get("period") === selection.period;
-          })) && (selection.key !== "brief" || resources.some(entry => {
-            const url = new URL(entry.name);
-            return url.pathname === "/api/dashboard/brief" && url.searchParams.get("company_id") === selection.companyId
-              && url.searchParams.get("period") === selection.period
-              && (url.searchParams.get("preparation") === "complete" || resources.some(other => {
-                const followup = new URL(other.name);
-                return followup.pathname === "/api/dashboard/period-preparation"
-                  && followup.searchParams.get("company_id") === selection.companyId
-                  && followup.searchParams.get("period") === selection.period;
-              }));
-          }));
-          const mainReady = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
-            && selection.visible.every(selector => document.querySelector(selector)?.getClientRects().length);
-          const annexReady = selection.key !== "brief" || (
-            document.querySelector(".period-preparation")?.getClientRects().length
-            && document.querySelector(`.close-review .review-state.${selection.state}`)?.getClientRects().length
-            && document.querySelector(".close-review .accounting-summary")?.getClientRects().length
-          );
-          completeFrames = networkComplete && mainReady && annexReady ? completeFrames + 1 : 0;
-          if (completeFrames >= 2) {
-            // Timestamp in the page, before any Playwright assertions/RPC delay.
-            window.__stage9RenderedAt = performance.now();
-          } else if (performance.now() - started < 30000) requestAnimationFrame(observed);
-        };
-        requestAnimationFrame(observed);
-      }, { once: true, capture: true });
-    }, { action: module.action, key: module.key, companyId: company.id,
+    await refreshButton.evaluate(observeHotRefresh, { action: module.action, key: module.key, companyId: company.id,
       period: company.period, quarter,
-      visible: module.visible.split(", "), state: company.state === "closed" ? "closed" : "prepared" });
+      visible: module.visible.split(", "), root: refreshRoots[module.key],
+      projection: refreshProjections.get(module.key)?.dom });
     await refreshButton.click();
     await page.waitForFunction(() => window.__stage9RenderedAt !== null);
-    const elapsed = await page.evaluate(() => {
-      const measured = window.__stage9RenderedAt - window.__stage9RefreshStart;
-      delete window.__stage9RefreshStart;
-      delete window.__stage9RenderedAt;
-      return measured;
+    const measurement = await page.evaluate(captureRefreshMeasurement, {
+      action: module.action, companyId: company.id, period: company.period, quarter,
     });
-    for (const pending of [contextReply, mainReply, reviewReply].filter(Boolean)) {
+    if (resourceSamples) resourceSamples.push(measurement.resources);
+    for (const pending of [contextReply, mainReply]) {
       await verifyReply(await pending, module);
     }
     await rendered(module);
     assertNoBrowserFailures();
-    return elapsed;
+    return measurement.measured;
   }
   async function measureCompanySwitch(target) {
     await page.goto(address(modules[0]));
     await rendered(modules[0]);
-    const actions = ["context", "brief", "close-review"];
+    const actions = ["context", "brief"];
     const replies = [];
     const capture = reply => {
       const url = new URL(reply.url());
@@ -304,6 +635,17 @@ async function run(config) {
     try {
     const selector = page.getByLabel("切换公司", { exact: true });
     await selector.evaluate((element, selection) => {
+      const briefReady = () => {
+        const content = document.querySelector(".brief-content");
+        const state = content?.getAttribute("data-month-state");
+        const required = content?.getAttribute("data-owner-review-required");
+        const prompt = document.querySelector("#owner-tasks .owner-review-request");
+        return ["open", "closed", "covered"].includes(state)
+          && ["true", "false"].includes(required)
+          && (required === "true" ? state === "open" && prompt?.getClientRects().length
+          && prompt.querySelector("button")?.getClientRects().length : !prompt)
+          && !document.querySelector(".close-review, #monthly-review, #close-review-title");
+      };
       element.addEventListener("change", () => {
         performance.setResourceTimingBufferSize(1000);
         performance.clearResourceTimings();
@@ -314,31 +656,20 @@ async function run(config) {
         const observe = () => {
           const period = new URL(location.href).searchParams.get("period");
           const resources = performance.getEntriesByType("resource").filter(entry => entry.startTime >= started);
-          const complete = period && ["context", "brief", "close-review"].every(action =>
+          const complete = period && ["context", "brief"].every(action =>
             resources.some(entry => {
               const url = new URL(entry.name);
               return url.pathname === `/api/dashboard/${action}`
                 && url.searchParams.get("company_id") === selection.companyId
                 && (action === "context" || url.searchParams.get("period") === period);
-            })) && resources.some(entry => {
-              const url = new URL(entry.name);
-              return url.pathname === "/api/dashboard/brief"
-                && url.searchParams.get("company_id") === selection.companyId
-                && url.searchParams.get("period") === period
-                && (url.searchParams.get("preparation") === "complete" || resources.some(other => {
-                  const followup = new URL(other.name);
-                  return followup.pathname === "/api/dashboard/period-preparation"
-                    && followup.searchParams.get("company_id") === selection.companyId
-                    && followup.searchParams.get("period") === period;
-                }));
-            });
+            }));
           const ready = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
             && document.querySelector(".company-switcher-name")?.textContent?.trim() === selection.companyName
             && document.querySelector("#overview")?.getClientRects().length
-            && document.querySelector("#monthly-review-title")?.getClientRects().length
-            && document.querySelector(".period-preparation")?.getClientRects().length
-            && document.querySelector(".close-review .review-state")?.getClientRects().length
-            && document.querySelector(".close-review .review-note")?.getClientRects().length;
+            && document.querySelector("#activity")?.getClientRects().length
+            && document.querySelector("#open-items")?.getClientRects().length
+            && document.querySelector("#owner-tasks")?.getClientRects().length
+            && briefReady();
           frames = complete && ready ? frames + 1 : 0;
           if (frames >= 2) window.__stage9SwitchRenderedAt = performance.now();
           else if (performance.now() - started < 30000) requestAnimationFrame(observe);
@@ -358,17 +689,15 @@ async function run(config) {
       const url = new URL(reply.url());
       return url.pathname === `/api/dashboard/${action}` && url.searchParams.get("period") === expectedPeriod;
     });
-    const briefReply = finalReply("brief"), reviewReply = finalReply("close-review");
-    assert(briefReply && reviewReply, "switch: final month requests did not complete");
-    const selected = { ...target, period: expectedPeriod, preview_digest: undefined };
-    await verifyReply(briefReply, modules[0], selected, { requireVouchers: expectedPeriod === target.period });
-    const review = await reviewReply.json();
-    assert(["prepared", "closed", "covered", "unprepared", "stale"].includes(review.state),
-      "switch: unsupported close-review state");
-    assert.equal(review.period, expectedPeriod, "switch: close review used another month");
-    selected.state = review.state;
-    if (expectedPeriod === target.period) selected.preview_digest = target.preview_digest;
-    await verifyReply(reviewReply, modules[0], selected);
+    const briefReply = finalReply("brief");
+    assert(briefReply, "switch: final month request did not complete");
+    const selected = { ...target, period: expectedPeriod };
+    if (expectedPeriod !== target.period) {
+      delete selected.state;
+      delete selected.preview_digest;
+    }
+    const brief = await verifyReply(briefReply, modules[0], selected,
+      { requireVouchers: expectedPeriod === target.period });
     await rendered(modules[0], selected);
     assert.equal(new URL(page.url()).searchParams.get("company_id"), target.id);
     assert.equal(new URL(page.url()).searchParams.get("period"), expectedPeriod);
@@ -380,7 +709,7 @@ async function run(config) {
     }
     assertNoBrowserFailures();
     return { status: "measured", from_company_id: company.id, to_company_id: target.id,
-      selected_period: expectedPeriod, review_state: review.state, elapsed_ms: elapsed };
+      selected_period: expectedPeriod, month_state: brief.data.month_state, elapsed_ms: elapsed };
     } finally {
       page.off("response", capture);
     }
@@ -389,7 +718,7 @@ async function run(config) {
     const ticket = new URL(config.ticket_url);
     ticket.searchParams.set("company_id", company.id);
     ticket.searchParams.set("period", company.period);
-    const firstReplies = [response("context"), response("brief"), response("close-review")];
+    const firstReplies = [response("context"), response("brief")];
     await page.goto(ticket.href);
     const firstNavigation = await navigationRendered(modules[0]);
     for (const reply of await Promise.all(firstReplies)) await verifyReply(reply, modules[0]);
@@ -401,12 +730,262 @@ async function run(config) {
       first_render_epoch_ms: firstNavigation.epoch_ms,
     };
     Object.assign(partialNavigation, navigationBase);
+    if (config.layout_only) {
+      const layouts = [];
+      // These interaction checks are outside every default/cold/refresh timing.
+      async function localChange(module, action, section = null) {
+        const requests = [], replies = [];
+        const requestListener = request => {
+          const url = new URL(request.url());
+          if (url.pathname.startsWith("/api/dashboard/")) requests.push(url);
+        };
+        const replyListener = reply => {
+          if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) replies.push(reply);
+        };
+        await page.evaluate(() => {
+          const header = document.querySelector(".module-header");
+          window.__stage9LocalRoot = header;
+          window.__stage9LocalFailures = [];
+          window.__stage9LocalObserver = new MutationObserver(() => {
+            if (!header.isConnected || header.getAttribute("aria-busy") !== "false") window.__stage9LocalFailures.push("whole-page loading");
+          });
+          window.__stage9LocalObserver.observe(document.body, { subtree: true, attributes: true, childList: true });
+        });
+        page.on("request", requestListener); page.on("response", replyListener);
+        try {
+          const pending = section ? waitForLater(page.waitForResponse(reply => {
+            const url = new URL(reply.url());
+            return matchesAction(url, module.action) && url.searchParams.get("section") === section;
+          })) : null;
+          await action();
+          if (pending) await pending;
+          await page.waitForFunction(() => !Array.from(document.querySelectorAll("[role=status], .empty"))
+            .some(node => node.getClientRects().length && /正在读取所选|正在读取资金明细|正在读取银行流水|正在读取凭证/.test(node.textContent ?? "")));
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          for (const url of requests) {
+            assert.equal(url.pathname, `/api/dashboard/${module.action}`, `${module.key}: display change read unrelated data`);
+            assert(section && url.searchParams.get("section") === section, `${module.key}: display change reloaded whole page`);
+            assert.equal(url.searchParams.get("company_id"), company.id, "local filter: company changed");
+            assert.equal(url.searchParams.get("period"), company.period, "local filter: month changed");
+            assert(url.searchParams.get("expected_version"), "local filter: snapshot boundary missing");
+          }
+          for (const reply of replies) await verifyReply(reply, module);
+          assert.deepEqual(await page.evaluate(() => window.__stage9LocalFailures), [], `${module.key}: local change flashed whole page`);
+          assert.equal(await page.locator(".module-header").getAttribute("aria-busy"), "false");
+          assert.equal(await page.locator("[role=alert]").count(), 0, `${module.key}: local read failed`);
+          assertNoBrowserFailures();
+        } finally {
+          page.off("request", requestListener); page.off("response", replyListener);
+          await page.evaluate(() => window.__stage9LocalObserver.disconnect());
+        }
+      }
+      async function checkOwnerLayout(module, scenario) {
+        const layout = await page.evaluate(() => {
+          const visible = element => element.getClientRects().length
+            && getComputedStyle(element).visibility !== "hidden";
+          const textBounds = element => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return Array.from(range.getClientRects());
+          };
+          const currencyOverflow = Array.from(document.querySelectorAll("strong, dd, td"))
+            .filter(element => visible(element) && /[¥￥]/.test(element.textContent ?? ""))
+            .flatMap(element => textBounds(element)
+              .filter(rect => rect.left < -1 || rect.right > innerWidth + 1)
+              .map(rect => ({ label: element.textContent, left: rect.left, right: rect.right })));
+          const heroOverlap = [];
+          const hero = document.querySelector(".funds-hero");
+          if (hero) {
+            const panes = Array.from(hero.children).filter(element => element.tagName === "DIV");
+            for (const [index, pane] of panes.entries()) {
+              const rects = Array.from(pane.querySelectorAll("strong"))
+                .filter(visible).flatMap(textBounds);
+              for (const other of panes.slice(index + 1)) {
+                const box = other.getBoundingClientRect();
+                for (const rect of rects) {
+                  if (rect.right > box.left + 1 && rect.left < box.right - 1
+                    && rect.bottom > box.top + 1 && rect.top < box.bottom - 1) {
+                    heroOverlap.push({ text: pane.textContent, other: other.textContent });
+                  }
+                }
+              }
+            }
+          }
+          const workbench = document.querySelector(".fund-business-workbench");
+          const lastAccount = document.querySelector(".fund-account-index button:last-of-type");
+          const firstMovement = document.querySelector(".book-activity-row");
+          const detailEnd = document.querySelector(".fund-business-detail > :last-child");
+          const mobileFundsGaps = innerWidth <= 760 && workbench && lastAccount && firstMovement
+            ? {
+              before_rows: firstMovement.getBoundingClientRect().top - lastAccount.getBoundingClientRect().bottom,
+              after_rows: detailEnd
+                ? workbench.getBoundingClientRect().bottom - detailEnd.getBoundingClientRect().bottom : 0,
+            } : null;
+          return {
+            viewport: innerWidth, width: document.documentElement.scrollWidth,
+            technical: Array.from(document.querySelectorAll("summary, h2, h3, dt"))
+              .filter(visible).map(element => element.textContent || "")
+              .filter(text => /技术详情|原始 JSON|来源证明|核算依据|试算平衡/.test(text)),
+            currency_overflow: currencyOverflow, hero_overlap: heroOverlap,
+            mobile_funds_gaps: mobileFundsGaps,
+          };
+        });
+        layouts.push({ page: module.key, scenario, ...layout });
+        assert(layout.width <= layout.viewport + 1,
+          `${module.key}/${scenario}: horizontal overflow at ${layout.viewport}px (${layout.width}px)`);
+        assert.deepEqual(layout.technical, [], `${module.key}/${scenario}: technical content remains`);
+        assert.deepEqual(layout.currency_overflow, [], `${module.key}/${scenario}: amount overflows the screen`);
+        assert.deepEqual(layout.hero_overlap, [], `${module.key}/${scenario}: hero amount overlaps another section`);
+        if (layout.mobile_funds_gaps) {
+          assert(layout.mobile_funds_gaps.before_rows <= 100,
+            `${module.key}/${scenario}: excessive blank space before the movements`);
+          assert(layout.mobile_funds_gaps.after_rows <= 60,
+            `${module.key}/${scenario}: excessive blank space after the movements`);
+        }
+      }
+      for (const width of [320, 375, 768, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const module of modules) {
+          const expected = [response("context"), response(module.action)];
+          await page.goto(address(module));
+          let mainPayload;
+          for (const reply of await Promise.all(expected)) {
+            const payload = await verifyReply(reply, module);
+            if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) mainPayload = payload;
+          }
+          await rendered(module);
+          await checkOwnerLayout(module, "default");
+          if (width === 375 && config.screenshot_directory) {
+            await page.screenshot({ path: `${config.screenshot_directory}/${module.key}.png`, fullPage: true });
+          }
+          if (module.key === "reports") {
+            for (let index = 0; index < 3; index++) {
+              await localChange(module, () => page.locator(`#report-statement-button-${index}`).click());
+              await page.locator("#report-full tbody tr").first().waitFor();
+              await checkOwnerLayout(module, `statement_${index + 1}`);
+              await localChange(module, () => page.locator(".template-switch input").check());
+              await page.locator(".tax-template-sheet").waitFor();
+              await checkOwnerLayout(module, `tax_template_${index + 1}`);
+              await localChange(module, () => page.locator(".template-switch input").uncheck());
+              if (width === 375 && config.screenshot_directory) {
+                await page.screenshot({ path: `${config.screenshot_directory}/report-statement-${index + 1}.png`, fullPage: true });
+              }
+            }
+          }
+          if (module.key === "employees") {
+            const employee = page.locator("details.employee-card").first();
+            if (await employee.count() && !(await employee.evaluate(node => node.open))) {
+              await localChange(module, () => employee.locator(":scope > summary").click());
+              await employee.locator(".employee-detail").waitFor();
+              const item = mainPayload.data.collections.employees.items.find(item => item.selection_status !== "unestablished");
+              const detailText = await employee.locator(".employee-detail").textContent();
+              for (const field of ["gross_salary_fen", "employee_social_insurance_fen", "employee_housing_fund_fen", "individual_income_tax_fen", "other_net_settlements_fen"]) {
+                assert(detailText.includes(formatFen(item[field])), `employees: current payroll ${field} missing`);
+              }
+              await checkOwnerLayout(module, "current_payroll");
+            }
+            await localChange(module, () => page.getByLabel("筛选员工", { exact: true }).selectOption("payroll"), "employees");
+            await localChange(module, () => page.getByLabel("筛选员工", { exact: true }).selectOption("all"), "employees");
+          }
+          if (module.key === "assets") {
+            await localChange(module, () => page.getByLabel("筛选资产", { exact: true }).selectOption("fixed"), "assets");
+            await localChange(module, () => page.getByLabel("筛选资产", { exact: true }).selectOption("all"), "assets");
+          }
+          if (module.key === "funds") {
+            await localChange(module, () => page.locator("#fund-detail-tab-bank").click());
+            await localChange(module, () => page.locator("#fund-detail-tab-book").click());
+            const accounts = page.locator(".fund-account-index > button");
+            if (await accounts.count() > 1) {
+              await localChange(module, () => accounts.nth(1).click(), "movements");
+              await localChange(module, () => accounts.first().click(), "movements");
+            }
+          }
+          if (module.key === "brief") {
+            const categories = page.locator("#activity .index button");
+            if (await categories.count() > 1) {
+              await localChange(module, () => categories.nth(1).click());
+              await localChange(module, () => categories.first().click());
+            }
+            await localChange(module, () => page.getByRole("button", { name: "按凭证", exact: true }).click());
+            const vouchers = mainPayload.data.collections.vouchers.items;
+            assert.equal(await page.locator(".voucher-card").count(), vouchers.length, "brief: first 20 vouchers incomplete");
+            if (vouchers.length) {
+              await localChange(module, () => page.locator(".voucher-row").first().click());
+              const detail = page.locator(".voucher-inline-detail");
+              await detail.waitFor();
+              assert.equal(await detail.locator("tbody tr").count(), vouchers[0].lines.length, "voucher: visible entry lines missing");
+              const totals = await detail.locator("tfoot").textContent();
+              assert(totals.includes(formatFen(vouchers[0].amount_fen)), "voucher: visible debit/credit totals missing");
+              await checkOwnerLayout(module, "voucher_detail");
+            }
+            if (width === 375 && mainPayload.data.collections.vouchers.page.has_more) {
+              await localChange(module, async () => {
+                await page.getByRole("button", { name: "下一页", exact: true }).click();
+                await page.waitForFunction(() => document.querySelector(".voucher-pagination strong")?.textContent?.trim().startsWith("2 /"));
+              }, "vouchers");
+              assert.equal(await page.locator(".voucher-card").count(), Math.min(20, mainPayload.data.voucher_count - 20), "voucher: second page incomplete");
+              await localChange(module, async () => {
+                await page.getByRole("button", { name: "改为全部显示凭证", exact: true }).click();
+                await page.waitForFunction(total => document.querySelectorAll(".voucher-card").length === total
+                  && document.querySelector(".voucher-view")?.getAttribute("aria-busy") === "false", mainPayload.data.voucher_count);
+              }, mainPayload.data.voucher_count > 40 ? "vouchers" : null);
+              const numbers = await page.locator(".voucher-reference strong").allTextContents();
+              assert.equal(new Set(numbers).size, mainPayload.data.voucher_count, "voucher: all mode duplicated or lost vouchers");
+              await localChange(module, () => page.getByRole("button", { name: "改为分页显示凭证", exact: true }).click());
+            }
+            await localChange(module, () => page.getByRole("button", { name: "按业务", exact: true }).click());
+          }
+          const detail = page.locator(".business-status-details").first();
+          if (await detail.count()) {
+            const ancestors = detail.locator("xpath=ancestor::details[not(@open)]");
+            const count = await ancestors.count();
+            for (let index = 0; index < count; index++) {
+              // Requery after each real click: opened ancestors leave this set.
+              await detail.locator("xpath=ancestor::details[not(@open)]").first()
+                .locator(":scope > summary").click();
+            }
+            const reply = response("business-status");
+            await detail.locator("summary").click();
+            await verifyReply(await reply, module);
+            await detail.locator(".business-detail-panel").waitFor();
+            assert.equal(await detail.locator("[role=alert]").count(), 0, `${module.key}: business detail failed`);
+            await checkOwnerLayout(module, "business_detail");
+            if (width === 375 && config.screenshot_directory) {
+              await page.screenshot({ path: `${config.screenshot_directory}/${module.key}-business-detail.png`, fullPage: true });
+            }
+          }
+          if (module.key === "brief" && width === 375 && mainPayload.data.owner_review_request) {
+            const digest = mainPayload.data.owner_review_request.preview_digest;
+            const pending = response("close-review");
+            const markAllowed = request => {
+              const url = new URL(request.url());
+              if (matchesAction(url, "close-review") && url.searchParams.get("preview_digest") === digest) allowedCloseReviewRequests.add(request.url());
+            };
+            page.on("request", markAllowed);
+            try {
+              await page.getByRole("button", { name: "查看本次核对内容", exact: true }).click();
+              const reply = await pending, review = await verifyReply(reply, module);
+              assert.equal(new URL(reply.url()).searchParams.get("preview_digest"), digest, "review: requested another preview");
+              assert.equal(review.preview_digest, digest, "review: displayed another preview");
+              await page.locator(".close-review").waitFor();
+              await checkOwnerLayout(module, "on_demand_review");
+              assertNoBrowserFailures();
+              await page.getByRole("button", { name: "收起本次核对", exact: true }).click();
+              await verifyBriefVisible(mainPayload.data);
+            } finally { page.off("request", markAllowed); }
+          }
+        }
+      }
+      assertNoBrowserFailures();
+      return { status: "passed", company_id: company.id, period: company.period,
+        pages: {}, layouts, navigation: navigationBase };
+    }
     if (config.foreground_stream) {
       assert(typeof config.stop_file === "string" && config.stop_file.length > 0);
       process.stdout.write(`${JSON.stringify({ kind: "ready", company_id: company.id,
         period: company.period, first_render_ms: firstLoad })}\n`);
       while (!fs.existsSync(config.stop_file)) {
-        const elapsed = await measure(modules[0]);
+        const elapsed = await measure(modules[0], undefined, true);
         process.stdout.write(`${JSON.stringify({ kind: "sample", elapsed_ms: elapsed })}\n`);
       }
       assertNoBrowserFailures();
@@ -440,7 +1019,7 @@ async function run(config) {
         warmups, sample_count: samples, pages: {},
         navigation: { ...navigationBase, company_switch: {
           status: "measured", from_company_id: company.id, to_company_id: target.id,
-          selected_period: lastSwitch.selected_period, review_state: lastSwitch.review_state,
+          selected_period: lastSwitch.selected_period, month_state: lastSwitch.month_state,
           samples: timings, median_ms: percentile(sorted, 0.5),
           p95_ms: percentile(sorted, 0.95), max_ms: sorted.at(-1),
         } },
@@ -448,8 +1027,7 @@ async function run(config) {
     }
     const coldOpen = {};
     for (const module of modules) {
-      const expected = [response("context"), response(module.action),
-        ...(module.key === "brief" ? [response("close-review")] : [])];
+      const expected = [response("context"), response(module.action)];
       result[module.key] = { samples: [] };
       await page.goto(address(module));
       coldOpen[module.key] = (await navigationRendered(module)).elapsed_ms;
@@ -457,11 +1035,13 @@ async function run(config) {
       for (const reply of await Promise.all(expected)) await verifyReply(reply, module);
       for (let i = 0; i < warmups; i++) await measure(module);
       const timings = [];
-      result[module.key] = { samples: timings };
-      for (let i = 0; i < samples; i++) timings.push(await measure(module));
+      const resourceSamples = [];
+      result[module.key] = { samples: timings, resource_samples: resourceSamples };
+      for (let i = 0; i < samples; i++) timings.push(await measure(module, resourceSamples));
       const sorted = [...timings].sort((a, b) => a - b);
       result[module.key] = {
         samples: timings,
+        resource_samples: resourceSamples,
         median_ms: percentile(sorted, 0.5),
         p95_ms: percentile(sorted, 0.95),
         max_ms: sorted.at(-1),
@@ -512,4 +1092,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { waitForLater };
+module.exports = { waitForLater, verifyBriefState, verifyCollection, verifyVoucher, verifyMainPayload, formatFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };

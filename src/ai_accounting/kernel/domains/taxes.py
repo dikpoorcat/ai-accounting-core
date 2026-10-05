@@ -29,7 +29,16 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..types import MAX_FEN, ActualDate, Fen, NonNegativeFen, SubjectId, YearMonth, sum_fen
+from ..types import (
+    MAX_FEN,
+    ActualDate,
+    EvidenceDigest,
+    Fen,
+    NonNegativeFen,
+    SubjectId,
+    YearMonth,
+    sum_fen,
+)
 from .money import ACTUAL_PAYMENT_KINDS
 
 Money = NonNegativeFen
@@ -558,7 +567,7 @@ class TaxCreditConfirmation(Fact):
     original_filing_reference: str | None = Field(default=None, min_length=1)
     confirmation_reference: str | None = Field(default=None, min_length=1)
     original_filing_evidence: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    confirmation_evidence: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    confirmation_evidence: EvidenceDigest | None = None
     confirmation_date: ActualDate | None = None
     disposition: Literal["refund", "offset", "refund_or_offset"] | None = None
     vat_credit_fen: Money | None = None

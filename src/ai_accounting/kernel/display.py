@@ -9,14 +9,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .contracts import KernelError, NeedsInformation
-from .types import YearMonth, canonical, digest
+from .types import EvidenceDigest, YearMonth, canonical, digest, evidence_digest_bytes
 
 CONTENT_CONTRACT = "commentary-content-v1"
 LEGACY_CONTRACT = "legacy-context-v8"
 
 ShortText = Annotated[str, Field(min_length=1, max_length=200)]
 NoteText = Annotated[str, Field(max_length=50000)]
-EvidenceDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class _Profile(BaseModel):
@@ -84,9 +83,7 @@ class Display:
     def _evidence(connection, value):
         if value is None:
             return None
-        raw = bytes.fromhex(value)
-        if len(raw) != 32:
-            raise ValueError("evidence digest must be 32 bytes")
+        raw = evidence_digest_bytes(value)
         if connection.execute("SELECT 1 FROM evidence WHERE digest=?", (raw,)).fetchone() is None:
             raise NeedsInformation("evidence_digest", "展示资料引用的依据尚未登记")
         return raw
@@ -865,8 +862,10 @@ class Display:
         source: str,
         expected_revision: int,
         request_id: str,
-        evidence_digest: str | None = None,
+        evidence_digest: EvidenceDigest | None = None,
     ):
+        if evidence_digest is not None:
+            evidence_digest_bytes(evidence_digest)
         period = str(YearMonth(period))
         self._revision(expected_revision)
         if not isinstance(text, str) or not text.strip() or len(text) > 50000:

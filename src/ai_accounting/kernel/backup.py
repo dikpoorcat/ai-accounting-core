@@ -32,7 +32,12 @@ from .permissions import (
     private_temporary_directory,
     reject_reparse_path,
 )
-from .runtime import connect, require_supported_runtime
+from .runtime import (
+    connect,
+    require_supported_runtime,
+    unpublished_copy_sidecars,
+    verification_snapshot,
+)
 from .schema_bundle import DATABASE_FORMAT_KEYS, production_bundle, valid_database_format
 from .versions import database_format, upgrade, verify_schema
 
@@ -155,6 +160,19 @@ def _verify_connection(
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
 ) -> dict[str, Any]:
+    with verification_snapshot(connection):
+        return _verify_connection_snapshot(
+            connection, bundle, allow_previous=allow_previous,
+            expected_company_id=expected_company_id,
+            expected_taxpayer_id=expected_taxpayer_id,
+            expected_database_id=expected_database_id,
+        )
+
+
+def _verify_connection_snapshot(
+    connection, bundle, *, allow_previous,
+    expected_company_id=None, expected_taxpayer_id=None, expected_database_id=None,
+):
     format_value, identity = _company_header(
         connection,
         bundle,
@@ -497,22 +515,22 @@ def _verify_rollover_archive(path, bundle, identity_checks):
     except BackupError as original_error:
         if original_error.code != "backup_schema_unsupported" or bundle.status != "draft":
             raise
-        from .offline_development_upgrade import SOURCE_FINGERPRINT, source_bundle
+        from .offline_development_upgrade import _declared_changes, source_bundle
 
-        if (SOURCE_FINGERPRINT, bundle.current("company")["sha256"]) not in (
-            bundle.draft_transitions.get("company", ())
-        ):
-            raise
-        historical = source_bundle(bundle)
+        # Only the package's two exact, validated forward steps authorize a
+        # rollover source; a loose snapshot or arbitrary transition cannot.
+        steps = _declared_changes(bundle)
         # The first verifier already checked archive paths, sizes and manifest
         # shape before rejecting its historical format. Recheck with the exact
         # source contract, including content, evidence and all identity fields.
-        try:
-            return verify_portable(path, _bundle=historical, **identity_checks)
-        except BackupError as source_error:
-            if source_error.code == "backup_schema_unsupported":
-                raise original_error from source_error
-            raise
+        for source, _, _ in reversed(steps):
+            historical = source_bundle(bundle, source["sha256"])
+            try:
+                return verify_portable(path, _bundle=historical, **identity_checks)
+            except BackupError as source_error:
+                if source_error.code != "backup_schema_unsupported":
+                    raise
+        raise original_error
 
 
 def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -> None:
@@ -576,6 +594,42 @@ def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -
     elif previous_digest != state["old_current"]:
         raise _error("backup_target_changed", "Pending previous backup disappeared")
     _clear_rollover(marker, pending)
+
+
+def copy_to_unpublished_database(source, target, *, progress=None) -> None:
+    """Copy into a caller-owned exclusive, unpublished file without a full WAL.
+
+    The caller must establish target ownership/freshness and verify the copied
+    structure/content before publication. Never use this on an active database.
+    Failure leaves the unpublished target for the caller's cleanup/diagnostics.
+    """
+    databases = [tuple(row) for row in target.execute("PRAGMA database_list")]
+    main = [row for row in databases if row[1] == "main"]
+    source_main = [row for row in source.execute("PRAGMA database_list") if row[1] == "main"]
+    if (target.in_transaction or target.execute("PRAGMA query_only").fetchone()[0]
+            or len(main) != 1 or not main[0][2]
+            or any(row[1] not in {"main", "temp"} for row in databases)
+            or any(row[2] and Path(row[2]).resolve() == Path(main[0][2]).resolve()
+                   for row in source_main)):
+        raise _error("backup_content_invalid", "Copy requires a separate unpublished writable file")
+    mode = target.execute("PRAGMA journal_mode").fetchone()[0]
+    if mode not in {"wal", "delete"}:
+        raise _error("backup_content_invalid", "Unsupported unpublished target journal mode")
+    with unpublished_copy_sidecars(target) as after_delete:
+        if target.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+            raise _error("backup_content_invalid", "Could not prepare unpublished target")
+        after_delete()
+        source.backup(target, pages=256, progress=progress)
+        if target.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+            raise _error("backup_content_invalid", "Could not finalize unpublished copy")
+        after_delete()
+        if mode == "wal":
+            if target.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
+                raise _error("backup_content_invalid", "Could not restore target journal mode")
+            if tuple(target.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()) != (0, 0, 0):
+                raise _error(
+                    "backup_content_invalid", "Unpublished copy checkpoint did not complete"
+                )
 
 
 def _copy_sqlite_snapshot(source_connection, temporary: Path, *, timeout_seconds: float) -> None:

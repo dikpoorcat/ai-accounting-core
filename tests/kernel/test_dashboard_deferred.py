@@ -6,6 +6,7 @@ import pytest
 import test_reports as report_cases
 from entity_fixture import seed_entities
 from test_dashboard_transport import _publish_expense, authenticated
+from test_integrity_content import damage
 from test_resident_service import resident as resident_fixture
 
 import ai_accounting.kernel.business_queries as business_query_module
@@ -20,19 +21,13 @@ from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.http import wire_money
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
+from ai_accounting.kernel.types import YearMonth
 
 book = report_cases.book
 resident = resident_fixture
 DAY = "2026-09-13"
 CHECK_KEYS = {"materials", "accounting", "close_requirements"}
-SECTIONS = (
-    "vouchers",
-    "businesses",
-    "open_items",
-    "settlement_events",
-    "external_followups",
-    "file_jobs",
-)
+SECTIONS = ("activity", "open_items")
 
 
 @pytest.fixture(autouse=True)
@@ -60,12 +55,8 @@ def assert_context(response, engine):
 
 def assert_pending_checks(response):
     data = response["data"]
-    assert data["period_preparation"] is None
-    assert data["material_completeness"] is None
-    checks = {item["key"]: item for item in data["validation"]["items"]}
-    assert CHECK_KEYS <= checks.keys()
-    assert all(checks[key]["state"] == "pending" for key in CHECK_KEYS)
-    assert data["validation"]["state"] in {"pending", "attention", "error"}
+    assert {"period_preparation", "material_completeness", "validation"}.isdisjoint(data)
+    assert all(item["status"] == "ai_reviewing" for item in data["risks"])
 
 
 def without_clock(value):
@@ -96,32 +87,39 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
     )
     publish("second-march-voucher")
     dashboard = Dashboard(engine)
-    complete = dashboard.brief("2026-03", limit=1)
-    assert complete["data"]["voucher_count"] == 2
-    assert complete["data"]["total_debit_fen"] == 12000
-    assert complete["data"]["collections"]["vouchers"]["items"][0]["components"]
-
     forbid_preparation(monkeypatch)
+    complete = dashboard.brief("2026-03", limit=1, preparation="complete")
+    assert complete["data"]["activity_count"] == 2
+    assert complete["data"]["position"]["month_expense_fen"] == 2000
+    assert complete["data"]["funds_overview"]["outflow_fen"] == 10000
+    # The earlier month's cost is paid this month; it does not become this month's expense.
+    posted = [
+        event
+        for subject in ("payment", "second-march-voucher")
+        for event in BusinessQueries(engine).business_status(subject, "2026-03")["as_posted"][
+            "voucher_events"
+        ]
+        if event["posting_period"] == "2026-03"
+    ]
+    assert sum(line["debit"] for event in posted for line in event["lines"]) == 12000
+    assert complete["data"]["collections"]["activity"]["items"][0]["subject_id"]
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 7
-    assert deferred["projection"] == "dashboard_brief_deferred"
+    assert deferred["schema_version"] == complete["schema_version"] == 11
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
     assert_pending_checks(deferred)
     for key in ("snapshot_version", "selected_period", "read_semantics"):
         assert deferred[key] == complete[key]
-    deferred_only = {"period_preparation", "material_completeness", "validation", "generated_at"}
-    assert {k: v for k, v in deferred["data"].items() if k not in deferred_only} == {
-        k: v for k, v in complete["data"].items() if k not in deferred_only
-    }
+    assert without_clock(deferred["data"]) == without_clock(complete["data"])
     for section in SECTIONS:
         page = dashboard.brief("2026-03", section=section, limit=1, preparation="deferred")
         assert page["read_context"] == context
         assert_pending_checks(page)
         assert section in page["data"]["collections"]
-        assert page["data"]["total_debit_fen"] == 12000
+        assert page["data"]["position"]["month_expense_fen"] == 2000
+        assert page["data"]["funds_overview"]["outflow_fen"] == 10000
         assert page["data"]["position"] == deferred["data"]["position"]
-        if section == "vouchers":
+        if section == "activity":
             cursor = page["data"]["collections"][section]["page"]["next_cursor"]
             assert cursor
             next_page = dashboard.brief(
@@ -134,23 +132,22 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
             )
             assert_pending_checks(next_page)
             assert next_page["read_context"] == context
-            assert len(next_page["data"]["collections"]["vouchers"]["items"]) == 1
+            assert len(next_page["data"]["collections"]["activity"]["items"]) == 1
             assert (
-                next_page["data"]["collections"]["vouchers"]["items"][0]["number"]
-                != page["data"]["collections"]["vouchers"]["items"][0]["number"]
+                next_page["data"]["collections"]["activity"]["items"][0]["key"]
+                != page["data"]["collections"]["activity"]["items"][0]["key"]
             )
 
-    original_position = dashboard_module._position
-
-    def known_amount_error(snapshot):
-        return {**original_position(snapshot), "equation_valid": False}
-
-    monkeypatch.setattr(dashboard_module, "_position", known_amount_error)
-    invalid = dashboard.brief("2026-03", preparation="deferred")
-    assert_pending_checks(invalid)
-    assert invalid["data"]["validation"]["state"] == "error"
-    assert invalid["data"]["validation"]["integrity_valid"] is False
-    assert invalid["data"]["validation"]["items"][0]["state"] == "error"
+    damage(
+        engine,
+        "monthly_account",
+        "UPDATE monthly_account SET debit=debit+1 WHERE period=? AND account=("
+        "SELECT min(account) FROM monthly_account WHERE period=?)",
+        (YearMonth("2026-03").ordinal, YearMonth("2026-03").ordinal),
+    )
+    with pytest.raises(KernelError) as failure:
+        dashboard.brief("2026-03", preparation="deferred")
+    assert failure.value.code == "content_integrity_failed"
 
 
 def test_deferred_report_keeps_open_and_closed_sources_and_export_contract(book, monkeypatch):
@@ -159,16 +156,15 @@ def test_deferred_report_keeps_open_and_closed_sources_and_export_contract(book,
     for closed in (False, True):
         if closed:
             report_cases.close_quarter(book)
-        complete = dashboard.quarterly_report(2026, 1)
-        assert complete["export"]["available"] is closed
-        assert len(complete["period_preparations"]) == 3
         with monkeypatch.context() as guard:
             forbid_preparation(guard)
+            complete = dashboard.quarterly_report(2026, 1, preparation="complete")
             deferred = dashboard.quarterly_report(2026, 1, preparation="deferred")
-        assert deferred["schema_version"] == complete["schema_version"] == 4
+        assert complete["export"]["available"] is closed
+        assert deferred["schema_version"] == complete["schema_version"] == 5
         assert deferred["projection"] == "dashboard_quarterly_report_deferred"
         assert_context(deferred, book[0])
-        assert deferred["period_preparations"] is None
+        assert "period_preparations" not in deferred and "period_preparations" not in complete
         assert without_clock(
             {
                 k: v
@@ -184,7 +180,6 @@ def test_preparation_restores_original_checks_inside_the_validated_read_snapshot
     report_cases.scenario(book)
     engine = book[0]
     dashboard = Dashboard(engine)
-    complete = dashboard.brief("2026-03")
     deferred = dashboard.brief("2026-03", preparation="deferred")
     context = assert_context(deferred, engine)
     assert dashboard.quarterly_report(2026, 1, preparation="deferred")["read_context"] == context
@@ -205,16 +200,27 @@ def test_preparation_restores_original_checks_inside_the_validated_read_snapshot
     assert result["schema_version"] == 4
     assert result["projection"] == "dashboard_period_preparation_result"
     assert result["read_context"] == context and result["period"] == "2026-03"
-    assert result["data"]["period_preparation"] == complete["data"]["period_preparation"]
     checks = result["data"]["brief_checks"]
-    assert checks["material_completeness"] == complete["data"]["material_completeness"]
-    assert checks["issues"] == complete["data"]["validation"]["issues"]
-    assert checks["items"] == [
-        item for item in complete["data"]["validation"]["items"] if item["key"] in CHECK_KEYS
-    ]
+    core = BusinessQueries(engine).period_readiness("2026-03", as_of=DAY)
     assert (
-        checks["attention_count"] + deferred["data"]["validation"]["attention_count"]
-        == complete["data"]["validation"]["attention_count"]
+        result["data"]["period_preparation"]["readiness"]
+        == dashboard_module.preparation_view(core)["readiness"]
+    )
+    expected_checks = dashboard_module._brief_checks(core)
+    assert checks["issues"] == expected_checks["issues"]
+    assert checks["items"] == expected_checks["items"]
+    assert (
+        checks["material_completeness"]["satisfied"]
+        == expected_checks["material_completeness"]["satisfied"]
+    )
+    assert (
+        checks["material_completeness"]["issues"]
+        == expected_checks["material_completeness"]["issues"]
+    )
+    assert len(checks["material_completeness"]["coverage_digest"]) == 64
+    assert {item["key"] for item in checks["items"]} == CHECK_KEYS
+    assert checks["attention_count"] == len(checks["material_completeness"]["issues"]) + len(
+        checks["issues"]
     )
     forbid_preparation(monkeypatch)
     with pytest.raises(KernelError) as error:
@@ -282,8 +288,7 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 7
-    assert result["projection"] == "dashboard_brief_deferred"
+    assert result["schema_version"] == 11
     assert result["read_context"]["company_id"] == "empty"
     assert result["read_context"]["database_id"] == "empty-db"
     assert result["data"] is None
@@ -305,12 +310,9 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
         ("dashboard_brief", {"period": "2026-09"}),
         ("dashboard_quarterly_report", {"year": 2026, "quarter": 3}),
     ):
-        assert (
-            validate_command(service.command_models, name, {"company_id": company, **parameters})[
-                "preparation"
-            ]
-            == "complete"
-        )
+        assert validate_command(
+            service.command_models, name, {"company_id": company, **parameters}
+        )["preparation"] == ("deferred" if name == "dashboard_brief" else "complete")
         with pytest.raises(KernelError) as error:
             validate_command(
                 service.command_models,

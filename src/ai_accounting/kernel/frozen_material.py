@@ -12,6 +12,7 @@ import hashlib
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
+from weakref import WeakSet
 
 from .integrity import _invalid
 from .types import YearMonth, canonical, digest
@@ -41,6 +42,49 @@ _PROOF_FIELDS = {
     "resolution": "resolution_versions",
     "group": "group_versions",
 }
+
+_MATERIAL_VERSION_PRODUCER = object()
+_material_version_ledgers = WeakSet()
+
+
+class _MaterialVersionLedger:
+    """Actual sealed typed-version matches, scoped to one unchanged verification."""
+
+    def __init__(self, connection, lease, *, _producer):
+        if _producer is not _MATERIAL_VERSION_PRODUCER:
+            raise ValueError("material version proof requires its verified producer")
+        self.connection = connection
+        self.lease = lease
+        self.total_changes = connection.total_changes
+        self.schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
+        self._matches = {}
+        _material_version_ledgers.add(self)
+
+    def require(self, connection):
+        from .verified_source_lease import require_verified_lease
+
+        if self.connection is not connection:
+            raise ValueError("material version proof belongs to another connection")
+        require_verified_lease(connection, self.lease)
+        if (
+            connection.total_changes != self.total_changes
+            or connection.execute("PRAGMA schema_version").fetchone()[0] != self.schema_version
+        ):
+            raise ValueError("material version proof source snapshot changed")
+
+
+def _verified_material_version_ledger(connection):
+    from .verified_source_lease import current_verified_lease
+
+    return _MaterialVersionLedger(
+        connection, current_verified_lease(connection), _producer=_MATERIAL_VERSION_PRODUCER
+    )
+
+
+def _require_material_version_ledger(connection, ledger):
+    if type(ledger) is not _MaterialVersionLedger or ledger not in _material_version_ledgers:
+        raise ValueError("material version proof requires its verified producer")
+    ledger.require(connection)
 
 
 @dataclass(frozen=True)
@@ -263,21 +307,33 @@ def _current_versions(connection, kind, table):
     return result
 
 
-def _frozen_versions(connection, kind, table, identifiers):
+def _frozen_versions(connection, kind, table, identifiers, *, _verified_versions=None):
     if not isinstance(identifiers, list) or any(not isinstance(v, str) for v in identifiers):
         _invalid("close", "*", "frozen_material_version_list_invalid")
     if len(identifiers) != len(set(identifiers)):
         _invalid("close", "*", "frozen_material_version_list_duplicate")
+    selected = identifiers
+    if _verified_versions is not None:
+        _require_material_version_ledger(connection, _verified_versions)
+        if (kind, table) not in _KINDS.values():
+            raise ValueError("material version proof kind and typed table differ")
+        selected = [
+            ident
+            for ident in identifiers
+            if (kind, table, ident) not in _verified_versions._matches
+        ]
     if not identifiers:
         return defaultdict(set)
-    if kind == "material_source_v2":
+    if not selected:
+        rows = []
+    elif kind == "material_source_v2":
         rows = connection.execute(
             "SELECT f.subject_id,ids.value FROM json_each(?) ids "
             "CROSS JOIN fact_revision f ON f.id=ids.value "
             "CROSS JOIN fact_seal seal ON seal.fact_id=f.id "
             "CROSS JOIN subject s ON s.id=f.subject_id AND s.kind=? "
             f"CROSS JOIN {table} t ON t.revision_id=f.id",
-            (canonical(identifiers), kind),
+            (canonical(selected), kind),
         ).fetchall()
     else:
         rows = connection.execute(
@@ -285,10 +341,20 @@ def _frozen_versions(connection, kind, table, identifiers):
             "ON t.revision_id=ids.value CROSS JOIN fact_revision f ON f.id=t.revision_id "
             "CROSS JOIN fact_seal seal ON seal.fact_id=f.id "
             "CROSS JOIN subject s ON s.id=f.subject_id AND s.kind=?",
-            (canonical(identifiers), kind),
+            (canonical(selected), kind),
         ).fetchall()
-    if len(rows) != len(identifiers):
+    if len(rows) != len(selected) or {row[1] for row in rows} != set(selected):
         _invalid("close", "*", "frozen_material_fact_seal_missing")
+    if _verified_versions is not None:
+        # Publish only after every selected identity, typed row, seal and kind
+        # matched. Stored summaries never populate this ledger.
+        _require_material_version_ledger(connection, _verified_versions)
+        _verified_versions._matches.update(
+            ((kind, table, fact_id), source_id) for source_id, fact_id in rows
+        )
+        rows = [
+            (_verified_versions._matches[kind, table, fact_id], fact_id) for fact_id in identifiers
+        ]
     result = defaultdict(set)
     for source_id, fact_id in rows:
         result[source_id].add(fact_id)

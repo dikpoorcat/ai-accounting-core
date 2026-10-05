@@ -1,0 +1,193 @@
+{
+  "kind": "raw_owner_r64_unified_receipts",
+  "created_utc": "2026-10-02T04:31:26.955812+00:00",
+  "scope": "Completed fixed-source r64 required regression group and historical r64 candidate construction receipts; candidate predates the mixed metadata batch boundary repair and is not the final current candidate.",
+  "limitations": [
+    "This archival operation runs no test, measurement, build or application code.",
+    "276 passing tests cover the listed required group, not cumulative full regression or final repaired-source validation.",
+    "Independent review found reusable metadata can be cached before a fresh body batch fails; this is a partial metadata publication boundary gap, not evidence that a corrupt body was authenticated.",
+    "The r64 candidate is historical only. A final repaired candidate and the main 48-month performance acceptance remain unverified; stage 9 owner-dashboard performance is incomplete."
+  ],
+  "missing_expected_files": [],
+  "files": [
+    {
+      "source": ".tmp/stage9-r64-required-group.json",
+      "source_mtime_utc": "2026-10-02T04:28:05.506146+00:00",
+      "source_mtime_ns": 1790915285506146000,
+      "archive": "owner-r64-unified-stage9-r64-required-group.json.gz",
+      "bytes": 2250,
+      "sha256": "725f0ccf08da2ce183748d40c5b648d77ab6aafcf58235ddf1e2595da6403c4c",
+      "archive_bytes": 711,
+      "archive_sha256": "6ddc77a6bc2cbfb9291f12fd41b3931d4a25e48f08775b8da5c35eeba8d13bcf",
+      "decompressed_bytes": 2250,
+      "decompressed_sha256": "725f0ccf08da2ce183748d40c5b648d77ab6aafcf58235ddf1e2595da6403c4c",
+      "decompress_byte_equivalent": true
+    },
+    {
+      "source": ".tmp/stage9-r64-required-group.log",
+      "source_mtime_utc": "2026-10-02T04:28:04.660752+00:00",
+      "source_mtime_ns": 1790915284660751600,
+      "archive": "owner-r64-unified-stage9-r64-required-group.log.gz",
+      "bytes": 3000,
+      "sha256": "df5a22ceb3ae39d5f5ca4d301cafc3724581636a32cedde53def44a8a8ae80ae",
+      "archive_bytes": 702,
+      "archive_sha256": "51bafedcf0a5a29a75f6dac8958c7cfbf585da8f930fc7b40ed1666ef5d15415",
+      "decompressed_bytes": 3000,
+      "decompressed_sha256": "df5a22ceb3ae39d5f5ca4d301cafc3724581636a32cedde53def44a8a8ae80ae",
+      "decompress_byte_equivalent": true
+    },
+    {
+      "source": ".tmp/stage9-r64-required-group.xml",
+      "source_mtime_utc": "2026-10-02T04:28:04.187177+00:00",
+      "source_mtime_ns": 1790915284187176900,
+      "archive": "owner-r64-unified-stage9-r64-required-group.xml.gz",
+      "bytes": 50173,
+      "sha256": "bbf31d3f6b78977b8155bc206fb2183b290e57dbe17dab54bc1c19168a5c0552",
+      "archive_bytes": 6946,
+      "archive_sha256": "6374f3aa8cf98390ffec529e6b5229358fe6b82368b4ffcdc900ce1d6a4cbaa5",
+      "decompressed_bytes": 50173,
+      "decompressed_sha256": "bbf31d3f6b78977b8155bc206fb2183b290e57dbe17dab54bc1c19168a5c0552",
+      "decompress_byte_equivalent": true
+    },
+    {
+      "source": ".tmp/stage9-build-candidate-owner-r64/candidate-provenance.json",
+      "source_mtime_utc": "2026-10-02T04:20:34.887809+00:00",
+      "source_mtime_ns": 1790914834887808600,
+      "archive": "owner-r64-unified-candidate-provenance.json.gz",
+      "bytes": 74575,
+      "sha256": "8b91cea446693f6e38549d6a240079d3bca71bd36c3e24380c722d068ece81a1",
+      "archive_bytes": 30600,
+      "archive_sha256": "ed0e433b35973be7b0c3d8b2fd2a5bcdfe5bdf52d3ff1fc71bbdf7daec8e3793",
+      "decompressed_bytes": 74575,
+      "decompressed_sha256": "8b91cea446693f6e38549d6a240079d3bca71bd36c3e24380c722d068ece81a1",
+      "decompress_byte_equivalent": true
+    },
+    {
+      "source": ".tmp/stage9-candidate-owner-r64.log",
+      "source_mtime_utc": "2026-10-02T04:20:34.920107+00:00",
+      "source_mtime_ns": 1790914834920106800,
+      "archive": "owner-r64-unified-stage9-candidate-owner-r64.log.gz",
+      "bytes": 1145,
+      "sha256": "ed189faa20c1b2e368b8dce1e0a6fcd96e4ba1a4d94f3bc118ef0deefce1aaea",
+      "archive_bytes": 602,
+      "archive_sha256": "a595d7e976bdd3962bef57bf2c188ec3edf9cb3ea816f1c54a1d933fedae8213",
+      "decompressed_bytes": 1145,
+      "decompressed_sha256": "ed189faa20c1b2e368b8dce1e0a6fcd96e4ba1a4d94f3bc118ef0deefce1aaea",
+      "decompress_byte_equivalent": true
+    }
+  ],
+  "receipt_summaries": [
+    {
+      "source": ".tmp/stage9-r64-required-group.json",
+      "format": "wrapper_json",
+      "exit_code": 0,
+      "elapsed_seconds": 609.7062377999828,
+      "source_unchanged": true,
+      "before_sha256": "d54cf875a20b7333b0f63e5cc27281542c5e1851045d6e8a0aa04cd69e47b353",
+      "after_sha256": "d54cf875a20b7333b0f63e5cc27281542c5e1851045d6e8a0aa04cd69e47b353",
+      "targets": [
+        "tests/kernel/test_full_accounting_period_scopes.py",
+        "tests/kernel/test_close_accounting_filter.py",
+        "tests/kernel/test_employee_adopted_period_scopes.py",
+        "tests/kernel/test_entity_role_bounded_reads.py",
+        "tests/kernel/test_adopted_head_identity_batch.py",
+        "tests/kernel/test_asset_owner_outcome_reads.py",
+        "tests/kernel/test_asset_batch_reads.py",
+        "tests/kernel/test_required_money_header_reuse.py",
+        "tests/kernel/test_journal_source_header_reuse.py",
+        "tests/kernel/test_current_adoption_damage.py",
+        "tests/kernel/test_publication_record_proof_reuse.py",
+        "tests/kernel/test_journal_original_source_scope.py",
+        "tests/kernel/test_journal_kind_authority.py",
+        "tests/kernel/test_brief_activity_reuse.py",
+        "tests/kernel/test_owner_brief_amounts.py",
+        "tests/kernel/test_journal_summary_proof_reuse.py",
+        "tests/kernel/test_funds_required_summary_work.py",
+        "tests/kernel/test_posted_line_reuse.py",
+        "tests/kernel/test_employee_head_adoption_reads.py",
+        "tests/kernel/test_asset_identity_reads.py",
+        "tests/kernel/test_payroll_head_line_scope.py",
+        "tests/kernel/test_employee_role_identity_scope.py",
+        "tests/kernel/test_employee_frozen_cohort_reads.py",
+        "tests/kernel/test_employee_adopted_result_reads.py",
+        "tests/kernel/test_asset_batches.py::test_open_activation_batch_withdraws_member_and_preserves_number",
+        "tests/kernel/test_identity_corrections.py::test_asset_identity_differs_from_acquisition_and_reassigns_owned_members",
+        "tests/kernel/test_integrity_asset_card_close.py",
+        "tests/kernel/test_dashboard_workforce_assets.py",
+        "tests/kernel/test_history_reads_v1_warm_cache.py",
+        "tests/kernel/test_response_contracts.py::test_live_shapes_preserve_native_types_omission_and_null",
+        "tests/kernel/test_response_contracts.py::test_today_backend_samples_pass_generated_browser_validators"
+      ],
+      "changed_files": []
+    },
+    {
+      "source": ".tmp/stage9-r64-required-group.log",
+      "format": "log",
+      "observed_result_lines": [
+        "276 passed, 9 warnings in 608.15s (0:10:08)"
+      ]
+    },
+    {
+      "source": ".tmp/stage9-r64-required-group.xml",
+      "format": "junit",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "276",
+          "time": "607.931",
+          "timestamp": "2026-10-02T12:17:56.253880+08:00",
+          "hostname": "MD01"
+        }
+      ]
+    },
+    {
+      "source": ".tmp/stage9-build-candidate-owner-r64/candidate-provenance.json",
+      "format": "candidate_provenance",
+      "status": "historical_candidate_not_final_current",
+      "purpose": "isolated_release_candidate_not_repository_freeze",
+      "candidate": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-candidate-owner-r64",
+      "snapshot": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r64-release",
+      "snapshot_sha256": "59107d8719c95f12d71a433c2dc7ca2e2fab35cd266a7fc8d8d6e7f319d6766c",
+      "transform": {
+        "schema_bundle": {
+          "status": "released",
+          "version": 1
+        },
+        "removed_copied_draft_contracts": [
+          "src\\ai_accounting\\kernel\\schema_contracts\\catalog\\draft.json",
+          "src\\ai_accounting\\kernel\\schema_contracts\\company\\draft.json"
+        ]
+      },
+      "contracts": {
+        "catalog\\v1.json": {
+          "sha256": "ca7ea76f47f9339ca168acdc28f780fb9e8412fb4ce3a683de508072b19d3971",
+          "fingerprint": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+        },
+        "company\\v1.json": {
+          "sha256": "b729080164e04dc9ddb3eaf80ba2d6a8a7fbed410dbabc9f4360cc35b005f3b7",
+          "fingerprint": "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
+        },
+        "content-v1.json": {
+          "sha256": "1a1d5463795777f1df82421400adedada9d8e56e6a547388e9a9b3f57ed896f9",
+          "fingerprint": "ac6d042b8478d87add37376fab5e5c9b4ae99b6ccab89c1e2f52678b779fe5f8"
+        },
+        "development\\company\\923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json": {
+          "sha256": "fe72acdc5cd23b95766ed58c2cc0a174ef27b4dcb974b32906b6e24d0dec9680",
+          "fingerprint": "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
+        }
+      }
+    },
+    {
+      "source": ".tmp/stage9-candidate-owner-r64.log",
+      "format": "log",
+      "observed_result_lines": [
+        "Released contracts created",
+        "Released contracts verified",
+        "{\"candidate\": \"D:\\\\GitHub\\\\ai-accounting-core\\\\.tmp\\\\stage9-build-candidate-owner-r64\", \"snapshot\": \"D:\\\\GitHub\\\\ai-accounting-core\\\\.tmp\\\\stage9-build-source-owner-r64-release\", \"snapshot_sha256\": \"59107d8719c95f12d71a433c2dc7ca2e2fab35cd266a7fc8d8d6e7f319d6766c\", \"contracts\": {\"catalog\\\\v1.json\": {\"sha256\": \"ca7ea76f47f9339ca168acdc28f780fb9e8412fb4ce3a683de508072b19d3971\", \"fingerprint\": \"b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee\"}, \"company\\\\v1.json\": {\"sha256\": \"b729080164e04dc9ddb3eaf80ba2d6a8a7fbed410dbabc9f4360cc35b005f3b7\", \"fingerprint\": \"c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb\"}, \"content-v1.json\": {\"sha256\": \"1a1d5463795777f1df82421400adedada9d8e56e6a547388e9a9b3f57ed896f9\", \"fingerprint\": \"ac6d042b8478d87add37376fab5e5c9b4ae99b6ccab89c1e2f52678b779fe5f8\"}, \"development\\\\company\\\\923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861.json\": {\"sha256\": \"fe72acdc5cd23b95766ed58c2cc0a174ef27b4dcb974b32906b6e24d0dec9680\", \"fingerprint\": \"923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861\"}}}"
+      ]
+    }
+  ]
+}

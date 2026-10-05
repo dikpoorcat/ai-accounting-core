@@ -33,7 +33,7 @@ from .periods import Periods
 from .replay_close import ReplayClose
 from .reports import Reports
 from .tax_import import TaxImport
-from .types import canonical
+from .types import EvidenceDigest, canonical
 from .workflow import Workflow
 
 CONFIG = ConfigDict(extra="forbid", strict=True)
@@ -185,7 +185,7 @@ def command_models(registry):
                 kind=(Literal[kind], ...),
                 subject_id=(str, ...),
                 data=(model, ...),
-                evidence=(list[str], Field(min_length=1)),
+                evidence=(list[EvidenceDigest], Field(min_length=1)),
                 expected_revision=(int, Field(ge=0, strict=True)),
                 review=(DuplicateReview | None, None),
                 source_locations=(list[SourceLocation], Field(default_factory=list)),

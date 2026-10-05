@@ -1,0 +1,215 @@
+{
+  "kind": "raw_synthetic_receipts",
+  "files": [
+    {
+      "source": ".tmp\\stage9-funds-anchor-work.log",
+      "archive": "owner-required-r55-stage9-funds-anchor-work.log.gz",
+      "bytes": 567,
+      "sha256": "fb61cb2b58ea503b81084d0ffb18ea95d4b331661557b21836df50285077c2e3"
+    },
+    {
+      "source": ".tmp\\stage9-funds-anchor-work.xml",
+      "archive": "owner-required-r55-stage9-funds-anchor-work.xml.gz",
+      "bytes": 718,
+      "sha256": "9a96fceaa767d3d95876bc857b1819667ba6b6513dea22dd99937d6a5d19f950"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-added.log",
+      "archive": "owner-required-r55-stage9-funds-source-added.log.gz",
+      "bytes": 568,
+      "sha256": "b9a1b1a774b45dbe328d11bb0051defc46426fb61383ebc9c6dd167659ae7d5f"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-added.xml",
+      "archive": "owner-required-r55-stage9-funds-source-added.xml.gz",
+      "bytes": 1059,
+      "sha256": "a481d83cb48081b90fbae016d6ba051f64b03115fd723bd8d4f99bdde51825c8"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-final.log",
+      "archive": "owner-required-r55-stage9-funds-source-final.log.gz",
+      "bytes": 1106,
+      "sha256": "b573f1ef231e92ac75cd15cfeee9c6b0958689d423b5e6e803407e2e79911e08"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-final.xml",
+      "archive": "owner-required-r55-stage9-funds-source-final.xml.gz",
+      "bytes": 10486,
+      "sha256": "d09b53c5a9641d7fcf6ee350a015121358fcae951856fc22df1da5d219ca7bd7"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-integrity-v2.log",
+      "archive": "owner-required-r55-stage9-funds-source-integrity-v2.log.gz",
+      "bytes": 546,
+      "sha256": "e33d75e0f053cd3251b53bbc4b4cba27960de64f800a41a44b3849fe67f03253"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-integrity-v2.xml",
+      "archive": "owner-required-r55-stage9-funds-source-integrity-v2.xml.gz",
+      "bytes": 3302,
+      "sha256": "17e27555dcb59486774e200dcb09844e1e5f5611506befc9fffa58b757ad1a30"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-integrity.log",
+      "archive": "owner-required-r55-stage9-funds-source-integrity.log.gz",
+      "bytes": 2869,
+      "sha256": "faa10e3a72c35a56df0db4904ec6d54801d64ed60225d4fbbf09d52ed63b28c7"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-integrity.xml",
+      "archive": "owner-required-r55-stage9-funds-source-integrity.xml.gz",
+      "bytes": 4381,
+      "sha256": "32a113618b2a09d1ad6346b9f3f14e70081d9fd7afcaf592a139b87e6e6d776f"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-kind-initial.log",
+      "archive": "owner-required-r55-stage9-funds-source-kind-initial.log.gz",
+      "bytes": 5659,
+      "sha256": "f71d46b4ab5bc76e3725d2eba997a227517c2c1026f5a77c3216845ce45c33d2"
+    },
+    {
+      "source": ".tmp\\stage9-funds-source-kind-initial.xml",
+      "archive": "owner-required-r55-stage9-funds-source-kind-initial.xml.gz",
+      "bytes": 5174,
+      "sha256": "ae68bbf33196892f176d2773686a724836f43cb36e0357839fb3b32a1cc78606"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-all-initial.log",
+      "archive": "owner-required-r55-stage9-funds-zero-all-initial.log.gz",
+      "bytes": 10337,
+      "sha256": "d306abb79e22e2d77eb202f3d92a207e8899ed0532f62aac2469819a0ffad5d3"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-all-initial.xml",
+      "archive": "owner-required-r55-stage9-funds-zero-all-initial.xml.gz",
+      "bytes": 9841,
+      "sha256": "034b6f4a13e46317740d134cc1fcc4a2b292ef1e5ff1b837876812466ad93145"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-fixed.log",
+      "archive": "owner-required-r55-stage9-funds-zero-fixed.log.gz",
+      "bytes": 566,
+      "sha256": "4e16f61d26927a20d8656739d018867eb0e9e08ef0d126d39f70dbf149073390"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-fixed.xml",
+      "archive": "owner-required-r55-stage9-funds-zero-fixed.xml.gz",
+      "bytes": 1072,
+      "sha256": "b1efc1154b57c03a62963795c19c1ccb322786d635d7058a538ff7c8269296cd"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-initial.log",
+      "archive": "owner-required-r55-stage9-funds-zero-initial.log.gz",
+      "bytes": 3197,
+      "sha256": "4568c2e93468edf0c3e63a9e550815846de6588ea81a2bd336046af536a4f63d"
+    },
+    {
+      "source": ".tmp\\stage9-funds-zero-initial.xml",
+      "archive": "owner-required-r55-stage9-funds-zero-initial.xml.gz",
+      "bytes": 2653,
+      "sha256": "d489dbc02d057eb84f8268c1266da027fc322d687bf29a833b9e85d75800b0de"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-complete.log",
+      "archive": "owner-required-r55-stage9-input-identity-r54-complete.log.gz",
+      "bytes": 102,
+      "sha256": "577df4ad0068fa130b64a8e8b161c222c27d527ec74e5c83e8b3e07b1d77a6d2"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-complete.xml",
+      "archive": "owner-required-r55-stage9-input-identity-r54-complete.xml.gz",
+      "bytes": 3120,
+      "sha256": "75e11b4779125c350b05341f8c831151f4402b19974d0a0de08bd8d7510778a6"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-final.log",
+      "archive": "owner-required-r55-stage9-input-identity-r54-final.log.gz",
+      "bytes": 967,
+      "sha256": "51e6976c0ab2744afddbfb98b56856a5df48c841a017183e7a1f3fff838f0af6"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-final.xml",
+      "archive": "owner-required-r55-stage9-input-identity-r54-final.xml.gz",
+      "bytes": 3527,
+      "sha256": "e67be6e506355f1bd8dedd045f5dc4a6e0d904ceda08c27df4cdb05657c7e0be"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-retry.log",
+      "archive": "owner-required-r55-stage9-input-identity-r54-retry.log.gz",
+      "bytes": 102,
+      "sha256": "af8e4608128cd7f31948ee5d626a4f192311f86f2a0af041e2e9187fcc3aee5f"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54-retry.xml",
+      "archive": "owner-required-r55-stage9-input-identity-r54-retry.xml.gz",
+      "bytes": 2965,
+      "sha256": "ca279b5e0ba77418c4b5b7d32450f95112cd509c2f4d39a53e822dd6e9e95a87"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54.log",
+      "archive": "owner-required-r55-stage9-input-identity-r54.log.gz",
+      "bytes": 102,
+      "sha256": "5e147c28083b2b4f346ff9f1a109faf09a7f28e5672b664294cd670305d9fd26"
+    },
+    {
+      "source": ".tmp\\stage9-input-identity-r54.xml",
+      "archive": "owner-required-r55-stage9-input-identity-r54.xml.gz",
+      "bytes": 1850,
+      "sha256": "a7c3119a7b306504900ebedd8eac6ceda7c581c4b0850fd56d46ff21280b5569"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-draft-company.log",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-draft-company.log.gz",
+      "bytes": 115,
+      "sha256": "e9e0ba2939446055f79a5a05c860b2a9d7ee31a227af68c11a7d7f9766b778b4"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-draft-company.xml",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-draft-company.xml.gz",
+      "bytes": 646,
+      "sha256": "9a0aae9db350252d43018c8130718ba618701c2cfe9aeef154858512df84de24"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-final.log",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-final.log.gz",
+      "bytes": 23908,
+      "sha256": "7ce8c429943f1f16967028008a6ffd2880dc06319db0074d646222597641d63c"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-final.xml",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-final.xml.gz",
+      "bytes": 26270,
+      "sha256": "c869112fdc6f31be11ea2addf5e54a84b284c31b8cbd81d3c1588856baa36378"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-initial.log",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-initial.log.gz",
+      "bytes": 32802,
+      "sha256": "5f444d96a9a6dcbf9391a12e4a2b45e114cefbf8d2bf56bfec7e6809f729451f"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-initial.xml",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-initial.xml.gz",
+      "bytes": 35688,
+      "sha256": "71d737095d50deded1b8d31fd6457a86b51252164431cf37953efe106d897279"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-repaired.log",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-repaired.log.gz",
+      "bytes": 7965,
+      "sha256": "cb1317704a4de8ddc309a98f38a58cececc5943ad73b831cee81cedfd1929d17"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-repaired.xml",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-repaired.xml.gz",
+      "bytes": 9867,
+      "sha256": "95b73ea248a537e628a2906d2f67f765925870ece9e74b510a21001d60d377a1"
+    },
+    {
+      "source": ".tmp\\stage9-released-cli-rejection-results.json",
+      "archive": "owner-required-r55-stage9-released-cli-rejection-results.json.gz",
+      "bytes": 4052,
+      "sha256": "21b39db2ed219ff08ce755c32a72d9e3f16b842549a01119b437c0f06844ed33"
+    }
+  ]
+}

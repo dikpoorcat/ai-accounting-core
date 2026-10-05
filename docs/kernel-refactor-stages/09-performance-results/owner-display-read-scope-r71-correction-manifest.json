@@ -1,0 +1,282 @@
+{
+  "created_utc": "2026-10-02T13:21:59.400670+00:00",
+  "scope": "historical pre-guard synthetic reversal probe and subsequent single 55 complete-source/repair positive related group; ordinary page triple-deletion coverage still under review; no formal release or performance acceptance",
+  "prior_manifests": [
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-manifest.json",
+      "sha256": "c81a88da0eb42650fd7af78c0589510e94a4f14aceb29544fdd7a7e677d40998",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-related-manifest.json",
+      "sha256": "686116aaabd91b6271c88688c1cf6631e5750510a8eeb7eea4596eb469be6c07",
+      "unchanged": true
+    },
+    {
+      "path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-assets-manifest.json",
+      "sha256": "c75a5be4c933cbca5b80660a49aa7e12eb740f4c586fa76fc100f24b7881b903",
+      "unchanged": true
+    }
+  ],
+  "run": {
+    "tests": 55,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 0,
+    "stdout_seconds": 113.48,
+    "xml_seconds": 113.032,
+    "module_counts": {
+      "tests.kernel.test_open_correction_source_heads": 20,
+      "tests.kernel.test_payroll_corrections": 4,
+      "tests.kernel.test_publication_periods": 12,
+      "tests.kernel.test_report_projection": 19
+    },
+    "actual_command": ".tmp-kernel-venv/Scripts/python.exe -m pytest -q tests/kernel/test_open_correction_source_heads.py tests/kernel/test_payroll_corrections.py tests/kernel/test_publication_periods.py tests/kernel/test_report_projection.py --junitxml=.tmp/stage9-r71-correction-complete-source-related.xml"
+  },
+  "source_identity": "archive-time snapshots; four during-run observations agree, no full fixed execution inventory; prior 103 predates new complete-source guard",
+  "entries": [
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-source-repair-probe.py",
+      "scope": "historical pre-guard synthetic probe; complete three-stage dumps retained, no database copied",
+      "raw_sha256": "95d6f2411468579f5e4bc70e409d72240e4bb11192c2b6d589102d7061851448",
+      "raw_bytes": 4699,
+      "raw_mtime_ns": 1790946131934511200,
+      "raw_mtime_utc": "2026-10-02T13:02:11.934511+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-001-stage9-r71-reversal-source-repair-probe.py.gz",
+      "archive_sha256": "b56b07a27b8ed24c3b18e66ce1a32b81d4af17c799fa459aa018e4b6cac3c1ef",
+      "archive_bytes": 1656,
+      "archive_mtime_ns": 1790947319272369400,
+      "archive_mtime_utc": "2026-10-02T13:21:59.272369+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-source-repair-probe.json",
+      "scope": "historical pre-guard synthetic probe; complete three-stage dumps retained, no database copied",
+      "raw_sha256": "5f03533ce4518ae151a9211b801a6e4154ed62162881bcae2b47dca3bd1e9532",
+      "raw_bytes": 238561,
+      "raw_mtime_ns": 1790946154912040500,
+      "raw_mtime_utc": "2026-10-02T13:02:34.912040+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-002-stage9-r71-reversal-source-repair-probe.json.gz",
+      "archive_sha256": "abd3dbd469f3b621a96f354323dfaa509c52f75844d2cc9305fe002a6047ed10",
+      "archive_bytes": 33668,
+      "archive_mtime_ns": 1790947319286370800,
+      "archive_mtime_utc": "2026-10-02T13:21:59.286371+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-source-repair-probe.log",
+      "scope": "historical pre-guard synthetic probe; complete three-stage dumps retained, no database copied",
+      "raw_sha256": "8624a54966949fab63e39ce961bc8d26fb50712c5571406fe37559e0c1637c60",
+      "raw_bytes": 1181,
+      "raw_mtime_ns": 1790946154913041000,
+      "raw_mtime_utc": "2026-10-02T13:02:34.913041+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-003-stage9-r71-reversal-source-repair-probe.log.gz",
+      "archive_sha256": "b1ccc9f5321bacc4bf6332d55b448cb4a2f806c30028c313f7c6378e2c2c3755",
+      "archive_bytes": 344,
+      "archive_mtime_ns": 1790947319294370800,
+      "archive_mtime_utc": "2026-10-02T13:21:59.294371+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-reversal-source-repair-probe-command.txt",
+      "scope": "historical pre-guard synthetic probe; complete three-stage dumps retained, no database copied",
+      "raw_sha256": "e1ea762d59e8c15f2dd6e111ee8295e9b7b63bb2050d3fbcd2a03abd11d2f1d1",
+      "raw_bytes": 85,
+      "raw_mtime_ns": 1790946152476527600,
+      "raw_mtime_utc": "2026-10-02T13:02:32.476528+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-004-stage9-r71-reversal-source-repair-probe-command.txt.gz",
+      "archive_sha256": "2c7f66f915848da009356fddb14c9834f0c4239b4b4dc85573dd39ac6845b261",
+      "archive_bytes": 99,
+      "archive_mtime_ns": 1790947319302370000,
+      "archive_mtime_utc": "2026-10-02T13:21:59.302370+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-complete-source-related.log",
+      "scope": "actual single related-group receipt; not performance timing",
+      "raw_sha256": "6f2b6e8dd3d0c8c058fd69590e4c9515569a4a49cfdfd56762cfb3d59a5154fb",
+      "raw_bytes": 113,
+      "raw_mtime_ns": 1790947023593186200,
+      "raw_mtime_utc": "2026-10-02T13:17:03.593186+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-005-stage9-r71-correction-complete-source-related.log.gz",
+      "archive_sha256": "bacaf0ca0a74c309537fcdcbe9ff20a762bdb54f94c29ce5684fcf39e0fbfd68",
+      "archive_bytes": 66,
+      "archive_mtime_ns": 1790947319309368700,
+      "archive_mtime_utc": "2026-10-02T13:21:59.309369+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-complete-source-related.xml",
+      "scope": "actual single related-group receipt; not performance timing",
+      "raw_sha256": "374ba860f4442937279d85032503fd1282680284800f0c2a9248bd217ba8e8c6",
+      "raw_bytes": 9438,
+      "raw_mtime_ns": 1790947022635831300,
+      "raw_mtime_utc": "2026-10-02T13:17:02.635831+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-006-stage9-r71-correction-complete-source-related.xml.gz",
+      "archive_sha256": "37e52239dd7da335a7aa98bebc76edb1d61bf5d6df30885782163ffcd74d788c",
+      "archive_bytes": 1800,
+      "archive_mtime_ns": 1790947319315370100,
+      "archive_mtime_utc": "2026-10-02T13:21:59.315370+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": ".tmp/stage9-r71-correction-complete-source-related-command.txt",
+      "scope": "actual single related-group receipt; not performance timing",
+      "raw_sha256": "3285e109079615aaf45f4f21bcf544fbb0e14bbdec085829d042a9cd85808d10",
+      "raw_bytes": 287,
+      "raw_mtime_ns": 1790946908922951100,
+      "raw_mtime_utc": "2026-10-02T13:15:08.922951+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-007-stage9-r71-correction-complete-source-related-command.txt.gz",
+      "archive_sha256": "a49ad808de48ec06882b63ddf0c60fe039c33f795f7a48e0255e7f52dd5ae1bf",
+      "archive_bytes": 180,
+      "archive_mtime_ns": 1790947319324369500,
+      "archive_mtime_utc": "2026-10-02T13:21:59.324369+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/publication.py",
+      "scope": "archive-time production source, with during-run observation where available; not fixed release inventory",
+      "raw_sha256": "26787bba99aace3ebdd578de8a77f10c4ffcf6c0313a6ae0dd61a4ba5cd4d581",
+      "raw_bytes": 17150,
+      "raw_mtime_ns": 1790946304210899100,
+      "raw_mtime_utc": "2026-10-02T13:05:04.210899+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-008-publication.py.gz",
+      "archive_sha256": "7ef3a322b426341955a7c45b00b4e2ec609cd570ded4ed8895fadbe84e778c32",
+      "archive_bytes": 4511,
+      "archive_mtime_ns": 1790947319332370400,
+      "archive_mtime_utc": "2026-10-02T13:21:59.332371+00:00",
+      "decompressed_byte_equal": true,
+      "during_run_observation": {
+        "utc": "2026-10-02T13:16:08.834472+00:00",
+        "sha256": "26787bba99aace3ebdd578de8a77f10c4ffcf6c0313a6ae0dd61a4ba5cd4d581",
+        "bytes": 17150,
+        "mtime_ns": 1790946304210899100,
+        "same_as_archive_observed": true,
+        "limitation": "two read-only observations, not import-time lock or fixed whole-source inventory"
+      }
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/publication_v1.py",
+      "scope": "archive-time production source, with during-run observation where available; not fixed release inventory",
+      "raw_sha256": "254335a27c5c6d42c13ae4ec5aebf11a0347bcc1274c77b9c9e1b26355340fd0",
+      "raw_bytes": 17023,
+      "raw_mtime_ns": 1790946304227896900,
+      "raw_mtime_utc": "2026-10-02T13:05:04.227897+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-009-publication_v1.py.gz",
+      "archive_sha256": "065e9d5c02b65a7a1c84a98df8c2ace96f6f9c8d9a7aba44e707651ca3959ce8",
+      "archive_bytes": 4117,
+      "archive_mtime_ns": 1790947319338368000,
+      "archive_mtime_utc": "2026-10-02T13:21:59.338368+00:00",
+      "decompressed_byte_equal": true,
+      "during_run_observation": {
+        "utc": "2026-10-02T13:16:08.834472+00:00",
+        "sha256": "254335a27c5c6d42c13ae4ec5aebf11a0347bcc1274c77b9c9e1b26355340fd0",
+        "bytes": 17023,
+        "mtime_ns": 1790946304227896900,
+        "same_as_archive_observed": true,
+        "limitation": "two read-only observations, not import-time lock or fixed whole-source inventory"
+      }
+    },
+    {
+      "raw_path": "src/ai_accounting/kernel/integrity.py",
+      "scope": "archive-time production source, with during-run observation where available; not fixed release inventory",
+      "raw_sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763",
+      "raw_bytes": 75150,
+      "raw_mtime_ns": 1790946598074297000,
+      "raw_mtime_utc": "2026-10-02T13:09:58.074297+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-010-integrity.py.gz",
+      "archive_sha256": "1e7e2a24837f05754b2e30223bf4e8de2dae5031993b24e04042622c3d0d503b",
+      "archive_bytes": 14818,
+      "archive_mtime_ns": 1790947319345370300,
+      "archive_mtime_utc": "2026-10-02T13:21:59.345370+00:00",
+      "decompressed_byte_equal": true,
+      "during_run_observation": {
+        "utc": "2026-10-02T13:16:08.834472+00:00",
+        "sha256": "d3d965b1e81f78dc0cf437fdd72118a08a5dba18e11ff8b207bdcd7370dd3763",
+        "bytes": 75150,
+        "mtime_ns": 1790946598074297000,
+        "same_as_archive_observed": true,
+        "limitation": "two read-only observations, not import-time lock or fixed whole-source inventory"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_open_correction_source_heads.py",
+      "scope": "archive-time test source; actual executed membership independently recorded by XML",
+      "raw_sha256": "4d5eaa2b290750cddbb438e4091ac80e3171c7df79194386086aee571bc5107d",
+      "raw_bytes": 6765,
+      "raw_mtime_ns": 1790946473977274200,
+      "raw_mtime_utc": "2026-10-02T13:07:53.977274+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-011-test_open_correction_source_heads.py.gz",
+      "archive_sha256": "d02c05689b4d78533078f705002533471b68a5850ca61564fb71d2d640d2f14f",
+      "archive_bytes": 1752,
+      "archive_mtime_ns": 1790947319353369800,
+      "archive_mtime_utc": "2026-10-02T13:21:59.353370+00:00",
+      "decompressed_byte_equal": true,
+      "during_run_observation": {
+        "utc": "2026-10-02T13:16:08.834472+00:00",
+        "sha256": "4d5eaa2b290750cddbb438e4091ac80e3171c7df79194386086aee571bc5107d",
+        "bytes": 6765,
+        "mtime_ns": 1790946473977274200,
+        "same_as_archive_observed": true,
+        "limitation": "two read-only observations, not import-time lock or fixed whole-source inventory"
+      }
+    },
+    {
+      "raw_path": "tests/kernel/test_payroll_corrections.py",
+      "scope": "archive-time test source; actual executed membership independently recorded by XML",
+      "raw_sha256": "203c69ff527c0f7e8ea521007179dbd4c1ec9a0d1b0b3bc93effbd2471785f40",
+      "raw_bytes": 16187,
+      "raw_mtime_ns": 1790076282547772800,
+      "raw_mtime_utc": "2026-09-22T11:24:42.547773+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-012-test_payroll_corrections.py.gz",
+      "archive_sha256": "8e565246bbf9a9b99265083c81124f6c6a34fa65e1dd37147efeb52e9e4e0772",
+      "archive_bytes": 4137,
+      "archive_mtime_ns": 1790947319362367300,
+      "archive_mtime_utc": "2026-10-02T13:21:59.362367+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "tests/kernel/test_publication_periods.py",
+      "scope": "archive-time test source; actual executed membership independently recorded by XML",
+      "raw_sha256": "db845d452b74dc07d109503d8a2f148298ee607a635160cf38a2a9a5c3d4202a",
+      "raw_bytes": 15090,
+      "raw_mtime_ns": 1790435418689284400,
+      "raw_mtime_utc": "2026-09-26T15:10:18.689284+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-013-test_publication_periods.py.gz",
+      "archive_sha256": "472ce949656a559294eac000f2402999948c5bbfa4963d2a090ff3f7c64f1eac",
+      "archive_bytes": 3549,
+      "archive_mtime_ns": 1790947319369367200,
+      "archive_mtime_utc": "2026-10-02T13:21:59.369367+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "tests/kernel/test_report_projection.py",
+      "scope": "archive-time test source; actual executed membership independently recorded by XML",
+      "raw_sha256": "5b5ff91bc5b4dea60ce51c7e38d8a009727a33a72bdc87dbcffa04b7392411df",
+      "raw_bytes": 22974,
+      "raw_mtime_ns": 1790916643908257200,
+      "raw_mtime_utc": "2026-10-02T04:50:43.908257+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-014-test_report_projection.py.gz",
+      "archive_sha256": "9e9790b6089bf031cef73d96d4c16d04abed63032af99450c3864fef51da71ed",
+      "archive_bytes": 4992,
+      "archive_mtime_ns": 1790947319377668200,
+      "archive_mtime_utc": "2026-10-02T13:21:59.377668+00:00",
+      "decompressed_byte_equal": true
+    },
+    {
+      "raw_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71.md",
+      "scope": "concentrated record updated after actual 55 receipt",
+      "raw_sha256": "389b80e8794c56b0814321fd712e43bf73269795092b3a3b8d10686a94d173db",
+      "raw_bytes": 13083,
+      "raw_mtime_ns": 1790947319271368300,
+      "raw_mtime_utc": "2026-10-02T13:21:59.271368+00:00",
+      "archive_path": "docs/kernel-refactor-stages/09-performance-results/owner-display-read-scope-r71-correction-015-owner-display-read-scope-r71.md.gz",
+      "archive_sha256": "e05518c6c1de43bd1f24cd5a0d52a3f15c78762434f9f9fc9360565887c89ea4",
+      "archive_bytes": 6357,
+      "archive_mtime_ns": 1790947319391670500,
+      "archive_mtime_utc": "2026-10-02T13:21:59.391670+00:00",
+      "decompressed_byte_equal": true
+    }
+  ]
+}

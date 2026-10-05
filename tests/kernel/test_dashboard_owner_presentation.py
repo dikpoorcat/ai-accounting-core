@@ -12,6 +12,7 @@ from test_payroll_corrections import payment
 from test_platforms import funding_data, payment_data, transfer_data
 from test_reimbursement_assets import accepted_batch, batch_card
 
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.entities import Entities
@@ -53,9 +54,28 @@ def display_profile(engine, kind, entity_id, **fields):
 def voucher(engine, period, subject):
     return next(
         row
-        for row in Dashboard(engine).brief(period)["data"]["collections"]["vouchers"]["items"]
-        if row["components"][0]["id"] == subject and not row["reverses_version_id"]
+        for row in Dashboard(engine).brief(period)["data"]["collections"]["activity"]["items"]
+        if row["subject_id"] == subject and row["state"] == "已入账"
     )
+
+
+def accountant_status(engine, period, subject):
+    return BusinessQueries(engine).business_status(subject, period)
+
+
+def accounting_event(status, version_id):
+    return next(
+        item
+        for item in status["as_posted"]["voucher_events"]
+        if item["voucher_version_id"] == version_id
+    )
+
+
+def assert_company_money(status, version_id, *, inflow=0, outflow=0):
+    lines = accounting_event(status, version_id)["lines"]
+    money = [line for line in lines if line["account"] in {"1001", "1002", "1012"}]
+    assert sum(line["debit"] for line in money) == inflow
+    assert sum(line["credit"] for line in money) == outflow
 
 
 def expense_fields(party, *, amount=1000, period="2026-09"):
@@ -83,15 +103,13 @@ def test_business_short_title_keeps_supplied_purpose_and_party_in_full_summary(b
     )
     before = engine.ledger("2026-09")
     data = Dashboard(engine).brief("2026-09")["data"]
-    row = data["collections"]["vouchers"]["items"][0]
-    assert row["list_summary"] == "办公用品采购"
-    assert row["display_summary"] == (
+    row = data["collections"]["activity"]["items"][0]
+    assert row["title"] == "办公用品采购"
+    assert row["description"] == (
         "办公用品采购（2026-09） · 甲办公用品店；供研发办公室日常使用；已核对本次采购清单"
     )
-    activity = data["activity_groups"][0]["rows"][0]
-    assert activity["title"] == row["list_summary"]
-    assert activity["display_description"] == row["display_summary"]
-    assert row["business_amount_fen"] == 1000
+    assert row["party"] == "甲办公用品店"
+    assert row["amount_fen"] == 1000
     assert engine.ledger("2026-09") == before
 
 
@@ -103,12 +121,17 @@ def test_next_month_wage_payment_summary_names_employee_and_source_month(payroll
     company.publish("salary-paid")
     display_profile(company.engine, "business", "salary-paid", purpose="补发一月份工资")
     row = voucher(company.engine, "2026-02", "salary-paid")
-    assert row["list_summary"] == "支付工资奖金"
-    assert row["display_summary"] == "支付工资奖金（2026-01） · 甲员工；补发一月份工资"
+    assert row["title"] == "支付工资奖金"
+    assert row["description"] == "支付工资奖金（2026-01） · 甲员工；补发一月份工资"
     assert row["date"] == "2026-02-10"
-    assert row["fund_outflow_fen"] == 907400
-    assert row["lines"][0]["source_label"] == "2026-01 · 工资计提 · 甲员工"
-    assert row["lines"][0]["party"] == "甲员工"
+    assert row["amount_fen"] == 907400
+    assert row["party"] == "甲员工"
+    status = accountant_status(company.engine, "2026-02", "salary-paid")
+    assert_company_money(status, row["voucher_version_id"], outflow=907400)
+    movement = status["settlements"]["movements"][0]
+    assert movement["recipient_id"] == "employee"
+    source = accountant_status(company.engine, "2026-02", movement["source_business"]["subject_id"])
+    assert source["current_business_result"]["calculation"]["period"] == "2026-01"
 
 
 @pytest.mark.parametrize(
@@ -175,17 +198,22 @@ def test_opening_payroll_payment_names_original_wage_month_and_component(
     publish("prior-payroll-paid")
     before = engine.ledger("2026-01")
     row = voucher(engine, "2026-01", "prior-payroll-paid")
-    assert row["list_summary"] == title
-    assert row["display_summary"].startswith(f"{title}（2025-12）")
+    assert row["title"] == title
+    assert row["description"].startswith(f"{title}（2025-12）")
     assert row["recognition"]["period"] == "2026-01"
     assert row["date"] == "2026-01-15"
-    assert row["business_amount_fen"] == row["fund_outflow_fen"] == 15000 * len(components)
-    for relation in row["settlements"]:
-        assert relation["source_period"] == "2025-12"
-        assert relation["source_label"] == "2025-12 · 薪酬未付明细期初 · 甲员工"
+    assert row["amount_fen"] == 15000 * len(components)
+    assert row["party"] == ("甲员工" if recipient == "employee" else "实际收款机构")
+    status = accountant_status(engine, "2026-01", "prior-payroll-paid")
+    assert_company_money(status, row["voucher_version_id"], outflow=15000 * len(components))
+    assert len(status["settlements"]["movements"]) == len(components)
+    for relation in status["settlements"]["movements"]:
         assert relation["obligation_name"] == "primary"
-        assert relation["party"] == ("甲员工" if recipient == "employee" else "实际收款机构")
-        assert relation["source_period"] != row["components"][0]["recognition"]["period"]
+        assert relation["recipient_id"] == recipient
+        source = accountant_status(engine, "2026-01", relation["source_business"]["subject_id"])
+        data = source["current_business_result"]["calculation"]["fact_data"]
+        assert data["employee_id"] == "employee"
+        assert data["payroll_period"] == "2025-12" != row["recognition"]["period"]
     assert engine.ledger("2026-01") == before
 
 
@@ -199,18 +227,24 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     company.save(payroll(accounting_gross_salary_fen=1100000), "january", revision=1)
     company.confirm_payroll("january")
     company.publish("january", posting_period="2026-02")
-    rows = Dashboard(company.engine).brief("2026-02")["data"]["collections"]["vouchers"]["items"]
+    rows = Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"]["items"]
     reversal = next(
-        row for row in rows if row["reverses_version_id"] == original["voucher_version_id"]
+        row for row in rows if row["subject_id"] == "january" and row["state"] == "更正原业务"
     )
     replacement = voucher(company.engine, "2026-02", "january")
-    assert reversal["list_summary"] == "冲正·计提工资"
-    assert reversal["display_summary"] == "冲销原业务：计提工资（2026-01） · 甲员工；一月份员工工资"
-    assert reversal["business_amount_fen"] == -1000000
-    assert replacement["list_summary"] == "计提工资"
-    assert replacement["business_amount_fen"] == 1100000
-    assert "2026-01" in replacement["display_summary"]
-    assert reversal["funds"] == replacement["funds"] == []
+    assert reversal["title"] == "冲正·计提工资"
+    assert reversal["description"] == "冲销原业务：计提工资（2026-01） · 甲员工；一月份员工工资"
+    assert reversal["amount_fen"] == -1000000
+    assert replacement["title"] == "计提工资"
+    assert replacement["amount_fen"] == 1100000
+    assert "2026-01" in replacement["description"]
+    status = accountant_status(company.engine, "2026-02", "january")
+    assert (
+        accounting_event(status, reversal["voucher_version_id"])["reverses_voucher_version_id"]
+        == original["voucher_version_id"]
+    )
+    assert_company_money(status, reversal["voucher_version_id"])
+    assert_company_money(status, replacement["voucher_version_id"])
 
 
 @pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
@@ -244,20 +278,24 @@ def test_equal_supplier_amounts_follow_explicit_advance_source_order(bank_book, 
     )
     publish("paid-on-behalf")
     row = voucher(engine, "2026-09", "paid-on-behalf")
-    assert [(line["code"], line["debit_fen"], line["credit_fen"]) for line in row["lines"]] == [
+    status = accountant_status(engine, "2026-09", "paid-on-behalf")
+    lines = accounting_event(status, row["voucher_version_id"])["lines"]
+    assert [(line["account"], line["debit"], line["credit"]) for line in lines] == [
         ("2202", 12500, 0),
         ("2202", 12500, 0),
         ("2241", 0, 25000),
     ]
-    assert [line["party"] for line in row["lines"]] == [
-        *(names[source] for source in order),
-        "丙股东",
-    ]
-    for line, source in zip(row["lines"][:2], order, strict=True):
-        assert line["parties"] == [{"id": source, "name": names[source], "amount_fen": 12500}]
-        assert line["party_state"] == "known"
-    assert row["funds"] == []
-    assert row["fund_inflow_fen"] == row["fund_outflow_fen"] == 0
+    relations = sorted(
+        (item for item in status["settlements"]["line_relations"] if item["role"] == "advance"),
+        key=lambda item: item["line_no"],
+    )
+    for line, source in zip(relations, order, strict=True):
+        assert line["creditor_id"] == source
+        assert line["source_business"]["subject_id"] == source
+        assert line["amount_fen"] == 12500 and line["state"] == "resolved"
+    assert all(name in row["party"] for name in [*names.values(), "丙股东"])
+    assert status["current_business_result"]["calculation"]["fact_data"]["payer_id"] == "owner"
+    assert_company_money(status, row["voucher_version_id"])
 
 
 def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_book):
@@ -274,25 +312,35 @@ def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_bo
     save("reimbursed_asset", "chair", batch_card(30000, asset_id="chair"))
     publish("batch", "computer", "chair")
     row = voucher(engine, "2026-02", "batch")
-    credit = next(line for line in row["lines"] if line["code"] == "224101")
-    assert credit["credit_fen"] == 150000
-    assert credit["party_state"] == "multiple"
-    assert credit["parties"] == [
-        {"id": "alice", "name": "甲垫付人", "amount_fen": 90000},
-        {"id": "bob", "name": "乙垫付人", "amount_fen": 60000},
+    status = accountant_status(engine, "2026-02", "batch")
+    lines = accounting_event(status, row["voucher_version_id"])["lines"]
+    credit = next(line for line in lines if line["account"] == "224101")
+    assert credit["credit"] == 150000
+    relations = [
+        item
+        for item in status["settlements"]["line_relations"]
+        if item["line_no"] == credit["line_no"]
     ]
-    assert credit["party"] == "甲垫付人、乙垫付人"
-    assert row["funds"] == []
-    assert all(line["parties"] == [] for line in row["lines"] if line["code"] != "224101")
-    assert row["asset"] is None
+    assert [(item["creditor_id"], item["amount_fen"], item["state"]) for item in relations] == [
+        ("alice", -90000, "resolved"),
+        ("bob", -60000, "resolved"),
+    ]
+    assert row["party"] == "甲垫付人、乙垫付人"
+    assert all(
+        item["creditor_id"] is None
+        for item in status["settlements"]["line_relations"]
+        if item["line_no"] != credit["line_no"]
+    )
+    assert_company_money(status, row["voucher_version_id"])
+    cards = Dashboard(engine).assets("2026-02")["data"]["collections"]["assets"]["items"]
     assert [
-        (item["asset_id"], item["name"], item["code"], item["amount_fen"])
-        for item in row["asset_members"]
+        (item["asset_id"], item["name"], item["code"], item["cost_fen"])
+        for item in sorted(cards, key=lambda item: -item["cost_fen"])
     ] == [
         ("computer", "办公电脑", "FA-001", 120000),
         ("chair", "办公椅", "FA-002", 30000),
     ]
-    assert "2 张资产卡片：办公电脑（FA-001）、办公椅（FA-002）" in row["display_summary"]
+    assert "2 张资产卡片：办公电脑（FA-001）、办公椅（FA-002）" in row["description"]
 
 
 def test_offset_changes_obligations_without_presenting_company_money(bank_book):
@@ -333,13 +381,15 @@ def test_offset_changes_obligations_without_presenting_company_money(bank_book):
     publish("office", "prepayment", "offset")
     data = Dashboard(engine).brief("2026-09")["data"]
     row = next(
-        row for row in data["collections"]["vouchers"]["items"] if row["kind"] == "settlement"
+        row for row in data["collections"]["activity"]["items"] if row["subject_id"] == "offset"
     )
-    assert row["list_summary"] == "款项抵销"
-    assert row["business_amount_fen"] == 15000
-    assert {line["code"] for line in row["lines"]} == {"2202", "1123"}
-    assert row["funds"] == []
-    assert row["fund_inflow_fen"] == row["fund_outflow_fen"] == 0
+    assert row["title"] == "款项抵销"
+    assert row["amount_fen"] == 15000
+    status = accountant_status(engine, "2026-09", "offset")
+    assert {
+        line["account"] for line in accounting_event(status, row["voucher_version_id"])["lines"]
+    } == {"2202", "1123"}
+    assert_company_money(status, row["voucher_version_id"])
     assert data["funds_overview"]["inflow_fen"] == data["funds_overview"]["outflow_fen"] == 0
 
 
@@ -386,6 +436,7 @@ def test_brief_funds_includes_cash_platform_and_excludes_internal_transfer(platf
         "internal_transfer_fen": 10000,
     }
     # No bank statement has been provided; that does not erase confirmed cash or platform money.
-    assert data["cash"]["inflow_fen"] is None
-    assert data["cash"]["outflow_fen"] is None
+    bank = Dashboard(engine).funds("2026-09")["data"]["bank_statement"]
+    assert bank["inflow_fen"] is None
+    assert bank["outflow_fen"] is None
     assert engine.ledger("2026-09") == before

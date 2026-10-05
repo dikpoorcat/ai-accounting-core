@@ -11,10 +11,9 @@ from .close_storage import verified_header
 from .contracts import KernelError
 from .engine import PROGRAM_VERSION
 from .periods import Periods
-from .types import YearMonth, digest
+from .types import EvidenceDigest, YearMonth, digest, evidence_digest_bytes
 
 ScopeId = Annotated[str, Field(min_length=1, max_length=200)]
-EvidenceDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 SCOPE_FORMAT = "ai-accounting-kernel/2/replay-close-scope/1"
 
 
@@ -126,6 +125,7 @@ class ReplayClose:
     def preview(
         self, first_period: YearMonth, last_period: YearMonth, *, owner_confirmation: EvidenceDigest
     ):
+        evidence_digest_bytes(owner_confirmation, "owner_confirmation")
         first_period, last_period = YearMonth(first_period), YearMonth(last_period)
         target = self._require(first_period, last_period, owner_confirmation)
         with self.engine.store.connection(read_only=True) as connection:
@@ -187,6 +187,7 @@ class ReplayClose:
         epochs: dict,
         request_id: str,
     ):
+        evidence_digest_bytes(owner_confirmation, "owner_confirmation")
         first_period, last_period = YearMonth(first_period), YearMonth(last_period)
         self._require(first_period, last_period, owner_confirmation)
         arguments = [

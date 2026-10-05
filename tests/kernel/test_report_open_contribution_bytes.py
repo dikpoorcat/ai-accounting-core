@@ -6,6 +6,7 @@ from test_payroll_corrections import company as _payroll_company
 from test_payroll_corrections import payment as payroll_payment
 from test_reports import book as book  # noqa: F401
 from test_reports import scenario
+from test_requested_cache_work import RequestedCache
 
 from ai_accounting.kernel import integrity, storage
 from ai_accounting.kernel.contracts import KernelError
@@ -18,6 +19,32 @@ from ai_accounting.kernel.report_open_contribution import (
 from ai_accounting.kernel.reports import Reports
 
 payroll_company = _payroll_company
+
+
+def test_selected_contribution_cache_work_ignores_unrelated_saved_bodies(book):
+    from collections import Counter
+
+    engine = book[0]
+    scenario(book)
+    with QueryReads.snapshot(engine) as reads:
+        ids = _publication_ids(reads.connection)
+        expected = read_open_contributions(engine, reads.connection, ids, reads=reads)
+        assert expected
+        selected = tuple(expected)[:2]
+        assert len(selected) == 2
+        requested = set(selected)
+        visits = []
+        for size in (12, 48, 120, 2000):
+            calls = Counter()
+            reads._report_snapshot_cache["report_open_contributions"] = RequestedCache(
+                {**{f"unrelated-{i}": object() for i in range(size)},
+                 selected[0]: expected[selected[0]]},
+                calls, "contributions",
+            )
+            actual = read_open_contributions(engine, reads.connection, requested, reads=reads)
+            assert actual == {ident: expected[ident] for ident in requested}
+            visits.append(calls)
+        assert all(value == visits[0] for value in visits)
 
 
 def _publication_ids(connection):

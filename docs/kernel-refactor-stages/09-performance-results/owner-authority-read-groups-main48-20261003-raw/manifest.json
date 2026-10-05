@@ -1,0 +1,92 @@
+{
+  "scope": "fixed4d draft main48 fresh four-section qualification; independent complete 150 successful browser refreshes with 3 samples >=500ms (funds1/assets2), still FAIL; exact twelve owned idle synthetic hosts pause, CPU unchanged and all resume0. No stable gain inference or other sample qualification.",
+  "source_sha256": "4d4c2f9bed660d5738ab9a5aea4d704525cb09207578a63679e70793163d11b5",
+  "private_data_archived": false,
+  "mtime": 0,
+  "source_count": 8,
+  "raw_bytes": 456306,
+  "raw_budget_bytes": 524288,
+  "gzip_bytes": 32859,
+  "files": [
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-qualified.json",
+      "archive": "01-stage9-owner-authority-read-groups-main48-20261003-qualified.json.gz",
+      "bytes": 26593,
+      "sha256": "80b6f8d722cf3afcb9d86ce9e535bbb4cfa0c9f47e466dbe1177ba9851d75973",
+      "source_sha256_after": "80b6f8d722cf3afcb9d86ce9e535bbb4cfa0c9f47e466dbe1177ba9851d75973",
+      "gzip_bytes": 6384,
+      "gzip_sha256": "5214b3346a851bd888fd45d238ff5f6311192fa37a584f3b83b15b6642c63a36",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-browser.json",
+      "archive": "02-stage9-owner-authority-read-groups-main48-20261003-browser.json.gz",
+      "bytes": 417448,
+      "sha256": "6cb2547fa7505d5d115ffc00603bcf7bc42880317ffae673758ac76116b2dbcd",
+      "source_sha256_after": "6cb2547fa7505d5d115ffc00603bcf7bc42880317ffae673758ac76116b2dbcd",
+      "gzip_bytes": 22824,
+      "gzip_sha256": "2f952e4988ba806ba705eef9c2ecf7c5e770a5363dc0c28b0e86c2c73cf7ce2a",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-browser.log",
+      "archive": "03-stage9-owner-authority-read-groups-main48-20261003-browser.log.gz",
+      "bytes": 299,
+      "sha256": "e349d5c8dafa9ce5d28b377097a809a6d8bc5e03faeef7de360872596a2860d8",
+      "source_sha256_after": "e349d5c8dafa9ce5d28b377097a809a6d8bc5e03faeef7de360872596a2860d8",
+      "gzip_bytes": 172,
+      "gzip_sha256": "c35f46c400bc424888f47af0df179ae64d9c7ad238a4c1a18e051ce4d1dc356e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-pure-control.json",
+      "archive": "04-stage9-owner-authority-read-groups-main48-20261003-pure-control.json.gz",
+      "bytes": 5139,
+      "sha256": "9a5c870edf0cbea2983084c4406c601408227185d7d283639ab9dedbe3a10d6d",
+      "source_sha256_after": "9a5c870edf0cbea2983084c4406c601408227185d7d283639ab9dedbe3a10d6d",
+      "gzip_bytes": 728,
+      "gzip_sha256": "a2b8fb5e0e757fdb3046a7bf5093a542b07bad22d198a281b774cd1754ba1bf9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-pure-control.log",
+      "archive": "05-stage9-owner-authority-read-groups-main48-20261003-pure-control.log.gz",
+      "bytes": 201,
+      "sha256": "e2c42514ac3b376e6f7c95f3ac6bd91b7844bd22063c794e64bfcb5fca7b46ed",
+      "source_sha256_after": "e2c42514ac3b376e6f7c95f3ac6bd91b7844bd22063c794e64bfcb5fca7b46ed",
+      "gzip_bytes": 177,
+      "gzip_sha256": "a65e87da23f978ebb19abe5c2116fed6e114085336f389dd8b8c5c400e86f0c0",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-timing.ready.json",
+      "archive": "06-stage9-owner-authority-read-groups-main48-20261003-timing.ready.json.gz",
+      "bytes": 155,
+      "sha256": "eefbec8eb91ad7a03c3c86b87e7a9b9828fb1ec197dd39b50a6bc2bcf5283a19",
+      "source_sha256_after": "eefbec8eb91ad7a03c3c86b87e7a9b9828fb1ec197dd39b50a6bc2bcf5283a19",
+      "gzip_bytes": 150,
+      "gzip_sha256": "798a56f49deecf16b8b9350b9a9b11e22290ab3121897c311f332d23ac922b56",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-authority-read-groups-main48-20261003-timing.start.json",
+      "archive": "07-stage9-owner-authority-read-groups-main48-20261003-timing.start.json.gz",
+      "bytes": 179,
+      "sha256": "983be72ca04ab498a22e46e0031074ed31c835e3c1056f37a9e60fa25bac3433",
+      "source_sha256_after": "983be72ca04ab498a22e46e0031074ed31c835e3c1056f37a9e60fa25bac3433",
+      "gzip_bytes": 159,
+      "gzip_sha256": "9d2485d6bd23eeb1503cee6f4957ffb66228dc867a0e1b1460381917cd5647c5",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-current-group-pure-control.py",
+      "archive": "08-stage9-current-group-pure-control.py.gz",
+      "bytes": 6292,
+      "sha256": "ccc98b15da2ee6843fd77d18af7db6ea622a75c419235e21b072866eb9a0e099",
+      "source_sha256_after": "ccc98b15da2ee6843fd77d18af7db6ea622a75c419235e21b072866eb9a0e099",
+      "gzip_bytes": 2265,
+      "gzip_sha256": "8cc0d577d4128422f48599bd1886ecee82935d2d587ad7ae53caf33795073c35",
+      "decompressed_bytes_equal": true
+    }
+  ]
+}

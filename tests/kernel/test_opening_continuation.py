@@ -539,9 +539,18 @@ def _midyear_report_supplement_scenario(book):
 
 
 def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(book):
+    from ai_accounting.kernel.maintenance import Maintenance
+
     fact_id = _midyear_report_supplement_scenario(book)
     engine = book[0]
     report = Reports(engine)
+    unselected = report.report(2026, 3, source="closed")
+    assert unselected["status"] == "needs_information"
+    assert any(item["field"] == "report_carry_forward" for item in unselected["fact_issues"])
+    assert fact_id not in unselected["report_fact_ids"]
+    before = Dashboard(engine).quarterly_report(2026, 3, preparation="deferred")
+    assert before["close_state"] == "closed" and before["readiness_state"] == "blocked"
+    assert not before["export"]["available"] and "carry_forward" not in before
     damage(
         engine,
         "fact_report_carry_forward",
@@ -552,7 +561,20 @@ def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(b
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
         report.preview_export(2026, 3, carry_forward_fact_id=fact_id)
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
-        Dashboard(engine).quarterly_report(2026, 3, preparation="deferred")
+        Maintenance(engine).verify_integrity()
+    # The former page exception came from authenticating the removed carry
+    # options list. An unselected post-close supplement is not a frozen source
+    # of this page; its absence still blocks the report. Selected export and
+    # complete integrity verification retain their full source checks above.
+    after = Dashboard(engine).quarterly_report(2026, 3, preparation="deferred")
+    assert after["close_state"] == "closed" and after["readiness_state"] == "blocked"
+    assert not after["export"]["available"] and "carry_forward" not in after
+    business_fields = (
+        "close_state", "readiness_state", "status", "draft", "summary", "statements", "export",
+    )
+    assert {key: after[key] for key in business_fields} == {
+        key: before[key] for key in business_fields
+    }
 
 
 def test_opening_bank_reconciles_first_real_statement(book):

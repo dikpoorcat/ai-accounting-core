@@ -3,938 +3,181 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { fetchBusinessStatus, type BusinessStatusData } from "../api/businessStatus";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
-import { businessStateLabel, type DashboardCollection } from "../api/dashboardContracts";
+import { businessStateLabel } from "../api/dashboardContracts";
+import { localBusinessName } from "../api/localKernel";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
-import { fen, formatFen } from "../utils/money";
+import { formatFen } from "../utils/money";
 
 interface BriefStatusContext {
-  direction: "receivable" | "payable";
-  party: string;
-  description?: string;
-  sourcePeriod?: string | null;
-  sourceAmountFen?: string | null;
-  paidFen?: string | null;
-  otherSettledFen?: string | null;
-  outstandingFen?: string | null;
-  currentStatus?: string | null;
-  currentOutstandingFen?: string | null;
-  selectedPeriodClosed?: boolean;
+  direction: "receivable" | "payable"; party: string; description?: string;
+  sourceAmountFen?: string | null; paidFen?: string | null;
+  otherSettledFen?: string | null; outstandingFen?: string | null;
+  currentStatus?: string | null; currentOutstandingFen?: string | null; selectedPeriodClosed?: boolean;
 }
-
 const props = withDefaults(defineProps<{
-  subjectId: string;
-  period: string;
-  snapshotVersion?: string | null;
-  settlementView?: "historical" | "current";
-  summaryLabel?: string;
-  presentation?: "default" | "brief";
-  briefContext?: BriefStatusContext;
+  subjectId: string; period: string; snapshotVersion?: string | null;
+  settlementView?: "historical" | "current"; summaryLabel?: string;
+  presentation?: "default" | "brief"; briefContext?: BriefStatusContext;
 }>(), { presentation: "default" });
-type BusinessCollectionSection = keyof BusinessStatusData["collections"];
-type AdoptedBasis = NonNullable<BusinessStatusData["adopted_basis"]>;
-type AdoptedSource = AdoptedBasis["evidence"][number];
-
-function adoptedBasisLabel(basis: NonNullable<BusinessStatusData["adopted_basis"]>["basis"]) {
-  return basis === "frozen_adoption" ? "按本月关账时冻结采用" : "按当前正式发布结果采用";
-}
-
-function adoptedEvidenceLabel(source: AdoptedSource) {
-  if (source.name) return source.name;
-  return "已保全原始凭据";
-}
-
-function adoptedPayrollMode(mode: string) {
-  return mode === "explicit_no_change" ? "负责人确认本月无变化" : "负责人确认本月工资或劳务方案";
-}
-
 const emit = defineEmits<{ changed: [] }>();
 const route = useRoute();
-const data = ref<BusinessStatusData | null>(null), error = ref("");
-const loading = ref(false);
-const compactOpen = ref(false);
-const responseVersion = ref("");
-const notice = ref("");
-const collectionStates = ref<Record<string, { loading: boolean; error: string; notice: string; restart: boolean }>>({});
-const collectionControllers = new Map<string, AbortController>();
-let controller: AbortController | null = null, generation = 0, mounted = true;
-const currentFollowupSettlements = computed(() => data.value?.current_followups?.settlements || null);
-const duplicateChecks = computed(() => data.value?.duplicate_checks ?? {
-  status: "clear" as const,
-  strong_candidates: [], weak_candidates: [], unresolved: [], checks: [],
-  check_count: 0, checks_truncated: false,
+const data = ref<BusinessStatusData | null>(null), error = ref(""), notice = ref("");
+const loading = ref(false), moreLoading = ref(false), moreError = ref(""), openedPanel = ref(false), responseVersion = ref("");
+let controller: AbortController | null = null, pageController: AbortController | null = null, generation = 0, mounted = true;
+const businessName = computed(() => data.value?.display_profiles.business?.values.display_name || (data.value ? localBusinessName(data.value.identity.kind) : props.briefContext?.party || "业务详情"));
+const purposes = computed(() => {
+  const values = data.value?.display_profiles.business?.values;
+  return [...new Set([values?.purpose, values?.note].filter((item): item is string => Boolean(item)))];
 });
-const identityCorrections = computed(() => data.value?.identity_corrections ?? []);
-const entityReferences = computed(() => data.value?.entity_references ?? []);
-const showCurrentFollowups = computed(() => {
-  const selected = data.value?.settlements;
-  const current = currentFollowupSettlements.value;
-  if (!selected || !current) return false;
-  const currentCutoff = current.current_cutoff_period || current.cutoff_period;
-  return currentCutoff !== selected.cutoff_period
-    || current.status !== selected.status
-    || current.complete === false
-    || current.issues.length > 0
-    || current.obligations.length !== selected.obligations.length;
+const objects = computed(() => {
+  const profiles = data.value?.display_profiles;
+  return [...new Set([...(profiles?.counterparties ?? []), ...(profiles?.employees ?? []), ...(profiles?.assets ?? []), ...(profiles?.fund_accounts ?? [])].map(item => item.values.display_name).filter((item): item is string => Boolean(item)))];
 });
-const compactWarnings = computed(() => {
-  if (!data.value) return [];
-  const warnings: string[] = [];
-  warnings.push(...duplicateChecks.value.unresolved.map((item) => item.message));
-  const accounting = data.value.as_posted;
-  if (accounting.unestablished_state_selections.length) {
-    warnings.push(`${accounting.unestablished_state_selections.length} 组核算依据尚待确认`);
-  }
-  const selected = data.value.settlements;
-  warnings.push(...selected.issues.map((item) => item.message || "所选月末款项来源待核对"));
-  if (selected.status === "partially_established" && !selected.issues.length) {
-    warnings.push("所选月末款项关系尚未完整确认");
-  }
-  const current = currentFollowupSettlements.value;
-  if (showCurrentFollowups.value && current) {
-    warnings.push(...current.issues.map((item) => item.message || "当前后续款项来源待核对"));
-    if ((current.complete === false || current.status === "partially_established") && !current.issues.length) {
-      warnings.push("当前后续款项关系尚未完整确认");
-    }
-  }
-  return [...new Set(warnings)];
-});
-const visibleCollections = computed(() => {
-  if (!data.value) return [];
-  const labels: Record<string, string> = {
-    events: "核算记录",
-    settlement_events: "清偿记录",
-    source_history: "来源变更",
-    file_jobs: "文件记录",
-  };
-  const result: Array<{ key: BusinessCollectionSection; label: string; collection: DashboardCollection }> = [];
-  for (const key of ["events", "settlement_events", "source_history", "file_jobs"] as const) {
-    const collection = data.value.collections[key];
-    if (collection) result.push({ key, label: labels[key] || "相关记录", collection });
-  }
-  return result;
-});
-const compactCollections = computed(() => visibleCollections.value.filter(item => item.collection.page.total_count > 0));
-const compactCollectionTotal = computed(
-  () => compactCollections.value.reduce((total, item) => total + item.collection.page.total_count, 0),
-);
-const briefContext = computed(() => props.briefContext ?? null);
-const briefOutstandingWord = computed(() => briefContext.value?.direction === "payable" ? "待付" : "待收");
-const briefSettledWord = computed(() => briefContext.value?.direction === "payable" ? "已付" : "已收");
-const briefCurrentHeadline = computed(() => {
-  const context = briefContext.value;
-  if (!context) return "";
-  if (context.currentStatus === "settled") {
-    return context.direction === "payable" ? "当前已付清" : "当前已收回";
-  }
-  if (context.currentStatus === "partial") {
-    return context.direction === "payable" ? "当前部分支付" : "当前部分收回";
-  }
-  if (context.currentStatus === "open") return `当前${briefOutstandingWord.value}`;
-  return `${context.selectedPeriodClosed ? "关账时" : "月末"}${briefOutstandingWord.value}`;
-});
-const briefReason = computed(() => {
-  const context = briefContext.value;
-  if (!context) return "";
-  const description = context.description || "相关业务";
-  const source = context.sourcePeriod ? `形成于 ${periodLabel(context.sourcePeriod)}` : "来源期间未标注";
-  return `${description}${source}；截至所选月末仍有余额，因此列在这里。`;
-});
-const briefActionMessage = computed(() => {
-  const context = briefContext.value;
-  if (!context) return "";
-  if (compactWarnings.value.length) {
-    return "存在需要确认的来源或收付关系，请让 AI 会计先核对下列问题。";
-  }
-  if (context.currentStatus === "settled") {
-    return "这笔款项现在已经结清，无需继续跟进。";
-  }
-  if (context.currentStatus === "open" || context.currentStatus === "partial") {
-    return context.direction === "payable"
-      ? "目前仍需安排或确认付款；完成后让 AI 会计补充付款记录即可。"
-      : "目前仍需跟进到账；收到后让 AI 会计补充收款记录即可。";
-  }
-  return "这里展示所选月末状态；当前收付进展尚未完整建立，可让 AI 会计继续核对。";
-});
-const briefSelectedBalanceLabel = computed(
-  () => `${briefContext.value?.selectedPeriodClosed ? "关账时" : "月末"}${briefOutstandingWord.value}`,
-);
-const briefHasOtherSettlement = computed(() => {
-  const value = briefContext.value?.otherSettledFen;
-  return value !== null && value !== undefined && fen(value) !== 0n;
-});
+const businessAmount = computed(() => data.value?.frozen_adoption || data.value?.current_business_result);
+const currentSettlements = computed(() => data.value?.current_followups.settlements);
+const showCurrent = computed(() => currentSettlements.value && currentSettlements.value.cutoff_period !== data.value?.settlements.cutoff_period);
+const collection = computed(() => data.value?.collections.settlement_events);
 function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView]); }
 function invalidate() {
-  generation += 1; controller?.abort(); controller = null;
-  for (const request of collectionControllers.values()) request.abort();
-  collectionControllers.clear(); collectionStates.value = {};
-  data.value = null; loading.value = false; error.value = ""; responseVersion.value = ""; notice.value = "";
+  generation += 1; controller?.abort(); pageController?.abort(); controller = null; pageController = null;
+  data.value = null; loading.value = false; moreLoading.value = false; error.value = ""; moreError.value = ""; notice.value = ""; responseVersion.value = "";
 }
-function snapshotChanged() { invalidate(); notice.value = "业务资料已更新，正在重新读取。"; emit("changed"); }
-async function load(section?: BusinessCollectionSection) {
-  if (section) { await loadCollection(section); return; }
+function changed() { invalidate(); notice.value = "业务资料已变化，请刷新页面后重新查看。"; emit("changed"); }
+async function load() {
   if (loading.value) return;
   const version = ++generation, key = selection(), request = new AbortController();
   controller = request; loading.value = true; error.value = "";
   const valid = () => mounted && generation === version && selection() === key && controller === request;
   try {
-    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current" });
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current", limit: 20 });
     if (!valid()) return;
-    responseVersion.value = result.snapshot_version;
-    data.value = result.data; notice.value = "";
-  } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) snapshotChanged(); else error.value = dashboardErrorMessage(caught); } }
-  finally { if (valid()) loading.value = false; }
+    data.value = result.data; responseVersion.value = result.snapshot_version; notice.value = "";
+  } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) error.value = dashboardErrorMessage(caught); } }
+  finally { if (valid()) { loading.value = false; controller = null; } }
 }
-async function loadCollection(section: BusinessCollectionSection) {
-  const current = data.value;
-  if (!current || loading.value) return;
-  if (!collectionStates.value[section]) collectionStates.value[section] = { loading: false, error: "", notice: "", restart: false };
-  const state = collectionStates.value[section];
-  const page = current.collections[section]?.page;
-  if (state.loading || (!state.restart && (!page?.has_more || !page.next_cursor))) return;
-  const version = generation, key = selection(), expectedVersion = responseVersion.value;
-  const request = new AbortController(); collectionControllers.set(section, request);
-  const valid = () => mounted && generation === version && selection() === key && collectionControllers.get(section) === request && responseVersion.value === expectedVersion && data.value !== null;
-  state.loading = true; state.error = "";
-  let replace = state.restart;
-  const read = (cursor?: string) => fetchBusinessStatus(props.period, props.subjectId, request.signal, { section, cursor, expected_version: expectedVersion, settlement_view: props.settlementView ?? "current" });
+async function loadMore() {
+  const page = collection.value?.page;
+  if (!page?.has_more || !page.next_cursor || moreLoading.value || !data.value) return;
+  const version = generation, key = selection(), request = new AbortController();
+  pageController = request; moreLoading.value = true; moreError.value = "";
+  const valid = () => mounted && generation === version && selection() === key && pageController === request;
   try {
-    let result;
-    try { result = await read(replace ? undefined : page?.next_cursor ?? undefined); }
-    catch (caught) {
-      if (!valid()) return;
-      if (section !== "file_jobs" || replace || !isDashboardSnapshotChanged(caught)) throw caught;
-      // A file-only update invalidates its cursor, while the original business snapshot may remain valid.
-      replace = true; state.restart = true; state.notice = "文件任务已更新，正在重新读取该集合。";
-      result = await read();
-    }
-    if (!valid() || !data.value) return;
-    const next = result.data.collections[section], latest = data.value;
-    if (!next) return;
-    if (section === "events") {
-      data.value = { ...latest, collections: { ...latest.collections, events: { ...next, items: [...(replace ? [] : latest.collections.events?.items ?? []), ...next.items] } } };
-    } else if (section === "settlement_events") {
-      data.value = { ...latest, collections: { ...latest.collections, settlement_events: { ...next, items: [...(replace ? [] : latest.collections.settlement_events?.items ?? []), ...next.items] } } };
-    } else if (section === "source_history") {
-      data.value = { ...latest, collections: { ...latest.collections, source_history: { ...next, items: [...(replace ? [] : latest.collections.source_history?.items ?? []), ...next.items] } } };
-    } else {
-      data.value = { ...latest, collections: { ...latest.collections, file_jobs: { ...next, items: [...(replace ? [] : latest.collections.file_jobs?.items ?? []), ...next.items] } } };
-    }
-    state.restart = false;
-    if (replace) state.notice = "文件任务已更新，已重新读取；其他业务资料保持原核算版本。";
-  } catch (caught) {
-    if (valid()) {
-      if (isDashboardSnapshotChanged(caught)) snapshotChanged();
-      else { state.error = dashboardErrorMessage(caught); if (state.restart) state.notice = "文件任务已变化，旧分页已停止使用。请重新读取该集合。"; }
-    }
-  } finally { if (valid()) { state.loading = false; collectionControllers.delete(section); } }
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", limit: 20 });
+    if (!valid() || !data.value || !result.data.collections.settlement_events) return;
+    const next = result.data.collections.settlement_events, latest = data.value;
+    data.value = { ...latest, collections: { settlement_events: { ...next, items: [...latest.collections.settlement_events?.items ?? [], ...next.items] } } };
+  } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) moreError.value = dashboardErrorMessage(caught); } }
+  finally { if (valid()) { moreLoading.value = false; pageController = null; } }
 }
-function opened(event: Event) { if ((event.target as HTMLDetailsElement).open && !data.value && !loading.value) void load(); }
-function toggleCompact() {
-  compactOpen.value = !compactOpen.value;
-  if (compactOpen.value && !data.value && !loading.value) void load();
-}
-function periodLabel(value: string | null | undefined) {
-  if (!value) return "期间未提供";
-  const matched = /^(\d{4})-(\d{2})$/.exec(value);
-  return matched ? `${matched[1]} 年 ${Number(matched[2])} 月` : value;
-}
-function label(section: BusinessCollectionSection) { return ({ events: "核算历史", settlement_events: props.settlementView === "historical" ? "相关历史清偿（含关联来源，截至所选月末）" : "当前后续清偿事件", source_history: "来源历史", file_jobs: "文件任务" } as Record<string, string>)[section] ?? "业务详情"; }
-function duplicateSignalLabel(code: string) {
-  return ({
-    same_exact_material_location: "指向同一份原件的同一位置",
-    same_complete_signature_and_evidence: "核算内容完全相同并共用业务依据",
-    same_complete_actual_money: "实际资金日期、账户、对象及金额完全相同",
-    same_complete_signature: "核算内容相同，但没有共同业务原件",
-    shared_evidence: "引用了同一份资料",
-    same_material_location_different_signature: "原件位置相同，但核算内容不同",
-  } as Record<string, string>)[code] ?? "存在需要核对的相似线索";
-}
-function duplicateActionLabel(action: string) {
-  return ({ clear: "未发现强疑点", reuse_existing: "已复用既有业务", create_separate: "已有依据，确认为不同业务" } as Record<string, string>)[action] ?? "已核对";
-}
-function referenceChanged(item: BusinessStatusData["entity_references"][number]) {
-  return item.recorded_entity_id !== item.current_entity_id;
+function toggle(event: Event) { openedPanel.value = (event.target as HTMLDetailsElement).open; if (openedPanel.value && !data.value && !loading.value && !notice.value) void load(); }
+function movementLabel(item: NonNullable<BusinessStatusData["collections"]["settlement_events"]>["items"][number]) {
+  if (item.direction < 0) return "更正原清偿";
+  return ({ paid: "实际收付款", accepted: "已承接代付款", offset: "抵销清偿", refunded: "退款" } as Record<string, string>)[item.mode] || "清偿记录";
 }
 watch(selection, invalidate, { flush: "sync" });
 onBeforeUnmount(() => { mounted = false; invalidate(); });
 </script>
 
 <template>
-  <div v-if="presentation === 'brief'" class="compact-status-details">
-    <button
-      type="button"
-      class="compact-status-trigger"
-      :aria-expanded="compactOpen"
-      @click="toggleCompact"
-    >
-      <span>{{ summaryLabel || "查看详情" }}</span>
-      <i aria-hidden="true"></i>
-    </button>
-
-    <section v-if="compactOpen" class="compact-status-panel" :aria-busy="loading" aria-live="polite">
-      <header v-if="briefContext" class="compact-owner-heading">
-        <span>
-          <small>{{ briefContext.direction === "payable" ? "待付详情" : "待收详情" }}</small>
-          <strong>{{ briefContext.party }}</strong>
-          <em v-if="briefContext.description && briefContext.description !== briefContext.party">{{ briefContext.description }}</em>
-        </span>
-        <b :class="{ settled: briefContext.currentStatus === 'settled', attention: briefContext.currentStatus !== 'settled' }">{{ briefCurrentHeadline }}</b>
-      </header>
-
-      <section v-if="briefContext" :class="['compact-owner-overview', briefContext.direction]">
-        <p>{{ briefReason }}</p>
-        <dl class="compact-money-grid">
-          <div v-if="briefContext.sourceAmountFen !== undefined">
-            <dt>原金额</dt>
-            <dd>{{ formatFen(briefContext.sourceAmountFen) }}</dd>
-          </div>
-          <div v-if="briefContext.paidFen !== undefined">
-            <dt>{{ briefSettledWord }}</dt>
-            <dd>{{ formatFen(briefContext.paidFen) }}</dd>
-          </div>
-          <div v-if="briefHasOtherSettlement">
-            <dt>抵销等</dt>
-            <dd>{{ formatFen(briefContext.otherSettledFen) }}</dd>
-          </div>
-          <div class="remaining">
-            <dt>{{ briefSelectedBalanceLabel }}</dt>
-            <dd>{{ formatFen(briefContext.outstandingFen) }}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <p v-if="notice" class="compact-notice" role="status">{{ notice }}</p>
-      <div v-if="loading" class="compact-placeholder" role="status">正在读取款项详情…</div>
-      <div v-else-if="error" class="compact-placeholder error" role="alert">
-        <span>{{ error }}</span>
-        <button type="button" @click="load()">重新读取</button>
-      </div>
-      <template v-else-if="data">
-        <header v-if="!briefContext" class="compact-status-heading">
-          <span>
-            <small>核对结果</small>
-            <strong>{{ businessStateLabel(data.review.status) }}</strong>
-          </span>
-          <b v-if="compactWarnings.length" class="attention">{{ compactWarnings.length }} 项需要核对</b>
-          <b v-else>未发现问题</b>
-        </header>
-
-        <section :class="['compact-decision', { attention: compactWarnings.length }]">
-          <strong>{{ compactWarnings.length ? `${compactWarnings.length} 项需要核对` : "账务与收付关系已核对" }}</strong>
-          <span v-if="briefContext">{{ briefActionMessage }}</span>
-          <span v-else>{{ compactWarnings.length ? "请查看下列问题。" : "未发现来源或收付关系异常。" }}</span>
-        </section>
-
-        <ul v-if="compactWarnings.length" class="compact-warnings">
-          <li v-for="warning in compactWarnings" :key="warning">{{ warning }}</li>
-        </ul>
-
-        <details class="compact-accounting">
-          <summary>
-            <span>查看账务确认过程</span>
-            <small>{{ businessStateLabel(data.review.status) }}</small>
-          </summary>
-          <dl class="compact-status-grid">
-            <div>
-              <dt>业务是否已入账</dt>
-              <dd>{{ businessStateLabel(data.as_posted.status) }}</dd>
-              <span>
-                截至 {{ periodLabel(data.as_posted.cutoff_period) }}
-                <template v-if="data.as_posted.voucher_events.length">
-                  · {{ data.as_posted.voucher_events.length }} 个凭证事件
-                </template>
-              </span>
-            </div>
-            <div>
-              <dt>当前业务结果</dt>
-              <dd>{{ data.current_business_result ? "已有正式结果" : "尚无正式结果" }}</dd>
-              <span>当前已知资料下正式采用的业务结果</span>
-            </div>
-            <div>
-              <dt>当时冻结采用</dt>
-              <dd>{{ data.frozen_adoption ? "已明确采用" : "当月无独立冻结" }}</dd>
-              <span v-if="data.frozen_adoption">关账期 {{ periodLabel(data.frozen_adoption.close_period) }}</span>
-              <span v-else>{{ data.closure.state === "covered_by_later_close" ? "仅被后续关账覆盖" : "没有当月关账采用记录" }}</span>
-            </div>
-            <div>
-              <dt>所选月末收付状态</dt>
-              <dd>{{ businessStateLabel(data.settlements.status) }}</dd>
-              <span>截至 {{ periodLabel(data.settlements.cutoff_period) }} · {{ data.settlements.obligations.length }} 项款项</span>
-            </div>
-            <div v-if="showCurrentFollowups && currentFollowupSettlements">
-              <dt>现在的收付状态</dt>
-              <dd>{{ businessStateLabel(currentFollowupSettlements.status) }}</dd>
-              <span>
-                截至 {{ periodLabel(currentFollowupSettlements.current_cutoff_period || currentFollowupSettlements.cutoff_period) }}
-                · {{ currentFollowupSettlements.obligations.length }} 项款项
-              </span>
-            </div>
-          </dl>
-        </details>
-
-        <details v-if="data.adopted_basis" class="compact-accounting">
-          <summary><span>查看实际采用依据</span><small>{{ adoptedBasisLabel(data.adopted_basis.basis) }}</small></summary>
-          <p>政策 {{ data.adopted_basis.policies.length }} 项 · 工资及劳务确认 {{ data.adopted_basis.payroll_confirmations.length }} 项 · 原始凭据 {{ data.adopted_basis.evidence.length }} 项</p>
-          <ul class="business-review-list">
-            <li v-for="source in data.adopted_basis.policies" :key="`compact-policy-${source.reference.id}`"><strong>{{ source.label }}</strong><span>{{ source.version || '未单列版本号' }} · {{ source.effective_from || '生效日起点未单列' }}<template v-if="source.effective_to"> 至 {{ source.effective_to }}</template><template v-if="source.official_urls.length"> · <a :href="source.official_urls[0]" target="_blank" rel="noreferrer">官方来源</a></template></span></li>
-            <li v-for="source in data.adopted_basis.payroll_confirmations" :key="`compact-payroll-${source.calculation_reference.id}`"><strong>{{ source.label }}</strong><span>{{ adoptedPayrollMode(source.mode) }} · {{ source.confirmation_references.length }} 项确认事实</span></li>
-            <li v-for="source in data.adopted_basis.evidence" :key="`compact-evidence-${source.id}`"><strong>原始凭据</strong><span>{{ adoptedEvidenceLabel(source) }}</span></li>
-          </ul>
-          <details><summary>内部校验信息</summary><pre>{{ JSON.stringify({ calculation_ids: data.adopted_basis.calculation_ids, policies: data.adopted_basis.policies.map(item => item.reference), payroll_confirmations: data.adopted_basis.payroll_confirmations.map(item => ({ calculation_reference: item.calculation_reference, confirmation_references: item.confirmation_references })), evidence: data.adopted_basis.evidence }, null, 2) }}</pre></details>
-        </details>
-
-        <details v-if="compactCollections.length" class="compact-history">
-          <summary>
-            <span>查看相关记录</span>
-            <small>{{ compactCollectionTotal }} 项</small>
-          </summary>
-          <section v-for="item in compactCollections" :key="item.key">
-            <header>
-              <h4>{{ item.label }}</h4>
-              <span>{{ item.collection.page.total_count }} 项</span>
-            </header>
-            <DashboardBusinessRecords :items="item.collection.items" :period="period" :show-business="false" />
-            <DashboardPagination
-              compact
-              :page="item.collection.page"
-              :loaded="item.collection.items.length"
-              :loading="collectionStates[item.key]?.loading"
-              :error="collectionStates[item.key]?.error"
-              @more="load(item.key)"
-              @retry="load(item.key)"
-            />
-          </section>
-        </details>
+  <details class="business-status-details" :class="{ 'compact-status-details': presentation === 'brief' }" @toggle="toggle">
+    <summary class="business-detail-trigger" :class="{ 'compact-status-trigger': presentation === 'brief' }"><span>{{ summaryLabel || '业务详情' }}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></summary>
+    <p v-if="notice" class="business-detail-state" :class="{ 'compact-status-panel': presentation === 'brief' }" role="status">{{ notice }}</p>
+    <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation === 'brief' }" role="status">正在读取业务详情…</p>
+    <p v-else-if="error" class="business-detail-state error" :class="{ 'compact-status-panel': presentation === 'brief' }" role="alert">{{ error }} <button type="button" @click="load">重新读取</button></p>
+    <section v-else-if="data" class="business-detail-panel" :class="{ 'compact-status-panel': presentation === 'brief' }">
+      <header><h3>{{ businessName }}</h3><span class="business-state" :class="{ attention: data.settlements.checking, withdrawn: data.latest_source.deleted }">{{ data.latest_source.deleted ? '业务已撤回' : data.settlements.checking ? 'AI 会计核对中' : businessStateLabel(data.review.status) }}</span></header>
+      <p v-if="objects.length">业务对象：{{ objects.join('、') }}</p>
+      <p v-for="purpose in purposes" :key="purpose">{{ purpose }}</p>
+      <dl class="business-amounts">
+        <div v-if="data.frozen_adoption"><dt>关账月份</dt><dd>{{ data.frozen_adoption.close_period }}</dd></div>
+        <div v-else><dt>业务所属月</dt><dd>{{ data.latest_source.period }}</dd></div>
+        <div v-if="businessAmount"><dt>{{ data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ formatFen(businessAmount.amount_fen) }}</dd></div>
+        <div v-if="!data.frozen_adoption && data.current_business_result"><dt>该金额入账月</dt><dd>{{ data.current_business_result.posting_period }}</dd></div>
+      </dl>
+      <p v-if="!data.frozen_adoption && data.current_business_result">以上是当前业务结果；本月更正或冲回的金额见对应记录。</p>
+      <h4>截至 {{ data.settlements.cutoff_period }} 的收付进展</h4>
+      <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
+      <DashboardBusinessRecords :items="data.settlements.obligations" :period="period" :show-business="false" />
+      <template v-if="showCurrent && currentSettlements">
+        <h4>截至 {{ currentSettlements.cutoff_period }} 的后续进展</h4>
+        <p v-if="currentSettlements.checking" class="checking">AI 会计核对中，当前收付结果尚不能完整确认。</p>
+        <DashboardBusinessRecords :items="currentSettlements.obligations" :period="period" :show-business="false" />
+      </template>
+      <template v-if="collection?.page.total_count">
+        <h4>实际清偿记录</h4>
+        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ item.posting_period }} · {{ movementLabel(item) }}</span><strong>{{ item.relation_state === 'unresolved' ? 'AI 会计核对中' : formatFen(item.signed_amount_fen) }}</strong></li></ul>
+        <DashboardPagination :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
       </template>
     </section>
-  </div>
-  <details v-else class="business-status-default" @toggle="opened">
-    <summary>{{ summaryLabel || (settlementView === 'historical' ? '查看更多历史清偿与精确来源' : '查看这项业务的完整状态与追溯') }}</summary>
-    <p v-if="notice" role="status">{{ notice }}</p>
-    <p v-if="loading">正在读取…</p>
-    <p v-if="error" role="alert">{{ error }}<button type="button" @click="load()">重新读取</button></p>
-    <template v-if="data">
-      <p>当前核算依据：{{ businessStateLabel(data.review.status) }}</p>
-      <h4>所选月末账面结果</h4>
-      <p>按实际入账期间还原至 {{ data.as_posted.cutoff_period }} · {{ businessStateLabel(data.as_posted.status) }}</p>
-      <section v-for="(selection, index) in data.as_posted.unestablished_state_selections" :key="index">
-        <strong>尚不能证明冻结采用</strong>
-        <p>以下为精确候选，不能当作已采用结果或按零金额处理。</p>
-        <div v-for="candidate in selection.candidates" :key="candidate.calculation_id">
-          <details><summary>查看候选与未建立原因</summary><pre>{{ JSON.stringify({ reason: selection.reason, candidate }, null, 2) }}</pre></details>
-        </div>
-      </section>
-      <DashboardBusinessRecords :items="[...data.as_posted.voucher_events, ...data.as_posted.state_results]" :period="period" :show-business="false" />
-      <h4>当前业务结果</h4>
-      <DashboardBusinessRecords v-if="data.current_business_result" :items="[data.current_business_result]" :period="period" :show-business="false" />
-      <p v-else>当前没有正式采用的业务结果。</p>
-      <h4>实际采用依据</h4>
-      <template v-if="data.adopted_basis">
-        <p>{{ adoptedBasisLabel(data.adopted_basis.basis) }}。政策 {{ data.adopted_basis.policies.length }} 项，工资及劳务确认 {{ data.adopted_basis.payroll_confirmations.length }} 项，原始凭据 {{ data.adopted_basis.evidence.length }} 项。</p>
-        <ul class="business-review-list">
-          <li v-for="source in data.adopted_basis.policies" :key="`policy-${source.reference.id}`"><strong>{{ source.label }}</strong><span>{{ source.version || '未单列版本号' }} · {{ source.effective_from || '生效日起点未单列' }}<template v-if="source.effective_to"> 至 {{ source.effective_to }}</template><template v-if="source.official_urls.length"> · <a :href="source.official_urls[0]" target="_blank" rel="noreferrer">官方来源</a></template></span></li>
-          <li v-for="source in data.adopted_basis.payroll_confirmations" :key="`payroll-${source.calculation_reference.id}`"><strong>{{ source.label }}</strong><span>{{ adoptedPayrollMode(source.mode) }} · {{ source.confirmation_references.length }} 项确认事实</span></li>
-          <li v-for="source in data.adopted_basis.evidence" :key="`evidence-${source.id}`"><strong>原始凭据</strong><span>{{ adoptedEvidenceLabel(source) }}</span></li>
-        </ul>
-        <details><summary>内部校验信息</summary><pre>{{ JSON.stringify({ calculation_ids: data.adopted_basis.calculation_ids, policies: data.adopted_basis.policies.map(item => item.reference), payroll_confirmations: data.adopted_basis.payroll_confirmations.map(item => ({ calculation_reference: item.calculation_reference, confirmation_references: item.confirmation_references })), evidence: data.adopted_basis.evidence }, null, 2) }}</pre></details>
-      </template>
-      <p v-else>当前没有可列示的实际采用依据。</p>
-      <h4>重复业务核对</h4>
-      <p v-if="duplicateChecks.unresolved.length" class="incomplete-status" role="status">发现 {{ duplicateChecks.unresolved.length }} 项明显疑似重复，AI 会计须先核对已有资料；仍无法判断时再请负责人确认。</p>
-      <p v-else>当前没有尚待核对的明显重复疑点。</p>
-      <ul v-if="duplicateChecks.strong_candidates.length" class="business-review-list">
-        <li v-for="candidate in duplicateChecks.strong_candidates" :key="candidate.subject_id">
-          <strong>{{ candidate.period }} 的同类业务</strong>
-          <span>{{ candidate.signals.map(item => duplicateSignalLabel(item.code)).join("；") }}</span>
-        </li>
-      </ul>
-      <details v-if="duplicateChecks.weak_candidates.length">
-        <summary>查看 {{ duplicateChecks.weak_candidates.length }} 项弱线索（不影响入账）</summary>
-        <ul class="business-review-list">
-          <li v-for="candidate in duplicateChecks.weak_candidates" :key="candidate.subject_id">
-            <strong>{{ candidate.period }} 的相似业务</strong>
-            <span>{{ candidate.signals.map(item => duplicateSignalLabel(item.code)).join("；") }}</span>
-          </li>
-        </ul>
-      </details>
-      <details v-if="duplicateChecks.checks.length">
-        <summary>查看已有核对处置（{{ duplicateChecks.check_count }} 项）</summary>
-        <ul class="business-review-list">
-          <li v-for="check in duplicateChecks.checks" :key="check.check_id">
-            <strong>{{ duplicateActionLabel(check.action) }}</strong>
-            <span>{{ check.explanation }}</span>
-          </li>
-        </ul>
-        <p v-if="duplicateChecks.checks_truncated">这里只显示最近的核对处置，完整记录保留在内核中。</p>
-      </details>
-      <template v-if="identityCorrections.length || entityReferences.some(referenceChanged)">
-        <h4>对象身份与纠错</h4>
-        <p v-if="identityCorrections.length">这项业务有 {{ identityCorrections.length }} 次有依据的身份纠错；当前名单按纠错后对象展示，旧引用仍保留。</p>
-        <p v-else>对象引用未发现身份纠错。</p>
-        <details>
-          <summary>查看旧身份、当前归属与纠错依据</summary>
-          <ul class="business-review-list">
-            <li v-for="reference in entityReferences" :key="`${reference.fact_id}:${reference.path}`">
-              <strong>{{ reference.role }}</strong>
-              <span>{{ referenceChanged(reference) ? `${reference.recorded_entity_id} → ${reference.current_entity_id}` : reference.current_entity_id }}</span>
-            </li>
-          </ul>
-          <pre v-if="identityCorrections.length">{{ JSON.stringify(identityCorrections, null, 2) }}</pre>
-        </details>
-      </template>
-      <h4>当时冻结采用</h4>
-      <DashboardBusinessRecords v-if="data.frozen_adoption" :items="[data.frozen_adoption]" :period="period" :show-business="false" />
-      <p v-else-if="data.closure.state === 'covered_by_later_close'">所选月份被后续关账覆盖，但没有本月独立冻结内容。</p>
-      <p v-else>所选月份没有冻结采用记录。</p>
-      <h4>所选月末款项</h4>
-      <p>截至 {{ data.settlements.cutoff_period }} · {{ businessStateLabel(data.settlements.status) }}</p>
-      <p v-if="data.settlements.status === 'partially_established' || data.settlements.issues.length || data.as_posted.unestablished_state_selections.length" class="incomplete-status" role="status">历史月末款项尚不能完整确定；已有金额不能代表完整清偿结果，请核对下方来源和未建立候选。</p>
-      <p v-for="(issue, index) in data.settlements.issues" :key="index">{{ issue.message || "款项来源尚待核对。" }}</p>
-      <DashboardBusinessRecords :items="data.settlements.obligations" :period="period" :show-business="false" />
-      <h4>本项历史业务相关的当前跟进</h4>
-      <template v-if="data.current_followups">
-        <p>相关后来清偿截至 {{ data.current_followups.settlements.current_cutoff_period || data.current_followups.settlements.cutoff_period }} · {{ businessStateLabel(data.current_followups.settlements.status) }}</p>
-        <p v-if="data.current_followups.settlements.complete === false || data.current_followups.settlements.unestablished_state_selections?.length || data.current_followups.settlements.status === 'partially_established'" class="incomplete-status" role="status">相关当前款项尚不能完整确定；即使已有金额，也不能据此认定已结清。<span v-if="data.current_followups.settlements.unestablished_state_selections?.length">仍有 {{ data.current_followups.settlements.unestablished_state_selections.length }} 组采用依据尚未建立，候选保留在技术依据中供核对。</span></p>
-        <p v-for="(issue, index) in data.current_followups.settlements.issues" :key="index">{{ issue.message || "当前款项来源尚待核对。" }}</p>
-        <DashboardBusinessRecords :items="data.current_followups.settlements.obligations" :period="period" :show-business="false" />
-      </template>
-      <p v-else>当前跟进资料尚未提供。</p>
-      <h4>外部办理</h4>
-      <DashboardBusinessRecords :items="[data.external]" :period="period" :show-business="false" />
-      <details v-for="item in visibleCollections" :key="item.key">
-        <summary>{{ label(item.key) }}</summary>
-        <p v-if="collectionStates[item.key]?.notice" role="status">{{ collectionStates[item.key].notice }}</p>
-        <template v-if="!collectionStates[item.key]?.restart">
-          <DashboardBusinessRecords :items="item.collection.items" :period="period" :show-business="false" />
-          <DashboardPagination :page="item.collection.page" :loaded="item.collection.items.length" :loading="collectionStates[item.key]?.loading" :error="collectionStates[item.key]?.error" @more="load(item.key)" @retry="load(item.key)" />
-        </template>
-        <p v-else-if="collectionStates[item.key]?.error" role="alert">{{ collectionStates[item.key].error }} <button type="button" :disabled="collectionStates[item.key].loading" @click="load(item.key)">重新读取文件任务</button></p>
-      </details>
-      <details><summary>技术依据与字段来源</summary><pre>{{ JSON.stringify(data, null, 2) }}</pre></details>
-    </template>
   </details>
 </template>
 
 <style scoped>
-.business-status-default,
-.business-status-default p {
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.business-status-default,
-.business-status-default details {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.business-status-default summary {
-  padding: 6px 0;
-  cursor: pointer;
-}
-
-.business-status-default summary:focus-visible,
-.compact-status-trigger:focus-visible,
-.compact-accounting > summary:focus-visible,
-.compact-history > summary:focus-visible {
-  outline: 2px solid var(--focus, var(--brief-green));
-  outline-offset: 2px;
-}
-
-.business-status-default button,
-.compact-placeholder button {
-  padding: 7px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.business-status-default pre {
-  max-height: 360px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.incomplete-status {
-  padding: 10px 12px;
-  border-left: 3px solid var(--warning);
-  background: var(--warning-soft);
-  font-weight: 650;
-}
-
-.business-review-list {
-  display: grid;
-  gap: 7px;
-  margin: 8px 0;
-  padding: 0;
-  list-style: none;
-}
-
-.business-review-list li {
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--line);
-  background: var(--surface-soft);
-}
-
-.business-review-list span {
-  color: var(--muted);
-}
-
-.compact-status-details {
-  display: contents;
-}
-
-.compact-status-trigger {
+.business-status-details { min-width: 0; overflow-wrap: anywhere; }
+.business-detail-trigger {
   display: inline-flex;
   min-height: 32px;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 9px;
-  border: 0;
+  gap: 3px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: var(--brief-green, var(--accent));
-  font: inherit;
+  color: var(--accent);
   font-size: 11px;
   font-weight: 750;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.compact-status-trigger:hover,
-.compact-status-trigger[aria-expanded="true"] {
-  background: var(--brief-green-soft, var(--surface-soft));
-}
-
-.compact-status-trigger i {
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg) translateY(-1px);
-  transition: transform 140ms ease;
-}
-
-.compact-status-trigger[aria-expanded="true"] i {
-  transform: rotate(225deg) translate(-1px, -1px);
-}
-
-.compact-status-panel {
-  display: grid;
-  min-width: 0;
-  width: 100%;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 14px 16px;
-  border-radius: var(--brief-control-radius, var(--radius-control, 9px));
-  background: var(--brief-soft, var(--surface-soft));
-  color: var(--brief-text, var(--text));
-}
-
-.compact-notice,
-.compact-placeholder {
-  margin: 0;
-  color: var(--brief-muted, var(--muted));
-  font-size: 12px;
-}
-
-.compact-placeholder {
-  display: flex;
-  min-height: 60px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-}
-
-.compact-placeholder.error {
-  color: var(--brief-amber, var(--warning));
-}
-
-.compact-owner-heading,
-.compact-status-heading,
-.compact-accounting > summary,
-.compact-history > summary,
-.compact-history > section > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.compact-owner-heading {
-  align-items: flex-start;
-}
-
-.compact-owner-heading > span,
-.compact-status-heading > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.compact-owner-heading small,
-.compact-status-heading small,
-.compact-accounting small,
-.compact-history small,
-.compact-history > section > header span {
-  color: var(--brief-muted, var(--muted));
-  font-size: 11px;
-}
-
-.compact-owner-heading strong,
-.compact-status-heading strong {
-  font-size: 15px;
-}
-
-.compact-owner-heading em {
-  overflow: hidden;
-  color: var(--brief-muted, var(--muted));
-  font-size: 11px;
-  font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.compact-owner-heading > b,
-.compact-status-heading > b {
-  flex: none;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: var(--brief-green-soft, var(--surface-soft));
-  color: var(--brief-green, var(--accent));
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.compact-owner-heading > b.attention,
-.compact-status-heading > b.attention {
-  background: var(--brief-amber-soft, var(--warning-soft));
-  color: var(--brief-amber, var(--warning));
-}
-
-.compact-owner-heading > b.settled {
-  background: var(--brief-green-soft, var(--surface-soft));
-  color: var(--brief-green, var(--accent));
-}
-
-.compact-owner-overview {
-  display: grid;
-  gap: 10px;
-}
-
-.compact-owner-overview > p {
-  margin: 0;
-  color: var(--brief-muted, var(--muted));
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.compact-money-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.compact-money-grid > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-  padding-left: 10px;
-  border-left: 1px solid var(--brief-line, var(--line));
-}
-
-.compact-money-grid > div:first-child {
-  padding-left: 0;
-  border-left: 0;
-}
-
-.compact-money-grid dt {
-  color: var(--brief-muted, var(--muted));
-  font-size: 10px;
-}
-
-.compact-money-grid dd {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 760;
-  white-space: nowrap;
-}
-
-.compact-owner-overview.receivable .remaining dd {
-  color: var(--brief-blue, var(--accent));
-}
-
-.compact-owner-overview.payable .remaining dd {
-  color: var(--brief-amber, var(--warning));
-}
-
-.compact-decision {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--brief-line, var(--line));
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.compact-decision strong {
-  flex: none;
-}
-
-.compact-decision span {
-  color: var(--brief-muted, var(--muted));
-}
-
-.compact-decision.attention strong {
-  color: var(--brief-amber, var(--warning));
-}
-
-.compact-status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.compact-status-grid > div {
-  display: grid;
-  gap: 3px;
-  padding: 4px 12px;
-  border-left: 1px solid var(--brief-line, var(--line));
-}
-
-.compact-status-grid > div:first-child {
-  padding-left: 0;
-  border-left: 0;
-}
-
-.compact-status-grid dt {
-  color: var(--brief-muted, var(--muted));
-  font-size: 10px;
-}
-
-.compact-status-grid dd {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.compact-status-grid span {
-  color: var(--brief-muted, var(--muted));
-  font-size: 10px;
   line-height: 1.45;
-}
-
-.compact-warnings {
-  display: grid;
-  gap: 5px;
-  margin: 0;
-  padding: 9px 12px 9px 28px;
-  border-left: 3px solid var(--brief-amber, var(--warning));
-  border-radius: 7px;
-  background: var(--brief-amber-soft, var(--warning-soft));
-  color: var(--brief-text, var(--text));
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.compact-accounting,
-.compact-history {
-  min-width: 0;
-  border-top: 1px solid var(--brief-line, var(--line));
-}
-
-.compact-accounting > summary,
-.compact-history > summary {
-  min-height: 34px;
-  padding: 4px 2px 0;
-  color: var(--brief-green, var(--accent));
-  font-size: 11px;
-  font-weight: 750;
   list-style: none;
   cursor: pointer;
 }
-
-.compact-accounting > summary::-webkit-details-marker,
-.compact-history > summary::-webkit-details-marker {
-  display: none;
-}
-
-.compact-accounting > .compact-status-grid {
-  padding: 10px 0;
-}
-
-.compact-history > section {
+.business-detail-trigger::-webkit-details-marker { display: none; }
+.business-detail-trigger:hover { background: var(--accent-soft); }
+.business-detail-trigger:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.business-detail-trigger svg { width: 10px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+.business-status-details[open] > .business-detail-trigger svg { transform: rotate(90deg); }
+.business-status-details[open] > .business-detail-trigger { background: var(--accent-soft); }
+.business-detail-panel, .business-detail-state {
   min-width: 0;
-  padding: 10px 0;
-  border-top: 1px solid var(--brief-line, var(--line));
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
 }
-
-.compact-history > section > header h4 {
-  margin: 0;
-  font-size: 12px;
-}
-
-.compact-history :deep(.business-records article) {
-  padding: 9px 0;
-}
-
+.business-detail-panel { display: grid; gap: 12px; }
+.business-detail-state.error { color: var(--danger); }
+header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+h3, h4, p { min-width: 0; margin: 0; }
+h3 { font-size: 15px; }
+h4 { font-size: 12px; }
+p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.business-state { flex: none; max-width: 100%; padding: 4px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 750; }
+.business-state.attention { background: var(--warning-soft); color: var(--warning); }
+.business-state.withdrawn { background: var(--surface); color: var(--muted); }
+.checking { padding: 9px; border-left: 3px solid var(--warning); background: var(--warning-soft); }
+dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0; }
+dl > div { min-width: 0; padding: 4px 12px; border-left: 1px solid var(--line); }
+dl > div:first-child { padding-left: 0; border-left: 0; }
+dt { color: var(--muted); font-size: 11px; }
+dd { margin: 3px 0 0; font-size: 15px; font-weight: 750; overflow-wrap: anywhere; }
+ul { margin: 0; padding: 0; list-style: none; }
+li { display: flex; gap: 12px; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+li span { color: var(--muted); }
+button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.compact-status-details { display: contents; }
+.compact-status-trigger { white-space: nowrap; }
+.compact-status-details::details-content { display: contents; }
+.compact-status-details:not([open]) > :not(summary) { display: none; }
+.compact-status-panel { grid-column: 1 / -1; }
 @media (max-width: 720px) {
-  .business-status-default summary,
-  .business-status-default button,
-  .compact-status-trigger {
-    min-height: 44px;
-  }
-
-  .compact-status-panel {
-    padding: 12px;
-  }
-
-  .compact-status-grid > div,
-  .compact-status-grid > div:first-child {
-    padding: 8px 0;
-    border-top: 1px solid var(--brief-line, var(--line));
-    border-left: 0;
-  }
-
-  .compact-status-grid > div:first-child {
-    padding-top: 0;
-    border-top: 0;
-  }
-
-  .compact-owner-heading,
-  .compact-status-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .compact-money-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .compact-money-grid > div,
-  .compact-money-grid > div:first-child {
-    padding: 5px 0;
-    border-top: 1px solid var(--brief-line, var(--line));
-    border-left: 0;
-  }
-
-  .compact-decision {
-    display: grid;
-    gap: 3px;
-  }
-
-  .compact-status-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+  header, li { flex-direction: column; align-items: flex-start; gap: 5px; }
+  .business-detail-trigger { min-height: 44px; }
+  .business-detail-panel, .business-detail-state { padding: 12px; }
+  dl { grid-template-columns: minmax(0, 1fr); }
+  dl > div, dl > div:first-child { padding: 8px 0; border-top: 1px solid var(--line); border-left: 0; }
+  dl > div:first-child { padding-top: 0; border-top: 0; }
 }
+@media (prefers-reduced-motion: reduce) { .business-detail-trigger svg { transition: none; } }
 </style>

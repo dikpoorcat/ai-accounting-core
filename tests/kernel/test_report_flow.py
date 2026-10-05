@@ -1,5 +1,7 @@
 """Root-bound month contributions agree with the original report formulas."""
 
+import json
+
 import pytest
 from test_integrity_content import damage
 from test_reports import book as _book
@@ -28,6 +30,113 @@ from ai_accounting.kernel.types import YearMonth
 from ai_accounting.kernel.verified_source_lease import verified_source_lease
 
 book = _book
+
+
+def test_authenticated_flow_preserves_data_without_reencoding_body(
+    book, monkeypatch, record_testsuite_property
+):
+    from ai_accounting.kernel.types import canonical
+
+    engine = book[0]
+    report = scenario(book)
+    before = report.report(2026, 1)["statements"]
+    close_quarter(book)
+    with engine.store.connection(read_only=True) as connection:
+        raw = dict(connection.execute("SELECT posting_period,content FROM report_period_flow"))
+    bodies = {period: json.loads(content) for period, content in raw.items()}
+    body_fields = set(next(iter(bodies.values())))
+    serialized_body_bytes = []
+    encode = json.JSONEncoder.encode
+
+    def measured(encoder, value):
+        encoded = encode(encoder, value)
+        if isinstance(value, dict) and set(value) == body_fields:
+            serialized_body_bytes.append(len(encoded.encode("utf-8")))
+        return encoded
+
+    monkeypatch.setattr(json.JSONEncoder, "encode", measured)
+    with QueryReads.snapshot(engine) as reads:
+        for period, body in bodies.items():
+            result = read_report_flow(reads.connection, period, reads=reads)
+            assert {key: value for key, value in result.items() if key != "root"} == body
+            assert read_report_flow(reads.connection, period, reads=reads) == result
+    assert serialized_body_bytes == []
+    # Measure the actual UTF-8 output of the former decode/encode comparison,
+    # rather than counting a particular implementation line or mock call.
+    for period, body in bodies.items():
+        assert canonical(body) == raw[period]
+    expected_bytes = sum(len(content.encode("utf-8")) for content in raw.values())
+    assert sum(serialized_body_bytes) == expected_bytes > 0
+    record_testsuite_property("report_flow_read_body_reencoded_bytes", 0)
+    record_testsuite_property("report_flow_former_body_reencoded_bytes", expected_bytes)
+    assert report.report(2026, 1, source="closed")["statements"] == before
+
+
+@pytest.mark.parametrize("change,rebind_mutable", [
+    ("whitespace", False), ("format", True), ("amount", True),
+])
+def test_flow_raw_changes_reject_at_independent_parent_and_repair_from_source(
+    book, change, rebind_mutable
+):
+    from ai_accounting.kernel import report_flow
+    from ai_accounting.kernel.close_storage import derived_root, verified_header
+    from ai_accounting.kernel.integrity import verify_integrity
+    from ai_accounting.kernel.types import canonical
+
+    engine = book[0]
+    scenario(book)
+    close_quarter(book)
+    period = YearMonth("2026-01").ordinal
+    with engine.store.connection(read_only=True) as connection:
+        stored = connection.execute(
+            "SELECT * FROM report_period_flow WHERE posting_period=?", (period,)
+        ).fetchone()
+        original = stored["content"]
+        body = json.loads(original)
+        header = verified_header(connection, connection.execute(
+            "SELECT * FROM period_close WHERE period=?", (period,)
+        ).fetchone())
+        source_root = derived_root(header, "report")
+        semantic_root = derived_root(header, "report_semantics")
+    if change == "whitespace":
+        altered = " " + original
+    elif change == "format":
+        altered = json.dumps(body, ensure_ascii=False, indent=2)
+    else:
+        body["profit"]["1"] += 1
+        altered = canonical(body)
+    checksum = (
+        report_flow._root(period, stored["close_digest"], source_root, semantic_root, altered)
+        if rebind_mutable else stored["root_digest"]
+    )
+    with engine.store.connection() as connection:
+        connection.execute(
+            "UPDATE report_period_flow SET content=?,root_digest=? WHERE posting_period=?",
+            (altered, checksum, period),
+        )
+        connection.commit()
+    with QueryReads.snapshot(engine) as reads:
+        for _ in range(2):
+            with pytest.raises(KernelError, match="冻结来源"):
+                read_report_flow(reads.connection, period, reads=reads)
+        assert ("report_period_flow", period) not in reads._report_snapshot_cache
+        assert compare_report_flow(engine, reads.connection)["changed"]
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError):
+            verify_integrity(engine, connection)
+    with engine.store.connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert repair_report_flow(engine, connection)["changed"]
+        assert connection.execute(
+            "SELECT content FROM report_period_flow WHERE posting_period=?", (period,)
+        ).fetchone()[0] == original
+        connection.commit()
+    with QueryReads.snapshot(engine) as reads:
+        assert read_report_flow(reads.connection, period, reads=reads) is not None
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert verify_integrity(engine, connection)["status"] == "verified"
 
 
 def test_closed_flow_matches_live_statements_and_authority(book):

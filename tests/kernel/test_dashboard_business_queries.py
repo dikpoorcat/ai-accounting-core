@@ -7,6 +7,7 @@ from test_payroll_reserve_payment import prepare
 from test_tax_credits import company as _tax_company
 from test_workflow import setup_company
 
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains import taxes, transactions
@@ -23,10 +24,9 @@ def test_refundable_tax_position_agrees_with_report_and_refund(tax_company):
     company.publish("credit", "february")
     # The brief must establish its position even without a report profile.
     dashboard = Dashboard(company.engine)
-    position = dashboard.brief("2026-02")["data"]["position"]
-    assert position["complete"] and position["equation_valid"] is True
-    # The returned sales consideration remains a payable; the refundable tax is an asset.
-    assert position["liabilities_fen"] == 101000
+    before = dashboard.brief("2026-02")["data"]
+    assert before["position"]["complete"]
+    assert not any(item["key"] == "amounts" for item in before["risks"])
     company.save(
         ReportProfile,
         "report-profile",
@@ -38,8 +38,10 @@ def test_refundable_tax_position_agrees_with_report_and_refund(tax_company):
     )
     balance = Reports(company.engine).report(2026, 1)["statements"]["balance_sheet"]
     assert balance["14"]["ending_fen"] == 1060
-    assert position["assets_fen"] == balance["30"]["ending_fen"]
-    assert position["liabilities_fen"] == balance["47"]["ending_fen"]
+    # The returned sales consideration remains a payable; the refundable tax is an asset.
+    assert balance["47"]["ending_fen"] == 101000
+    assert balance["30"]["ending_fen"] == balance["53"]["ending_fen"]
+    assets_before = balance["30"]["ending_fen"]
     company.save(
         transactions.Payment,
         "refund",
@@ -65,11 +67,12 @@ def test_refundable_tax_position_agrees_with_report_and_refund(tax_company):
         ],
     )
     company.publish("refund")
-    after = dashboard.brief("2026-02")["data"]["position"]
+    after = dashboard.brief("2026-02")["data"]
     balance = Reports(company.engine).report(2026, 1)["statements"]["balance_sheet"]
     assert balance["14"]["ending_fen"] == 0
-    assert after["assets_fen"] == position["assets_fen"] == balance["30"]["ending_fen"]
-    assert after["bank_fen"] == position["bank_fen"] + 1060
+    assert assets_before == balance["30"]["ending_fen"]
+    assert balance["30"]["ending_fen"] == balance["53"]["ending_fen"]
+    assert after["funds_overview"]["bank_fen"] == before["funds_overview"]["bank_fen"] + 1060
 
 
 @pytest.mark.parametrize("reserve", [False, True])
@@ -118,51 +121,67 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
     employees = response["data"]["collections"]["employees"]["items"]
     for employee in employees:
         person = employee["employee_id"]
-        sources = dashboard.employees(
+        focused = dashboard.employees(
             "2026-02",
-            section="payroll_sources",
+            section="employees",
             employee_id=person,
             expected_version=response["snapshot_version"],
-        )["data"]["collections"]["payroll_sources"]["items"]
-        source = next(s for s in sources if s["source_id"] == "wage-" + person)
-        assert "movements" not in source
-        collection = dashboard.employees(
+        )["data"]["collections"]["employees"]["items"]
+        assert focused == [employee]
+        collection = dashboard.business_status(
             "2026-02",
+            "wage-" + person,
             section="settlement_events",
-            employee_id=person,
             expected_version=response["snapshot_version"],
         )["data"]["collections"]["settlement_events"]
-        movement = next(
+        movement = next(item for item in collection["items"] if item["subject_id"] == payment_id)
+        assert movement["source_subject_id"] == "wage-" + person
+        assert movement["signed_amount_fen"] == company.current("wage-" + person).values["net_fen"]
+        assert (
+            employee["direct_net_payments_fen"]
+            == company.current("wage-" + person).values["net_fen"]
+        )
+        assert employee["outstanding_net_fen"] == 0
+        core = BusinessQueries(company.engine).business_status("wage-" + person, "2026-02")
+        exact = next(
             item
-            for item in collection["items"]
+            for item in core["settlements"]["movements"]
             if item["settlement_business"]["subject_id"] == payment_id
         )
-        assert movement["recipient_id"] == person
-        assert movement["source_business"]["subject_id"] == "wage-" + person
-        assert movement["source_calculation_id"] == source["calculation_id"]
-        assert movement["obligation_key"] == "payroll:wage-" + person + ":net"
+        assert exact["recipient_id"] == person
+        assert exact["source_business"]["subject_id"] == "wage-" + person
+        assert (
+            exact["source_calculation_id"] == core["current_business_result"]["calculation"]["id"]
+        )
+        assert exact["obligation_key"] == "payroll:wage-" + person + ":net"
         assert employee["name"] == "合成人员" + person
-        assert employee["field_sources"]["name"]
+        identity = next(
+            item
+            for item in Entities(company.engine).find_entities(query=person, kind="person")["items"]
+            if item["entity_id"] == person
+        )
+        assert identity["profile"]["display_name"] == employee["name"]
+        assert identity["profile"]["source"] == "合成人员身份资料"
     earlier_response = dashboard.employees("2026-01")
     earlier = earlier_response["data"]["collections"]["employees"]["items"]
     for employee in earlier:
-        sources = dashboard.employees(
+        focused = dashboard.employees(
             "2026-01",
-            section="payroll_sources",
+            section="employees",
             employee_id=employee["employee_id"],
             expected_version=earlier_response["snapshot_version"],
-        )["data"]["collections"]["payroll_sources"]["items"]
-        assert all("movements" not in source for source in sources)
-        movements = dashboard.employees(
+        )["data"]["collections"]["employees"]["items"]
+        assert focused == [employee]
+        assert employee["direct_net_payments_fen"] == 0
+        movements = dashboard.business_status(
             "2026-01",
+            "wage-" + employee["employee_id"],
             section="settlement_events",
-            employee_id=employee["employee_id"],
             expected_version=earlier_response["snapshot_version"],
         )["data"]["collections"]["settlement_events"]["items"]
-        assert {
-            (item["settlement_business"]["subject_id"], item["posting_period"])
-            for item in movements
-        } == {(payment_id, "2026-02")}
+        assert {(item["subject_id"], item["posting_period"]) for item in movements} == {
+            (payment_id, "2026-02")
+        }
 
 
 def test_complete_materials_do_not_hide_missing_payroll_in_brief(tmp_path):
@@ -172,11 +191,17 @@ def test_complete_materials_do_not_hide_missing_payroll_in_brief(tmp_path):
     with pytest.raises(KernelError) as error:
         company.close("2026-01")
     assert any(issue["field"] == "missing_payroll" for issue in error.value.details["fact_issues"])
-    data = Dashboard(company.engine).brief("2026-01")["data"]
-    assert data["material_completeness"]["satisfied"]
-    assert data["validation"]["state"] == "attention"
-    assert any(issue["field"] == "missing_payroll" for issue in data["validation"]["issues"])
+    dashboard = Dashboard(company.engine)
+    response = dashboard.brief("2026-01")
+    context = response["read_context"]
+    assert {"material_completeness", "validation", "period_preparation"}.isdisjoint(
+        response["data"]
+    )
+    checks = dashboard.period_preparation(
+        "2026-01", expected_read_version=context["read_version"], as_of=context["as_of"]
+    )["data"]["brief_checks"]
+    assert checks["material_completeness"]["satisfied"]
+    assert any(issue["field"] == "missing_payroll" for issue in checks["issues"])
     assert any(
-        item["key"] == "accounting" and item["state"] == "pending"
-        for item in data["validation"]["items"]
+        item["key"] == "accounting" and item["state"] == "pending" for item in checks["items"]
     )

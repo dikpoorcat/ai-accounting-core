@@ -88,7 +88,7 @@ def may_contain(value: DecodedKeysFilter, key: str) -> bool:
     """False proves absence only under an authenticated, fully rebuilt root."""
     if not isinstance(value, DecodedKeysFilter):
         raise ValueError("decoded filter required")
-    return all(
-        value.bits[position >> 3] & (1 << (position & 7))
-        for position in _positions(key, value.bit_count)
-    )
+    for position in _positions(key, value.bit_count):
+        if not value.bits[position >> 3] & (1 << (position & 7)):
+            return False
+    return True

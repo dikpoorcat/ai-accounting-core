@@ -1,0 +1,252 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "Rejected journal full-contribution candidate; original diagnostic outputs and exact withdrawal, not qualification/performance/release acceptance",
+  "files": [
+    {
+      "source": ".tmp/stage9-journal-contribution-work-before-dd86-20261004.json",
+      "archive": "stage9-journal-contribution-work-before-dd86-20261004.json.gz",
+      "raw_bytes": 546492,
+      "gzip_bytes": 70086,
+      "source_sha256": "2784e85a11a2151d0fdb97546c37a9daea1eb0a2787408e5c3478b29bff7c649",
+      "gzip_sha256": "ee2b4fce4f180b51dd823afea0f11c0b3f3a009acb25de9250cc2e01acea4645",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "synthetic_work_templates_numeric_counters_and_guard_hashes_no_payloads"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-after-candidate-20261004.json",
+      "archive": "stage9-journal-contribution-work-after-candidate-20261004.json.gz",
+      "raw_bytes": 555902,
+      "gzip_bytes": 70735,
+      "source_sha256": "cf988ee4cfdb791c605ae37a746bd7cfefb7bd3fb8cec9863ef7ee842bcabb3b",
+      "gzip_sha256": "873e88d6271b86dd22f1ba2085ba92db4d9eff2d9c2b19de9842c4611320b4ed",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "synthetic_work_templates_numeric_counters_and_guard_hashes_no_payloads"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-20261004.py",
+      "archive": "stage9-journal-contribution-work-20261004.py.gz",
+      "raw_bytes": 8752,
+      "gzip_bytes": 3031,
+      "source_sha256": "4e92f2f7206131d1bed1183984b0551ab2936e3455dcc546a8270d126bb13355",
+      "gzip_sha256": "622fdb7c1d43d5881bbb8ea63adfbf76e391af72cb95a5c66ddf92d76ba06496",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-comparison-20261004.py",
+      "archive": "stage9-journal-contribution-work-comparison-20261004.py.gz",
+      "raw_bytes": 3456,
+      "gzip_bytes": 1462,
+      "source_sha256": "25c29507d7c0448d38ff0ae7793cfb4ea3394389188e3f49fd9840f8855a888d",
+      "gzip_sha256": "ff782651c19c7e9aa1c836fe8958a8ff5bb434c482339907435ae6ce348b404e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-comparison-20261004-fix1.py",
+      "archive": "stage9-journal-contribution-work-comparison-20261004-fix1.py.gz",
+      "raw_bytes": 3749,
+      "gzip_bytes": 1608,
+      "source_sha256": "1872edad1c6b737a346a482559dd7482f2aeee5663b8e815b5dbf0ec7cdac839",
+      "gzip_sha256": "af958912f1f258b4cd93875874ef5360eaec0a68f212db49b6793e68e8954849",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-comparison-20261004-fix2.py",
+      "archive": "stage9-journal-contribution-work-comparison-20261004-fix2.py.gz",
+      "raw_bytes": 4021,
+      "gzip_bytes": 1686,
+      "source_sha256": "574f7bc9e74510c1a05307e7bbac929102c1633466b7883f881a7ed6694a01e9",
+      "gzip_sha256": "f7bd30bbce266716e4787fe092cc8d7472a5eab9f38cb4d4be0f00db23c53178",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-comparison-20261004-fix2.json",
+      "archive": "stage9-journal-contribution-work-comparison-20261004-fix2.json.gz",
+      "raw_bytes": 7478,
+      "gzip_bytes": 1789,
+      "source_sha256": "6906b9b816c11bf2ccff44d006cffa9c81e6c96c2a2548a6eb966d0f48eef26b",
+      "gzip_sha256": "ec0326cd412f3f49dd0c3090a6a06d2adb99aa798f7ffcf98424a7245b42e829",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-work-comparison-20261004-first-failure.json",
+      "archive": "stage9-journal-contribution-work-comparison-20261004-first-failure.json.gz",
+      "raw_bytes": 485,
+      "gzip_bytes": 315,
+      "source_sha256": "31851f4804d93b1f2ffc3a349f7a3fa90538e453307792ecf8fbc89d281e014a",
+      "gzip_sha256": "1e163e0299ad9f47df9174e288b1c73d64f60533cf630994da28c9f55202bf50",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    },
+    {
+      "source": ".tmp/stage9-preserve-work-comparison-failure-and-repair-20261004.py",
+      "archive": "stage9-preserve-work-comparison-failure-and-repair-20261004.py.gz",
+      "raw_bytes": 2055,
+      "gzip_bytes": 805,
+      "source_sha256": "e875697c16d36e596ba84ce952d41ac10942899be75a59348817fb6082041c78",
+      "gzip_sha256": "34eeadd7d41a507e0276cf2b7b120d6563d1ad268dd0f20a0619b805a5009300",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-save-journal-contribution-candidate-20261004.py",
+      "archive": "stage9-save-journal-contribution-candidate-20261004.py.gz",
+      "raw_bytes": 3113,
+      "gzip_bytes": 1199,
+      "source_sha256": "51d2d66b90f120efc1014d11880b51b09ff4d7c91ba5ce802782a06e44326a0d",
+      "gzip_sha256": "4df1263e0f7ec2bfcea325c84e657c79df6242fda782864cca564fd0e7650f8b",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-withdraw-journal-contribution-candidate-20261004.py",
+      "archive": "stage9-withdraw-journal-contribution-candidate-20261004.py.gz",
+      "raw_bytes": 2525,
+      "gzip_bytes": 1039,
+      "source_sha256": "b342563dfb3a649a8f3607d61ec768f22c681bcb328fa981e03fb7f8b9c4d93a",
+      "gzip_sha256": "0a2a69789386d5cb3a0551a836f80087ca109eacc9603b49c626c36c6e12a604",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-implementation-notes-20261004.txt",
+      "archive": "stage9-journal-contribution-implementation-notes-20261004.txt.gz",
+      "raw_bytes": 2989,
+      "gzip_bytes": 1490,
+      "source_sha256": "d7756a3d8181ab261e4182a017f33cc92e45ef0154e5b685699a99bb9cd15ad2",
+      "gzip_sha256": "f0d70a59b6a86e509893a8f138c3affd288d3775cda03ce3a6cd4c3af73556e2",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-independent-review-20261004.md",
+      "archive": "stage9-journal-contribution-independent-review-20261004.md.gz",
+      "raw_bytes": 8763,
+      "gzip_bytes": 4407,
+      "source_sha256": "8ec5e96c0c2632349255287bb4f40520537ef0cced8564254665880781585e3c",
+      "gzip_sha256": "c0730abb74ef1bea74a7968d2faea96355a459b0bbf163f8a47ab1b88a530ddc",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/dashboard_reads.py.before",
+      "archive": "capsule-dashboard_reads.py.before.gz",
+      "raw_bytes": 79359,
+      "gzip_bytes": 17765,
+      "source_sha256": "60539b091f1cfa65719aec2de0272445d88098ed049143da7ea9ea9eb5dcbdd4",
+      "gzip_sha256": "10c1e0b88f2ada5eb99d6f6472e9e758c8dd3ee776824612644d0b933ad377b0",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/dashboard_reads.py.candidate",
+      "archive": "capsule-dashboard_reads.py.candidate.gz",
+      "raw_bytes": 82506,
+      "gzip_bytes": 18418,
+      "source_sha256": "229aa4b8e27197f47c648634e3d99293ae5719bc25e020821b9bc012a965b87a",
+      "gzip_sha256": "e2271caf5a61f9f50e0f4087b944a9d70ad23d16c5a4d40f0decdcdd345568bb",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/manifest.json",
+      "archive": "capsule-manifest.json.gz",
+      "raw_bytes": 818,
+      "gzip_bytes": 404,
+      "source_sha256": "ae3447016269d8eafce433eb15922b40ac271910e34678e8a9855f645e210aff",
+      "gzip_sha256": "43d5a245e692d3b6015950998bca47cd8d796a4a12df0312da0fd8bd56b5c00e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/query_reads.py.before",
+      "archive": "capsule-query_reads.py.before.gz",
+      "raw_bytes": 121142,
+      "gzip_bytes": 25308,
+      "source_sha256": "72999dd7080c526a038a2efce017b653e0dd06e16871f8dc4b20d3d1b3e2a9da",
+      "gzip_sha256": "119479b14531267c3c911e5eb90b2de0a067880dab48b60ea174a9b2456cad8d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/query_reads.py.candidate",
+      "archive": "capsule-query_reads.py.candidate.gz",
+      "raw_bytes": 122343,
+      "gzip_bytes": 25438,
+      "source_sha256": "35e5a1a1f836ac35442fa67c8d9653cdd329d8ecede4d4e18bd6dc25bcab3c48",
+      "gzip_sha256": "f1a191de70cc028f898633cb0221d8e847fca8da11f36f3d2f0162daff7be473",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/report_open_contribution.py.before",
+      "archive": "capsule-report_open_contribution.py.before.gz",
+      "raw_bytes": 28752,
+      "gzip_bytes": 7018,
+      "source_sha256": "7efbf4b43c621662d11ac29c4d1be0e1df74e7e78577289e74d4fb57d069e3da",
+      "gzip_sha256": "66a7c0e258af8f48802a96f05d7630e7dc78564026734a87e88ac8cfee84b88d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/report_open_contribution.py.candidate",
+      "archive": "capsule-report_open_contribution.py.candidate.gz",
+      "raw_bytes": 30499,
+      "gzip_bytes": 7315,
+      "source_sha256": "20eb3882296b89ccddf59f8436c40fae5b07822a47e1a80f4c957b50ecfd04e7",
+      "gzip_sha256": "4f8d6269e7923007cd5884d7f3b9f222acc5997e44fc671ae1c16d9fd8127536",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/test_journal_contribution_summary.py.candidate",
+      "archive": "capsule-test_journal_contribution_summary.py.candidate.gz",
+      "raw_bytes": 9116,
+      "gzip_bytes": 2339,
+      "source_sha256": "87c34887cd0c716c09ae19ab8e4ba06122a498868207c01d13a91ee1b121e604",
+      "gzip_sha256": "ad022a56be84f410e90fbe8bacc6bd0c903ff985699916ca1f4475cf48783f87",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "reviewed_source_no_credentials_snapshot_token_is_python_context_object"
+    },
+    {
+      "source": ".tmp/stage9-journal-contribution-candidate-source-20261004/withdrawal.json",
+      "archive": "capsule-withdrawal.json.gz",
+      "raw_bytes": 616,
+      "gzip_bytes": 378,
+      "source_sha256": "0a4848a6834f8ce179edcc91be219a645e8574b6fe3a471ec19bc67c2f49f05a",
+      "gzip_sha256": "dd2fea8776a194a838947f38a8ce3e760bf4bbaaa99c86e54df34b0eca85dfdd",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "source_or_analysis"
+    }
+  ],
+  "raw_bytes": 1624931,
+  "gzip_bytes": 264035,
+  "content_review": "Each JSON workload inspected by actual schema, SQL literal contents, counters, call names and guard hash values; each script/source parsed and reviewed. Synthetic paths/IDs retained. No result payloads, credentials, access tokens, PID, real private data or DB bytes. security_owner entries are SHA256 only; snapshot_token source variables are Python context objects.",
+  "production_frozen": false
+}

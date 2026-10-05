@@ -6,6 +6,7 @@ from test_banking import entry, funding, match, opening, reconciliation, stateme
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_funds import FundsRead
 from ai_accounting.kernel.entities import Entities
 
 
@@ -123,7 +124,15 @@ def test_dashboard_keeps_original_bank_rows_and_nests_whole_batch_recipients(boo
         *statements["items"],
         *following["data"]["collections"]["statements"]["items"],
     ]
-    assert [(row["reference"], row["signed_amount_fen"]) for row in rows] == [
+    assert [row["signed_amount_fen"] for row in rows] == [1000, -130, -170]
+    assert all(
+        not {"reference", "state", "source_check", "party_sources"} & row.keys() for row in rows
+    )
+    with dashboard._snapshot("2026-09") as snap:
+        read = FundsRead(snap)
+        read.bank_summary(page_request={"after": None, "limit": 10, "where": "1=1", "filters": []})
+        original_rows = read.shared_pages["statements"][0]
+    assert [(row["reference"], row["signed_fen"]) for row in original_rows] == [
         ("receipt", 1000),
         ("first", -130),
         ("second", -170),

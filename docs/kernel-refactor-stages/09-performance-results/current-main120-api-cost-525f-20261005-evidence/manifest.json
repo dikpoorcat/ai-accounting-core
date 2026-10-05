@@ -1,0 +1,374 @@
+{
+  "source_sha256": "525f02d6718561bb51b22b559b03b3dc6f2aea968eb9a3a13484a532c0cc1d9f",
+  "source_manifest_sha256": "23cf3745f887ec981bab163c6aa1594b6dda9b162bf1310c652677f8ac4db7c9",
+  "scope": "525f main120 instrumented API/profile/native-pool and one asset line-span diagnostic; not browser acceptance or old-host GC attribution",
+  "gzip_mtime": 0,
+  "representation": "Redacted JSON/logs retain failed states, samples and counters; private roots, auth and memory addresses removed; private guards canonical SHA. Helpers and pstats private original SHA only; full profile top/callers retained in JSON. No databases or source snapshot copies.",
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005.json",
+      "source_sha256": "2b464be7a37ac3e16f361aa93f4e53544a45e2b0f62eecb701ff1451dc696682",
+      "source_bytes": 20925,
+      "archive": "stage9-current-main120-api-cost-525f-20261005.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "9aad80d593b4936a77c95f2f5302f0bbf3dc73c8e7dababa15b3cb29870f34f2",
+      "redacted_bytes": 2485,
+      "gzip_sha256": "424839fc0db387671b62c414debf5cdc3f45d8a10f4dddca8b2767b4dc430e5c",
+      "gzip_bytes": 1349,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005.log",
+      "source_sha256": "02ee9269c11c8215929316a1e26ef7fcd14887eaaf4cdbafc6b406a7796dfa12",
+      "source_bytes": 1633,
+      "archive": "stage9-current-main120-api-cost-525f-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "e73cb00fa5346cc28a3290df40c23db017bfc2fd7214836b5f9b2a60ca39036c",
+      "redacted_bytes": 1579,
+      "gzip_sha256": "642a3e89de984574555bd861988b14c3a380745cd9b26a55124a5284d632777f",
+      "gzip_bytes": 652,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v2.json",
+      "source_sha256": "7d3fe970671cc6a47e7c3e56f2c53b22122be2561361296347b2c197931dd10b",
+      "source_bytes": 223347,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v2.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "aa2857a082b1b3d94f57e633e126858884f0b49ecd0f185adc8ebe6b52c4eec0",
+      "redacted_bytes": 199048,
+      "gzip_sha256": "456e5de06f41503d951b744ce615ebaeea5b2c6fe01f8957b15e693fe4857409",
+      "gzip_bytes": 20973,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v2.log",
+      "source_sha256": "df4c8a8db72fb835b7165ae471a6862a757b62b3237097ea0a242c4b6b752c26",
+      "source_bytes": 1371,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v2.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "bc4dde6da8c0fe84546b0281e655a1693e0839d3f05f487b8901ed6338658956",
+      "redacted_bytes": 1315,
+      "gzip_sha256": "eec5dfb782627d35d74504e7323a7b56c85eb34b0a271793b9c94621ef1977cb",
+      "gzip_bytes": 427,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3.json",
+      "source_sha256": "18c9a2cbf839f8483283a5d7593a76357dc3ce98f8f8e9bf7f04656d2fdea0c6",
+      "source_bytes": 4687844,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "90a85441a914391a7593679df2d8351ca77bf05301867601ddfe5a0fa863813d",
+      "redacted_bytes": 4451636,
+      "gzip_sha256": "ff5f2f0d0af2f207d5e9911e59cc059d735646f25256e453ceface8b11383d16",
+      "gzip_bytes": 482832,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3.log",
+      "source_sha256": "ff78f5cdde100f1c87c8127860db0cd8fea9319e7d29f3a3b557f1e82e53d2d9",
+      "source_bytes": 878,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "ff78f5cdde100f1c87c8127860db0cd8fea9319e7d29f3a3b557f1e82e53d2d9",
+      "redacted_bytes": 878,
+      "gzip_sha256": "c9b84661e1a9e7009082a5d809190760983b0f7e55a556c5c536ea325402a70d",
+      "gzip_bytes": 291,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-contract-smoke-first-failure.json",
+      "source_sha256": "4c920127f0e93b2fe62a6868bac1767e63237d8aff772d1a127914d26cc36257",
+      "source_bytes": 334,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-contract-smoke-first-failure.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "4c920127f0e93b2fe62a6868bac1767e63237d8aff772d1a127914d26cc36257",
+      "redacted_bytes": 334,
+      "gzip_sha256": "e0136482328c0acd0d7474b3b214548cf76c5859d4aeea97e725485613f0037e",
+      "gzip_bytes": 240,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-contract-smoke-r2.json",
+      "source_sha256": "8d558fe9923fddacc0a78f3d6b7728f5e8a33c126dba1646ee930ef5d53f298d",
+      "source_bytes": 2168,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-contract-smoke-r2.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "8d558fe9923fddacc0a78f3d6b7728f5e8a33c126dba1646ee930ef5d53f298d",
+      "redacted_bytes": 2168,
+      "gzip_sha256": "6d16bea9ac42ff080bf05d2440210accdb4792e49088231cc2119d7ef15ea578",
+      "gzip_bytes": 540,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-main120-asset-accounting-line-525f-20261005.json",
+      "source_sha256": "3a2dd0d8bd42cd66ff9e39a84628a796b9fe006ec4fbc167343c7e99084defb4",
+      "source_bytes": 79118,
+      "archive": "stage9-main120-asset-accounting-line-525f-20261005.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "a5915eacbdd017851dabf77417f8ce0a1fc0ede48fe28c08557ba6e1fd5fbbaa",
+      "redacted_bytes": 57027,
+      "gzip_sha256": "69019d559283779449ae5c9d81b084870e0cdd93918968f6e2f544ff8d56e6b4",
+      "gzip_bytes": 6553,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-main120-asset-accounting-line-525f-20261005.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "archive": "stage9-main120-asset-accounting-line-525f-20261005.log.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "redacted_bytes": 0,
+      "gzip_sha256": "a542e35d0ee8f57176398724659615266963d1b9a9850d7c20d7257fa1614f08",
+      "gzip_bytes": 20,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-current-brief-raw.json",
+      "source_sha256": "4d3a56403619a435a87fbe7960f3764a65e45a51f3bb9835b2da6f5dda598c69",
+      "source_bytes": 180488,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-current-brief-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "40b9a0344ce555852dd63afccba8154a5379bcc99e313a1b549f3cb6dc36290e",
+      "redacted_bytes": 180378,
+      "gzip_sha256": "aea3fcd73910b8e9550f2e278d6c3c8cc2bd240ee07f07889fa0b93c1b1ab111",
+      "gzip_bytes": 27108,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-current-funds-raw.json",
+      "source_sha256": "583729a72abca8c81bdda4c3fa535d15780564e631858fb7e4c6fd97759be207",
+      "source_bytes": 161020,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-current-funds-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "a22b45c49c2802a733d35459da5a88330807b00f52de4c5f8876e537d70ac6e0",
+      "redacted_bytes": 160910,
+      "gzip_sha256": "19005dd2a0612c0f2204fd1c6886bc27b37962b2c5ee8b0c54766c08c1d74717",
+      "gzip_bytes": 27095,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-current-employees-raw.json",
+      "source_sha256": "9d7ae88c62afb9a6328eb06463722551d0604430a662f5101f27a0ec67db6ca4",
+      "source_bytes": 111509,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-current-employees-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "678be01ecaa13a9fae0567a731317de0219cc9226f00757d6968354448e5fb09",
+      "redacted_bytes": 111399,
+      "gzip_sha256": "c0a3b00fe029c5bd9916c2f20f6a0d435eb41a51c8cd627bd9126f646c8e9e30",
+      "gzip_bytes": 18781,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-current-assets-raw.json",
+      "source_sha256": "a0c396519066069b5778dd33e312040f0759182f6b065cfbec5818a53739f0b7",
+      "source_bytes": 142621,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-current-assets-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "2a8e8c240beb4899a6c433c1082da1cd041671bab0c0074e39f64b7a5a7c422c",
+      "redacted_bytes": 142511,
+      "gzip_sha256": "be69c35a22ef8c9436629ce158df92f1dabe060d09612311a27582c6fedf80d7",
+      "gzip_bytes": 24037,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-current-quarterly_report-raw.json",
+      "source_sha256": "2b9f90d519992ccee6872f71e86c4ba51f1db9a123d1ee211f8b5a9a51deb51e",
+      "source_bytes": 119372,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-current-quarterly_report-raw.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "b5029153b15642be038c07f241bf45aef6b08b3a63ed0886d994be96b9b3c2ee",
+      "redacted_bytes": 119262,
+      "gzip_sha256": "b988a4361b54bd620fdc62f44cd55c25f800dd785c7bfc670d139fda2e228360",
+      "gzip_bytes": 20089,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-brief-profile.json",
+      "source_sha256": "dd68a82255f6a6e9fbe4962f9d53ed2adc71c477e7755dd947fe7a14eeb8afc4",
+      "source_bytes": 637373,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-brief-profile.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "7b5687a9fd6fdb2183ca483c69d1c3cc37ea24658fee502084a7ab6f96d82726",
+      "redacted_bytes": 615032,
+      "gzip_sha256": "35d476e3c610cf21d1cb88930a88b938f92a3c63c9289b5efeff21fc1220ca54",
+      "gzip_bytes": 65093,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-funds-profile.json",
+      "source_sha256": "14bb93314ca2fbdd92ef4a477d40425793c649fd094e65c40494c974db4eef98",
+      "source_bytes": 540665,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-funds-profile.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "e35832f25471a616927c32ecb4148b30ad573cd38c9c57d6dea5f7e6a7f78758",
+      "redacted_bytes": 520874,
+      "gzip_sha256": "923ba98b98329c01f0476942d4d846fed288539f719f47964acb3f044d6fa8e7",
+      "gzip_bytes": 55622,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-employees-profile.json",
+      "source_sha256": "1ad1d1df38ba9dfd7ffb61b547ffb5eb407fc4d1e3b74d44905a0439d0c30348",
+      "source_bytes": 397201,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-employees-profile.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "a6c209802a2f26daf2cf5c20a96d4b029054b3b3631daf9695c78a5a3428784f",
+      "redacted_bytes": 382881,
+      "gzip_sha256": "0f50a1df7c5c580f41ac42b4a051adbaf808966cb958e30edd1690bcd2d1643b",
+      "gzip_bytes": 40931,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-assets-profile.json",
+      "source_sha256": "b41c6454821b945ff30ab98f46f0ceb5689e56ae7c5ea7da487012d5e100d700",
+      "source_bytes": 594445,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-assets-profile.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "915274f0e34900b21b52cecf5effbe915be21471c7b9b6146a860ab4323872e2",
+      "redacted_bytes": 571887,
+      "gzip_sha256": "a3403758112817f872dd833151876af3442569b75f1538890add0dadc3cdad6f",
+      "gzip_bytes": 60388,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-quarterly_report-profile.json",
+      "source_sha256": "b230487fc63dcc9795ba083170725e6fae2ae3e5e07ab6ebf9406426aa053688",
+      "source_bytes": 483648,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-quarterly_report-profile.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "6ee01140ae28039e2222b9c9a0813edfb98a2d6684a4cf38887a78e7fa843bd2",
+      "redacted_bytes": 465750,
+      "gzip_sha256": "12be9a68b8b2d6c27583947cb5d2f17a7e762932952185dbd24d17df03fcfe68",
+      "gzip_bytes": 49643,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-funds-http.json",
+      "source_sha256": "00d7dae3fce0d6464e5f4e6b08b46eac2a6fcf2724b8409112faa9cafcff21d0",
+      "source_bytes": 83682,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-funds-http.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "dfbf63c5f2a1c685bc94d7f418f7cb434009bf19a58bf453af6303ad48ad684b",
+      "redacted_bytes": 83536,
+      "gzip_sha256": "d133ce1a7acec0ec3c659ab26feb9335006e20d3c57c4783a58f8e09c824eac0",
+      "gzip_bytes": 9504,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-employees-http.json",
+      "source_sha256": "205ba9b1a0f8e8ac52489937076abb917bfa165b55e355876e4c8e88295fe7a0",
+      "source_bytes": 81495,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-employees-http.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "603f5f805e20c0956c451c59c5d18508ad5030d27cc51a739c051eb05e43092a",
+      "redacted_bytes": 81349,
+      "gzip_sha256": "7bbfa0144238784c8c5a496a3adbb971ca10053aef93a3d0b28d3e5efbfd23f0",
+      "gzip_bytes": 8267,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-assets-http.json",
+      "source_sha256": "87aa4657c26b6b5fde75351e4121529344eca645f1f753cf6bcc75063bb734de",
+      "source_bytes": 79122,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-assets-http.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "aa2786c1865559d1b8e9dbd80c169e9960d05d35bab13635943fd55b7ba23b65",
+      "redacted_bytes": 78976,
+      "gzip_sha256": "34d158312dfb5e277fa525bdb43905685395847f2eea97a8b524ac4280789f24",
+      "gzip_bytes": 8259,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-quarterly_report-http.json",
+      "source_sha256": "c619d0b2978f26dd484b991a3fea0673f3f6fdba15ae9e6784e9c5fb303195e6",
+      "source_bytes": 84372,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v3-quarterly_report-http.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "1cc5f2836824524967f4f1323546045e351a0ba9bdeb15cf656b2a0678980cbe",
+      "redacted_bytes": 84226,
+      "gzip_sha256": "58a1813f20c6528ccb6f2b11dd4f0460a57762ebde16bc63add10b1f5819307d",
+      "gzip_bytes": 8786,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v2-brief-http.json",
+      "source_sha256": "c05392ab471b0fc760bb03568b39557ac3acb03bc42c347a3a51c5012781fa14",
+      "source_bytes": 131501,
+      "archive": "stage9-current-main120-api-cost-525f-20261005-v2-brief-http.json.gz",
+      "representation": "redacted_analysis",
+      "redacted_sha256": "dc4a76a6cbabeee9d164f5d6b593654867588a5806c09fbc797ff74fdaa7d814",
+      "redacted_bytes": 131355,
+      "gzip_sha256": "9b1bba0ed001c8167c355b203a917604bdb2a520fd55e7947b35eda6623e5186",
+      "gzip_bytes": 12840,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005.py",
+      "source_sha256": "353a3f0685f43f56387fb741fda3f5d4e721387ffc3f21860be05f0649ce5e15",
+      "source_bytes": 27170,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v2.py",
+      "source_sha256": "c5c064c470b80ecd1482d7af4abafb5759a616c999091b58e103dbd416530ecf",
+      "source_bytes": 28206,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3.py",
+      "source_sha256": "c81a33aa7a2d30d4708d3fd362e64c6543798a223514420b03753d595b7a1c66",
+      "source_bytes": 29747,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-main120-asset-accounting-line-525f-20261005.py",
+      "source_sha256": "6288ef085e23b3c774ad3607b346bcd86c5bd7cb6abfaea3d104af610d363435",
+      "source_bytes": 10198,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-brief.pstats",
+      "source_sha256": "fcfa0a2e99b0a7fd37368a1b18923281775aa63781657ea98e59bca92cd97d33",
+      "source_bytes": 149001,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-funds.pstats",
+      "source_sha256": "82becfa8b0d28d3c0dc7ee27d366869b6017dadc3ad2a04c76d579429e60b73c",
+      "source_bytes": 121759,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-employees.pstats",
+      "source_sha256": "ada5886a8bbdf7dd5578d91a81b0565d4a559411080525cf133bf2cf03d10141",
+      "source_bytes": 97894,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-assets.pstats",
+      "source_sha256": "0d357d4fdf22bf670f98cb7dc41029243b0ebbd3eef26a63e30e8d8e46505438",
+      "source_bytes": 133529,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    },
+    {
+      "private_source_path": ".tmp/stage9-current-main120-api-cost-525f-20261005-v3-quarterly_report.pstats",
+      "source_sha256": "b952ae52bf9efa5915dfda871c4306b2b13ba4d044fd98edc88b7ca026a9e6b6",
+      "source_bytes": 110086,
+      "representation": "private_source_sha_only",
+      "reason": "helper may contain private authentication; pstats contains private source paths; retained in ignored originals"
+    }
+  ]
+}

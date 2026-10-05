@@ -1,0 +1,108 @@
+{
+  "source_sha256": "1836585b091d79999bce32980a42ed919246449d7f493593633cf4cbd0768459",
+  "scope": "38 actual independent AI read-only production MCP calls; 3 initialize and 3 list_tools separately",
+  "tool_response_status_counts": {
+    "no_top_level_status": 23,
+    "ready": 2,
+    "blocked": 1,
+    "needs_information": 1,
+    "rejected": 6,
+    "committed": 2,
+    "unknown": 3
+  },
+  "tool_rejection_code_counts": {
+    "dashboard_snapshot_changed": 4,
+    "fact_cursor_stale": 1,
+    "invalid_command": 1
+  },
+  "valid_business_or_query_responses": 32,
+  "expected_cursor_denials": 5,
+  "invalid_command_invocation_mistakes": 1,
+  "safety_review": "Original receipt, full structured actual tool transcript and selected-read stdout individually inspected. PID values and private owner approval/confirmation/review objects removed; explicitly labelled analyses retain original path/SHA. Public company IDs, accounting source/build hashes and query results retained. No private passwords, capability/token/key values, SID/SDDL or native-actor commands published. No helpers, whole module inventories, databases or ZIPs archived.",
+  "private_retained_failure_references": [
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\helper-original-failure.json",
+      "original_sha256": "c76e5618571f8836bc5acf6cd4dfef079be6f55ab9c12915b101292304d59777",
+      "published": false
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\receipt-original-failure.json",
+      "original_sha256": "b4d1c48bc5a6cb61589854ae0450aaf79b764520aa5270b3393183e314df1cc7",
+      "published": false
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\resume-business-status.json",
+      "original_sha256": "1a350fffba0e7617df46a50e36a04038ab0458ee96c78c3e00a4b3cf6b6f03e3",
+      "published": false
+    }
+  ],
+  "artifacts": [
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\receipt.json",
+      "original_sha256": "8deb9e524a265ffe96354b4896e203e232890c45d46d877ff213a75962fbb9bf",
+      "original_bytes": 7417,
+      "archive": "receipt.json-redacted-analysis.json.gz",
+      "archive_sha256": "98df13f4382c52eaae853a64acd7069cf7a418a8be5ba97c29bda1a442d8741d",
+      "archive_bytes": 2794,
+      "analysis_sha256": "83576c483154dc2063533aef3c67f9aef05f6561cceba618dd921efcec634ea6",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/current_package/host_pid",
+        "/current_package/previous_host_pid",
+        "/interruption/before/host_pid",
+        "/interruption/after/host_pid",
+        "/owned_exit/host_pids",
+        "/owned_exit/pass1/host_pid",
+        "/owned_exit/pass2/host_pid"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\transcript.jsonl",
+      "original_sha256": "c96cf80d13e2ec76848003cf638a9f273ea6d4ed190283cd60034257dd4cd819",
+      "original_bytes": 1549171,
+      "archive": "transcript.jsonl-redacted-analysis.json.gz",
+      "archive_sha256": "aa817b8c18a76e4f0b31df33ee1584e1d8d9cc78121e31c8ab7574d5053ae98f",
+      "archive_bytes": 205714,
+      "analysis_sha256": "681ca72b5c0dbf75696031d6e788cfea445dae97cf30bc888ab822ee11f91e84",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/0/response/command_schemas/preview_close/properties/owner_confirmation",
+        "/0/response/command_schemas/close/properties/owner_confirmation",
+        "/0/response/command_schemas/close/properties/approval_id",
+        "/0/response/command_schemas/preview_replay_close_range/properties/owner_confirmation",
+        "/0/response/command_schemas/confirm_replay_close_range/properties/owner_confirmation",
+        "/0/response/response_schemas/dashboard_brief/$defs/BriefData/properties/owner_review_request",
+        "/0/response/response_schemas/dashboard_close_review/properties/owner_review",
+        "/0/response/replay_close_contract/authorization_method",
+        "/0/response/replay_close_contract/scope_schema/$defs/ReplayTarget/properties/owner_confirmation",
+        "/14/response/approval",
+        "/14/response/owner_confirmation",
+        "/14/response/owner_review",
+        "/36/response/approval",
+        "/36/response/owner_confirmation",
+        "/36/response/owner_review"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    },
+    {
+      "original_path": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-current-two-group-mcp-read-20261004\\selected-reads-output.jsonl",
+      "original_sha256": "dc29c0b1ef029b058f9a5577a495098050863217b1c1bd3806a38509ca797fc9",
+      "original_bytes": 113595,
+      "archive": "selected-reads-output.jsonl-redacted-analysis.json.gz",
+      "archive_sha256": "3925d1d3158e3635b4bc04a51d3151a20cbd3487be1a6e22aa35824c02394b8c",
+      "archive_bytes": 19860,
+      "analysis_sha256": "b0088dcde46f1b9cc5d004add9ee26553245f1812eec594c874e8cef5b5b676b",
+      "representation": "redacted_analysis_not_original_receipt",
+      "redacted_paths": [
+        "/12/data/approval",
+        "/12/data/owner_confirmation",
+        "/12/data/owner_review"
+      ],
+      "gzip_mtime": 0,
+      "roundtrip_equal": true
+    }
+  ]
+}

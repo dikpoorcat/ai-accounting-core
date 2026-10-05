@@ -366,14 +366,19 @@ def _closed_report_fact_sources(connection, end, reads=None, *, closes=None, ret
             "SELECT * FROM period_close WHERE period<=? ORDER BY period", (end.ordinal,)
         ).fetchall()
     )
+    selected = tuple(selected)
+    financial_checks = (
+        reads.close_readiness_checks_many(selected, "financial_reports")
+        if reads is not None else None
+    )
     sources = []
-    for close in selected:
+    for index, close in enumerate(selected):
         if reads is None:
             reader = close_reader()
             header = reader.verified_header(connection, close, require_marker=True)
             financial = reader.read_readiness_check(connection, header, "financial_reports")
         else:
-            financial = reads.close_readiness_check(close, "financial_reports")
+            financial = financial_checks[index]
         fact_ids = financial.get("facts", []) if isinstance(financial, dict) else None
         if not isinstance(fact_ids, list) or any(
             type(ident) is not str or not ident for ident in fact_ids
@@ -505,13 +510,28 @@ def _unfrozen_voucher_ids(connection, year_start, end, frozen_flows, *, historic
 def _has_open_publication(connection, cutoff):
     # Seek from one actual posting month to the next. A later close does not
     # stand in for an exact close here; retain the original per-month test.
-    return bool(connection.execute(
+    published = bool(connection.execute(
         "WITH RECURSIVE months(period) AS ("
         "SELECT min(posting_period) FROM calculation_publication WHERE posting_period<=? "
         "UNION ALL SELECT (SELECT min(posting_period) FROM calculation_publication "
         "WHERE posting_period>m.period AND posting_period<=?) FROM months m "
         "WHERE m.period IS NOT NULL) SELECT 1 FROM months m WHERE m.period IS NOT NULL "
         "AND NOT EXISTS(SELECT 1 FROM period_close c WHERE c.period=m.period) LIMIT 1",
+        (cutoff, cutoff),
+    ).fetchone())
+    if published:
+        return True
+    # A missing publication cannot switch a real open voucher to the closed
+    # report lane. Its original source proof will reject the missing record.
+    return bool(connection.execute(
+        "WITH RECURSIVE months(period) AS ("
+        "SELECT min(period) FROM voucher_version WHERE period<=? UNION ALL "
+        "SELECT (SELECT min(period) FROM voucher_version "
+        "WHERE period>m.period AND period<=?) FROM months m WHERE m.period IS NOT NULL) "
+        "SELECT 1 FROM months m WHERE m.period IS NOT NULL "
+        "AND NOT EXISTS(SELECT 1 FROM period_close c WHERE c.period=m.period) "
+        "AND EXISTS(SELECT 1 FROM voucher_version v INDEXED BY voucher_period "
+        "JOIN voucher_current a ON a.version_id=v.id WHERE v.period=m.period) LIMIT 1",
         (cutoff, cutoff),
     ).fetchone())
 
@@ -579,15 +599,38 @@ def _validated_report_classification_headers(
 ):
     """Validate selected headers and every normalized child against exact lines."""
     before = len(problems)
-    headers, conflicts = {}, set()
-    for row in connection.execute(
+    cache = (
+        reads._report_snapshot_cache
+        if reads._snapshot_active and reads.connection is connection and connection.in_transaction
+        else None
+    )
+    references = set(references)
+    header_cache = (
+        cache.get("report_classification_scalar_headers", {}) if cache is not None else {}
+    )
+    missing = references - header_cache.keys()
+    loaded_headers = list(connection.execute(
         "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period,"
         "f.period AS fact_period,f.digest AS fact_digest "
         "FROM json_each(?) ids CROSS JOIN fact_report_classification c ON c.revision_id=ids.value "
         "LEFT JOIN voucher_version v ON v.id=c.voucher_version_id "
         "LEFT JOIN fact_revision f ON f.id=c.revision_id",
-        (canonical(sorted(references)),),
-    ):
+        (canonical(sorted(missing)),),
+    )) if missing else []
+    selected_headers = {row["revision_id"]: row for row in loaded_headers}
+    selected_headers.update(
+        (ident, header_cache[ident]) for ident in references & header_cache.keys()
+    )
+    rows = [selected_headers[ident] for ident in sorted(selected_headers)]
+
+    def remember_headers():
+        if cache is not None and len(problems) == before:
+            cache.setdefault("report_classification_scalar_headers", {}).update(
+                (row["revision_id"], row) for row in loaded_headers
+            )
+
+    headers, conflicts = {}, set()
+    for row in rows:
         key = row["voucher_version_id"]
         if key in headers or key in conflicts:
             problems.append(
@@ -604,11 +647,6 @@ def _validated_report_classification_headers(
     if not headers:
         return {}
 
-    cache = (
-        reads._report_snapshot_cache
-        if reads._snapshot_active and reads.connection is connection
-        else None
-    )
     cache_key = ("report_classification_validated_references", end.ordinal, source)
     verified = cache.get(cache_key, frozenset()) if cache is not None else frozenset()
     # Always detect conflicts in the complete requested set above. Only the
@@ -623,6 +661,7 @@ def _validated_report_classification_headers(
         key: row for key, row in pending.items() if row["revision_id"] not in covered
     }
     if not pending:
+        remember_headers()
         return headers
     candidates = set(pending)
     candidates.update(
@@ -701,6 +740,7 @@ def _validated_report_classification_headers(
                 )
     if cache is not None and len(problems) == before:
         cache[cache_key] = verified | {row["revision_id"] for row in pending.values()}
+    remember_headers()
     return headers
 
 
@@ -802,9 +842,7 @@ def _verify_report_fact_sources(connection, reads, identifiers):
     )
     missing = identifiers - verified
     if missing:
-        from .integrity import verify_sources
-
-        verify_sources(reads.engine, connection, fact_ids=missing)
+        reads.verify_fact_versions(missing)
         if cache is not None:
             verified.update(missing)
 
@@ -1049,9 +1087,11 @@ class Reports:
         with manager as connection:
             if not external_connection:
                 connection.execute("BEGIN")
-            from .query_reads import QueryReads
+            from .query_reads import QueryReads, _owns_current_selector_snapshot
 
             reads = reads or QueryReads(self.engine, connection)
+            if source == "open" and not _issues_only:
+                reads.verify_open_voucher_scope(end.ordinal)
             cache = self._cache(reads, connection)
             epochs = self.store.epochs(connection)
             identity = dict(connection.execute("SELECT * FROM identity WHERE id=1").fetchone())
@@ -1160,12 +1200,17 @@ class Reports:
                 problems.append(issue("bookkeeping_start", "报表期间早于明确建账月"))
             if source == "closed":
                 problems.extend(_closed_period_issues(closes, book_start, year_start, end))
-            unknown_accounts = set(
-                _account_totals(connection, end.ordinal, source, (), reads=reads)
-            ) - (_POSITION_ACCOUNTS)
-            from .report_projection import party_balance_rows
+            end_account_totals = _account_totals(
+                connection, end.ordinal, source, (), reads=reads
+            )
+            # With a frozen baseline, these totals do not depend on the later
+            # opening rows. Retain this call's verified result only in its
+            # current owned snapshot; the no-close path still reads opening.
+            reuse_end_totals = bool(closes) and _owns_current_selector_snapshot(reads, connection)
+            unknown_accounts = set(end_account_totals) - (_POSITION_ACCOUNTS)
+            from .report_projection import _party_balance_position_lines
 
-            party_balances = None
+            party_position_lines = None
             if not unknown_accounts:
 
                 def cached_party_balance(cutoff):
@@ -1176,10 +1221,10 @@ class Reports:
                             cache[open_key] = _has_open_publication(connection, cutoff)
                         if not cache[open_key]:
                             effective = "closed"
-                    key = ("party_balance", cutoff, effective)
+                    key = ("party_balance_position_lines", cutoff, effective)
                     if cache is not None and key in cache:
                         return cache[key]
-                    result = party_balance_rows(
+                    result = _party_balance_position_lines(
                         self.engine, connection, cutoff, source=effective, reads=reads
                     )
                     if cache is not None and result is not None:
@@ -1189,14 +1234,14 @@ class Reports:
                 start_parties = cached_party_balance(year_start.ordinal - 1)
                 end_parties = cached_party_balance(end.ordinal)
                 if start_parties is not None and end_parties is not None:
-                    party_balances = {
+                    party_position_lines = {
                         year_start.ordinal - 1: start_parties,
                         end.ordinal: end_parties,
                     }
             from .report_flow import read_report_flow
 
             frozen_flows = {}
-            if party_balances is not None and not unknown_accounts:
+            if party_position_lines is not None and not unknown_accounts:
                 for month in sorted(closes):
                     if year_start.ordinal <= month <= end.ordinal:
                         flow = read_report_flow(connection, month, reads=reads)
@@ -1210,7 +1255,7 @@ class Reports:
                 year_start.ordinal,
                 end.ordinal,
                 frozen_flows,
-                historical_accounts=historical_accounts if party_balances is None else None,
+                historical_accounts=historical_accounts if party_position_lines is None else None,
             )
             # The open party balance has already selected every authoritative
             # line of this exact month in this snapshot. Its cache entry is
@@ -1221,7 +1266,7 @@ class Reports:
                 cache.get(("report_open_source_rows", end.ordinal))
                 if cache is not None
                 and source == "open"
-                and party_balances is not None
+                and party_position_lines is not None
                 and end.ordinal not in closes
                 and end.ordinal not in frozen_flows
                 else None
@@ -1246,7 +1291,7 @@ class Reports:
             # posting year's flows retain their immutable classification sources.
             row_filter = (
                 "v.period>=? AND l.account IN (SELECT value FROM json_each(?))"
-                if party_balances is not None
+                if party_position_lines is not None
                 else "(v.period>=? AND l.account IN (SELECT value FROM json_each(?))) OR "
                 "l.account IN (SELECT value FROM json_each(?)) OR "
                 "l.account NOT IN (SELECT value FROM json_each(?))"
@@ -1268,7 +1313,7 @@ class Reports:
                 year_start.ordinal,
                 canonical(sorted(CASH_ACCOUNTS | set(PROFIT_ACCOUNTS))),
             ]
-            if party_balances is None:
+            if party_position_lines is None:
                 params.extend((canonical(sorted(RECLASS)), canonical(sorted(_POSITION_ACCOUNTS))))
             rows = [dict(r) for r in connection.execute(sql, params)]
             if reused_open_rows is not None:
@@ -1621,7 +1666,10 @@ class Reports:
                 problems.append(issue("opening_package", "接续报表所采用的期初总清单尚未正式发布"))
             rows.extend(opening_rows)
             totals = {
-                cutoff: _account_totals(
+                cutoff: dict(end_account_totals)
+                if cutoff == end.ordinal and reuse_end_totals
+                and _owns_current_selector_snapshot(reads, connection)
+                else _account_totals(
                     connection,
                     cutoff,
                     source,
@@ -1638,7 +1686,7 @@ class Reports:
                 end.ordinal,
                 problems,
                 account_balances=totals,
-                party_balances=party_balances,
+                party_position_lines=party_position_lines,
                 frozen_flows=frozen_flows,
             )
             carry = None
@@ -1913,97 +1961,6 @@ class Reports:
             carry_forward_fact_id=carry_forward_fact_id,
         )
 
-    def browser_report_details(self, plan, closed, *, connection=None, reads=None):
-        """Describe the sources actually used without changing the frozen report plan."""
-        external_connection = connection is not None
-        if reads is not None and (
-            not external_connection
-            or reads.store is not self.store
-            or reads.connection is not connection
-            or not reads._snapshot_active
-            or not connection.in_transaction
-        ):
-            raise ValueError("browser report reads belong to another snapshot")
-        manager = (
-            nullcontext(connection)
-            if external_connection
-            else self.store.connection(read_only=True)
-        )
-        with manager as connection:
-            if not external_connection:
-                connection.execute("BEGIN")
-            from .query_reads import QueryReads
-
-            reads = reads or QueryReads(self.engine, connection)
-            # These are the only two source counts used by this projection.
-            # Keep authoritative subject kinds and exact plan membership, but
-            # avoid grouping every historical source into unused categories.
-            classification_count, tax_confirmation_count = connection.execute(
-                "SELECT count(*) FILTER (WHERE s.kind=?),"
-                "count(*) FILTER (WHERE s.kind=?) FROM json_each(?) ids "
-                "JOIN fact_revision f INDEXED BY fact_id_subject_cover ON f.id=ids.value "
-                "JOIN subject s INDEXED BY subject_id_kind_cover ON s.id=f.subject_id",
-                (ReportClassification.kind, ReportIncomeTaxConfirmation.kind,
-                 canonical(plan["report_fact_ids"])),
-            ).fetchone()
-            source = plan.get("opening_source")
-            choices = []
-            if source:
-                rows = connection.execute(
-                    "SELECT f.id FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
-                    "WHERE s.kind='report_carry_forward' AND f.period=? "
-                    "ORDER BY f.subject_id,f.revision",
-                    (YearMonth(source["period"]).ordinal,),
-                )
-                identifiers = [row[0] for row in rows]
-                _verify_report_fact_sources(connection, reads, identifiers)
-                versions = reads.fact_versions(identifiers)
-                for ident in identifiers:
-                    fact = versions[ident]
-                    if fact.fact.opening_package_id != source["subject_id"]:
-                        continue
-                    choices.append(
-                        {
-                            "fact_id": fact.id,
-                            "subject_id": fact.subject_id,
-                            "revision": fact.revision,
-                            "period": str(fact.fact.period),
-                            "label": (
-                                f"资料 {len(choices) + 1} · {fact.fact.period} "
-                                f"· 第 {fact.revision} 版"
-                            ),
-                            "evidence_count": len(fact.evidence),
-                            "used": fact.id in plan["report_fact_ids"],
-                        }
-                    )
-            issue_vouchers = reads.vouchers(
-                {
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT id FROM voucher_version WHERE id IN "
-                        "(SELECT json_extract(value,'$.voucher_version_id') FROM json_each(?))",
-                        (canonical(plan["fact_issues"]),),
-                    )
-                }
-            )
-            issues = []
-            for issue in plan["fact_issues"]:
-                item = dict(issue)
-                if item.get("voucher_version_id"):
-                    voucher = issue_vouchers.get(item["voucher_version_id"])
-                    if voucher:
-                        item["voucher_number"] = voucher["number"]
-                        item["period"] = str(YearMonth.from_ordinal(voucher["period"]))
-                issues.append(item)
-        return {
-            "carry_forward_options": choices,
-            "classification_count": classification_count,
-            "income_tax_confirmation_count": tax_confirmation_count,
-            "issues": issues,
-            "close_state": "open"
-            if any(item["field"] in {"period", "closed_periods"} for item in closed["fact_issues"])
-            else "closed",
-        }
 
     def browser_job_results(self, jobs):
         """Expose a download only after the same checks used for file delivery."""
@@ -2601,6 +2558,7 @@ def _statements(
     *,
     account_balances=None,
     party_balances=None,
+    party_position_lines=None,
     frozen_flows=None,
 ):
     def balance(as_of):
@@ -2608,7 +2566,7 @@ def _statements(
             totals = account_balances[as_of]
             if totals is None:
                 return {line: None for line in range(1, 54)}
-            selected = (
+            selected = [] if party_position_lines is not None else (
                 list(party_balances[as_of])
                 if party_balances is not None
                 else [
@@ -2625,7 +2583,12 @@ def _statements(
             )
         else:
             selected = (row for row in rows if row["period"] <= as_of)
-        position = classify_financial_position(selected)
+        position = classify_financial_position(
+            selected,
+            _net_party_lines=(
+                party_position_lines[as_of] if party_position_lines is not None else None
+            ),
+        )
         problems.extend(position["issues"])
         return position["lines"]
 

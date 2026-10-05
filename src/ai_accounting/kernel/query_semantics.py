@@ -883,8 +883,15 @@ def resolve_line_parties(
     return {**resolution, "line_parties": lines}
 
 
-def classify_financial_position(rows: Iterable[Mapping[str, Any]]) -> dict:
-    """Classify signed account rows after netting each (account, stable party key)."""
+def classify_financial_position(
+    rows: Iterable[Mapping[str, Any]], *, _net_party_lines: Mapping[int, int] | None = None
+) -> dict:
+    """Classify signed account rows after netting each (account, stable party key).
+
+    The private statement input contains only mapped amounts from the verified
+    report reader after that exact netting; unresolved rows keep their normal
+    validation and unknown propagation below.
+    """
 
     direct: dict[str, int] = defaultdict(int)
     parties: dict[tuple[str, Hashable], int] = defaultdict(int)
@@ -955,9 +962,18 @@ def classify_financial_position(rows: Iterable[Mapping[str, Any]]) -> dict:
         for party, part in normalized:
             parties[(account, party)] += part
 
-    result: dict[int, int | None] = {line: 0 for line in range(1, 54)}
+    party_lines = defaultdict(int, _net_party_lines or {})
     for (account, _party_key), amount in parties.items():
-        result[RECLASS[account][0 if amount >= 0 else 1]] += abs(amount)
+        party_lines[RECLASS[account][0 if amount >= 0 else 1]] += abs(amount)
+    return _financial_position_totals(direct, party_lines, unknown_lines, unknown_account, issues)
+
+
+def _financial_position_totals(direct, party_lines, unknown_lines, unknown_account, issues):
+    """Share the unchanged totals and unknown propagation for both exact readers."""
+
+    result: dict[int, int | None] = {line: 0 for line in range(1, 54)}
+    for line, amount in party_lines.items():
+        result[line] += amount
     for account, amount in direct.items():
         if account in CASH_ACCOUNTS:
             result[1] += amount

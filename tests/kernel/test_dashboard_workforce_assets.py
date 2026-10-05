@@ -18,6 +18,7 @@ from test_reimbursement_assets import pay as asset_payment
 
 import ai_accounting.kernel.dashboard as dashboard_module
 from ai_accounting.kernel.asset_batches import AssetBatches
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard, _project_cost_balances
 from ai_accounting.kernel.dashboard_reads import adopted_head_metadata
@@ -26,35 +27,25 @@ from ai_accounting.kernel.domains.labor_assets import LaborProjectCost
 from ai_accounting.kernel.domains.opening import OpeningPayrollPayable
 from ai_accounting.kernel.domains.payroll import LaborAccrual
 from ai_accounting.kernel.domains.transactions import Allocation
-from ai_accounting.kernel.response_contracts import http_response, validate_response
+from ai_accounting.kernel.response_contracts import (
+    RESPONSE_ADAPTERS,
+    http_response,
+    validate_response,
+)
 
 company, labor_book, asset_book = _company, _labor_book, _asset_book
 opening_book = _opening_book
 
 
-def settlement_events(dashboard, response, period, employee_id):
-    return dashboard.employees(
-        period,
-        section="settlement_events",
-        employee_id=employee_id,
-        expected_version=response["snapshot_version"],
-    )["data"]["collections"]["settlement_events"]["items"]
-
-
-def payroll_sources(dashboard, response, period, employee_id):
-    return dashboard.employees(
-        period,
-        section="payroll_sources",
-        employee_id=employee_id,
-        expected_version=response["snapshot_version"],
-    )["data"]["collections"]["payroll_sources"]["items"]
+def source_status(dashboard, subject, period):
+    return BusinessQueries(dashboard.engine).business_status(subject, period)
 
 
 def test_employee_line_scope_preserves_open_and_closed_responses(company, monkeypatch):
     company.publish("january", "february")
     company.close("2026-01")
     dashboard = Dashboard(company.engine)
-    original = dashboard_module.payroll_head_metadata
+    original = dashboard_module.payroll_list_head_metadata
     observed = []
 
     def scoped(snap, kinds, *, line_count_period=None):
@@ -63,9 +54,9 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
         return heads
 
     for period in ("2026-01", "2026-02"):
-        monkeypatch.setattr(dashboard_module, "payroll_head_metadata", scoped)
+        monkeypatch.setattr(dashboard_module, "payroll_list_head_metadata", scoped)
         response = dashboard.employees(
-            period, employee_id="employee", section="payroll_sources", preparation="deferred"
+            period, employee_id="employee", section="employees", preparation="deferred"
         )
         assert observed[-1][1] == period
         assert all(
@@ -80,32 +71,28 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
         )
         monkeypatch.setattr(
             dashboard_module,
+            "payroll_list_head_metadata",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            dashboard_module,
             "payroll_head_metadata",
             lambda snap, kinds, *, line_count_period=None: adopted_head_metadata(snap, kinds),
         )
         complete = dashboard.employees(
-            period, employee_id="employee", section="payroll_sources", preparation="deferred"
+            period, employee_id="employee", section="employees", preparation="deferred"
         )
         assert response == complete
 
 
-def test_payroll_source_cards_follow_selected_page_order(company, monkeypatch):
+@pytest.mark.parametrize("section", ["payroll_sources", "settlement_events"])
+def test_removed_employee_history_sections_are_rejected(company, section):
     company.publish("january", "february")
-    original = dashboard_module.Calculations.selected
-
-    def reversed_selected(self, *, kinds=None, subjects=None, posting_period=None):
-        selected = original(
-            self, kinds=kinds, subjects=subjects, posting_period=posting_period
+    with pytest.raises(KernelError) as failure:
+        Dashboard(company.engine).employees(
+            "2026-02", employee_id="employee", section=section, preparation="deferred"
         )
-        if subjects == {"january", "february"}:
-            return dict(reversed(list(selected.items())))
-        return selected
-
-    monkeypatch.setattr(dashboard_module.Calculations, "selected", reversed_selected)
-    items = Dashboard(company.engine).employees(
-        "2026-02", employee_id="employee", section="payroll_sources", preparation="deferred"
-    )["data"]["collections"]["payroll_sources"]["items"]
-    assert [item["source_id"] for item in items] == ["january", "february"]
+    assert failure.value.code == "invalid_command"
 
 
 def test_opening_payroll_keeps_source_period_components_and_later_payment(opening_book):
@@ -158,38 +145,37 @@ def test_opening_payroll_keeps_source_period_components_and_later_payment(openin
     dashboard = Dashboard(engine)
     response = dashboard.employees("2026-01")
     assert (
-        dashboard.brief("2026-01", preparation="deferred")["data"]["workforce_cost"]
-        == response["data"]["workforce_cost"]
+        response["data"]["workforce_cost"]["total_fen"]
+        == response["data"]["employees"]["ledger_cost_fen"]
+        + response["data"]["workforce_cost"]["personal_labor_fen"]
     )
     employees = response["data"]["employees"]
     employee = response["data"]["collections"]["employees"]["items"][0]
     sources = {
-        source["component"]: source
-        for source in payroll_sources(dashboard, response, "2026-01", employee["employee_id"])
+        component: source_status(dashboard, f"prior-{component}", "2026-01")
+        for component in components
     }
     assert set(sources) == set(components)
     assert employee["direct_net_payments_fen"] == 15000
     assert employee["gross_salary_fen"] == employees["ledger_cost_fen"] == 0
     for component, source in sources.items():
-        assert source["period"] == "2025-12"
-        assert source["opening_period"] == "2026-01"
-        assert source["declarations"] == []
-        obligation = source["obligations"][0]
+        assert source["latest_fact"]["data"]["payroll_period"] == "2025-12"
+        assert source["latest_fact"]["data"]["period"] == "2026-01"
+        obligation = source["settlements"]["obligations"][0]
         assert obligation["key"] == f"opening_payroll_payable:prior-{component}:primary"
         assert obligation["name"] == "primary"
-        assert obligation["amount_fen"] == 50000
+        assert obligation["source_amount_fen"] == 50000
         assert obligation["remaining_fen"] == (35000 if component == "net" else 50000)
-        assert "movements" not in source
     movement = next(
         item
-        for item in settlement_events(dashboard, response, "2026-01", employee["employee_id"])
+        for item in sources["net"]["settlements"]["movements"]
         if item["settlement_business"]["subject_id"] == "prior-net-payment"
     )
     assert movement["posting_period"] == "2026-01"
-    assert movement["amount_fen"] == 15000
-    assert movement["recipient_id"] == "employee"
+    assert movement["signed_amount_fen"] == 15000
+    assert movement["state"] == "resolved"
     assert movement["source_business"]["subject_id"] == "prior-net"
-    assert movement["source_calculation_id"] == sources["net"]["calculation_id"]
+    assert sources["net"]["identity"]["subject_id"] == "prior-net"
     assert engine.ledger("2026-01") == ledger
 
 
@@ -278,33 +264,24 @@ def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company
         Dashboard(company.engine).employees(
             "2026-01",
             employee_id="employee",
-            section="payroll_sources",
+            section="employees",
             preparation="deferred",
         )
     assert failure.value.code == "content_integrity_failed"
-    with pytest.raises(KernelError) as brief_failure:
-        Dashboard(company.engine).brief("2026-01", preparation="deferred")
-    assert brief_failure.value.code == "content_integrity_failed"
+    with pytest.raises(KernelError) as business_failure:
+        BusinessQueries(company.engine).business_status("january", "2026-01")
+    assert business_failure.value.code == "content_integrity_failed"
 
 
-def test_next_month_declaration_is_attached_to_its_wage_source(company):
+def test_next_month_declaration_does_not_expand_owner_wage_payload(company):
     company.publish("january", "february")
     declare(company, period="2026-02", declaration_date="2026-02-06")
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-01")
     data = response["data"]["employees"]
     employee = response["data"]["collections"]["employees"]["items"][0]
-    assert employee["declared_tax_fen"] == 72600
-    source = next(
-        item
-        for item in payroll_sources(dashboard, response, "2026-01", employee["employee_id"])
-        if item["source_id"] == "january"
-    )
-    declaration = source["declarations"][0]
-    assert declaration["tax_period"] == "2026-01"
-    assert declaration["recording_period"] == "2026-02"
-    assert declaration["date"] == "2026-02-06"
-    assert declaration["recorded_later"]
+    assert "declared_tax_fen" not in employee and "tax_details" not in employee
+    assert {"payroll_sources", "settlement_events"}.isdisjoint(response["data"]["collections"])
     assert data["in_period_count"] == 0 and data["unknown_period_count"] == 1
 
 
@@ -316,44 +293,37 @@ def test_retained_disbursement_difference_and_payment_keep_source_period(company
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-02")
     employee = response["data"]["collections"]["employees"]["items"][0]
-    january = next(
-        item
-        for item in payroll_sources(dashboard, response, "2026-02", employee["employee_id"])
-        if item["source_id"] == "january"
-    )
-    net = next(item for item in january["obligations"] if item["name"] == "net")
+    january = source_status(dashboard, "january", "2026-02")
+    net = next(item for item in january["settlements"]["obligations"] if item["name"] == "net")
     assert net["paid_fen"] == 847400
     assert net["remaining_fen"] == 60000
-    assert january["disbursements"][0]["held_fen"] == 60000
-    assert "movements" not in january
+    assert "payroll_sources" not in response["data"]["collections"]
+    assert employee["outstanding_net_fen"] == 967400
+    assert response["data"]["employees"]["outstanding_net_fen"] == 967400
+    assert "settlement_events" not in response["data"]["collections"]
     movement = next(
         item
-        for item in settlement_events(dashboard, response, "2026-02", employee["employee_id"])
+        for item in january["settlements"]["movements"]
         if item["settlement_business"]["subject_id"] == "payment"
     )
     assert movement["posting_period"] == "2026-02"
-    assert movement["amount_fen"] == 847400
+    assert movement["signed_amount_fen"] == 847400
     assert movement["source_business"]["subject_id"] == "january"
-    assert movement["source_calculation_id"] == january["calculation_id"]
+    assert january["identity"]["subject_id"] == "january"
     assert employee["direct_net_payments_fen"] == 847400
 
 
-def test_later_disbursement_basis_is_visible_from_its_wage_month(company):
+def test_later_disbursement_basis_does_not_change_owner_payment_amounts(company):
     company.publish("january", "february")
     _, declared = declare(company, period="2026-02")
     adopt(company, declared, period="2026-02")
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-01")
     employee = response["data"]["collections"]["employees"]["items"][0]
-    source = next(
-        item
-        for item in payroll_sources(dashboard, response, "2026-01", employee["employee_id"])
-        if item["source_id"] == "january"
-    )
-    assert source["disbursements"][0]["recording_period"] == "2026-02"
-    assert source["disbursements"][0]["target_net_fen"] == 847400
-    assert not source["disbursements"][0]["needs_review"]
-    assert all(item["paid_fen"] == 0 for item in source["obligations"])
+    source = source_status(dashboard, "january", "2026-01")
+    assert employee["direct_net_payments_fen"] == 0
+    assert "payroll_sources" not in response["data"]["collections"]
+    assert all(item["paid_fen"] == 0 for item in source["settlements"]["obligations"])
 
 
 def test_personal_advance_is_clearing_without_company_cash(company):
@@ -380,24 +350,22 @@ def test_personal_advance_is_clearing_without_company_cash(company):
     assert employee["recorded_net_payments_fen"] == 907400
     assert employee["direct_net_payments_fen"] == 0
     assert employee["other_net_settlements_fen"] == 907400
-    january = next(
-        item
-        for item in payroll_sources(dashboard, response, "2026-02", employee["employee_id"])
-        if item["source_id"] == "january"
-    )
-    assert "movements" not in january
+    january = source_status(dashboard, "january", "2026-02")
+    assert "settlement_events" not in response["data"]["collections"]
     movement = next(
         item
-        for item in settlement_events(dashboard, response, "2026-02", employee["employee_id"])
+        for item in january["settlements"]["movements"]
         if item["settlement_business"]["subject_id"] == "owner-paid"
     )
     assert movement["mode"] == "advance"
     assert movement["posting_period"] == "2026-02"
-    assert movement["amount_fen"] == 907400
+    assert movement["signed_amount_fen"] == 907400
     assert movement["source_business"]["subject_id"] == "january"
-    assert movement["source_calculation_id"] == january["calculation_id"]
+    assert january["identity"]["subject_id"] == "january"
     assert (
-        next(item for item in january["obligations"] if item["name"] == "net")["remaining_fen"] == 0
+        next(item for item in january["settlements"]["obligations"] if item["name"] == "net")[
+            "remaining_fen"
+        ] == 0
     )
 
 
@@ -409,10 +377,15 @@ def test_bonus_is_separate_but_included_in_workforce_breakdown(tmp_path, monkeyp
     company.publish("bonus")
     dashboard = Dashboard(company.engine)
     data = dashboard.employees("2026-01")["data"]
-    cost = data["workforce_cost"]["employee"]
-    assert cost["annual_bonus_fen"] == cost["total_fen"] == 3000000
+    cost = data["employees"]
+    assert (
+        cost["annual_bonus_fen"]
+        == cost["ledger_cost_fen"]
+        == data["workforce_cost"]["total_fen"]
+        == 3000000
+    )
     assert cost["gross_salary_fen"] == 0
-    assert cost["breakdown_available"]
+    assert not cost["checking"]
 
     def unexpected_historical_wage_scan(*_args, **_kwargs):
         pytest.fail("Brief workforce cost must not scan historical wage heads")
@@ -420,10 +393,7 @@ def test_bonus_is_separate_but_included_in_workforce_breakdown(tmp_path, monkeyp
     monkeypatch.setattr(
         "ai_accounting.kernel.dashboard.payroll_head_metadata", unexpected_historical_wage_scan
     )
-    assert (
-        dashboard.brief("2026-01", preparation="deferred")["data"]["workforce_cost"]
-        == data["workforce_cost"]
-    )
+    assert "workforce_cost" not in dashboard.brief("2026-01", preparation="deferred")["data"]
 
 
 def test_brief_workforce_cost_rejects_changed_calculation_body(tmp_path):
@@ -460,11 +430,12 @@ def test_brief_workforce_cost_matches_closed_month_and_later_reversal(company):
     company.save(actual(), "actual")
     company.publish("actual", posting_period="2026-03")
     dashboard = Dashboard(company.engine)
-    for period in ("2026-01", "2026-03"):
-        detailed = dashboard.employees(period)["data"]["workforce_cost"]
-        brief = dashboard.brief(period, preparation="deferred")["data"]["workforce_cost"]
-        assert brief == detailed
-    assert brief["employee"]["periods"][0]["has_reversal"]
+    january = dashboard.employees("2026-01")["data"]
+    march = dashboard.employees("2026-03")["data"]
+    assert january["workforce_cost"]["total_fen"] == january["employees"]["ledger_cost_fen"]
+    assert march["workforce_cost"]["total_fen"] == march["employees"]["ledger_cost_fen"]
+    assert january["employees"]["gross_salary_fen"] == 1000000
+    assert march["employees"]["gross_salary_fen"] == 0
 
 
 def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_path):
@@ -483,23 +454,23 @@ def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_p
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-01")
     validate_response("dashboard_employees", response)
-    labor = response["data"]["workforce_cost"]["personal_labor"]
+    labor = response["data"]["workforce_cost"]
     source_response = dashboard.employees("2026-01", section="labor_sources")
     wire = http_response("dashboard_employees", source_response)
     labor_items = source_response["data"]["collections"]["labor_sources"]["items"]
     assert labor_items[0]["name"] == "未提供姓名或名称"
     assert (
-        wire["data"]["collections"]["labor_sources"]["items"][0]["name"]
-        == labor_items[0]["name"]
+        wire["data"]["collections"]["labor_sources"]["items"][0]["name"] == labor_items[0]["name"]
     )
-    assert labor["withholding_status"] == "not_withheld"
+    assert labor["personal_labor_fen"] == 500000
     assert labor_items[0]["withholding_method"] == "not_withheld_not_filed"
-    assert labor_items[0]["theoretical_tax_fen"] is None
+    assert "theoretical_tax_fen" not in labor_items[0]
     assert labor_items[0]["obligations"][0]["remaining_fen"] == 500000
     assert "settled_gross_fen" not in labor and "actual_withholding_tax_fen" not in labor
     assert (
-        dashboard.brief("2026-01", preparation="deferred")["data"]["workforce_cost"]
-        == response["data"]["workforce_cost"]
+        response["data"]["workforce_cost"]["total_fen"]
+        == response["data"]["employees"]["ledger_cost_fen"]
+        + response["data"]["workforce_cost"]["personal_labor_fen"]
     )
 
 
@@ -529,9 +500,9 @@ def test_personal_labor_items_only_include_selected_posting_month(tmp_path):
     company.publish("february-labor")
 
     data = Dashboard(company.engine).employees("2026-02")["data"]
-    labor = data["workforce_cost"]["personal_labor"]
+    labor = data["workforce_cost"]
 
-    assert labor["total_fen"] == 700000
+    assert labor["personal_labor_fen"] == 700000
     labor_items = data["collections"]["labor_sources"]["items"]
     assert [item["source_id"] for item in labor_items] == ["february-labor"]
     assert labor_items[0]["period"] == "2026-02"
@@ -585,25 +556,22 @@ def test_capitalized_labor_and_pending_intangible_are_visible_without_double_cos
         "labor_sources"
     ]["items"][0]
     assert labor["capitalized"]
-    labor_movements = dashboard.employees(
-        "2026-11", section="settlement_events", employee_id=labor["person_id"]
-    )["data"]["collections"]["settlement_events"]["items"]
+    labor_movements = source_status(dashboard, labor["subject_id"], "2026-11")["settlements"][
+        "movements"
+    ]
     assert {item["mode"] for item in labor_movements} == {"offset", "payment"}
-    assert assets["ledger_net_fen"] == assets["card_net_fen"] == 1600000
-    assert assets["reconciled"]
+    assert assets["ledger_net_fen"] == 1600000
+    assert not assets["checking"]
     assert assets["pending_intangible_count"] == (0 if activated else 1)
     assert assets["project_cost_fen"] == 0
-    brief_assets = dashboard.brief("2026-11", preparation="deferred")["data"]["long_term_assets"]
-    assert brief_assets["net_fen"] == 1600000
-    assert brief_assets["intangible_net_fen"] == (1600000 if activated else 0)
-    assert brief_assets["fixed_net_fen"] == brief_assets["fixed_active_count"] == 0
-    assert brief_assets["intangible_active_count"] == (1 if activated else 0)
-    assert brief_assets["pending_count"] == (0 if activated else 1)
-    assert brief_assets["project_cost_fen"] == 0
+    assert assets["intangible"]["active_net_fen"] == (1600000 if activated else 0)
+    assert assets["fixed"]["active_net_fen"] == assets["fixed"]["active_count"] == 0
+    assert assets["intangible"]["active_count"] == (1 if activated else 0)
+    assert assets["intangible"]["pending_count"] == (0 if activated else 1)
     intangible_assets = dashboard.assets("2026-11", section="assets", asset_filter="intangible")[
         "data"
     ]["collections"]["assets"]["items"]
-    assert intangible_assets[0]["source_label"] == "项目形成"
+    assert intangible_assets[0]["settlement_scope"] == "成本来源结算（不分摊为本资产付款）"
 
 
 def test_batch_asset_uses_batch_settlement_and_month_precision(asset_book):
@@ -619,38 +587,43 @@ def test_batch_asset_uses_batch_settlement_and_month_precision(asset_book):
     )
     publish("alice-paid")
     assets = Dashboard(engine).assets("2026-03")["data"]
-    assert assets["ledger_net_fen"] == assets["card_net_fen"] == 150000
-    assert assets["reconciled"]
+    assert assets["ledger_net_fen"] == 150000
+    assert not assets["checking"]
     asset_items = Dashboard(engine).assets("2026-03", section="assets", asset_filter="fixed")[
         "data"
     ]["collections"]["assets"]["items"]
     for item in asset_items:
         assert item["recognition_label"] == "2026-02（按月确认）"
-        assert item["source_party_label"] == "本验收批次债权人"
+        assert "source_parties" not in item and "source_party_label" not in item
         assert item["settlement_scope"] == "本验收批次结算"
-        assert item["settlements"][0]["source_id"] == "batch"
+        assert "settlements" not in item
+        assert item["payment_summary"] == {
+            "obligation_count": 2, "checking": False,
+            "amount_fen": 150000, "paid_fen": 90000,
+            "other_settled_fen": 0, "remaining_fen": 60000,
+        }
         assert "purchase_price_fen" not in item and "payment_date" not in item
 
 
-def test_unreleased_project_cost_is_reconciled_without_an_asset_card(tmp_path):
+def test_unreleased_project_cost_is_reconciled_without_an_asset_card(tmp_path, monkeypatch):
     company = Company(tmp_path / "project.sqlite")
     company.save(LaborProjectCost.model_validate(cost()), "project-labor")
     company.publish("project-labor")
+    def unexpected_settlement(*args, **kwargs):
+        raise AssertionError("项目列表不应预装载已移除的付款详情")
+    monkeypatch.setattr(BusinessQueries, "settlement_summary", unexpected_settlement)
     assets = Dashboard(company.engine).assets("2026-11")["data"]
     assert assets["registered_count"] == 0
     assert assets["project_cost_fen"] == 1600000
-    assert assets["ledger_net_fen"] == assets["card_net_fen"] == 1600000
-    assert assets["reconciled"]
+    assert assets["ledger_net_fen"] == 1600000
+    assert not assets["checking"]
     project = Dashboard(company.engine).assets("2026-11", section="projects")["data"][
         "collections"
     ]["projects"]["items"][0]
-    assert project["settlement"]["obligations"][0]["remaining_fen"] == 1600000
-    brief_assets = Dashboard(company.engine).brief("2026-11", preparation="deferred")["data"][
-        "long_term_assets"
-    ]
-    assert brief_assets["net_fen"] == brief_assets["project_cost_fen"] == 1600000
-    assert brief_assets["fixed_active_count"] == brief_assets["intangible_active_count"] == 0
-    assert brief_assets["pending_count"] == 0
+    assert "settlement" not in project
+    assert project["remaining_fen"] == 1600000
+    assert assets["fixed"]["active_count"] == assets["intangible"]["active_count"] == 0
+    assert assets["fixed"]["pending_count"] == assets["intangible"]["pending_count"] == 0
 
 
 def test_project_cost_account_candidates_keep_frozen_month_and_exact_correction(tmp_path):
@@ -667,21 +640,11 @@ def test_project_cost_account_candidates_keep_frozen_month_and_exact_correction(
     dashboard = Dashboard(company.engine)
     historical = dashboard.assets("2026-01")["data"]
     corrected = dashboard.assets("2026-02")["data"]
-    assert historical["project_cost_fen"] == historical["card_net_fen"] == 1_600_000
-    assert corrected["project_cost_fen"] == corrected["card_net_fen"] == 1_700_000
-    assert historical["reconciled"] and corrected["reconciled"]
-    assert (
-        dashboard.brief("2026-01", preparation="deferred")["data"]["long_term_assets"][
-            "project_cost_fen"
-        ]
-        == 1_600_000
-    )
-    assert (
-        dashboard.brief("2026-02", preparation="deferred")["data"]["long_term_assets"][
-            "project_cost_fen"
-        ]
-        == 1_700_000
-    )
+    assert historical["project_cost_fen"] == historical["ledger_net_fen"] == 1_600_000
+    assert corrected["project_cost_fen"] == corrected["ledger_net_fen"] == 1_700_000
+    assert not historical["checking"] and not corrected["checking"]
+    assert historical["collections"]["projects"]["items"][0]["cost_fen"] == 1_600_000
+    assert corrected["collections"]["projects"]["items"][0]["cost_fen"] == 1_700_000
 
 
 def test_project_cost_rejects_forged_frozen_voucher_reference(tmp_path):
@@ -734,9 +697,238 @@ def test_disbursement_pending_change_is_not_presented_as_current_confirmation(co
     dashboard = Dashboard(company.engine)
     response = dashboard.employees("2026-01")
     employee = response["data"]["collections"]["employees"]["items"][0]
-    source = next(
-        item
-        for item in payroll_sources(dashboard, response, "2026-01", employee["employee_id"])
-        if item["source_id"] == "january"
+    source = source_status(dashboard, "january", "2026-01")
+    assert employee["direct_net_payments_fen"] == 0
+    assert "payroll_sources" not in response["data"]["collections"]
+    assert all(item["paid_fen"] == 0 for item in source["settlements"]["obligations"])
+
+
+@pytest.mark.parametrize(
+    "settlement_state", ["established", "unknown", "incomplete_known", "not_established"]
+)
+def test_employee_page_keeps_complete_month_end_payment_totals_and_exact_target(
+    opening_book, monkeypatch, settlement_state
+):
+    engine, save, publish, package, _ = opening_book
+    members = [
+        ("opening_bank", "bank-opening", {"bank_account_id": "bank", "balance_fen": 1100000}),
+        *[
+            (
+                "opening_payroll_payable",
+                f"prior-{index:02}",
+                {
+                    "employee_id": f"employee-{index:02}",
+                    "recipient_id": f"employee-{index:02}",
+                    "payroll_period": "2025-12",
+                    "component": "net",
+                    "outstanding_fen": 50000,
+                },
+            )
+            for index in range(22)
+        ],
+    ]
+    package(members, period="2026-01")
+    save(
+        "payment",
+        "prior-net-paid",
+        {
+            "period": "2026-02",
+            "actual_date": "2026-02-10",
+            "direction": "outflow",
+            "bank_account_id": "bank",
+            "counterparty_id": "employee-21",
+            "amount_fen": 15000,
+            "allocations": [
+                {
+                    "source_kind": "opening_payroll_payable",
+                    "source_id": "prior-21",
+                    "obligation": "primary",
+                    "amount_fen": 15000,
+                }
+            ],
+        },
     )
-    assert source["disbursements"][0]["needs_review"]
+    publish("prior-net-paid")
+    original_summary = dashboard_module._Snapshot.settlement_summary
+    summary_scopes = []
+
+    def checked_summary(self, *, subject_ids=None, current=False, include_history_counts=True):
+        # Exercise the real source checks before testing propagation of a legal
+        # summary contract. This does not claim normal writes damage a source.
+        summary = original_summary(
+            self,
+            subject_ids=subject_ids,
+            current=current,
+            include_history_counts=include_history_counts,
+        )
+        assert summary["complete"] and not summary["issues"]
+        summary_scopes.append(set(subject_ids))
+        if settlement_state == "established":
+            return summary
+        if settlement_state == "not_established":
+            # A complete empty obligation contract is not an incomplete state.
+            return {**summary, "obligations": [], "status": "not_established"}
+        obligations = [dict(item) for item in summary["obligations"]]
+        if settlement_state == "unknown":
+            target = next(
+                item for item in obligations if item["source_business"]["subject_id"] == "prior-21"
+            )
+            for field in ("paid_fen", "period_paid_fen", "remaining_fen"):
+                target[field] = None
+            target["settlement_status"] = "unestablished"
+        return {
+            **summary,
+            "obligations": obligations,
+            "complete": False,
+            "status": "partially_established",
+            "issues": [{"field": "settlements", "message": "存在尚未确立的清偿关系"}],
+        }
+
+    monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", checked_summary)
+    dashboard = Dashboard(engine)
+    first = dashboard.employees("2026-02")
+    RESPONSE_ADAPTERS["dashboard_employees"].validate_python(first)
+    data = first["data"]
+    collection = data["collections"]["employees"]
+    assert collection["page"]["returned_count"] == 20
+    assert collection["page"]["total_count"] == 22 and collection["page"]["has_more"]
+    assert "employee-21" not in {item["employee_id"] for item in collection["items"]}
+    assert data["employees"]["net_salary_fen"] == 0
+    unknown = settlement_state == "unknown"
+    no_obligations = settlement_state == "not_established"
+    assert data["employees"]["checking"] is (settlement_state in {"unknown", "incomplete_known"})
+    assert data["employees"]["direct_net_payments_fen"] == (
+        None if unknown else 0 if no_obligations else 15000
+    )
+    assert data["employees"]["other_net_settlements_fen"] == (None if unknown else 0)
+    assert data["employees"]["outstanding_net_fen"] == (
+        None if unknown else 0 if no_obligations else 1085000
+    )
+    focused = dashboard.employees("2026-02", employee_id="employee-21")["data"]
+    assert focused["employee_id"] == "employee-21"
+    assert [item["employee_id"] for item in focused["collections"]["employees"]["items"]] == [
+        "employee-21"
+    ]
+    assert focused["collections"]["employees"]["items"][0]["outstanding_net_fen"] == (
+        None if unknown else 0 if no_obligations else 35000
+    )
+    assert focused["employees"] == data["employees"]
+    assert "payroll_sources" not in data["collections"]
+    assert {"payroll_sources", "settlement_events"}.isdisjoint(focused["collections"])
+    assert all(scope == {f"prior-{index:02}" for index in range(22)} for scope in summary_scopes)
+
+
+def test_employee_empty_collection_has_known_zero_amounts_without_checking(
+    opening_book, monkeypatch
+):
+    engine, _, _, package, _ = opening_book
+    package(
+        [
+            ("opening_bank", "bank-opening", {"bank_account_id": "bank", "balance_fen": 100}),
+            (
+                "opening_equity",
+                "capital-opening",
+                {
+                    "equity_kind": "paid_in_capital",
+                    "holder_or_basis_id": "holder",
+                    "balance_fen": 100,
+                },
+            ),
+        ]
+    )
+
+    def no_obligations_read(*args, **kwargs):
+        pytest.fail("An empty wage scope must not request a settlement summary")
+
+    monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", no_obligations_read)
+    response = Dashboard(engine).employees("2026-01")
+    RESPONSE_ADAPTERS["dashboard_employees"].validate_python(response)
+    data = response["data"]
+    assert not data["employees"]["checking"]
+    assert data["collections"]["employees"]["items"] == []
+    for field in ("direct_net_payments_fen", "other_net_settlements_fen", "outstanding_net_fen"):
+        assert data["employees"][field] == 0
+
+
+def test_employee_obligation_projection_keeps_full_core_cache_and_history(company, monkeypatch):
+    import ai_accounting.kernel.settlement_freeze as freeze
+
+    company.publish("january", "february")
+    company.close("2026-01")
+    original = freeze._key_publications
+    history_calls = []
+
+    def historical_counts(*args, **kwargs):
+        history_calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(freeze, "_key_publications", historical_counts)
+    with Dashboard(company.engine)._snapshot("2026-01") as snap:
+        for current in (False, True):
+            narrow = snap.settlement_summary(
+                subject_ids={"january"}, current=current, include_history_counts=False
+            )
+            calls_before_full = len(history_calls)
+            full = snap.settlement_summary(subject_ids={"january"}, current=current)
+            assert len(history_calls) == calls_before_full + 1
+            assert narrow == {
+                key: value
+                for key, value in full.items()
+                if key not in {"business_count", "movement_count", "line_relation_count"}
+            }
+            assert (
+                snap.settlement_summary(
+                    subject_ids={"january"}, current=current, include_history_counts=False
+                )
+                is narrow
+            )
+            assert snap.settlement_summary(subject_ids={"january"}, current=current) is full
+
+
+def test_employee_owner_projection_skips_removed_declaration_disbursement_and_current_reads(
+    company, monkeypatch
+):
+    company.publish("january", "february")
+    _, declaration = declare(company)
+    adopt(company, declaration)
+    original_by_kind = dashboard_module._Snapshot.by_kind
+    original_summary = dashboard_module._Snapshot.settlement_summary
+    original_calculation = dashboard_module._Snapshot.calculation
+
+    def scoped_facts(self, *kinds):
+        assert not set(kinds) & {"payroll_profile", "payroll_tax_declaration_actual"}
+        return original_by_kind(self, *kinds)
+
+    def historical_summary(self, *, subject_ids=None, current=False, include_history_counts=True):
+        assert not current
+        return original_summary(
+            self,
+            subject_ids=subject_ids,
+            current=current,
+            include_history_counts=include_history_counts,
+        )
+
+    def calculation_without_disbursement(self, ident):
+        kind = self.connection.execute(
+            "SELECT kind FROM calculation WHERE id=?", (ident,)
+        ).fetchone()[0]
+        assert kind != "payroll_disbursement_basis"
+        return original_calculation(self, ident)
+
+    monkeypatch.setattr(dashboard_module._Snapshot, "by_kind", scoped_facts)
+    monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", historical_summary)
+    monkeypatch.setattr(dashboard_module._Snapshot, "calculation", calculation_without_disbursement)
+    response = Dashboard(company.engine).employees("2026-01", employee_id="employee")
+    RESPONSE_ADAPTERS["dashboard_employees"].validate_python(response)
+    person = response["data"]["collections"]["employees"]["items"][0]
+    assert (
+        not {
+            "tax_details",
+            "declared_tax_fen",
+            "field_sources",
+            "profile_available",
+            "social_insurance_base_fen",
+        }
+        & person.keys()
+    )
+    assert {"payroll_sources", "settlement_events"}.isdisjoint(response["data"]["collections"])

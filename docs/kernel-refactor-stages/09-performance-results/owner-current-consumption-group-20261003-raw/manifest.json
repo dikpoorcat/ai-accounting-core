@@ -1,0 +1,471 @@
+{
+  "scope": "148d public synthetic directed regressions, first failures, frontend live samples and same-main48 AB workload; no latency qualification",
+  "private_data_archived": false,
+  "mtime": 0,
+  "source_count": 46,
+  "raw_bytes": 3302015,
+  "raw_budget_bytes": 5242880,
+  "gzip_bytes": 415828,
+  "files": [
+    {
+      "source": ".tmp/stage9-owner-current-consumption-source-20261003.log",
+      "archive": "01-stage9-owner-current-consumption-source-20261003.log.gz",
+      "bytes": 205,
+      "sha256": "52e4bcc773e2267a8ee77f4b51345eec14868d07e6984e1e52cad89415c9c318",
+      "source_sha256_after": "52e4bcc773e2267a8ee77f4b51345eec14868d07e6984e1e52cad89415c9c318",
+      "gzip_bytes": 186,
+      "gzip_sha256": "03a6a6e9c5d88ba8bb658da09b29b3fd6ff48c15a17bbf148ff98f4343608cd4",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-common-regression-first-20261003.log",
+      "archive": "02-stage9-owner-current-consumption-common-regression-first-20261003.log.gz",
+      "bytes": 276,
+      "sha256": "b7618ce50f24d64c1d4620fe5db3c475571d40cf7fbd382d801764069a484a41",
+      "source_sha256_after": "b7618ce50f24d64c1d4620fe5db3c475571d40cf7fbd382d801764069a484a41",
+      "gzip_bytes": 83,
+      "gzip_sha256": "5c32466fde353c2b7f07fda5c220b1a90954502f7b3e8da2ead10d30dc412a6b",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-common-regression-first-20261003.xml",
+      "archive": "03-stage9-owner-current-consumption-common-regression-first-20261003.xml.gz",
+      "bytes": 24352,
+      "sha256": "b80310c3963cf8e6b318f8e0f193aee6fba73a926d0e53ba886f1611904e8cb8",
+      "source_sha256_after": "b80310c3963cf8e6b318f8e0f193aee6fba73a926d0e53ba886f1611904e8cb8",
+      "gzip_bytes": 3158,
+      "gzip_sha256": "1a14d701f8364b8ad12713f83eae8d890314883366b4c86d8e893ea5b8f533fe",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-amount-summary-targeted-first.xml",
+      "archive": "04-stage9-owner-amount-summary-targeted-first.xml.gz",
+      "bytes": 9835,
+      "sha256": "e8e680f76868a1e6704a790e185c8f70ad49505d9300615faf205893d53c7cde",
+      "source_sha256_after": "e8e680f76868a1e6704a790e185c8f70ad49505d9300615faf205893d53c7cde",
+      "gzip_bytes": 2295,
+      "gzip_sha256": "59d5607a009a1f24872fe189ffac78a62ca0330a4d2f9d571ba293a44e9c65e7",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-amount-summary-work-repair.xml",
+      "archive": "05-stage9-owner-amount-summary-work-repair.xml.gz",
+      "bytes": 1976,
+      "sha256": "c492838830ac24f089450d9f790426f7c3863b9a8337bee29c6ef37a552a9130",
+      "source_sha256_after": "c492838830ac24f089450d9f790426f7c3863b9a8337bee29c6ef37a552a9130",
+      "gzip_bytes": 632,
+      "gzip_sha256": "f32d3a9685a25b1cc210aafc94c736c9d705099d488ced015d0376380a0fb049",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-amount-summary-transition-targeted.xml",
+      "archive": "06-stage9-owner-amount-summary-transition-targeted.xml.gz",
+      "bytes": 4649,
+      "sha256": "07517819a8eaf5f147c95f8ede5f2b6876303807c10caebac4a265bcc94289c6",
+      "source_sha256_after": "07517819a8eaf5f147c95f8ede5f2b6876303807c10caebac4a265bcc94289c6",
+      "gzip_bytes": 1779,
+      "gzip_sha256": "acd2dfd3f3bb0928a549781f707178dbf3a08e3a0318e9684f2f0768334cb25f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-amount-summary-transition-repair.xml",
+      "archive": "07-stage9-owner-amount-summary-transition-repair.xml.gz",
+      "bytes": 458,
+      "sha256": "6937aea273b30d2d7cbcb6d34ecac22d604863e5365f5c68efa4321a35f8c85d",
+      "source_sha256_after": "6937aea273b30d2d7cbcb6d34ecac22d604863e5365f5c68efa4321a35f8c85d",
+      "gzip_bytes": 287,
+      "gzip_sha256": "2bcb8374e16a24a4922fdc44ab7c2e016e5145d988daef5915b98fb0923d0420",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-bank-exact-witness-boundary-20261003.md",
+      "archive": "08-stage9-bank-exact-witness-boundary-20261003.md.gz",
+      "bytes": 6819,
+      "sha256": "34c93bc0b866d125593937b088101f97d0b90149e2b339422e86e0eeb0adfba8",
+      "source_sha256_after": "34c93bc0b866d125593937b088101f97d0b90149e2b339422e86e0eeb0adfba8",
+      "gzip_bytes": 3661,
+      "gzip_sha256": "bf98a6148fff33900f273a3aebcff47c86c07da3dfead97c74781ac1888feba5",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-bank-exact-witness-targeted-first.xml",
+      "archive": "09-stage9-bank-exact-witness-targeted-first.xml.gz",
+      "bytes": 7089,
+      "sha256": "fa7aded4acfe989780797428c6d90178de3ff61c2284c7965ea4048241ec7d5e",
+      "source_sha256_after": "fa7aded4acfe989780797428c6d90178de3ff61c2284c7965ea4048241ec7d5e",
+      "gzip_bytes": 1230,
+      "gzip_sha256": "c86eaa9eda94c3d4829f408107ac4e4c25cd96bc83366ebae892e6ed8e845d6d",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-bank-exact-witness-node-growth-first.xml",
+      "archive": "10-stage9-bank-exact-witness-node-growth-first.xml.gz",
+      "bytes": 4907,
+      "sha256": "9f2af2b0c57a71b34e6e116edd3cfaa059e86471f0fa0010b7c372b250995abb",
+      "source_sha256_after": "9f2af2b0c57a71b34e6e116edd3cfaa059e86471f0fa0010b7c372b250995abb",
+      "gzip_bytes": 1895,
+      "gzip_sha256": "b06e70700cd8ce3a775e5b2a8adcc9c49b1e98b7cba31fad28cd119fac48543e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-bank-exact-witness-node-growth-repair.xml",
+      "archive": "11-stage9-bank-exact-witness-node-growth-repair.xml.gz",
+      "bytes": 7031,
+      "sha256": "d78e9f9b0572a50216d651320d56f04b57f44d7d4de52b8c1980a223d85af459",
+      "source_sha256_after": "d78e9f9b0572a50216d651320d56f04b57f44d7d4de52b8c1980a223d85af459",
+      "gzip_bytes": 1214,
+      "gzip_sha256": "0e80c01f975b1bf4c381dd683cd10d54a8237a4f1b8e90e97a67b618503b49b5",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-asset-consumption-scope-directed.log",
+      "archive": "12-stage9-asset-consumption-scope-directed.log.gz",
+      "bytes": 3815,
+      "sha256": "decf292f6a446de161c538b0b36f942c21ce4c60cb1f49ffd954078890578af8",
+      "source_sha256_after": "decf292f6a446de161c538b0b36f942c21ce4c60cb1f49ffd954078890578af8",
+      "gzip_bytes": 1249,
+      "gzip_sha256": "82c1df4be6818c1929d890159d1272ec3ee4ea2aa1048e6d1807557ab69887bf",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-asset-consumption-scope-directed.xml",
+      "archive": "13-stage9-asset-consumption-scope-directed.xml.gz",
+      "bytes": 6998,
+      "sha256": "7b96e4d60c25ac247d93e1365e8a6475c78b3df85bd49efa713f3246e35ef11a",
+      "source_sha256_after": "7b96e4d60c25ac247d93e1365e8a6475c78b3df85bd49efa713f3246e35ef11a",
+      "gzip_bytes": 1885,
+      "gzip_sha256": "82ae2ca3a47c5ded70ea1c435f5b3415a6b71e87c35c14b96f963d3b533d5a05",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-end-amounts-change-20261003.md",
+      "archive": "14-stage9-owner-report-end-amounts-change-20261003.md.gz",
+      "bytes": 4572,
+      "sha256": "febb98a25f412aa81e572d56cd62a6c030051736c7fd119269c21cad3f67917c",
+      "source_sha256_after": "febb98a25f412aa81e572d56cd62a6c030051736c7fd119269c21cad3f67917c",
+      "gzip_bytes": 2604,
+      "gzip_sha256": "a9a151ea426a59828d05e04062362d1091ac4710854788bea288305e9f7f0acc",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-end-amounts-regression-20261003.log",
+      "archive": "15-stage9-owner-report-end-amounts-regression-20261003.log.gz",
+      "bytes": 1679,
+      "sha256": "881e7b299c96890fe200e7ac80bd41b110987ab69ba209483b0d82537250cf10",
+      "source_sha256_after": "881e7b299c96890fe200e7ac80bd41b110987ab69ba209483b0d82537250cf10",
+      "gzip_bytes": 667,
+      "gzip_sha256": "8aef38e335ca64c56ea8db287eb59bbc61f3965d6fda734577be11007acbf90c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-end-amounts-regression-20261003.xml",
+      "archive": "16-stage9-owner-report-end-amounts-regression-20261003.xml.gz",
+      "bytes": 13520,
+      "sha256": "9ed9ef8c86f7c5ccefc35956c5fa7c29a8e7614300e83beb8d0ffb69b601a169",
+      "source_sha256_after": "9ed9ef8c86f7c5ccefc35956c5fa7c29a8e7614300e83beb8d0ffb69b601a169",
+      "gzip_bytes": 3169,
+      "gzip_sha256": "6cf9f7537a8bba82f3d045e963be025e09a5904d0355d1215304e236082cf6c9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-disable-reuse-baseline-20261003.py",
+      "archive": "17-stage9-owner-report-disable-reuse-baseline-20261003.py.gz",
+      "bytes": 867,
+      "sha256": "42603677e3342b4db983a3f5c10fc5a3a066d9ac39b2e0c9307126b2aa1e038d",
+      "source_sha256_after": "42603677e3342b4db983a3f5c10fc5a3a066d9ac39b2e0c9307126b2aa1e038d",
+      "gzip_bytes": 504,
+      "gzip_sha256": "cf2966d671bc53180c3521a697f40349d1706db67862bb0156e3760416448524",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-disable-reuse-baseline-20261003.log",
+      "archive": "18-stage9-owner-report-disable-reuse-baseline-20261003.log.gz",
+      "bytes": 1575,
+      "sha256": "b70ccd23694e04ef4e30af7eaf992a2c79a10fe78305e7d52434ab2330685038",
+      "source_sha256_after": "b70ccd23694e04ef4e30af7eaf992a2c79a10fe78305e7d52434ab2330685038",
+      "gzip_bytes": 638,
+      "gzip_sha256": "1ff513183e45416a2dbeae0a51714d2a6e70ebf00e7b42bc806d96b5f38b119e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-disable-reuse-baseline-20261003.xml",
+      "archive": "19-stage9-owner-report-disable-reuse-baseline-20261003.xml.gz",
+      "bytes": 1587,
+      "sha256": "4f92739e7a80aeaa0a565c25d800816cb408f378f4dc92a76bc4c9c072f20616",
+      "source_sha256_after": "4f92739e7a80aeaa0a565c25d800816cb408f378f4dc92a76bc4c9c072f20616",
+      "gzip_bytes": 764,
+      "gzip_sha256": "55d24c1e0893c572f5664391d995d2b113d5a3f6bcb7677568d10e9eb5a19ca7",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-carry-consumption-regression-20261003.log",
+      "archive": "20-stage9-owner-report-carry-consumption-regression-20261003.log.gz",
+      "bytes": 100,
+      "sha256": "c31bf9347cf34010fe247e1bd4d6b43dff962c05cb18c450a77ce248309308a1",
+      "source_sha256_after": "c31bf9347cf34010fe247e1bd4d6b43dff962c05cb18c450a77ce248309308a1",
+      "gzip_bytes": 51,
+      "gzip_sha256": "8280b6eccc1a618144fe0a6a61e5028362aee776a52571cd9039436e1356ba8e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-report-carry-consumption-regression-20261003.xml",
+      "archive": "21-stage9-owner-report-carry-consumption-regression-20261003.xml.gz",
+      "bytes": 398,
+      "sha256": "fc9a91d0132c80413c634750e1086175881cf1915c06c046cf6b7a730af63f15",
+      "source_sha256_after": "fc9a91d0132c80413c634750e1086175881cf1915c06c046cf6b7a730af63f15",
+      "gzip_bytes": 271,
+      "gzip_sha256": "6f3805b2dfab31ea0b2545616465c35153a201718ba2e896d12e3af8fda131ae",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-frozen-body-reencoding-change-20261003.md",
+      "archive": "22-stage9-owner-frozen-body-reencoding-change-20261003.md.gz",
+      "bytes": 4457,
+      "sha256": "bccf9cd19b52512cdadc3da37d0ae9b2363ba01f4a5b4ac0e863f4800da185e8",
+      "source_sha256_after": "bccf9cd19b52512cdadc3da37d0ae9b2363ba01f4a5b4ac0e863f4800da185e8",
+      "gzip_bytes": 2629,
+      "gzip_sha256": "24779241c2da513310833bb5366fd769fb6d0c462bc895d4147b9def4f5c1ee8",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-frozen-body-reencoding-regression-20261003.log",
+      "archive": "23-stage9-owner-frozen-body-reencoding-regression-20261003.log.gz",
+      "bytes": 23726,
+      "sha256": "8e0ebad62e3cb58d1e2bee04404464726bb53a2c5e5b36d9d1a5d6e1b1263737",
+      "source_sha256_after": "8e0ebad62e3cb58d1e2bee04404464726bb53a2c5e5b36d9d1a5d6e1b1263737",
+      "gzip_bytes": 2398,
+      "gzip_sha256": "13a5077e194cd514d150feffc4509af63ca17a6b06a5f05a544ad2c6fbe24b06",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-frozen-body-reencoding-regression-20261003.xml",
+      "archive": "24-stage9-owner-frozen-body-reencoding-regression-20261003.xml.gz",
+      "bytes": 28360,
+      "sha256": "25eaf701d05675fb7101636371a6277c077447e52fc4d2684e76bbd02a1bd6d8",
+      "source_sha256_after": "25eaf701d05675fb7101636371a6277c077447e52fc4d2684e76bbd02a1bd6d8",
+      "gzip_bytes": 3421,
+      "gzip_sha256": "23b0d3ff7ec6d5d2aea235066b84753d2ee58b09aaf3ad8a282614d5752c9822",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-frozen-body-reencoding-failure-regression-20261003.log",
+      "archive": "25-stage9-owner-frozen-body-reencoding-failure-regression-20261003.log.gz",
+      "bytes": 101,
+      "sha256": "02a8cfbd41d040f6fca2b2a06a35a748ed447d7b24cba29171b44b63761210c3",
+      "source_sha256_after": "02a8cfbd41d040f6fca2b2a06a35a748ed447d7b24cba29171b44b63761210c3",
+      "gzip_bytes": 54,
+      "gzip_sha256": "297b9f639483e14ad7a2ddaaec91605b75f22fd0b9ff012387180da0be6b3d24",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-frozen-body-reencoding-failure-regression-20261003.xml",
+      "archive": "26-stage9-owner-frozen-body-reencoding-failure-regression-20261003.xml.gz",
+      "bytes": 1242,
+      "sha256": "a70093b9783c513d48343864963ddc449dc473c3d158740dc587f50c0578aef6",
+      "source_sha256_after": "a70093b9783c513d48343864963ddc449dc473c3d158740dc587f50c0578aef6",
+      "gzip_bytes": 364,
+      "gzip_sha256": "cc1798cc7149c9034b406fcacf6b36a6391a265c32a6e68217ff42268a6ed1bd",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-consumption-front-tests-20261003.log",
+      "archive": "27-stage9-owner-consumption-front-tests-20261003.log.gz",
+      "bytes": 17796,
+      "sha256": "4f6908cb1155a9be4f96bfc7c8aabd38c9fe364a3e6048a01ece9b026339735c",
+      "source_sha256_after": "4f6908cb1155a9be4f96bfc7c8aabd38c9fe364a3e6048a01ece9b026339735c",
+      "gzip_bytes": 6295,
+      "gzip_sha256": "00540a1ae5c78ddd0dacbde8015713ab206724138a7de6cae0dd7861b99997ae",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-consumption-front-release-20261003.log",
+      "archive": "28-stage9-owner-consumption-front-release-20261003.log.gz",
+      "bytes": 3480,
+      "sha256": "c7305e8027e9e321431561eea555205818812117215678f2c664b09e282d15e5",
+      "source_sha256_after": "c7305e8027e9e321431561eea555205818812117215678f2c664b09e282d15e5",
+      "gzip_bytes": 934,
+      "gzip_sha256": "38f5c00005ad5d8661ddf4b765a22676189cfd5a1cb335a2792e1ce675b9daec",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-consumption-live-samples-20261003.log",
+      "archive": "29-stage9-owner-consumption-live-samples-20261003.log.gz",
+      "bytes": 86,
+      "sha256": "3a38e6dafb59eb5c2a61cfde715548403c07ac4aafdfd0748a5137f5332e7aa0",
+      "source_sha256_after": "3a38e6dafb59eb5c2a61cfde715548403c07ac4aafdfd0748a5137f5332e7aa0",
+      "gzip_bytes": 98,
+      "gzip_sha256": "3262c7983f0f26ffc8d7c1c4bb238710910e40f8465e2c9e6c9a3f49c5b6e6a9",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-build-source-owner-current-consumption-20261003/frontend/tests/fixtures/dashboard-contracts.json",
+      "archive": "30-stage9-build-source-owner-current-consumption-20261003__frontend__tests__fixtures__dashboard-contracts.json.gz",
+      "bytes": 323267,
+      "sha256": "ffda375f3c4567337d39d8d8aa477484b5af5088ac8f9ce4dbdb06fe12c942d4",
+      "source_sha256_after": "ffda375f3c4567337d39d8d8aa477484b5af5088ac8f9ce4dbdb06fe12c942d4",
+      "gzip_bytes": 23906,
+      "gzip_sha256": "ce67b4d5c28caf29f680631fe902dddb6b425a8206f2c3204a9bdad32c57994c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-current-consumption-ab-tools-20261003.py",
+      "archive": "31-stage9-current-consumption-ab-tools-20261003.py.gz",
+      "bytes": 7453,
+      "sha256": "b8b10c61ee419970b3807e49c23c04f0f0475ccea41ba737c2f4f8b27c94fbbd",
+      "source_sha256_after": "b8b10c61ee419970b3807e49c23c04f0f0475ccea41ba737c2f4f8b27c94fbbd",
+      "gzip_bytes": 2460,
+      "gzip_sha256": "45b6cc0a886a81173f1430276a9d3092d73cd22224badc7b1737057f6e7ac61c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-current-consumption-ab-compare-20261003.py",
+      "archive": "32-stage9-current-consumption-ab-compare-20261003.py.gz",
+      "bytes": 5526,
+      "sha256": "b5e9e6b821b9d32f2b0627f7996d42b28d4e4caf85e369120281ca8c12ed29c4",
+      "source_sha256_after": "b5e9e6b821b9d32f2b0627f7996d42b28d4e4caf85e369120281ca8c12ed29c4",
+      "gzip_bytes": 2167,
+      "gzip_sha256": "dbdcc01865a0c1d58a5e5fa592f429c8507a0918db729bf204d837995ac35a8c",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-baseline-20261003.py",
+      "archive": "33-stage9-owner-current-consumption-AB-baseline-20261003.py.gz",
+      "bytes": 25509,
+      "sha256": "08a1314953bcc72e7c8535b0875d53b73356f2c01ef4cd72e244ba9cad6f732c",
+      "source_sha256_after": "08a1314953bcc72e7c8535b0875d53b73356f2c01ef4cd72e244ba9cad6f732c",
+      "gzip_bytes": 7292,
+      "gzip_sha256": "c27b96b47e7b6ab5225280ed53644317d0ca5b4ea54aa720baae779f0fc26b6e",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-baseline-20261003.json",
+      "archive": "34-stage9-owner-current-consumption-AB-baseline-20261003.json.gz",
+      "bytes": 811355,
+      "sha256": "66b4bfe85d096e857b49e080bc4e49a8cacab7f663eed77cbcea548909d17200",
+      "source_sha256_after": "66b4bfe85d096e857b49e080bc4e49a8cacab7f663eed77cbcea548909d17200",
+      "gzip_bytes": 93046,
+      "gzip_sha256": "74c57248cf776e6cad0c8f1e98b24ab6c7985683219ccade67d8afbbb46da798",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-baseline-20261003.log",
+      "archive": "35-stage9-owner-current-consumption-AB-baseline-20261003.log.gz",
+      "bytes": 518,
+      "sha256": "dd8006b193e5f1fd05dd2f129fcd5554c8f5158ed7cfaa0e1034947f1227d803",
+      "source_sha256_after": "dd8006b193e5f1fd05dd2f129fcd5554c8f5158ed7cfaa0e1034947f1227d803",
+      "gzip_bytes": 224,
+      "gzip_sha256": "a7dad448ad3e09dcd46f8606a55066ee170665fb7aa478c7836883e6a9a031bd",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-baseline-20261003.gate.json",
+      "archive": "36-stage9-owner-current-consumption-AB-baseline-20261003.gate.json.gz",
+      "bytes": 688,
+      "sha256": "540613707d3711c72c63f87c21b65e3c09d7ec86247b2707a8b9678a5ad1da98",
+      "source_sha256_after": "540613707d3711c72c63f87c21b65e3c09d7ec86247b2707a8b9678a5ad1da98",
+      "gzip_bytes": 435,
+      "gzip_sha256": "5607db832a5c0d06f38eb7e4300be3ccc3a2e5868faaf82d86338beefd45a662",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-candidate-20261003.py",
+      "archive": "37-stage9-owner-current-consumption-AB-candidate-20261003.py.gz",
+      "bytes": 25576,
+      "sha256": "3316b4caae91f076fd258ff5c735ed7d728194e79b748cc5879dfc92ba70048d",
+      "source_sha256_after": "3316b4caae91f076fd258ff5c735ed7d728194e79b748cc5879dfc92ba70048d",
+      "gzip_bytes": 7308,
+      "gzip_sha256": "13a9fc2be9199a1bf3744bda78a25e08f107554629deeee1fe1e6e7c191bee52",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-candidate-20261003.json",
+      "archive": "38-stage9-owner-current-consumption-AB-candidate-20261003.json.gz",
+      "bytes": 773611,
+      "sha256": "abcb65b6f1a83bc0170a144e334bac3f4cf00097e69ae8548b1a71042932ecd9",
+      "source_sha256_after": "abcb65b6f1a83bc0170a144e334bac3f4cf00097e69ae8548b1a71042932ecd9",
+      "gzip_bytes": 88998,
+      "gzip_sha256": "b905ddaa8ef33932e6bc01de93bdcd8324d3d7c7118089a533fdfada34d2b5c2",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-candidate-20261003.log",
+      "archive": "39-stage9-owner-current-consumption-AB-candidate-20261003.log.gz",
+      "bytes": 519,
+      "sha256": "09d02221bd92116b1a0c7b91f452a1a8478ccaa9cf2ad15aaa20b4eb25e7103e",
+      "source_sha256_after": "09d02221bd92116b1a0c7b91f452a1a8478ccaa9cf2ad15aaa20b4eb25e7103e",
+      "gzip_bytes": 224,
+      "gzip_sha256": "b670cbbb2cc27e07c7c10aa4f0b64a66b38d592a841723d57502884fa4da53c2",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-candidate-20261003.gate.json",
+      "archive": "40-stage9-owner-current-consumption-AB-candidate-20261003.gate.json.gz",
+      "bytes": 689,
+      "sha256": "5f3419f79e193a576d8a72130de155f6b2e9ac798ad406e71633fea8f7c6f0dc",
+      "source_sha256_after": "5f3419f79e193a576d8a72130de155f6b2e9ac798ad406e71633fea8f7c6f0dc",
+      "gzip_bytes": 439,
+      "gzip_sha256": "9cf3ff41f09fda44f44cca50f81b5e2a907275195df186a66f4ea593f09422d7",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-control-20261003.py",
+      "archive": "41-stage9-owner-current-consumption-AB-control-20261003.py.gz",
+      "bytes": 5722,
+      "sha256": "97e4adecf2bd9dabf29a6d6f2536d9985d88aacd237cbf649e46bfff515c9417",
+      "source_sha256_after": "97e4adecf2bd9dabf29a6d6f2536d9985d88aacd237cbf649e46bfff515c9417",
+      "gzip_bytes": 2312,
+      "gzip_sha256": "1da1aa65964928005b9cdec9cdb50cf3933886ba5e7bf9532843f3c07e16b97b",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-control-20261003.json",
+      "archive": "42-stage9-owner-current-consumption-AB-control-20261003.json.gz",
+      "bytes": 6186,
+      "sha256": "5309cfd53530832fcb4da0e322b279a1a991f31a613250693fbea241d642e387",
+      "source_sha256_after": "5309cfd53530832fcb4da0e322b279a1a991f31a613250693fbea241d642e387",
+      "gzip_bytes": 887,
+      "gzip_sha256": "dde086681cda1aed71560b889dc0313b6a71ba402bbee0740453a2253df1b8fb",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-control-20261003.log",
+      "archive": "43-stage9-owner-current-consumption-AB-control-20261003.log.gz",
+      "bytes": 139,
+      "sha256": "d7fb557cc72baad4cbb2e666123ab0c90d242c5f13f51febecc565775b1bffe4",
+      "source_sha256_after": "d7fb557cc72baad4cbb2e666123ab0c90d242c5f13f51febecc565775b1bffe4",
+      "gzip_bytes": 143,
+      "gzip_sha256": "f9cf3e742d03641138e24cca8179c59b6003db344920eb88f37aa3ad6f3e0209",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-comparison-20261003.json",
+      "archive": "44-stage9-owner-current-consumption-AB-comparison-20261003.json.gz",
+      "bytes": 1132459,
+      "sha256": "0592123c9ee8b069a4f712768d056bad58f08a6751198f2a6fadbe40ff970001",
+      "source_sha256_after": "0592123c9ee8b069a4f712768d056bad58f08a6751198f2a6fadbe40ff970001",
+      "gzip_bytes": 141020,
+      "gzip_sha256": "ba5e70d4a2179d1634a5001bffd4d6bf8194a63a17f1584af15ed747b161022f",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-comparison-20261003.log",
+      "archive": "45-stage9-owner-current-consumption-AB-comparison-20261003.log.gz",
+      "bytes": 118,
+      "sha256": "6a2efe0affbd76914f15bcb0b6364c4f9717d7472838de71c3b3c10ef660f42a",
+      "source_sha256_after": "6a2efe0affbd76914f15bcb0b6364c4f9717d7472838de71c3b3c10ef660f42a",
+      "gzip_bytes": 121,
+      "gzip_sha256": "7192fe5d3d6ca50243007ba74d04b4ce8cbb02f26770b185a8ae7cc32ba74f37",
+      "decompressed_bytes_equal": true
+    },
+    {
+      "source": ".tmp/stage9-owner-current-consumption-AB-tools-20261003.json",
+      "archive": "46-stage9-owner-current-consumption-AB-tools-20261003.json.gz",
+      "bytes": 724,
+      "sha256": "3516b8393bc381365306bfc228a7212e5218756aeff2eedebf71d8b473fdb560",
+      "source_sha256_after": "3516b8393bc381365306bfc228a7212e5218756aeff2eedebf71d8b473fdb560",
+      "gzip_bytes": 431,
+      "gzip_sha256": "e2cdc3e7ab7589ce4a74bfabc8a1f504696d8428ba22e4eaaf53e788e591d951",
+      "decompressed_bytes_equal": true
+    }
+  ]
+}

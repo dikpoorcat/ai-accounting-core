@@ -19,6 +19,7 @@ from ai_accounting.kernel import (
     stored_json,
 )
 from ai_accounting.kernel.catalog import catalog_sql
+from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.engine import Engine
@@ -138,7 +139,11 @@ def test_payroll_confirmation_decoded_once_without_changing_sources(
     detail = Dashboard(engine).business_status("2026-01", "january", as_of="2026-02-01")
     result = detail["data"]["current_business_result"]
     assert result["amount_fen"] == expected_gross
-    assert result["payroll_confirmation"]["confirmation_fact_id"] in expected_ids
+    assert "payroll_confirmation" not in result
+    core = BusinessQueries(engine).business_status("january", "2026-01", as_of="2026-02-01")
+    published = core["current_business_result"]
+    assert published["calculation"]["id"] == ident
+    assert published["payroll_confirmation"]["confirmation_fact_id"] in expected_ids
 
 
 def test_payroll_confirmation_duplicate_saved_key_still_rejected(released_payroll):

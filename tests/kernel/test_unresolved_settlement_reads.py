@@ -203,6 +203,18 @@ def test_unresolved_source_mismatch_propagates_unknown_without_reassigning_payme
         assert full["status"] == summary["status"] == "partially_established"
         assert summary["movement_count"] == len(full["movements"]) == 2
         assert summary["complete"] is False and summary["issues"]
+        obligations_only = queries.settlement_summary(
+            connection,
+            "2026-01",
+            subject_ids={"expense"},
+            current=current,
+            include_history_counts=False,
+        )
+        assert obligations_only == {
+            key: value
+            for key, value in summary.items()
+            if key not in {"business_count", "movement_count", "line_relation_count"}
+        }
         obligation = summary["obligations"][0]
         assert obligation["key"] == original_key
         assert obligation["source_amount_fen"] == 100

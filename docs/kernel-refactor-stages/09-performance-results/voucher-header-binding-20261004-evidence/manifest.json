@@ -1,0 +1,60 @@
+{
+  "scope": "807-source three isolated synthetic actual voucher-header defects, not new tests/qualification/performance; no SQLite copy",
+  "source_sha256": "80735c1e2832458cacb1e13097b9efd3e357cd5bd09fe6a67ad56716eef08613",
+  "gzip_mtime": 0,
+  "items": [
+    {
+      "source_path": ".tmp/stage9-voucher-header-defect-20261004-run1/probe.py",
+      "source_sha256": "7d034d323b8a45209f761e75655811836bfb73bc2663d41d5d130fa40ce08bc3",
+      "source_bytes": 4778,
+      "archive": "probe.py.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "7d034d323b8a45209f761e75655811836bfb73bc2663d41d5d130fa40ce08bc3",
+      "archived_bytes": 4778,
+      "gzip_sha256": "ed2563deed94bf9b3d459e78e432363cc3096b912fbc2b2cd784b125bb5c228f",
+      "gzip_bytes": 1681,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-header-defect-20261004-run1/probe.log",
+      "source_sha256": "084854bf8e0a5ffd6d662e25d95f01afc2a0829c788d7f0bc4114bc8d3f11782",
+      "source_bytes": 1656,
+      "archive": "probe.log.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "084854bf8e0a5ffd6d662e25d95f01afc2a0829c788d7f0bc4114bc8d3f11782",
+      "archived_bytes": 1656,
+      "gzip_sha256": "300c360e042556fef5fe199adba1f4cf496a75f7fc67a88f65166939d0d97e7f",
+      "gzip_bytes": 410,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-header-defect-20261004-run1/receipt.json",
+      "source_sha256": "999de7e402d797312c827e432159e23770315b3d6888235a8e6268e66282371a",
+      "source_bytes": 180092,
+      "archive": "receipt.json.gz",
+      "representation": "redacted_analysis: private root/read_context minimized; actual synthetic baseline/after responses retained",
+      "archived_sha256": "24e31fddcd6e9e539e3058ed9ed82a6ca66cc9e0c20eb6a44abb3014c0445f2f",
+      "archived_bytes": 173993,
+      "gzip_sha256": "df42614dcadab8fc0fa528ef5dced611e1a8a682c13ad8b7b54ff313684df656",
+      "gzip_bytes": 8554,
+      "roundtrip_equal": true
+    }
+  ],
+  "source_match_tool_record": {
+    "source_sha256": "80735c1e2832458cacb1e13097b9efd3e357cd5bd09fe6a67ad56716eef08613",
+    "all_same807": true,
+    "scope": "existing read-only tool record after probe and before subsequent production repair; not a fresh current-workspace check",
+    "files": {
+      "business_queries.py": "10e111bf424915da28447b4f9381dd01f12cc5fc8118de7330f31ca4e8a012bc",
+      "dashboard.py": "2031c877e1c6c3f790490fcbc722f1643371dcf3b2a52503574d72d685b43abd",
+      "dashboard_reads.py": "1f5271f89e1cb0aad7d2c6237691f76c0e4322d9ebec99bf5c77a8e50807b6bd",
+      "query_reads.py": "c25c79e9c1510937d713174b4fbad36710466b17bd3848933c8f633636f4dbed",
+      "close_storage.py": "7f029c57ba69d4985a3c3fa0b45d5b75b2a249f7196ac38c80aaa68494f80442",
+      "integrity.py": "b1912b0106be31238050425f3b0b355989b47148a2211084c1203603fd8066e5",
+      "test_asset_batch_reads.py": "e1990239624757f01eacbf5add141881f1e016941b1064bb360a8735ff572030",
+      "test_asset_batches.py": "7ae5b2d563bcc6ba156d01bf2296dfc378b9598029d67a089c52cec0853f49f6",
+      "test_payroll_corrections.py": "203c69ff527c0f7e8ea521007179dbd4c1ec9a0d1b0b3bc93effbd2471785f40",
+      "test_integrity_content.py": "78a84c910f97ec74c96302d1893b4b2ab2516f1e81018bf19d1f98bd0920ad8a"
+    }
+  }
+}

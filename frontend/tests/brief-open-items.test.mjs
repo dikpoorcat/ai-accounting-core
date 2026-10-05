@@ -26,9 +26,8 @@ test("closed-period open items prefer each item's current settlement status", as
       party_key: id,
       party,
       description: "可退保证金",
-      source_business: { kind: "refundable_deposit", subject_id: id },
+      subject_id: id,
       category_key: "refundable_deposit_receivables",
-      source_period: "2026-03",
       source_amount_fen: "10000",
       paid_fen: "0",
       other_settled_fen: "0",
@@ -75,8 +74,10 @@ test("closed-period open items prefer each item's current settlement status", as
     assert.match(html, /class="status"[^>]*>当前待收<\/span>/);
     assert.match(html, /class="status status-settled"[^>]*>当前已收回<\/span>/);
     assert.match(html, /class="status status-historical"[^>]*>关账时待收<\/span>/);
-    assert.equal((html.match(/class="compact-status-trigger"/g) ?? []).length, 3);
-    assert.match(html, /核对依据/);
+    assert.equal((html.match(/<details\b[^>]*class="[^"]*\bbusiness-status-details\b[^"]*"/g) ?? []).length, 3);
+    assert.equal((html.match(/class="[^"]*\bcompact-status-trigger\b[^"]*"/g) ?? []).length, 3);
+    assert.match(html, /业务详情/);
+    assert.doesNotMatch(html, /业务月份|业务月份未提供/);
     assert.doesNotMatch(html, /精确来源与候选依据/);
   } finally {
     await server.close();

@@ -1,0 +1,78 @@
+{
+  "scope": "Completed default relocated development-package selftest; archive only, no rerun or independent DB verification",
+  "source_sha256": "a5d4e1ac7d41814bb7a74d30410e0dbe45e6a691c85bd69f71deff10f57bd1d1",
+  "source_manifest_sha256": "a95fce65d9fc6d5381f043d591caf2ab6562f1b08bba1ce24090c833e3639a0b",
+  "source_file_count": 776,
+  "archive_time_full_and_selected_maps_equal": true,
+  "archive_time_zip_manifest_verification_runner_hashes_match_receipt": true,
+  "gzip_mtime": 0,
+  "items": [
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/package-receipt.json",
+      "source_sha256": "93a1c9e2f62192b2dd1100483c0fe3a027fd3b5b6f4dfac36f30d630681ee6f5",
+      "source_bytes": 1222516,
+      "archive": "package-receipt.json.gz",
+      "representation": "complete redacted UTF8 text; private roots/PID/addresses removed",
+      "redacted_sha256": "17b7b9810fdc43aef39f459804e16c26f7378c58c1f5b9950d0eae12674344e4",
+      "redacted_bytes": 1220676,
+      "gzip_sha256": "98eaa1fe70942220dacffa63beb20ccde7bb3860b2831bb941eb82a4cbbd09e5",
+      "gzip_bytes": 513524,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/package-verification.json",
+      "source_sha256": "aa83179090503bf60180282315b9ff991f64504dc9d984579b95725501c73424",
+      "source_bytes": 3643,
+      "archive": "package-verification.json.gz",
+      "representation": "complete redacted UTF8 text; private roots/PID/addresses removed",
+      "redacted_sha256": "683268ed88eaa5abee4eaeb455d9b80d11e35fda225c4f9f3fac4571a5649491",
+      "redacted_bytes": 3611,
+      "gzip_sha256": "fae66a2a214404a071fc73ee25dffefae501745ea12f67f66087be9167e1f31f",
+      "gzip_bytes": 1792,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/run.log",
+      "source_sha256": "f411fac4fc8652712906ea58a1305737b1044d2d2dd6b16b082a7f1d2f81d64e",
+      "source_bytes": 5009,
+      "archive": "run.log.gz",
+      "representation": "complete redacted UTF8 text; private roots/PID/addresses removed",
+      "redacted_sha256": "1eb6227bcbebd72ee0950586a6bb56433c24a4dacd43d3bfdec710a1b22661f6",
+      "redacted_bytes": 4929,
+      "gzip_sha256": "400e6b3eeb14fd556613a48a3fc39c14a026cdf3e62f99d3d69edbbd18166e18",
+      "gzip_bytes": 1946,
+      "roundtrip_equal": true
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/package/manifest.json",
+      "source_sha256": "bd802ceb8d370151ad3a36366f734eced7700dbd80e547cc06451666cd58cc49",
+      "source_bytes": 725809,
+      "archive": "package-manifest.json.gz",
+      "representation": "complete redacted UTF8 text; private roots/PID/addresses removed",
+      "redacted_sha256": "bd802ceb8d370151ad3a36366f734eced7700dbd80e547cc06451666cd58cc49",
+      "redacted_bytes": 725809,
+      "gzip_sha256": "b56747617347ff7f7e4f732bf546772bf12e78863d6ec426df24cd0203c1c90c",
+      "gzip_bytes": 308166,
+      "roundtrip_equal": true
+    }
+  ],
+  "private_references": [
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/runner.py",
+      "source_sha256": "90829be8bfbd4e25828a62292b15687351c35e1ffc205a446971fcc682ccb921",
+      "source_bytes": 14046,
+      "representation": "private SHA reference only; no helper/ZIP copied"
+    },
+    {
+      "private_source_path": ".tmp/stage9-development-delivery-copy-retention-a5d4-20261005/package.zip",
+      "source_sha256": "42c73e5e6dee558dd71fa60b60692d582e0cbc1f1c07e5af45d5d6079737b394",
+      "source_bytes": 34666263,
+      "representation": "private SHA reference only; no helper/ZIP copied"
+    }
+  ],
+  "limitations": [
+    "Synthetic tk/native-window checks are not owner-operated GUI acceptance",
+    "No independent AI MCP, real current DB adjustment, browser500 or pure timing",
+    "packaged_offline_upgrade is null; draft/0, no formal release"
+  ]
+}

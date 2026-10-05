@@ -1,0 +1,186 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "Current24b9 main12 FAIL10/150 and main48 FAIL28/150 pure browser windows; current main12 qualification and test-sidecar permission-only preparation, other five scales not run",
+  "files": [
+    {
+      "source": ".tmp/stage9-open-scope-main12-browser-20261004-fix1.json",
+      "source_sha256": "9d99cd3e3bfe313cde90c0e4a0d6aa3178c223c09fd546bc00352faa42904103",
+      "content_review": "actual_safe_synthetic_browser_or_qualification_JSON_reviewed_no_credentials_private_URL_or_runtime_PID",
+      "archive": "stage9-open-scope-main12-browser-20261004-fix1.json.gz",
+      "raw_bytes": 417477,
+      "gzip_bytes": 22645,
+      "gzip_sha256": "1a15fab4eb4004335244a1670de3b74e75e6e9703cd0ad538ba97482ab15428e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "derived_from": ".tmp/stage9-open-scope-main12-browser-20261004-fix1-runner.json",
+      "original_sha256": "ad29ff92416c56275b1ed8228d1ecbc87346c3b282919e8e3cf5d49a9a8c73d0",
+      "content_review": "actual_reviewed_runner_or_control_PID_fields_omitted",
+      "archive": "stage9-open-scope-main12-browser-20261004-fix1-runner-public-analysis.json.gz",
+      "raw_bytes": 4981,
+      "gzip_bytes": 1709,
+      "gzip_sha256": "2cc163b487e94a096fc0559b61c4aeab1a3859e7de40613efac96e79d0d8f5fc",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "derived_from": ".tmp/stage9-open-scope-main12-browser-20261004-fix1-control.json",
+      "original_sha256": "b7347bab2ad1095ffdb4a6d6bd7af28dd3d5f1de54b4a9b9b98d031a9d3a0489",
+      "content_review": "actual_reviewed_runner_or_control_PID_fields_omitted",
+      "archive": "stage9-open-scope-main12-browser-20261004-fix1-control-public-analysis.json.gz",
+      "raw_bytes": 6699,
+      "gzip_bytes": 1952,
+      "gzip_sha256": "3e74ee27d16d24447c1a276273d9e6578d367271971dda79bc12ada561db61e4",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-browser-20261004.json",
+      "source_sha256": "311c1ef035ae5837711cc88cb96b2a6ae68ac3e215ce6959e69ea35902d19cc0",
+      "content_review": "actual_safe_synthetic_browser_or_qualification_JSON_reviewed_no_credentials_private_URL_or_runtime_PID",
+      "archive": "stage9-open-scope-main48-browser-20261004.json.gz",
+      "raw_bytes": 417796,
+      "gzip_bytes": 22671,
+      "gzip_sha256": "2cf70cbdfdc3cf72103142656e4d55d275155840147a6b9f56a9fb1c13941b39",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "derived_from": ".tmp/stage9-open-scope-main48-browser-20261004-runner.json",
+      "original_sha256": "1d599fcb45cd4afaf9d78e103b3400023c01a37cc2bffc4d96caf8b11dc4ca73",
+      "content_review": "actual_reviewed_runner_or_control_PID_fields_omitted",
+      "archive": "stage9-open-scope-main48-browser-20261004-runner-public-analysis.json.gz",
+      "raw_bytes": 4822,
+      "gzip_bytes": 1696,
+      "gzip_sha256": "eed09e78276fc8fd5306bf601f3023e4a386ddf62eff63bebb01d2c9c2fab35c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "derived_from": ".tmp/stage9-open-scope-main48-browser-20261004-control.json",
+      "original_sha256": "3be4a7671663b609ea950779c10b30b18d81f0fa93bb36c01f333665481bbae4",
+      "content_review": "actual_reviewed_runner_or_control_PID_fields_omitted",
+      "archive": "stage9-open-scope-main48-browser-20261004-control-public-analysis.json.gz",
+      "raw_bytes": 5046,
+      "gzip_bytes": 1796,
+      "gzip_sha256": "771a2763a5c18f3d28c05990454982dc33412fe95a4f04dfee447131c26a9a8a",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main12-browser-20261004-fix1-qualified.json",
+      "source_sha256": "5199e57e6edfc844cac4add609eddf548fd81f715427858b8c2deaeb70a20a3c",
+      "content_review": "actual_safe_synthetic_browser_or_qualification_JSON_reviewed_no_credentials_private_URL_or_runtime_PID",
+      "archive": "stage9-open-scope-main12-browser-20261004-fix1-qualified.json.gz",
+      "raw_bytes": 8946,
+      "gzip_bytes": 2677,
+      "gzip_sha256": "48cf719ac215a024690496722eab64202afdaebf7bdf9e591c80a9c42dda152e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-final.json",
+      "source_sha256": "8740f5e1c03f89f632ea6746ecfaae287fe39bd31bac4aea289c0fa393b2eb3f",
+      "content_review": "actual_safe_synthetic_browser_or_qualification_JSON_reviewed_no_credentials_private_URL_or_runtime_PID",
+      "archive": "stage9-open-scope-browser-private-sidecars-20261004-final.json.gz",
+      "raw_bytes": 1767,
+      "gzip_bytes": 900,
+      "gzip_sha256": "9581691d83990dea40d15b991937ebbc54591fb6966f0daad94c0fbf8237ea94",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "derived_from": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-current-acl.json",
+      "original_sha256": "9ddc0fb7d3bb470bd1cdc87026c306ccb86fe05dd544f34a67b52f681a20f47f",
+      "content_review": "actual_acl_assertions_reviewed_owner_SID_and_SDDL_not_archived",
+      "archive": "sidecars-current-acl-public-analysis.json.gz",
+      "raw_bytes": 459,
+      "gzip_bytes": 319,
+      "gzip_sha256": "479105f1095a4e34d79892e0a922a4f383c7fb296d84562a24306a13ff843e0d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "content_review": "actual_saved_samples_HTTP_status_and_render_tail_summary_no_runtime_PID_or_secrets",
+      "archive": "two-browser-summary-public-analysis.json.gz",
+      "raw_bytes": 4560,
+      "gzip_bytes": 1203,
+      "gzip_sha256": "daa7a16afdcb1ccd6daae28813e30748856965508ee04257417ea0a7bb18913b",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    }
+  ],
+  "excluded_originals": [
+    {
+      "source": ".tmp/stage9-open-scope-main12-browser-20261004-fix1-runner.json",
+      "source_sha256": "ad29ff92416c56275b1ed8228d1ecbc87346c3b282919e8e3cf5d49a9a8c73d0",
+      "raw_bytes": 4589,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main12-browser-20261004-fix1-control.json",
+      "source_sha256": "b7347bab2ad1095ffdb4a6d6bd7af28dd3d5f1de54b4a9b9b98d031a9d3a0489",
+      "raw_bytes": 6467,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-browser-20261004-runner.json",
+      "source_sha256": "1d599fcb45cd4afaf9d78e103b3400023c01a37cc2bffc4d96caf8b11dc4ca73",
+      "raw_bytes": 4436,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-browser-20261004-control.json",
+      "source_sha256": "3be4a7671663b609ea950779c10b30b18d81f0fa93bb36c01f333665481bbae4",
+      "raw_bytes": 4763,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-current-acl-collection-failure.json",
+      "source_sha256": "6569da96eb4207a87950cb8d9bc59782258d880d5e3afd486dcb2fbbb4f134e5",
+      "raw_bytes": 3596,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-current-acl-raw.json",
+      "source_sha256": "0d8d7a18d1781c10357f7bcc4dcdccded0e83586a86ae5228b203748d38fe8ef",
+      "raw_bytes": 12391,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-current-acl.json",
+      "source_sha256": "9ddc0fb7d3bb470bd1cdc87026c306ccb86fe05dd544f34a67b52f681a20f47f",
+      "raw_bytes": 14155,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-diagnosis-fix1.json",
+      "source_sha256": "8cd609c560899204b8ba91f3124fb846588a5ff7d201f0ef39fd3a10c39a0bdb",
+      "raw_bytes": 35271,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-diagnosis.json",
+      "source_sha256": "00e04c11e9bb1e7abed734914af291ee198875d53ffd0937f160bfed4e66f8d1",
+      "raw_bytes": 7843,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-private-sidecars-20261004-repair-receipt.json",
+      "source_sha256": "e21600b8442ce5e2b029c93fe4469dbc276a0f29678c3ab5dcc675b031814e19",
+      "raw_bytes": 25965,
+      "original_unchanged_and_not_archived": true
+    },
+    {
+      "source": ".tmp/stage9-open-scope-browser-20261004-runner-fix2.py",
+      "source_sha256": "45cb6869e43bbb6ad6b8595dce45ca8b1d6d6c59991b77b82ab605f1d6faab12",
+      "raw_bytes": 10719,
+      "original_unchanged_and_not_archived": true
+    }
+  ],
+  "raw_bytes": 872553,
+  "gzip_bytes": 57568,
+  "production_frozen": false,
+  "content_review": "Original browser numeric samples and ResourceTiming public path/query data and current main12 Q inspected. R/control PID fields explicitly omitted in labeled analyses, raw receipts remain private path/SHA. Test-sidecar original before-ACL capture missing is not a no-change claim. Password helpers, auth token/capability/private URL and owner SID/SDDL are not archived."
+}

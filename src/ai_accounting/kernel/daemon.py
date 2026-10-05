@@ -330,30 +330,30 @@ def build_native_security_controller(
             raise KernelError("unknown_company", "公司尚未登记")
         if request["database_id"] != company["database_id"]:
             raise KernelError("company_mismatch", "公司数据库身份不一致")
-        preview = service.require_active_close_preview(
+        preview, review = service.require_active_close_preview(
             request["company_id"],
             request["database_id"],
             request["period"],
             request["preview_digest"],
         )
-        if preview["epochs"] != request["epochs"]:
+        if preview.epoch_values() != request["epochs"]:
             raise KernelError("preview_expired", "请先在当前服务重新预览关账")
         return {
             "company_name": company["name"],
             "period_month": request["period"],
-            "owner_review": preview["manifest"]["owner_review"],
+            "owner_review": review,
         }
 
     def issue_close(request, token, password):
         with service.security.authorized(token):
             engine = service.engine(request["company_id"])
-            known = service.require_active_close_preview(
+            known, _ = service.require_active_close_preview(
                 request["company_id"],
                 request["database_id"],
                 request["period"],
                 request["preview_digest"],
             )
-            if known["epochs"] != request["epochs"]:
+            if known.epoch_values() != request["epochs"]:
                 raise KernelError("preview_expired", "关账预览已变化，请重新预览并确认")
             authority = service.security.reauthenticate(token, password)
             with engine.store.connection() as connection:
@@ -363,7 +363,7 @@ def build_native_security_controller(
                     # immutable-source interpretation without advancing a business
                     # lane.  Rebuild the complete manifest under the company write
                     # lock and compare its digest, including read_repair_revision.
-                    active = service.require_active_close_preview(
+                    active, _ = service.require_active_close_preview(
                         request["company_id"],
                         request["database_id"],
                         request["period"],
@@ -372,7 +372,7 @@ def build_native_security_controller(
                     manifest = Periods(engine)._manifest(
                         connection,
                         request["period"],
-                        active["owner_confirmation"],
+                        active.owner_confirmation,
                     )
                     current = engine.store.epochs(connection)
                     preview_digest = digest(
@@ -452,7 +452,6 @@ def run(root, *, port=0, replay_scope_file=None):
         try:
             service_options = {
                 "enable_read_pool": True,
-                "enable_parallel_brief": True,
                 "_static_runtime": static_runtime,
             }
             if replay_scope_file is not None:

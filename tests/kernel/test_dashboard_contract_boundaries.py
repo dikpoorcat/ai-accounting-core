@@ -52,3 +52,25 @@ def test_all_current_backend_samples_reject_invalid_envelopes(live_responses, ch
         "dashboard_period_preparation",
         "dashboard_quarterly_report",
     }
+
+
+@pytest.mark.parametrize("sample,field", [
+    ("brief", "adopted_basis"),
+    ("brief", "validation"),
+    ("cash_funds", "fact_issues"),
+    ("employees", "period_preparation"),
+    ("assets", "source_history"),
+    ("business_status", "basis_integrity"),
+    ("quarterly_report", "period_preparations"),
+    ("quarterly_report", "technical"),
+])
+def test_owner_contracts_reject_retired_technical_fields(live_responses, sample, field):
+    source = live_responses[sample]
+    value = copy.deepcopy(source["response"])
+    owner = value.get("data", value)
+    owner[field] = {"private-original-document-name": "private-response-content"}
+    with pytest.raises(KernelError) as rejected:
+        validate_response(source["command"], value)
+    assert rejected.value.code == "response_contract_mismatch"
+    assert "private-response-content" not in str(rejected.value.response())
+    assert "private-original-document-name" not in str(rejected.value.response())

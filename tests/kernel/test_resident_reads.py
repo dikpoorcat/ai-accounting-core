@@ -11,7 +11,8 @@ import pytest
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.permissions import PrivatePathError, ensure_private_file
-from ai_accounting.kernel.resident_reads import ResidentReadPool
+from ai_accounting.kernel.resident_reads import READ_PAGE_CACHE_KIB, ResidentReadPool
+from ai_accounting.kernel.runtime import RuntimeConfigurationError
 from ai_accounting.kernel.service import LocalService
 
 
@@ -125,6 +126,36 @@ def test_pool_discards_failed_transaction_and_changed_sqlite_flags(resident):
             pass
     assert service.read_pool._total == 0
     assert _read_identity(store) == first["taxpayer_id"]
+
+
+@pytest.mark.parametrize("maximum", [0, 5, 1.5, True])
+def test_pool_rejects_unbounded_or_nonintegral_connection_budget(maximum):
+    with pytest.raises(ValueError, match="one to four"):
+        ResidentReadPool(maximum=maximum)
+
+
+def test_pool_rejects_changed_page_budget_and_replaces_connection(resident):
+    service, first, _ = resident
+    store = service.engine(first["id"], dashboard_read=True).store
+    with store.connection(read_only=True) as connection:
+        prior = connection
+        assert connection.execute("PRAGMA cache_size").fetchone()[0] == -READ_PAGE_CACHE_KIB
+        assert _read_taxpayer(connection) == first["taxpayer_id"]
+    prior.execute("PRAGMA cache_size=-1")
+    with pytest.raises(RuntimeConfigurationError, match="cache_size"):
+        with store.connection(read_only=True):
+            pytest.fail("changed resource budget was accepted")
+    assert service.read_pool._total == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        prior.execute("SELECT 1")
+    with store.connection(read_only=True) as connection:
+        assert connection is not prior
+        assert connection.execute("PRAGMA cache_size").fetchone()[0] == -READ_PAGE_CACHE_KIB
+        assert _read_taxpayer(connection) == first["taxpayer_id"]
+
+
+def _read_taxpayer(connection):
+    return connection.execute("SELECT taxpayer_id FROM identity").fetchone()[0]
 
 
 def test_pool_clears_read_instrumentation_before_reuse(resident):

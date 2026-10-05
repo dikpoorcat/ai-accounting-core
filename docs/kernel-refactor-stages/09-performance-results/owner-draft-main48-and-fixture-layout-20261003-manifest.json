@@ -1,0 +1,87 @@
+{
+  "status": "complete",
+  "source_sha256": "e0c8cd4d7c03db0743c8e2b3d15c3c0f668e4e0c690b3cb388942fc2b55e0871",
+  "scope": "main48 fresh complete qualification and failed 500ms timing; tools-only historical-source group; not stage complete",
+  "files": [
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-20261003-qualified.json",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-20261003-qualified.json.gz",
+      "sha256": "e1fde1266e0f359c9ef7358d22a88dd2fc0fc465dc6122386f5641508201ce92",
+      "bytes": 26579,
+      "gzip_sha256": "1fd6ead01e554330c6825283a9aa35b1febab684c34ad6fcf1a42766f21f3461",
+      "gzip_bytes": 6375
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-20261003-browser.json",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-20261003-browser.json.gz",
+      "sha256": "7fd7bdd27c8d32ba92d82ee8a52030a881e74eec15e1317660cce41721611dfe",
+      "bytes": 418003,
+      "gzip_sha256": "7cb19738c7122b8433cee8b16254eb0c5046cab1819df75080958881ef390c52",
+      "gzip_bytes": 22677
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-20261003-qualification-browser.log",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-20261003-qualification-browser.log.gz",
+      "sha256": "6e219a43aea8b876c2b15a47f4b866da5af574eeb1c1b449f99f3a8844886592",
+      "bytes": 271,
+      "gzip_sha256": "88cbb99f6b2c974c12b2eab57d5b0aba0130aae81fee957618055364a5772b43",
+      "gzip_bytes": 163
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-20261003-timing.ready.json",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-20261003-timing.ready.json.gz",
+      "sha256": "bb56741da9ba31c03a522f571f90b056a220378707ceab20f831912d9b6e8fb9",
+      "bytes": 141,
+      "gzip_sha256": "a73e91e65ebf6f01a1fcea1fead0c09ccb928e450a8b7f122d0b25452c860adb",
+      "gzip_bytes": 142
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-20261003-timing.start.json",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-20261003-timing.start.json.gz",
+      "sha256": "6239fd4514b7a3bd327026a9479c1de4750dbe0f859c0c0f04c1ed08b003071b",
+      "bytes": 167,
+      "gzip_sha256": "a77b25a0133f4615df434e7cc86cbc6ec70c8ad429b00ccc98f96af43a9ed752",
+      "gzip_bytes": 154
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-pure-control-20261003.py",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-pure-control-20261003.py.gz",
+      "sha256": "642296b5d6bbdc47853feb2823e372255369d256b53739a9d8145431874e32f3",
+      "bytes": 5476,
+      "gzip_sha256": "321d45916f7ce4086c48cb0008921671a6078980005a9631ff0ca77d2dc5fa51",
+      "gzip_bytes": 1967
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-pure-control-20261003.json",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-pure-control-20261003.json.gz",
+      "sha256": "72d36206897c081a8e4805452193d50b49a022fb2cfe567971dd26801cb80e0f",
+      "bytes": 4583,
+      "gzip_sha256": "e731922c5c975993b7b4b900730240d324e390d70c06c1bc309baa2d92f1672a",
+      "gzip_bytes": 618
+    },
+    {
+      "source": ".tmp\\stage9-draft-runtime-main48-pure-control-20261003.log",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-draft-runtime-main48-pure-control-20261003.log.gz",
+      "sha256": "1a62c83b2476360162b64de4efd08ce6f85368f94b7f01c89eff6cf72154071d",
+      "bytes": 187,
+      "gzip_sha256": "b9100ed71169d1948838d39b5ad305677989860a56fec452a7cbddd90989d7ff",
+      "gzip_bytes": 168
+    },
+    {
+      "source": ".tmp\\stage9-historical-source-layout-directed-first.log",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-historical-source-layout-directed-first.log.gz",
+      "sha256": "19251926c006e6cf8c4f3c47bc98fb3e755e20015f1f730f87f4a4677ea003ba",
+      "bytes": 102,
+      "gzip_sha256": "fed04ee7553854776a3eea4c6aab4c56ffa52a69ccf3b3c7caf94ad4a452830b",
+      "gzip_bytes": 55
+    },
+    {
+      "source": ".tmp\\stage9-historical-source-layout-directed-first.xml",
+      "file": "owner-draft-main48-and-fixture-layout-20261003-raw\\stage9-historical-source-layout-directed-first.xml.gz",
+      "sha256": "e11a5ca2d9e34aa01679c68e52add01a7231fa4357638da1bd9eb12d0b2cfe3f",
+      "bytes": 7831,
+      "gzip_sha256": "1e388e81dd93fc83e021fa43c2c572ef762b32fdf611cfd2bbfe4a07e61854ea",
+      "gzip_bytes": 1357
+    }
+  ]
+}

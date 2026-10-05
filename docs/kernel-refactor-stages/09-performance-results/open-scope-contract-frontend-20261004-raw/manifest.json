@@ -1,0 +1,242 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "Current24b9 export checks, actual current frontend184 tests/build and45fixture validation, fresh current backend45syntheticHTTP consumer validation and two original preflight failures; no browser performance or ongoing qualification output",
+  "files": [
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-contracts.log",
+      "archive": "stage9-open-scope-current-frontend-20261004-contracts.log.gz",
+      "raw_bytes": 413,
+      "gzip_bytes": 252,
+      "source_sha256": "86239968ec39ae4b5b76751fa256fabe8656c7c51d94fed3ebdc516e69b1c17a",
+      "gzip_sha256": "5dfbc9300934952ea8527b25e13429b9614abfc2beb8d6cf77d8c56a31b772c8",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-samples.log",
+      "archive": "stage9-open-scope-current-frontend-20261004-samples.log.gz",
+      "raw_bytes": 492,
+      "gzip_bytes": 277,
+      "source_sha256": "e54b3f01fa43bff55242bf7942f3d3e56f770ac52ac48c0e887e1e582c5e33f7",
+      "gzip_sha256": "5c02ef1bef169ad555d02d2c9ac777abd7f75081cc35559f0318c7c4ed5b1dad",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-tests.log",
+      "archive": "stage9-open-scope-current-frontend-20261004-tests.log.gz",
+      "raw_bytes": 17891,
+      "gzip_bytes": 6433,
+      "source_sha256": "d3a240024504440a64d3b3067f2dd28ae8a57b2f83f95f3f4254503fc62ef83e",
+      "gzip_sha256": "3a302c2fc52cf4eb30aa21f3ebdb7846c24381ec7d7d424f910a39081effb781",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-release-build.log",
+      "archive": "stage9-open-scope-current-frontend-20261004-release-build.log.gz",
+      "raw_bytes": 3740,
+      "gzip_bytes": 1074,
+      "source_sha256": "24f6eced08081a048aa5fee55c5f9a740fbef4efe292648d6fe3a99961816045",
+      "gzip_sha256": "9254e4713ad1bb8cd71847168d612668c037a088fcc7bd0e2c4f92386516119c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-summary-public-analysis.json",
+      "archive": "stage9-open-scope-current-frontend-20261004-summary-public-analysis.json.gz",
+      "raw_bytes": 48989,
+      "gzip_bytes": 8223,
+      "source_sha256": "23b41d3a6eabb840b1d0cf434a49d75de3701c81af57b79ee094c2e38d47267b",
+      "gzip_sha256": "9c7149f25da13e02f3d1226b73a90f0d4c044da4d3f1ce8571c5bf37c5f1524a",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "derived_public_analysis_NOT_original_summary_removed_PID"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-prepare-20261004.py",
+      "archive": "stage9-open-scope-current-frontend-prepare-20261004.py.gz",
+      "raw_bytes": 1590,
+      "gzip_bytes": 810,
+      "source_sha256": "604b5b30cafd41ce4dae859c92909cdde631bbe4e7b1a79803cc300743632da7",
+      "gzip_sha256": "9d1c4121937ec615699e38894e6bb74970c27cf559f2076d943aab2e410cfd0e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-validation-20261004.py",
+      "archive": "stage9-open-scope-current-frontend-validation-20261004.py.gz",
+      "raw_bytes": 7215,
+      "gzip_bytes": 2690,
+      "source_sha256": "f4547b11eb818d8f816d9f6edce904dd99667efd6bd2fb41a0e2e5eecbea9b14",
+      "gzip_sha256": "4a54d816046074e6f343efbf1359841f8036143d41b04302758ca96beb6d6b84",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-live-consumer-validation-20261004.py",
+      "archive": "stage9-open-scope-live-consumer-validation-20261004.py.gz",
+      "raw_bytes": 3142,
+      "gzip_bytes": 1388,
+      "source_sha256": "cb7b19aa6c4f12af68ca7b703b047c55a246c0191412362894a12098e50f4391",
+      "gzip_sha256": "9af0ea73f532b61429b75a8598545bdbab0e4314eac0f7bc11d14eefa3749bab",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-live-consumer-validation-20261004.json",
+      "archive": "stage9-open-scope-live-consumer-validation-20261004.json.gz",
+      "raw_bytes": 25961,
+      "gzip_bytes": 10223,
+      "source_sha256": "f78fe76bbffb7a237271cc459b7c593f3027cf55fb8dba4f545a2eef4fe8ba5e",
+      "gzip_sha256": "a6746896554a36fd9240a2b219113b4f88daa1bd9d852ffca025d637c9fb4f91",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-live-consumer-validation-20261004-samples.json",
+      "archive": "stage9-open-scope-live-consumer-validation-20261004-samples.json.gz",
+      "raw_bytes": 323267,
+      "gzip_bytes": 23906,
+      "source_sha256": "fc2554bcea8f3cb44e2afd4f9a9753b3f0513e7295a6b021ec36918c7d61f04a",
+      "gzip_sha256": "146563e36dcd585a60267d84293011526dcb569666f5e83a5d62f6d1c8844f46",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "45_fresh_current_backend_synthetic_HTTP_responses_actual_fields_reviewed_no_auth_or_private_data"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-live-consumer-validation-20261004-backend-samples.log",
+      "archive": "stage9-open-scope-live-consumer-validation-20261004-backend-samples.log.gz",
+      "raw_bytes": 136,
+      "gzip_bytes": 136,
+      "source_sha256": "0ff6c153ac93e5f3811db521195ae7722ee48d7dc6aea80a2d0f99f7ab8992f4",
+      "gzip_sha256": "f137ffbce56fa109aabfda12c5882d1238cf3f3152df7e5ca9d0e19ded6a5587",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-live-consumer-validation-20261004-generated-consumers.log",
+      "archive": "stage9-open-scope-live-consumer-validation-20261004-generated-consumers.log.gz",
+      "raw_bytes": 0,
+      "gzip_bytes": 20,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-20261004.py",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-20261004.py.gz",
+      "raw_bytes": 4152,
+      "gzip_bytes": 1596,
+      "source_sha256": "c8f4ff85d66e21222d38e54dd294b5e1b339bbf50231b1955a055cd0086a0b44",
+      "gzip_sha256": "2b02b7c8db938c0c2248c0bf71a7af093ff277c89ad5f11cc262f2cdde4ae92c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-20261004.json",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-20261004.json.gz",
+      "raw_bytes": 26109,
+      "gzip_bytes": 8902,
+      "source_sha256": "49a376975614f58dc1f5aeb290df8816def570461bf9a2360f50606c7a2df71c",
+      "gzip_sha256": "76334494978c475488f374aa66b66669065698e37800755552e330b9e6efa5f9",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-20261004-database-contracts.log",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-20261004-database-contracts.log.gz",
+      "raw_bytes": 26,
+      "gzip_bytes": 46,
+      "source_sha256": "add12b459e7c2fd68942aa672200645cb635e69258e68f2756f5667977d4578f",
+      "gzip_sha256": "6a52a80d028a861c78374c94eecf1d991c90a6d98ef4209cd1ce66d6b315c385",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-20261004-response-model-export.log",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-20261004-response-model-export.log.gz",
+      "raw_bytes": 43,
+      "gzip_bytes": 61,
+      "source_sha256": "399b048bf7fecb4590159ad3d1c4a1487b932e790593c0876b843bd37b10682a",
+      "gzip_sha256": "a41c953a79d00f24baea4ed40da0a06c59be59a1e04b96e12f6d3683b1a06257",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-fix1-20261004.py",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-fix1-20261004.py.gz",
+      "raw_bytes": 4391,
+      "gzip_bytes": 1668,
+      "source_sha256": "85978fb281a359e1a2d3f56e484e73f416d80273c24bbe5806d3384c3deffb4a",
+      "gzip_sha256": "8356dcad6d0f43f9bcd6cad716415ac23e5a2a4e8de53be05abdd36fa6bdd4c7",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-contract-and-frontend-scope-preflight-failure-20261004.json",
+      "archive": "stage9-open-scope-contract-and-frontend-scope-preflight-failure-20261004.json.gz",
+      "raw_bytes": 527,
+      "gzip_bytes": 354,
+      "source_sha256": "32eb5fda829a39d88245f54172101f3ee740ab050cf56e215fec7e8154bff08d",
+      "gzip_sha256": "cc81168e9ba339c572816859363383c2bf5d7a2bb1e5e0694da65ae446f2ec82",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-qualification-preflight-failure-20261004.json",
+      "archive": "stage9-open-scope-main48-qualification-preflight-failure-20261004.json.gz",
+      "raw_bytes": 703,
+      "gzip_bytes": 435,
+      "source_sha256": "a0af88ecd8553e36370570ca798fe13fe42edb8dfd8a0cd0f7cbc828eb2ef49b",
+      "gzip_sha256": "81332a29d35d72f69d66bf06f023bfe646154da9821dbf66bc3a5b9bbe029096",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "content_review": "actual_reviewed_logs_or_script_or_failure_receipt"
+    }
+  ],
+  "excluded_originals": [
+    {
+      "source": ".tmp/stage9-open-scope-current-frontend-20261004-summary.json",
+      "source_sha256": "83d078bfba154d5392adeaa644b197744f52abeb3fdcffb771d7852de2948687",
+      "raw_bytes": 47410,
+      "original_unchanged_and_not_archived": true,
+      "reason": "Actual runtime PID in original; only explicitly derived analysis archived."
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-qualification-only-20261004.py",
+      "source_sha256": "0b45ec943e7f571a44e46902d80c315514a0fb61fe16d90081dee22dd2278a0c",
+      "raw_bytes": 6726,
+      "original_unchanged_and_not_archived": true,
+      "reason": "Actual synthetic password literals in original source; preserve private path/SHA only."
+    },
+    {
+      "source": ".tmp/stage9-open-scope-main48-qualification-only-fix1-20261004.py",
+      "source_sha256": "0cb2a83a9af4448c8bd1d66828baac69d7023987ad625b1c5e1992ab8ef41ded",
+      "raw_bytes": 8335,
+      "original_unchanged_and_not_archived": true,
+      "reason": "Actual synthetic password literals in source; preserve private path/SHA only."
+    }
+  ],
+  "raw_bytes": 468787,
+  "gzip_bytes": 68494,
+  "content_review": "Actual helper code, JSON fields/leaf strings, logs and synthetic response contents reviewed. Runtime PID original and qualification scripts with actual password literals excluded by semantic content inspection. Derived summary is labeled analysis and never original receipt. No PID, credentials, auth token, real private data, DB bytes or ongoing Q/R archived. Synthetic pagination cursors and source read_version are business scope values.",
+  "production_frozen": false
+}

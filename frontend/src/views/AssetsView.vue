@@ -14,10 +14,9 @@ import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
-import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { fen, formatFen, formatPositiveFen } from "../utils/money";
+import { fen, formatFen } from "../utils/money";
 
 const filters = [
   { value: "all", label: "全部资产" },
@@ -45,6 +44,7 @@ const response = ref<AssetsDashboardResponse | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 const focusedAssetId = computed(() => typeof route.query.asset_id === "string" ? route.query.asset_id : "");
+const focusedProjectId = computed(() => typeof route.query.project_id === "string" ? route.query.project_id : "");
 const filter = computed<AssetFilter>({
   get: () => filters.find(item => item.value === route.query.asset_filter)?.value ?? "all",
   set: value => { void router.push({
@@ -83,32 +83,15 @@ const attentionItems = computed(() => {
   const assets = data.value;
   if (!assets) return [];
   const alerts: string[] = [];
-  if (assets.reconciled === null) alerts.push("部分资产资料尚未确认，因此资产数量和金额可能不完整；由 AI 会计核对。");
-  if (!assets.reconciled) {
-    if (assets.differences.cost_fen !== null && fen(assets.differences.cost_fen)) {
-      alerts.push(
-        `资产及项目明细的成本与账面记录相差 ${formatPositiveFen(assets.differences.cost_fen)}。`,
-      );
-    }
-    if (assets.differences.accumulated_fen !== null && fen(assets.differences.accumulated_fen)) {
-      alerts.push(
-        `资产明细的累计折旧摊销与账面记录相差 ${formatPositiveFen(assets.differences.accumulated_fen)}。`,
-      );
-    }
-    if (assets.differences.net_fen !== null && fen(assets.differences.net_fen)) {
-      alerts.push(
-        `资产及项目明细的账面价值与账面记录相差 ${formatPositiveFen(assets.differences.net_fen)}。`,
-      );
-    }
-  }
+  if (assets.checking) alerts.push("AI 会计核对中，部分资产资料尚待确认。");
   if (assets.ledger_net_fen !== null && fen(assets.ledger_net_fen) < 0n) {
-    alerts.push("期末长期资产账面净值为负数，请核对资产原值与累计折旧摊销。");
+    alerts.push("期末长期资产账面净值为负数，由 AI 会计核对中。");
   }
   return alerts;
 });
 const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
   { id: "assets-overview", label: "概览" },
-  ...(attentionItems.value.length ? [{ id: "assets-checks", label: "资产核对" }] : []),
+  ...(attentionItems.value.length ? [{ id: "assets-checks", label: "关注事项" }] : []),
   { id: "asset-movements-title", label: "本月变动" },
   { id: "asset-list-title", label: "资产卡片" },
   { id: "asset-projects-title", label: "项目投入" },
@@ -156,30 +139,35 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
   const controller = new AbortController();
   activeController = controller;
   selectedPeriod.value = period;
-  response.value = null;
+  if (!contextGate) response.value = null;
   errorMessage.value = "";
   loading.value = true;
   try {
     const request = fetchAssetsDashboard(period, controller.signal, {
-      asset_filter: filter.value,
+      asset_filter: focusedAssetId.value ? "all" : filter.value,
       asset_id: focusedAssetId.value || undefined,
+      project_id: focusedProjectId.value || undefined,
     });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
-    if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; }
+    if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; loading.value = false; }
     await nextTick();
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
       const heading = document.getElementById(route.hash.slice(1));
       if (heading) { positionSection(heading); heading.focus({ preventScroll: true }); }
     }
-    if (isCurrent(generation, selection) && activeController === controller && route.hash === "#asset-card-target") {
+    if (isCurrent(generation, selection) && activeController === controller && focusedAssetId.value) {
       const card = document.getElementById("asset-card-target");
       if (card) {
         positionSection(card);
         card.focus({ preventScroll: true });
       }
     }
+    if (isCurrent(generation, selection) && activeController === controller && focusedProjectId.value) {
+      const card = document.getElementById("project-card-target");
+      if (card) { positionSection(card); card.focus({ preventScroll: true }); }
+    }
   } catch (error: unknown) {
-    if (isCurrent(generation, selection) && activeController === controller) errorMessage.value = dashboardErrorMessage(error);
+    if (isCurrent(generation, selection) && activeController === controller) { response.value = null; errorMessage.value = dashboardErrorMessage(error); }
   } finally {
     if (isCurrent(generation, selection) && activeController === controller) {
       loading.value = false;
@@ -193,8 +181,14 @@ function changePeriod(value: string) {
   void router.push({ query: { company_id: route.query.company_id, period: value } });
 }
 
-async function refresh() {
-  invalidateRequests();
+function refresh() { return refreshCurrent(true); }
+function refreshChanged() {
+  updateNotice.value = "资料已更新，正在重新读取。";
+  return refreshCurrent(false);
+}
+async function refreshCurrent(keepContent: boolean) {
+  invalidateRequests(keepContent);
+  loading.value = true;
   const generation = requestGeneration, selection = selectionKey();
   try {
     const period = routePeriod(), company = route.query.company_id;
@@ -210,29 +204,78 @@ async function refresh() {
       if (isCurrent(generation, selection)) await synchronizePeriod(true);
     }
   } catch (error: unknown) {
-    if (isCurrent(generation, selection)) errorMessage.value = dashboardErrorMessage(error);
+    if (isCurrent(generation, selection)) { response.value = null; loading.value = false; errorMessage.value = dashboardErrorMessage(error); }
   }
 }
 
-function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value, focusedAssetId.value]); }
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value, focusedAssetId.value, focusedProjectId.value]); }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selection === selectionKey(); }
-function invalidateRequests() {
+function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   activeController?.abort(); activeController = null;
   clearPageRequests();
-  response.value = null; loading.value = false;
+  if (!keepContent) response.value = null;
+  loading.value = keepContent;
+}
+
+async function reloadCollection(section: "assets" | "projects") {
+  const current = response.value;
+  if (!current?.data || loading.value || current.selected_period?.key !== routePeriod()) return;
+  const generation = requestGeneration, selection = selectionKey();
+  pageControllers.get(section)?.abort();
+  const request = new AbortController(); pageControllers.set(section, request);
+  pageLoading.value[section] = true; pageErrors.value[section] = "";
+  const valid = () => isCurrent(generation, selection) && pageControllers.get(section) === request
+    && response.value?.snapshot_version === current.snapshot_version;
+  try {
+    const next = await fetchAssetsDashboard(selectedPeriod.value, request.signal, {
+      section, asset_filter: focusedAssetId.value ? "all" : filter.value,
+      asset_id: focusedAssetId.value || undefined, project_id: focusedProjectId.value || undefined,
+      expected_version: current.snapshot_version,
+    });
+    if (!valid() || !next.data || !response.value?.data) return;
+    if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
+    const latest = response.value, collection = next.data.collections[section];
+    if (!collection) throw new Error("所选资产明细暂时无法读取，请重试。");
+    response.value = { ...latest, data: { ...latest.data!,
+      ...(section === "assets" ? { asset_filter: next.data.asset_filter, asset_id: next.data.asset_id } : { project_id: next.data.project_id }),
+      collections: { ...latest.data!.collections, [section]: collection },
+    } };
+    await nextTick();
+    if (valid()) {
+      const id = section === "assets" ? "asset-card-target" : "project-card-target";
+      const target = document.getElementById(id);
+      if (target) { positionSection(target); target.focus({ preventScroll: true }); }
+    }
+  } catch (caught) {
+    if (!valid()) return;
+    if (isDashboardSnapshotChanged(caught)) await refreshChanged();
+    else pageErrors.value[section] = dashboardErrorMessage(caught);
+  } finally {
+    if (valid()) { pageLoading.value[section] = false; pageControllers.delete(section); }
+  }
+}
+function collectionMatchesSelection(section: "assets" | "projects") {
+  const current = data.value;
+  return section === "projects" ? current?.project_id === (focusedProjectId.value || null)
+    : current?.asset_filter === (focusedAssetId.value ? "all" : filter.value)
+      && current?.asset_id === (focusedAssetId.value || null);
+}
+function retryCollection(section: "assets" | "projects") {
+  return collectionMatchesSelection(section) ? loadMore(section) : reloadCollection(section);
 }
 
 async function loadMore(section: "assets" | "projects" = "assets") {
+  if (!collectionMatchesSelection(section)) { await reloadCollection(section); return; }
   const current = response.value;
   const page = current?.data?.collections[section ?? "assets"]?.page;
   if (!current?.data || !page?.has_more || !page.next_cursor || pageLoading.value[section]) return;
   const generation = requestGeneration, selection = selectionKey();
   const request = new AbortController(); pageControllers.set(section, request); pageLoading.value[section] = true; pageErrors.value[section] = "";
   try {
-    const next = await fetchAssetsDashboard(selectedPeriod.value, request.signal, { section, asset_filter: filter.value, cursor: page.next_cursor, expected_version: current.snapshot_version });
+    const next = await fetchAssetsDashboard(selectedPeriod.value, request.signal, { section, asset_filter: focusedAssetId.value ? "all" : filter.value, asset_id: focusedAssetId.value || undefined, project_id: focusedProjectId.value || undefined, cursor: page.next_cursor, expected_version: current.snapshot_version });
     if (!isCurrent(generation, selection) || pageControllers.get(section) !== request || response.value?.snapshot_version !== current.snapshot_version || !next.data) return;
-    if (next.snapshot_version !== current.snapshot_version) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); return; }
+    if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
     const latest = response.value;
     if (!latest.data) return;
     const previous = latest.data.collections[section];
@@ -243,7 +286,7 @@ async function loadMore(section: "assets" | "projects" = "assets") {
     } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(section) !== request) return;
-    if (isDashboardSnapshotChanged(caught)) { updateNotice.value = "资料已更新，正在重新读取。"; await refresh(); }
+    if (isDashboardSnapshotChanged(caught)) { await refreshChanged(); }
     else pageErrors.value[section] = dashboardErrorMessage(caught);
   } finally { if (isCurrent(generation, selection) && pageControllers.get(section) === request) { pageLoading.value[section] = false; pageControllers.delete(section); } }
 }
@@ -325,38 +368,33 @@ function paymentScopeLabel(item: EstablishedAssetItem) {
 }
 
 function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {
-  const obligations = new Map<string, EstablishedAssetItem["settlements"][number]["obligations"][number]>();
-  let issueCount = 0;
-  for (const source of item.settlements) {
-    issueCount += source.issues?.length ?? 0;
-    for (const obligation of source.obligations) obligations.set(obligation.key, obligation);
-  }
-  const rows = [...obligations.values()];
+  const summary = item.payment_summary;
   const label = paymentScopeLabel(item);
-  if (!rows.length) {
+  if (!summary.obligation_count) {
     return {
       label,
-      value: issueCount ? `${issueCount} 项待核对` : "未列付款事项",
-      detail: issueCount ? "付款依据需要 AI 会计确认" : "点击查看取得来源",
-      tone: issueCount ? "attention" : "neutral",
+      value: summary.checking ? "AI 会计核对中" : "未列付款事项",
+      detail: summary.checking ? "付款金额暂无法完整确认" : "没有已确认的付款义务",
+      tone: summary.checking ? "attention" : "neutral",
     };
   }
-  const totals = rows.reduce((current, row) => ({
-    amount: current.amount + fen(row.amount_fen),
-    paid: current.paid + fen(row.paid_fen),
-    other: current.other + fen(row.other_settled_fen),
-    remaining: current.remaining + fen(row.remaining_fen),
-  }), { amount: 0n, paid: 0n, other: 0n, remaining: 0n });
+  if ([summary.amount_fen, summary.paid_fen, summary.other_settled_fen, summary.remaining_fen].some(value => value === null)) {
+    return { label, value: "暂无法确定", detail: "AI 会计核对中，付款金额保持未知", tone: "attention" };
+  }
+  const totals = {
+    amount: fen(summary.amount_fen), paid: fen(summary.paid_fen),
+    other: fen(summary.other_settled_fen), remaining: fen(summary.remaining_fen),
+  };
   const details: string[] = [];
   if (totals.paid) details.push(`公司已付 ${formatFen(totals.paid)}`);
   if (totals.other) details.push(`抵销等 ${formatFen(totals.other)}`);
   if (!details.length) details.push(`相关应付 ${formatFen(totals.amount)}`);
-  if (issueCount) details.push(`${issueCount} 项关系待核对`);
+  if (summary.checking) details.push("AI 会计核对中");
   return {
     label,
-    value: totals.remaining ? `月末待付 ${formatFen(totals.remaining)}` : issueCount ? `${issueCount} 项待核对` : "月末已结清",
+    value: totals.remaining ? `月末待付 ${formatFen(totals.remaining)}` : summary.checking ? "AI 会计核对中" : "月末已结清",
     detail: details.join(" · "),
-    tone: totals.remaining || issueCount ? "attention" : "settled",
+    tone: totals.remaining || summary.checking ? "attention" : "settled",
   };
 }
 
@@ -364,8 +402,8 @@ function dateLabel(value: string) {
   return value.length === 7 ? `${value}（按月确认）` : value;
 }
 
-function obligationLabel(name: string) {
-  return ({ net: "应付个人款项", tax: "应缴个税" } as Record<string, string>)[name] ?? "应付金额";
+function exitInformation(item: EstablishedAssetItem) {
+  return isFixedAsset(item) ? item.disposal : item.retirement;
 }
 
 function chargeLabel(item: EstablishedAssetItem, current = false) {
@@ -387,17 +425,13 @@ function pendingCost() {
   return !current || current.pending_fixed_cost_fen === null || current.pending_intangible_cost_fen === null ? null : fen(current.pending_fixed_cost_fen) + fen(current.pending_intangible_cost_fen);
 }
 
-function exitInformation(item: EstablishedAssetItem) {
-  return isFixedAsset(item) ? item.disposal : item.retirement;
-}
-
 onMounted(() => {
   mounted = true;
   void synchronizePeriod();
 });
 
 watch(
-  () => [route.query.company_id, route.query.period, filter.value, focusedAssetId.value],
+  () => [route.query.company_id, route.query.period],
   (value, previous) => {
     if (value.every((item, index) => item === previous[index])) return;
     invalidateRequests();
@@ -405,13 +439,25 @@ watch(
   { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period, filter.value, focusedAssetId.value] as const,
-  ([orgId, period, selectedFilter, assetId], previous) => {
-    if (previous && orgId === previous[0] && period === previous[1]
-      && selectedFilter === previous[2] && assetId === previous[3]) return;
-    const previousOrgId = previous?.[0];
-    if (mounted && orgId && orgId === route.query.company_id) void synchronizePeriod(orgId !== previousOrgId);
+  () => [context.value?.current_company?.company_id, route.query.period] as const,
+  ([companyId, period], previous) => {
+    if (previous && companyId === previous[0] && period === previous[1]) return;
+    if (mounted && companyId && companyId === route.query.company_id) void synchronizePeriod(companyId !== previous?.[0]);
   },
+);
+watch(
+  () => [filter.value, focusedAssetId.value, focusedProjectId.value],
+  (value, previous) => {
+    if (value.every((item, index) => item === previous[index]) || !mounted) return;
+    requestGeneration += 1;
+    activeController?.abort(); activeController = null;
+    clearPageRequests();
+    if (context.value?.current_company?.company_id !== route.query.company_id) return;
+    if (!response.value?.data || loading.value) { void synchronizePeriod(true); return; }
+    if (value[0] !== previous[0] || value[1] !== previous[1] || !collectionMatchesSelection("assets")) void reloadCollection("assets");
+    if (value[2] !== previous[2] || !collectionMatchesSelection("projects")) void reloadCollection("projects");
+  },
+  { flush: "sync" },
 );
 
 onBeforeUnmount(() => {
@@ -433,13 +479,13 @@ onBeforeUnmount(() => {
         @refresh="refresh"
       >
         <template #navigation>
-          <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="资产内容导航" @select="focusSection" />
+          <DashboardSectionNav v-if="sectionLinks.length" v-show="!loading" :items="sectionLinks" :active="activeSection" label="资产内容导航" @select="focusSection" />
         </template>
       </DashboardModuleHeader>
 
 
       <p v-if="updateNotice" class="note" role="status">{{ updateNotice }}</p>
-      <section v-if="loading && !data" class="state-panel" aria-live="polite">
+      <section v-if="loading" class="state-panel" aria-live="polite">
         <strong>正在加载资产数据…</strong>
         <span>正在读取所选月份的资产明细。</span>
       </section>
@@ -455,7 +501,7 @@ onBeforeUnmount(() => {
         <span>开始记账后，可在这里按月查看资产信息。</span>
       </section>
 
-      <template v-else>
+      <div v-if="selectedPeriodView && data" v-show="!loading && !errorMessage" class="asset-result">
         <section id="assets-overview" class="assets-hero" tabindex="-1" aria-labelledby="assets-total-label">
           <p class="dashboard-hero-eyebrow">
               {{ selectedPeriodView.label }}期末 · 全公司
@@ -472,20 +518,6 @@ onBeforeUnmount(() => {
               另含待启用资产 {{ formatFen(pendingCost()) }}
               <span v-if="data.project_cost_fen === null || fen(data.project_cost_fen)"> · 尚未计入资产卡片的项目投入 {{ formatFen(data.project_cost_fen) }}</span>
             </p>
-          </div>
-          <div class="reconciliation" :class="{ attention: !data.reconciled }">
-            <span>资产明细与账面记录</span>
-            <strong>{{ data.reconciled === null ? "尚不能完整核对" : data.reconciled ? "核对一致" : "存在差异" }}</strong>
-            <small v-if="!data.reconciled">
-              <a href="#assets-attention-title">查看需要关注的事项</a> · <a href="#asset-list-title">查看相关资产卡片</a>
-            </small>
-            <details class="reconciliation-details">
-              <summary>查看核对说明</summary>
-              <p>范围包括在用、待启用资产及尚未计入资产卡片的项目投入。</p>
-              <p>账面成本 {{ formatFen(data.ledger_cost_fen) }} · 明细成本 {{ formatFen(data.card_cost_fen) }}</p>
-              <p>账面累计折旧摊销 {{ formatFen(data.ledger_accumulated_fen) }} · 明细累计折旧摊销 {{ formatFen(data.card_accumulated_fen) }}</p>
-              <p>账面价值 {{ formatFen(data.ledger_net_fen) }} · 明细价值 {{ formatFen(data.card_net_fen) }}</p>
-            </details>
           </div>
         <section class="kpi-grid" aria-label="资产核心指标">
           <article class="kpi">
@@ -568,7 +600,7 @@ onBeforeUnmount(() => {
           <div class="section-heading">
             <div>
               <h2 id="asset-list-title" tabindex="-1">资产明细</h2>
-              <p class="list-caption"><strong>{{ data.unestablished_count ? "已确认" : "共" }} {{ data.registered_count }}</strong> 项资产 · {{ filterLabel }} · 已加载 {{ filteredItems.length }} 项</p>
+              <p class="list-caption"><strong>{{ data.unestablished_count ? "已确认" : "共" }} {{ data.registered_count }}</strong> 项资产 · {{ filterLabel }} <template v-if="!pageLoading.assets && !pageErrors.assets">· 已加载 {{ filteredItems.length }} 项</template></p>
             </div>
             <div class="asset-toolbar">
               <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">当前筛选只显示资料已确认的资产；待确认项目会另行提示。</p>
@@ -581,7 +613,9 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="data.unestablished_count">另有 {{ data.unestablished_count }} 项资产资料尚未确认，暂不计入资产数量和金额。</p>
-          <div v-if="filteredItems.length" class="asset-grid">
+          <p v-if="pageLoading.assets" class="note" role="status">正在读取所选资产…</p>
+          <p v-else-if="pageErrors.assets" class="note" role="alert">{{ pageErrors.assets }} <button type="button" @click="retryCollection('assets')">重新读取</button></p>
+          <div v-else-if="filteredItems.length" class="asset-grid">
             <template v-for="item in filteredItems" :key="item.asset_id">
             <article
               v-if="isUnestablishedAsset(item)"
@@ -649,57 +683,48 @@ onBeforeUnmount(() => {
                     <small>{{ assetPaymentSummary(item).detail }}</small>
                   </div>
                 </div>
+                <p v-if="isFixedAsset(item) && item.disposal" class="note">{{ item.disposal.kind === 'sale' ? '出售' : '报废' }} {{ item.disposal.date }} · 收款金额 {{ formatFen(item.disposal.gross_proceeds_fen) }}<template v-if="item.disposal.party"> · {{ item.disposal.party }}</template> · 处置收益 {{ formatFen(item.disposal.gain_fen) }} · 处置损失 {{ formatFen(item.disposal.loss_fen) }}</p>
+                <p v-else-if="!isFixedAsset(item) && item.retirement" class="note">终止使用 {{ item.retirement.date }} · 退出时账面价值 {{ formatFen(item.retirement.book_value_fen) }}</p>
               </div>
             </article>
             </template>
           </div>
           <div v-else class="empty-filter">{{ filter === 'all' ? '本月没有资产，项目投入另列。' : '当前筛选条件下没有资产。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
-          <DashboardPagination :page="data.collections.assets?.page" :loaded="filteredItems.length" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="loadMore()" />
+          <DashboardPagination v-if="!pageLoading.assets && !pageErrors.assets" :page="data.collections.assets?.page" :loaded="filteredItems.length" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="loadMore()" />
         </section>
 
         <section class="panel">
           <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
-          <p class="note">项目来源独立展示；整批结算不分摊为单卡付款。</p>
-          <p v-if="!projects.length" class="note">本月没有可展示的项目来源。</p>
-          <details v-for="project in projects" :key="project.source_id" class="asset-card dashboard-record-card project-card">
-            <summary class="project-summary">
-              <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>展开查看来源与付款</small></span>
+          <p v-if="pageLoading.projects" class="note" role="status">正在读取所选项目…</p>
+          <p v-else-if="pageErrors.projects" class="note" role="alert">{{ pageErrors.projects }} <button type="button" @click="retryCollection('projects')">重新读取</button></p>
+          <p v-else-if="!projects.length" class="note">本月没有可展示的项目投入。</p>
+          <article v-for="project in pageLoading.projects || pageErrors.projects ? [] : projects" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card">
+            <div class="project-summary">
+              <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>已投入成本 {{ formatFen(project.cost_fen) }}</small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
-            </summary>
-            <div class="settlement-detail">
-              <p v-for="(issue, issueIndex) in project.settlement.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本项目来源款项尚需核对，请查看精确依据。' }}</p>
-              <p>该来源已计入项目成本 {{ formatFen(project.cost_fen) }}，付款情况单独列示。</p>
-              <p v-for="obligation in project.settlement.obligations" :key="obligation.key">{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }} · 公司实际付款 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未结金额 {{ formatFen(obligation.remaining_fen) }}</p>
-              <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
-              <BusinessStatusDetails :subject-id="project.settlement.subject_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看精确关联的清偿事件" @changed="refresh" />
             </div>
-          </details>
-          <DashboardPagination :page="data.collections.projects?.page" :loaded="projects.length" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="loadMore('projects')" />
+          </article>
+          <DashboardPagination v-if="!pageLoading.projects && !pageErrors.projects" :page="data.collections.projects?.page" :loaded="projects.length" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="retryCollection('projects')" />
         </section>
 
-      </template>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.asset-result { display: contents; }
 [id][tabindex="-1"] { scroll-margin-top: 76px; }
 .assets-checks { min-width: 0; }
 .project-card { margin-top: 10px; }
-.project-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto); align-items: center; gap: 12px 24px; }
+.project-summary { display: grid; min-height: 44px; padding: 16px; grid-template-columns: minmax(0, 1fr) minmax(150px, auto); align-items: center; gap: 12px 24px; }
 .project-copy, .project-value { display: grid; min-width: 0; gap: 4px; }
 .project-copy > span, .project-value > span { color: var(--muted); font-size: 12px; }
-.project-copy > small { color: var(--accent); font-size: 11px; }
+.project-copy > small { color: var(--muted); font-size: 11px; }
 .project-value { justify-items: end; font-variant-numeric: tabular-nums; }
 .project-value strong { color: var(--gold); font-size: 18px; }
 .source-issue { color: var(--warning); }
 .assets-total, .kpi strong, .book-value strong, .owner-value-grid strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.asset-card > summary:not(.asset-card-summary) { min-height: 44px; padding: 16px; overflow-wrap: anywhere; cursor: pointer; }
-.reconciliation-details { min-width: 0; margin-top: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.reconciliation-details summary { color: var(--accent); font-size: 12px; font-weight: 750; cursor: pointer; }
-.settlement-detail { padding: 16px; border-top: 1px solid var(--line); overflow-wrap: anywhere; font-size: 12px; }
-.settlement-detail h3 { font-size: 14px; }
 .assets-page { min-height: 100%; }
 .assets-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
 .state-panel, .panel { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);  }
@@ -709,13 +734,8 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--surface); cursor: pointer; }
 .assets-hero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; min-height: 198px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
 .assets-hero > div > span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.assets-hero > div { grid-column: 1 / -1; min-width: 0; }
 .assets-total { color: var(--gold); }
-.reconciliation { display: grid; align-content: start; align-self: stretch; padding: 0; border: 0; border-radius: 0; background: transparent; }
-.reconciliation.attention strong { color: var(--warning); }
-.reconciliation span, .reconciliation strong, .reconciliation small { display: block; }
-.reconciliation span { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
-.reconciliation strong { color: var(--accent); font-size: 20px; }
-.reconciliation small { margin-top: 6px; color: var(--muted); font-size: 11px; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px;
   overflow: visible;
 
@@ -815,6 +835,6 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .assets-hero .kpi-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
 .assets-hero .kpi-grid strong { font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
-  .assets-hero .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .assets-hero .kpi-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 }
 </style>

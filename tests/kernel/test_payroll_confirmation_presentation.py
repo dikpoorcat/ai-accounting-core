@@ -14,8 +14,11 @@ def test_dashboard_current_and_frozen_wage_details_retain_monthly_plan_evidence(
     dashboard = Dashboard(company.engine)
 
     current_response = dashboard.business_status("2026-01", "january", as_of="2026-02-01")
-    assert current_response["schema_version"] == 5
-    current = current_response["data"]
+    assert current_response["schema_version"] == 6
+    assert "payroll_confirmation" not in current_response["data"]["current_business_result"]
+    current = BusinessQueries(company.engine).business_status(
+        "january", "2026-01", as_of="2026-02-01"
+    )
     source = current["current_business_result"]["payroll_confirmation"]
 
     assert source["mode"] == "monthly_plan"
@@ -26,12 +29,20 @@ def test_dashboard_current_and_frozen_wage_details_retain_monthly_plan_evidence(
     assert len(source["evidence"]) == 1
 
     company.close("2026-01")
-    closed = dashboard.business_status("2026-01", "january", as_of="2026-02-01")["data"]
+    owner_closed = dashboard.business_status("2026-01", "january", as_of="2026-02-01")["data"]
+    assert "payroll_confirmation" not in owner_closed["frozen_adoption"]
+    assert (
+        owner_closed["current_business_result"]["amount_fen"]
+        == current_response["data"]["current_business_result"]["amount_fen"]
+    )
+    closed = BusinessQueries(company.engine).business_status(
+        "january", "2026-01", as_of="2026-02-01"
+    )
 
     assert closed["frozen_adoption"]["payroll_confirmation"] == source
     assert (
         closed["frozen_adoption"]["calculation_id"]
-        == closed["current_business_result"]["calculation_id"]
+        == closed["current_business_result"]["calculation"]["id"]
     )
 
 

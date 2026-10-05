@@ -1,0 +1,270 @@
+{
+  "status": "completed_scoped_receipts_archived",
+  "artifact_count": 23,
+  "source_sha256": "6688df6c46f5416ca03917def0d29a701cb20e8ae45b962c59df4a1290f8da62",
+  "current_source_full_verification": false,
+  "browser_acceptance": false,
+  "scope": "initial75pass2fail;old8cc rejection reproduction;two nodes corrected2pass;fixed6688 independent111pass;native counts only",
+  "excluded": [
+    "databases",
+    "credentials",
+    "original checkpoints",
+    "running qualification/browser receipts",
+    "real data"
+  ],
+  "artifacts": [
+    {
+      "group": "6688_source_seal_metadata",
+      "source": ".tmp/stage9-close-reference-group-seal.py",
+      "archive": "owner-close-reference-group-20261003-01-stage9-close-reference-group-seal.py.gz",
+      "bytes": 2738,
+      "sha256": "911fc2bb804f6e31e9ac4ab783f63747515330b122f3e18fae9e6d7209895577",
+      "archive_sha256": "033dadbe017949adb71db1c8b8749b747af1cc202fc82f23dd05f9fe0c676f0e",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_source_seal_metadata",
+      "source": ".tmp/stage9-close-reference-group-seal.json",
+      "archive": "owner-close-reference-group-20261003-02-stage9-close-reference-group-seal.json.gz",
+      "bytes": 1122,
+      "sha256": "3781f852b01a76ecee57591df0dd22b857020bc777f11daade86ac1fb6e33364",
+      "archive_sha256": "2a9435098d834ca756232e92170c91da63ce5c15ccc514239308dffa344b8866",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_source_seal_metadata",
+      "source": ".tmp/stage9-close-reference-group-seal.log",
+      "archive": "owner-close-reference-group-20261003-03-stage9-close-reference-group-seal.log.gz",
+      "bytes": 1072,
+      "sha256": "937c9487fc37ac390b6332465f14b086204267c78714e011f3880741097a3e7b",
+      "archive_sha256": "21b3a6ed7ee2e755f36d277ee5ffe5613044396138bcec4bf5bb2be44fb5adc6",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_source_seal_metadata",
+      "source": ".tmp/stage9-build-source-owner-reference-group-20261003-release/source-manifest.json",
+      "archive": "owner-close-reference-group-20261003-04-source-manifest.json.gz",
+      "bytes": 88963,
+      "sha256": "9de4a38ae2f93fc575d5a68898ad3cba334ab4dc5786c67731a6c1eead1d52b5",
+      "archive_sha256": "4daac3e9140f55b061f0c037600b99ed75ac3909e49645f0f1575347d76f8eed",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "primary_initial_failure",
+      "source": ".tmp/stage9-reference-batch-group.log",
+      "archive": "owner-close-reference-group-20261003-05-stage9-reference-batch-group.log.gz",
+      "bytes": 6178,
+      "sha256": "0be167c891edff922e6d6f8aed098c2d53e9dceee3f70f18063cae4286241d2e",
+      "archive_sha256": "ce34ec3f44946669d20330920512afab809d4ded5f6fc43b8a0534bad237350a",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "primary_initial_failure",
+      "source": ".tmp/stage9-reference-batch-group.xml",
+      "archive": "owner-close-reference-group-20261003-06-stage9-reference-batch-group.xml.gz",
+      "bytes": 23758,
+      "sha256": "842b3a5be933c4a0333d680de2eda83e0d1559c850536d9acd341032da4c5893",
+      "archive_sha256": "918ee7c98d71c50bd5809abd36e7d132d3e0a53fe308a4ea6c041679e9efac2c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "8cc_original_rejection_reproduction",
+      "source": ".tmp/stage9-reference-error-original-path.py",
+      "archive": "owner-close-reference-group-20261003-07-stage9-reference-error-original-path.py.gz",
+      "bytes": 2665,
+      "sha256": "90068b97f746f4aa059ace1c5b85822c89d103c9265cf0f6dfe1a6cad8781d2b",
+      "archive_sha256": "606c26313a1099eaf06f5647b0612a4f403bec56b4206b635791de7ca134cda3",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "8cc_original_rejection_reproduction",
+      "source": ".tmp/stage9-reference-error-original-path.json",
+      "archive": "owner-close-reference-group-20261003-08-stage9-reference-error-original-path.json.gz",
+      "bytes": 623,
+      "sha256": "8d5fc1d059d662c8480dad0617d78a90cbd7754923f7cf7dcea16c45f728536e",
+      "archive_sha256": "344b2ca8b6452d817e522cc05c1f6322d1ac04878d0bda35788deaef9545b970",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "8cc_original_rejection_reproduction",
+      "source": ".tmp/stage9-reference-error-original-path.log",
+      "archive": "owner-close-reference-group-20261003-09-stage9-reference-error-original-path.log.gz",
+      "bytes": 468,
+      "sha256": "d5bd8893101b4d0dad64d3b8e4004a2923fe07c919fcc00bff49e6e3ebfbb213",
+      "archive_sha256": "2c4ad4cb8efa01bb35b71cd3568906f29cb38fc19b25dc3dd41efab2a2f39fdd",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "two_nodes_correction_only",
+      "source": ".tmp/stage9-reference-rejection-correction.log",
+      "archive": "owner-close-reference-group-20261003-10-stage9-reference-rejection-correction.log.gz",
+      "bytes": 100,
+      "sha256": "8945f8b5c89a8e4a7290846dd1ecc77cbcb8eaaddb9f97e4799a531193e9a4a1",
+      "archive_sha256": "81331ba97366533ad7601c96a3f5580b1b5d6935c31416b0a5167f4fa2f6f1f0",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "two_nodes_correction_only",
+      "source": ".tmp/stage9-reference-rejection-correction.xml",
+      "archive": "owner-close-reference-group-20261003-11-stage9-reference-rejection-correction.xml.gz",
+      "bytes": 568,
+      "sha256": "1950eaaa1bfa5f4d50ab6624c8ef333b724343f1d3fef05574c3fcd1cf42f9cb",
+      "archive_sha256": "db73d2030f5967c3cf1d9bde6bc5a1468f89809acb0618be28e29627bfa3eb0d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_fixed_factory_independent_regression",
+      "source": ".tmp/stage9-reference-group-regression.py",
+      "archive": "owner-close-reference-group-20261003-12-stage9-reference-group-regression.py.gz",
+      "bytes": 4508,
+      "sha256": "468361b2942f07101deebdd5a9b80ab3047e25feef76203edab4a32fced35756",
+      "archive_sha256": "97f965e83c93600b3e6eb946e08a7de87704105cd62b462d36108dfc233cba8d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_fixed_factory_independent_regression",
+      "source": ".tmp/stage9-reference-group-regression.json",
+      "archive": "owner-close-reference-group-20261003-13-stage9-reference-group-regression.json.gz",
+      "bytes": 91534,
+      "sha256": "eefed5211dfb4b7142ce0177de02324532f53a2c91c8d7d505d9c5d7f42710f5",
+      "archive_sha256": "e24a0e0e982b6e1dea9cec4647663f83e52e7c57567a11673420cdba105880a2",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_fixed_factory_independent_regression",
+      "source": ".tmp/stage9-reference-group-regression.log",
+      "archive": "owner-close-reference-group-20261003-14-stage9-reference-group-regression.log.gz",
+      "bytes": 834,
+      "sha256": "ef1c34b95c7431a28efc4c74d8628632df3002818e59ba96df5e07c0a80427f9",
+      "archive_sha256": "857d3e8d6fd317537bb0f46585d6300ab718106a4b5a06612cf89aacae0cd15d",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_fixed_factory_independent_regression",
+      "source": ".tmp/stage9-reference-group-regression.xml",
+      "archive": "owner-close-reference-group-20261003-15-stage9-reference-group-regression.xml.gz",
+      "bytes": 20984,
+      "sha256": "59f32ad1c7b85eb87d0e1d38e087cad2c80233ba0097f03e44328e07419b6b60",
+      "archive_sha256": "5a4ea5320ea4eead4be6c64d202f0dd9609627457e82e6b868cb684d2efd6499",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_fixed_factory_independent_regression",
+      "source": ".tmp/stage9-reference-group-regression-runner.log",
+      "archive": "owner-close-reference-group-20261003-16-stage9-reference-group-regression-runner.log.gz",
+      "bytes": 115,
+      "sha256": "aae3a6cfc2db10d80134d5e9bc587af5334cc978f341b9fc15154c9c78d4f1d8",
+      "archive_sha256": "2297f6de616ef13e2fa4e5be2eba84d92686086c70b21d84fc85f1ece947644f",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main48-reference-group-native-work.py",
+      "archive": "owner-close-reference-group-20261003-17-stage9-owner-main48-reference-group-native-work.py.gz",
+      "bytes": 15768,
+      "sha256": "2059712aad5d1584b2598049710e5f7be20b5bb3126c6a0bf205e50f1a2d0bc5",
+      "archive_sha256": "0771cab2eb1849fc5e9b69c7b9638ad7c97830e3b351a210325f47b59b6b25b7",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main48-reference-group-native-work.json",
+      "archive": "owner-close-reference-group-20261003-18-stage9-owner-main48-reference-group-native-work.json.gz",
+      "bytes": 602959,
+      "sha256": "14ffdccd99686fca30212de0d108cb27f51429333eb15d568e752012bb677147",
+      "archive_sha256": "b4cbdebc2aeb6212519c04a6959162cb94ec4010734c9e26a335a662da0838d3",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main48-reference-group-native-work.log",
+      "archive": "owner-close-reference-group-20261003-19-stage9-owner-main48-reference-group-native-work.log.gz",
+      "bytes": 139,
+      "sha256": "7926a5d1c5b920b29dbe5c93505ade21b39ab354de8142478e3dd53a512c5fcc",
+      "archive_sha256": "75e41cb8767a6f86b5bb6b394b4889f7fa64b6223567c2ca39ef6b67a7c93325",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main12-reference-group-native-work.py",
+      "archive": "owner-close-reference-group-20261003-20-stage9-owner-main12-reference-group-native-work.py.gz",
+      "bytes": 15768,
+      "sha256": "6fc139086baf919ce7c15d7809e8f316d146516c7251dc5836ba31a906ccf6fa",
+      "archive_sha256": "f3c2f7f7d321f82c1e2796c05d08dae10322cd10e1e53322408ca2fba95a127c",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main12-reference-group-native-work.json",
+      "archive": "owner-close-reference-group-20261003-21-stage9-owner-main12-reference-group-native-work.json.gz",
+      "bytes": 603353,
+      "sha256": "81f716fb8e23880db45e3fde586eebffee045280125971c9e2fbabce5133d4cd",
+      "archive_sha256": "892c1d7949877ba2c1b1ebfdf4ba1b18cb3f650bf33f9c4767bbb671bdc2aadb",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "6688_native_diagnostics_old_sample_qualification",
+      "source": ".tmp/stage9-owner-main12-reference-group-native-work.log",
+      "archive": "owner-close-reference-group-20261003-22-stage9-owner-main12-reference-group-native-work.log.gz",
+      "bytes": 139,
+      "sha256": "59cef1bcd15ddf0d05cd24eca0b9ddefc6abea6611e39da136f0c4206af451c6",
+      "archive_sha256": "268dcf5c350478a4ae0be52e637dff5ce43f3390c89943c7d7d9d29982006f39",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    },
+    {
+      "group": "current_static_scope",
+      "source": ".tmp/stage9-c4-close-physical-batch-scope.md",
+      "archive": "owner-close-reference-group-20261003-23-stage9-c4-close-physical-batch-scope.md.gz",
+      "bytes": 12327,
+      "sha256": "f875f1c1efd917967ca589ecbf4f122ec430f64707648883287078507be1e70c",
+      "archive_sha256": "a1d0524ff2b1a470f420499d82ff512afec83baa228331dddfd7efd4ad128de9",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true,
+      "source_unchanged": true
+    }
+  ]
+}

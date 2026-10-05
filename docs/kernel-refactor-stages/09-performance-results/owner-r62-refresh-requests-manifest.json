@@ -1,0 +1,23 @@
+{
+  "scope": "instrumented request sequence diagnostic; not performance acceptance",
+  "sample_scope": "diagnostic",
+  "status": "passed",
+  "source": "D:\\GitHub\\ai-accounting-core\\.tmp\\stage9-build-source-owner-r61-release",
+  "source_sha256": "6d9951d3660ae4d0c81bc7da6241085a69a03ab8d8640a0d984ef263eba637b7",
+  "warmups": 1,
+  "sample_count": 1,
+  "files": [
+    {
+      "source": ".tmp\\stage9-owner-main12-requests-r62.json",
+      "archive": "owner-r62-refresh-requests.json.gz",
+      "raw_sha256": "4f6a37f956ffab408a26ba3774d837ff9e74d25b48c5e6718084554e371fa98b",
+      "archive_sha256": "027c1903602ffb429b964b3f5601de85e3532116f863302de9b97e38f6c0e187"
+    },
+    {
+      "source": ".tmp\\stage9-owner-main12-requests-r62.log",
+      "archive": "owner-r62-refresh-requests.log.gz",
+      "raw_sha256": "14c1034084b6750a41581f0db1e549cf756e2b2bb0e217bc076b5771c023e9e6",
+      "archive_sha256": "d5c4e27d09d4ce5b55088b28272b0a29d7c852616c1d4ad01d57b9025c93dea6"
+    }
+  ]
+}

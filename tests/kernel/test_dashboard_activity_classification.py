@@ -170,8 +170,8 @@ def _reimbursement_payments(book, channel="bank"):
 
 
 def _assert_groups(data, expected, *, complete=True):
-    vouchers = data["collections"]["vouchers"]["items"]
-    components = {item["components"][0]["id"]: item["components"][0] for item in vouchers}
+    activities = data["collections"]["activity"]["items"]
+    components = {item["subject_id"]: item for item in activities}
     if complete:
         assert set(components) == set(expected)
     assert {ident: item["group"] for ident, item in components.items()} == {
@@ -180,15 +180,9 @@ def _assert_groups(data, expected, *, complete=True):
     assert {item["key"]: item["event_count"] for item in data["activity_groups"]} == dict(
         Counter(expected.values())
     )
-    grouped_subjects = {}
     for group in data["activity_groups"]:
-        assert group["loaded_count"] == len(group["rows"])
-        for row in group["rows"]:
-            component = row["components"][0]
-            assert component["group"] == group["key"] == expected[component["id"]]
-            assert component["id"] not in grouped_subjects
-            grouped_subjects[component["id"]] = group["key"]
-    assert set(grouped_subjects) == set(components)
+        assert sum(item["count"] for item in group["type_counts"]) == group["event_count"]
+    assert len(activities) == len(components)
 
 
 def test_expense_group_follows_typed_creditor_kind(book):
@@ -221,19 +215,19 @@ def test_whole_month_groups_stay_complete_when_only_one_voucher_is_loaded(book):
     while True:
         data = response["data"]
         _assert_groups(data, expected, complete=False)
-        items = data["collections"]["vouchers"]["items"]
+        items = data["collections"]["activity"]["items"]
         assert len(items) == 1
-        subject = items[0]["components"][0]["id"]
+        subject = items[0]["subject_id"]
         assert subject not in loaded
         loaded.add(subject)
-        page = data["collections"]["vouchers"]["page"]
+        page = data["collections"]["activity"]["page"]
         assert page["total_count"] == len(expected)
         if not page["has_more"]:
             break
         response = dashboard.brief(
             PERIOD,
             preparation="deferred",
-            section="vouchers",
+            section="activity",
             cursor=page["next_cursor"],
             expected_version=response["snapshot_version"],
             limit=1,
@@ -272,7 +266,7 @@ def test_payment_with_supplier_and_employee_sources_has_one_other_business_event
             "mixed-batch": "other",
         },
     )
-    assert data["voucher_count"] == 3
+    assert data["activity_count"] == 3
 
 
 def test_closed_month_expense_and_payment_keep_their_published_source_after_a_later_draft(book):
@@ -360,7 +354,7 @@ def test_bounded_activity_summary_rejects_damaged_off_page_classification_source
         }
     before = Dashboard(engine).brief(PERIOD, preparation="deferred", limit=1)["data"]
     _assert_groups(before, expected, complete=False)
-    assert before["collections"]["vouchers"]["items"][0]["components"][0]["id"] == "first-voucher"
+    assert before["collections"]["activity"]["items"][0]["subject_id"] == "first-voucher"
     with engine.store.connection(read_only=True) as connection:
         source = connection.execute(
             "SELECT c.id,c.outcome FROM calculation c "
@@ -407,7 +401,7 @@ def test_retained_bank_verification_payment_is_income(book):
     publish("verification-income")
     data = Dashboard(engine).brief(PERIOD, preparation="deferred")["data"]
     _assert_groups(data, {"verification-income": "income_customer"})
-    assert data["collections"]["vouchers"]["items"][0]["business_amount_fen"] == 1
+    assert data["collections"]["activity"]["items"][0]["amount_fen"] == 1
 
 
 def test_overpayment_confirmation_and_its_actual_refund_keep_fund_movement_group(book):

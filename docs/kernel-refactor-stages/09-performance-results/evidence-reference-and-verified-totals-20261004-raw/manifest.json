@@ -1,0 +1,103 @@
+{
+  "format": "stage9-bounded-evidence-archive/1",
+  "scope": "public evidence-reference result/logs/contracts and verified-line totals audit; HTTP diagnostic originals excluded",
+  "files": [
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-result.md",
+      "archive": "stage9-evidence-reference-group-fix-20261004-result.md.gz",
+      "raw_bytes": 4287,
+      "gzip_bytes": 2144,
+      "source_sha256": "e4c7b73f8069609a0214ea3ec817285b4eb964c17c8a2515f7c2dbe8a7234bbc",
+      "gzip_sha256": "af3c1d53cf8dc2b9796b65265cf123a5747639d3c9362b8c1e88bd198fa9dea4",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-tests-first.log",
+      "archive": "stage9-evidence-reference-group-fix-20261004-tests-first.log.gz",
+      "raw_bytes": 3328,
+      "gzip_bytes": 1177,
+      "source_sha256": "db4b499af7e5559c738633fe2a26b9ace16aade26b6a8bc55441a848fea5f9f7",
+      "gzip_sha256": "3b890fe81213ab55e7299cc2726aa482529e176c82e4a0a1f029632026fa5e5b",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-tests-repair.log",
+      "archive": "stage9-evidence-reference-group-fix-20261004-tests-repair.log.gz",
+      "raw_bytes": 115,
+      "gzip_bytes": 68,
+      "source_sha256": "a1f4c5f9fcd41a70b9800c3d35a9120aee468988dc235888506c7779f59fab2f",
+      "gzip_sha256": "ce659bf26f41476edecfcf16c24676713a70c6aa6aa7d1f899a02b133d0c60c3",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-nested.log",
+      "archive": "stage9-evidence-reference-group-fix-20261004-nested.log.gz",
+      "raw_bytes": 100,
+      "gzip_bytes": 51,
+      "source_sha256": "93496a05e86081fc822d276c30b248cf1547ee0bfaa326579354afcc9ccf0288",
+      "gzip_sha256": "303096f57e84458a1b144d69deb73247e40d420682859cf7916c09b1aa6da606",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-ruff.log",
+      "archive": "stage9-evidence-reference-group-fix-20261004-ruff.log.gz",
+      "raw_bytes": 20,
+      "gzip_bytes": 40,
+      "source_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "gzip_sha256": "6907f34c82deb8a688eb1658e87fcdbb33e1cfd89fabe0c681fe5186b5ecb153",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-evidence-reference-group-fix-20261004-contract-check.json",
+      "archive": "stage9-evidence-reference-group-fix-20261004-contract-check.json.gz",
+      "raw_bytes": 313,
+      "gzip_bytes": 215,
+      "source_sha256": "d94cda4c70682c6666ba4e59d09a3b9494c9597cdf32ab075c016c80b8cde228",
+      "gzip_sha256": "16092097a4b19a538689515b765283c0fe3923a1face9cbf209a9766ff3ce2b0",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    },
+    {
+      "source": ".tmp/stage9-verified-line-totals-audit-20261004.md",
+      "archive": "stage9-verified-line-totals-audit-20261004.md.gz",
+      "raw_bytes": 10705,
+      "gzip_bytes": 5467,
+      "source_sha256": "62a6cf5968cd232b5b759dc754d71634da0610b4f483665c91a2f8fd0262f063",
+      "gzip_sha256": "48b68cde4f332401de9d8b61b5312ab769656491c6b8cfe443b7dff834f9966b",
+      "gzip_mtime": 0,
+      "roundtrip_verified": true
+    }
+  ],
+  "total_raw_bytes": 18868,
+  "total_gzip_bytes": 9162,
+  "excluded_diagnostic_originals": [
+    {
+      "source": ".tmp/stage9-dd86-http-pipeline-diagnostic-20261004.json",
+      "source_sha256": "1f8f3f459c4b825e2f988dcb910723faee1eed7030a2161b7ff89a2375dfad08",
+      "reason": "contains profile/process/identity data; group document is explicit analysis summary, not original"
+    },
+    {
+      "source": ".tmp/stage9-dd86-http-pipeline-diagnostic-20261004-fix1.json",
+      "source_sha256": "f09e5bc90a29e557f4fc21902c52c4cd771257dfe9083f1ed98714a970dbeecd",
+      "reason": "contains profile/process/identity data; group document is explicit analysis summary, not original"
+    },
+    {
+      "source": ".tmp/stage9-dd86-http-pipeline-diagnostic-20261004-analysis.json",
+      "source_sha256": "4cab70f69f09a89988d936b2be667f0dcf04750559c4de065322e1c8d2659fa0",
+      "reason": "contains profile/process/identity data; group document is explicit analysis summary, not original"
+    }
+  ],
+  "credential_scan": "no matches",
+  "excludes": [
+    "private MCP/credentials/PIDs",
+    "DB/WAL/ZIP",
+    "raw profiles",
+    "full source lists",
+    "real business data"
+  ]
+}

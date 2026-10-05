@@ -1,6 +1,8 @@
 """Frozen settlement reads retain both historical and current posting semantics."""
 
+import hashlib
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from test_settlement_period_scopes import allocation, cash_payment, setup
@@ -8,6 +10,7 @@ from test_settlement_period_scopes import allocation, cash_payment, setup
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.cash import CashFunding
 from ai_accounting.kernel.maintenance import Maintenance
+from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.settlement_freeze import (
     FrozenScope,
@@ -116,14 +119,27 @@ def test_open_tail_replay_is_shared_only_for_equal_historical_and_current_scope(
     import ai_accounting.kernel.settlement_freeze as freeze
 
     original_read_root = freeze._read_root
+    original_groups = freeze._groups_from_root
+    original_change_counts = freeze._change_period_counts
     roots = []
+    aggregate_work = []
 
     def counted_root(connection, period):
         roots.append(period)
         return original_read_root(connection, period)
 
+    def counted_groups(root):
+        aggregate_work.append(("groups", len(root["groups"])))
+        return original_groups(root)
+
+    def counted_changes(root):
+        aggregate_work.append(("change_periods", len(root["change_period_counts"])))
+        return original_change_counts(root)
+
     with monkeypatch.context() as scoped:
         scoped.setattr(freeze, "_read_root", counted_root)
+        scoped.setattr(freeze, "_groups_from_root", counted_groups)
+        scoped.setattr(freeze, "_change_period_counts", counted_changes)
         with QueryReads.snapshot(company.engine) as reads:
             current = settlement_followup_summary(
                 reads.connection, "2026-01", current=True, reads=reads
@@ -135,6 +151,11 @@ def test_open_tail_replay_is_shared_only_for_equal_historical_and_current_scope(
             assert reads._frozen_settlement_scopes["2026-01", True].groups is (
                 reads._frozen_settlement_scopes["2026-01", False].groups
             )
+            root = reads._frozen_settlement_scopes["2026-01", True].base_root
+            assert aggregate_work == [
+                ("groups", len(root["groups"])),
+                ("change_periods", len(root["change_period_counts"])),
+            ]
         assert roots == [YearMonth("2026-01").ordinal]
     company.save(
         cash_payment(
@@ -144,7 +165,10 @@ def test_open_tail_replay_is_shared_only_for_equal_historical_and_current_scope(
         "balance-paid",
     )
     company.publish("balance-paid")
-    with QueryReads.snapshot(company.engine) as reads:
+    aggregate_work.clear()
+    with monkeypatch.context() as scoped, QueryReads.snapshot(company.engine) as reads:
+        scoped.setattr(freeze, "_groups_from_root", counted_groups)
+        scoped.setattr(freeze, "_change_period_counts", counted_changes)
         historical = settlement_followup_summary(
             reads.connection, "2026-02", reads=reads
         )
@@ -157,6 +181,11 @@ def test_open_tail_replay_is_shared_only_for_equal_historical_and_current_scope(
         assert reads._frozen_settlement_blocks
         assert historical["remaining_fen"] == current["remaining_fen"]
         assert historical["paid_fen"] == current["paid_fen"]
+        root = scopes["2026-02", False].base_root
+        assert aggregate_work == [
+            ("groups", len(root["groups"])),
+            ("change_periods", len(root["change_period_counts"])),
+        ]
     company.save(
         cash_payment(
             "2026-03", 400000,
@@ -593,13 +622,10 @@ def test_frozen_page_locates_only_bounded_leaves_among_many_open_keys(monkeypatc
         base_period=period,
         base_root={"directories": {"all": directory, "open": directory}},
         groups={
-            (period, "receivable", "1122", None, "labor"): {
-                "obligation_count": len(keys),
-                "unknown_count": 1,
-                "open_count": len(keys) - 2,
-                "open_unknown_count": 1,
-                "open_sum": 100 * (len(keys) - 3),
-            }
+            (period, "receivable", "1122", None, "labor"): [
+                len(keys), 1, len(keys) - 2, 1, 0, 0, 0, 0, 0, 0,
+                0, 100 * (len(keys) - 3), 0, 0, 0,
+            ]
         },
         period_amounts={},
         overrides={
@@ -653,7 +679,7 @@ def test_frozen_page_locates_only_bounded_leaves_among_many_open_keys(monkeypatc
     assert set(settled) == {"k00000", "k00002"}
 
 
-def test_frozen_directory_rejects_missing_reference_and_open_tail_rejects_missing_change(
+def test_unused_reference_is_full_integrity_duty_and_open_tail_still_checked(
     tmp_path, monkeypatch
 ):
     import ai_accounting.kernel.settlement_freeze as freeze
@@ -661,6 +687,9 @@ def test_frozen_directory_rejects_missing_reference_and_open_tail_rejects_missin
     company = setup(tmp_path)
     monkeypatch.setattr(freeze, "_LEAF_SIZE", 1)
     company.close("2026-01")
+    with company.engine.store.connection(read_only=True) as connection:
+        expected = settlement_dashboard_open(connection, "2026-01", limit=1)
+        expected_summary = settlement_followup_summary(connection, "2026-01")
     with company.engine.store.connection() as connection:
         rows = connection.execute(
             "SELECT ordinal FROM settlement_freeze_ref "
@@ -672,10 +701,19 @@ def test_frozen_directory_rejects_missing_reference_and_open_tail_rejects_missin
             (rows[-1][0],),
         )
     with company.engine.store.connection(read_only=True) as connection:
-        with pytest.raises(KernelError, match="冻结清偿依据不匹配"):
-            settlement_dashboard_open(connection, "2026-01", limit=1)
+        assert settlement_dashboard_open(connection, "2026-01", limit=1) == expected
+        assert settlement_followup_summary(connection, "2026-01") == expected_summary
         with pytest.raises(KernelError, match="冻结清偿依据不匹配"):
             require_frozen_settlement_projection(company.engine, connection)
+        close_epochs = company.engine.store.epochs(connection)
+    # The actual close transaction independently verifies the old mirror before
+    # preparing its next root; an ordinary successful read cannot authorize it.
+    with pytest.raises(KernelError, match="冻结清偿依据不匹配"):
+        Periods(company.engine).close(
+            "2026-02", owner_confirmation=company.owner_confirmation,
+            preview_digest="00" * 32, epochs=close_epochs, request_id="reject-broken-freeze",
+        )
+    assert company.count("period_close") == 1
     repaired = company.engine.rebuild_projections(request_id="repair-frozen-settlement")
     assert repaired["changed"] is True
     with company.engine.store.connection(read_only=True) as connection:
@@ -703,6 +741,94 @@ def test_frozen_directory_rejects_missing_reference_and_open_tail_rejects_missin
     with other.engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError, match="清偿读取投影的期间摘要不匹配"):
             settlement_dashboard_open(connection, "2026-01", current=True)
+
+
+def test_unused_reference_growth_does_not_expand_ordinary_read_work(tmp_path):
+    company = setup(tmp_path)
+    company.close("2026-01")
+
+    def read():
+        statements = []
+        with company.engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            connection.set_trace_callback(statements.append)
+            result = (
+                settlement_followup_summary(connection, "2026-01"),
+                settlement_dashboard_open(connection, "2026-01", limit=1),
+                settlement_summary(connection, "2026-01", subject_ids={"cost"}),
+                settlement_position_rows(connection, "2026-01", {"1122", "2202", "2241"}),
+            )
+            connection.set_trace_callback(None)
+        return result, statements
+
+    expected, before = read()
+    with company.engine.store.connection() as connection:
+        period, kind, first, last, count, digest = connection.execute(
+            "SELECT period,kind,first_key,last_key,row_count,block_digest "
+            "FROM settlement_freeze_ref WHERE kind='all' ORDER BY ordinal LIMIT 1"
+        ).fetchone()
+        maximum = connection.execute(
+            "SELECT max(ordinal) FROM settlement_freeze_ref WHERE period=? AND kind=?",
+            (period, kind),
+        ).fetchone()[0]
+        connection.executemany(
+            "INSERT INTO settlement_freeze_ref VALUES(?,?,?,?,?,?,?)",
+            ((period, kind, maximum + number, first, last, count, digest)
+             for number in range(1, 101)),
+        )
+    actual, after = read()
+    assert actual == expected
+    assert after == before
+    assert not any("settlement_freeze_ref" in statement for statement in after)
+    assert any("settlement_freeze_block" in statement for statement in after)
+    assert any("settlement_state_revision" in statement for statement in after)
+    with company.engine.store.connection(read_only=True) as connection:
+        with pytest.raises(KernelError, match="冻结清偿依据不匹配"):
+            require_frozen_settlement_projection(company.engine, connection)
+    assert company.engine.rebuild_projections(request_id="repair-extra-freeze-refs")["changed"]
+    assert read() == (expected, before)
+
+
+@pytest.mark.parametrize("kind", ["all", "open", "subject"])
+@pytest.mark.parametrize("entries", [
+    [None], [[]], [[0, "a", "z", 1]], [[False, "a", "z", 1, "00" * 32]],
+    [[0, 1, "z", 1, "00" * 32]], [[0, "z", "a", 1, "00" * 32]],
+    [[0, "a", "z", True, "00" * 32]], [[0, "a", "z", 0, "00" * 32]],
+    [[0, "a", "z", 1, "gg" * 32]],
+    [[0, "a", "z", 1, "00" * 32], [1, "z", "zz", 1, "11" * 32]],
+])
+def test_authenticated_root_rejects_malformed_directory_headers(monkeypatch, kind, entries):
+    """Even an already anchored body must reject malformed consumed headers."""
+    from ai_accounting.kernel import content_history_context, settlement_freeze
+
+    period = YearMonth("2026-01").ordinal
+    close_digest = bytes.fromhex("aa" * 32)
+    root = {"format": "settlement-freeze/2", "period": period,
+            "close_digest": close_digest.hex(), "directories": {"all": [], "open": []},
+            "subject_directory": []}
+    if kind == "subject":
+        root["subject_directory"] = entries
+    else:
+        root["directories"][kind] = entries
+    payload = canonical(root)
+    root_digest = hashlib.sha256(payload.encode()).digest()
+    # Supply the independent parent result to isolate this post-authentication
+    # shape boundary; no business writer or integrity verifier is bypassed.
+    reader = SimpleNamespace(verified_header=lambda *_args: root_digest,
+                             derived_root=lambda header, _name: header)
+    monkeypatch.setattr(content_history_context, "close_reader", lambda: reader)
+    with sqlite3.connect(":memory:") as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("CREATE TABLE period_close(period,manifest,digest)")
+        connection.execute(
+            "CREATE TABLE settlement_freeze_root(period,close_digest,root_json,root_digest)"
+        )
+        connection.execute("INSERT INTO period_close VALUES(?,?,?)", (period, "{}", close_digest))
+        connection.execute("INSERT INTO settlement_freeze_root VALUES(?,?,?,?)",
+                           (period, close_digest, payload, root_digest))
+        with pytest.raises(KernelError) as invalid:
+            settlement_freeze.frozen_root(connection, period)
+        assert invalid.value.code == "content_integrity_failed"
 
 
 def test_second_frozen_period_keeps_first_period_paid_and_reuses_state(tmp_path, monkeypatch):

@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from draft_bundle_fixture import synthetic_draft_bundle
 from entity_fixture import seed_registration_entities
 from monthly_close_fixture import close_months, ready
 
@@ -22,7 +23,6 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.runtime import connect, initialize_file, private_file_lock
-from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security.service import SecurityService
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import install_metadata, verify_schema
@@ -39,11 +39,16 @@ def create_old_company(
     company_id=COMPANY,
     taxpayer_id=TAXPAYER,
     database_id=DATABASE,
+    source_fingerprint=development.SOURCE_FINGERPRINT,
+    prior_adjustment=False,
 ) -> tuple[Path, object, object]:
     """Install every object from the packaged 923584 contract, not new DDL."""
-    target = bundle or production_bundle()
-    source = development.source_bundle(target)
-    objects = source.current("company")["objects"]
+    target = bundle or synthetic_draft_bundle(
+        path.parent / (path.stem + "-draft-contracts"), development=True
+    )
+    source = development.source_bundle(target, source_fingerprint)
+    original = (development.source_bundle(target) if prior_adjustment else source)
+    objects = original.current("company")["objects"]
 
     def initialize(connection):
         connection.execute("BEGIN IMMEDIATE")
@@ -57,7 +62,18 @@ def create_old_company(
             connection.execute(
                 "INSERT INTO identity VALUES(1,?,?,?)", (company_id, taxpayer_id, database_id)
             )
-            install_metadata(connection, source, "company")
+            install_metadata(connection, original, "company")
+            if prior_adjustment:
+                assert source_fingerprint == development.INDEX_SOURCE_FINGERPRINT
+                _, step_target, differences = development._declared_changes(target)[0]
+                development._apply_first_step(connection, step_target, differences)
+                connection.execute(
+                    "INSERT INTO schema_draft_history(sequence,source_fingerprint,"
+                    "target_fingerprint,retained_history_digest) VALUES(1,?,?,?)",
+                    (bytes.fromhex(development.SOURCE_FINGERPRINT),
+                     bytes.fromhex(source_fingerprint),
+                     bytes.fromhex(_retained_history_digest(connection))),
+                )
             connection.commit()
         except BaseException:
             connection.rollback()
@@ -175,28 +191,33 @@ def snapshot_rows(connection, source):
     return development._all_existing_rows(connection, source.current("company"))
 
 
-def create_old_root(tmp_path):
+def create_old_root(tmp_path, *, source_fingerprints=None):
     root = tmp_path / "synthetic-root"
-    target = production_bundle()
+    target = synthetic_draft_bundle(tmp_path / "draft-contracts", development=True)
     catalog = Catalog(root, target)
     SecurityService(root / "catalog.sqlite").provision(
         "synthetic-owner", "Synthetic-Only-Password-123!"
     )
     companies = []
     source = development.source_bundle(target)
-    for index in (1, 2):
+    source_fingerprints = source_fingerprints or (development.SOURCE_FINGERPRINT,) * 2
+    for index, source_fingerprint in enumerate(source_fingerprints, 1):
         company_id = f"synthetic-company-{index}"
         database_id = f"synthetic-database-{index}"
         taxpayer_id = f"91310000000000000{index}"
         path = root / taxpayer_id / "company.sqlite"
         path.parent.mkdir()
-        create_old_company(
-            path,
-            target,
-            company_id=company_id,
-            taxpayer_id=taxpayer_id,
-            database_id=database_id,
-        )
+        if source_fingerprint == target.current("company")["sha256"]:
+            Store.create(path, target, company_id, taxpayer_id, database_id)
+        else:
+            create_old_company(
+                path,
+                target,
+                company_id=company_id,
+                taxpayer_id=taxpayer_id,
+                database_id=database_id,
+                source_fingerprint=source_fingerprint,
+            )
         with catalog.connection() as connection:
             connection.execute(
                 "INSERT INTO company(id,taxpayer_id,name,path,database_id) VALUES(?,?,?,?,?)",
@@ -226,7 +247,7 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
             connection.execute("SELECT version,hex(fingerprint) FROM schema_history").fetchall()
             == original
         )
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 2
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert snapshot_rows(connection, source) == rows
         assert _retained_history_digest(connection) == history
@@ -237,7 +258,7 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
         assert result["verification"]["status"] == "verified"
 
 
-@pytest.mark.parametrize("point", ["after_copy", "after_drop", "after_ddl", "before_commit"])
+@pytest.mark.parametrize("point", ["after_copy", "after_drop", "after_ddl", "after_index_ddl", "before_commit"])
 def test_each_fault_rolls_back_whole_company_upgrade(tmp_path, point):
     path, source, target = create_old_company(tmp_path / "company.sqlite")
     old_business(path, source)

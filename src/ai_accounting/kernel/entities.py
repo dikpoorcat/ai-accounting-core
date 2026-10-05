@@ -15,7 +15,7 @@ from .content_history_context import source_canonical as canonical
 from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
-from .types import ActualDate, YearMonth
+from .types import ActualDate, EvidenceDigest, YearMonth, evidence_digest_bytes
 
 EntityKind = Literal["person", "organization", "fund_account", "asset", "project", "fund_product"]
 ENTITY_KINDS = ("person", "organization", "fund_account", "asset", "project", "fund_product")
@@ -179,24 +179,25 @@ def employee_entities(connection, period, *, registry):
     # Every latest person profile can influence this negative membership test.
     # Verify its exact JSON before applying the same predicates in Python;
     # SQLite JSON1 picks the first duplicate key while Python picks the last.
-    candidates = list(connection.execute(
-        "SELECT p.*,EXISTS(SELECT 1 FROM entity_reference_current r "
-        "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
-        "AND r.role='employee' AND r.period<=?) AS employee_reference,"
-        "EXISTS(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id) "
-        "AS resolved FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
-        "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
-        "FROM entity_profile_revision q WHERE q.entity_id=e.id) ORDER BY e.id",
-        (cutoff,),
-    ))
+    candidates = list(
+        connection.execute(
+            "SELECT p.*,EXISTS(SELECT 1 FROM entity_reference_current r "
+            "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
+            "AND r.role='employee' AND r.period<=?) AS employee_reference,"
+            "EXISTS(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id) "
+            "AS resolved FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
+            "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
+            "FROM entity_profile_revision q WHERE q.entity_id=e.id) ORDER BY e.id",
+            (cutoff,),
+        )
+    )
     selected = []
     for profile in candidates:
         content = _profile_record(profile)
         if profile["employee_reference"] or (
             not profile["resolved"]
             and (
-                content["employment_start"] is not None
-                or content["employment_status"] != "unknown"
+                content["employment_start"] is not None or content["employment_status"] != "unknown"
             )
         ):
             selected.append(profile)
@@ -277,9 +278,7 @@ class Entities:
         profile = EntityProfile.model_validate_json(canonical(data)).model_dump(mode="json")
         if not isinstance(source, str) or not source.strip() or len(source) > 2000:
             raise ValueError("source must describe the explicit source of the profile")
-        evidence = None if evidence_digest is None else bytes.fromhex(evidence_digest)
-        if evidence is not None and len(evidence) != 32:
-            raise ValueError("invalid evidence digest")
+        evidence = None if evidence_digest is None else evidence_digest_bytes(evidence_digest)
         return profile, evidence
 
     @staticmethod
@@ -320,7 +319,7 @@ class Entities:
         *,
         source: str,
         request_id: str,
-        evidence_digest: str | None = None,
+        evidence_digest: EvidenceDigest | None = None,
         account_type: Literal["bank", "cash", "platform"] | None = None,
     ):
         if kind not in ENTITY_KINDS or (kind == "fund_account") != (account_type is not None):
@@ -353,7 +352,7 @@ class Entities:
         source: str,
         expected_revision: int,
         request_id: str,
-        evidence_digest: str | None = None,
+        evidence_digest: EvidenceDigest | None = None,
     ):
         profile, evidence = self._profile(data, source, evidence_digest)
 
@@ -432,15 +431,19 @@ class Entities:
             # missing index row still belongs to full integrity verification.
             usage = {}
             if candidates:
-                latest_rows = list(connection.execute(
-                    "WITH latest AS (SELECT r.entity_id,max(r.period) last_period "
-                    "FROM entity_reference_current r JOIN fact_current c ON c.fact_id=r.fact_id "
-                    "WHERE r.entity_id IN (SELECT value FROM json_each(?)) GROUP BY r.entity_id) "
-                    "SELECT l.entity_id,l.last_period,r.fact_id FROM latest l "
-                    "JOIN entity_reference_current r ON r.entity_id=l.entity_id "
-                    "AND r.period=l.last_period JOIN fact_current c ON c.fact_id=r.fact_id",
-                    (canonical(sorted(candidates)),),
-                ))
+                latest_rows = list(
+                    connection.execute(
+                        "WITH latest AS (SELECT r.entity_id,max(r.period) last_period "
+                        "FROM entity_reference_current r JOIN fact_current c "
+                        "ON c.fact_id=r.fact_id "
+                        "WHERE r.entity_id IN (SELECT value FROM json_each(?)) "
+                        "GROUP BY r.entity_id) "
+                        "SELECT l.entity_id,l.last_period,r.fact_id FROM latest l "
+                        "JOIN entity_reference_current r ON r.entity_id=l.entity_id "
+                        "AND r.period=l.last_period JOIN fact_current c ON c.fact_id=r.fact_id",
+                        (canonical(sorted(candidates)),),
+                    )
+                )
                 if latest_rows:
                     from .entity_references import verify_hits
 

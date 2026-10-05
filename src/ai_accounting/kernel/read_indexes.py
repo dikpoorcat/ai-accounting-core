@@ -90,6 +90,9 @@ CREATE TABLE close_reference(close_period INTEGER NOT NULL REFERENCES period_clo
  FOREIGN KEY(source_kind,source_id) REFERENCES read_index_source
  DEFERRABLE INITIALLY DEFERRED) STRICT;
 CREATE INDEX close_reference_lookup ON close_reference(reference_type,reference_id,close_period);
+CREATE INDEX close_reference_direct_adoption ON close_reference(
+ reference_type,reference_id,path,close_period,position)
+ WHERE path='adopted_results[*].fact_id' OR path='adopted_results[*].calculation_id';
 CREATE INDEX close_reference_related ON close_reference(related_id,close_period)
  WHERE related_id IS NOT NULL;
 CREATE TABLE job_reference(job_id TEXT NOT NULL REFERENCES jobs(id),path TEXT NOT NULL,
@@ -546,6 +549,11 @@ def authoritative_close_rows(connection, *, periods, through_period=None):
     rows = list(connection.execute(sql + " ORDER BY p.period", parameters))
     if not rows:
         return [], {}
+    from . import close_storage
+
+    if close_storage._owned_header_snapshot(connection):
+        verified = close_storage.verified_headers(connection, rows)
+        return rows, {header.period: header for header in verified}
     identity = connection.execute(
         "SELECT company_id,database_id FROM identity WHERE id=1"
     ).fetchone()
@@ -672,17 +680,18 @@ def verify_close_references(
     added_parts = {}
     storage_parts = ChainMap(added_parts, _verified_storage_parts or {})
 
-    def verify_storage_leaves(header, expected):
+    def verify_storage_leaves(header, expected, values=None):
         from .content_history_context import close_reader
 
         reference_leaves = close_reader().reference_leaves
 
         period = expected[0]["close_period"]
-        values = reference_leaves(
-            connection, header,
-            [(item["path"], item["index"], item["reference_id"]) for item in expected],
-            parts=storage_parts,
-        )
+        if values is None:
+            values = reference_leaves(
+                connection, header,
+                [(item["path"], item["index"], item["reference_id"]) for item in expected],
+                parts=storage_parts,
+            )
         for item, (value, related) in zip(expected, values, strict=True):
             valid_leaf = _text(value) or (
                 item["reference_type"] == "management" and type(value) is int
@@ -693,6 +702,60 @@ def verify_close_references(
                 or related != item.get("related_id")
             ):
                 _invalid("close", period, "reference_leaf_mismatch")
+
+    from . import close_storage
+
+    if (
+        len(requested) > 1 and close_storage._owned_header_snapshot(connection)
+        and all(type(items[0]["close_period"]) is int for items in requested.values())
+    ):
+        groups, missing, added_headers = [], {}, {}
+        for key, expected in requested.items():
+            period = expected[0]["close_period"]
+            if period in (_verified_manifests or {}):
+                verify_leaves(_verified_manifests[period], expected)
+            elif period in (_verified_headers or {}):
+                groups.append((_verified_headers[period], expected))
+            else:
+                missing[key] = expected
+        if missing:
+            periods = [items[0]["close_period"] for items in missing.values()]
+            rows = connection.execute(
+                "SELECT q.key,p.period,p.manifest,p.digest,s.source_digest "
+                "FROM json_each(?) q LEFT JOIN period_close p ON p.period=q.value "
+                "LEFT JOIN read_index_source s "
+                "ON s.source_kind='close' AND s.source_id=CAST(p.period AS TEXT)",
+                (json.dumps(periods),),
+            ).fetchall()
+            selected = []
+            for row in rows:
+                expected = missing[json.dumps(periods[int(row[0])])]
+                if row["digest"] is None or row["source_digest"] != row["digest"]:
+                    _invalid(
+                        "close", expected[0]["close_period"], "source_digest_or_marker_mismatch"
+                    )
+                selected.append(expected)
+            headers = close_storage.verified_headers(connection, rows)
+            added_headers = {header.period: header for header in headers}
+            groups.extend(zip(headers, selected, strict=True))
+        values = close_storage.reference_leaves_many(
+            connection,
+            [(header, [(item["path"], item["index"], item["reference_id"]) for item in expected])
+             for header, expected in groups],
+            parts=storage_parts,
+        )
+        for (header, expected), selected in zip(groups, values, strict=True):
+            verify_storage_leaves(header, expected, selected)
+        if _verified_storage_parts is not None:
+            _verified_storage_parts.update(added_parts)
+        if added_headers:
+            from .storage import _active_fact_reads
+
+            # Only the active owner's existing proof map may receive these
+            # marker-checked roots, after the entire requested leaf group passed.
+            if _verified_headers is _active_fact_reads.get()._close_headers:
+                _verified_headers.update(added_headers)
+        return
 
     # Only a managed QueryReads snapshot supplies these already checked sources.
     # Leaf identities are still compared, even when another leaf used this source.

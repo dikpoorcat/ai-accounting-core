@@ -1,0 +1,239 @@
+{
+  "scope": "fixed bfb regression832 and source-bound guarded instrumented/native sequential diagnostics, not fresh full qualification/browser500; historical archives unchanged",
+  "source_sha256": "bfb70cb0bdcffe8a17bfa326364242386e2b9e497fc9f1da00dc91b300f77919",
+  "source_manifest_sha256": "c0061c3d0277601ea97a1f706d9bd668d04bd688e575720ca3eeec5e378ad5f0",
+  "source_files": 770,
+  "gzip_mtime": 0,
+  "items": [
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-regression-20261004.json",
+      "source_sha256": "49c5ae8be3a2e80c78fe3d2c41ad0eb72dc00d73a118f6181432505a19d261be",
+      "source_bytes": 7261,
+      "archive": "stage9-voucher-owner-converged-regression-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "archived_sha256": "a3705d2d6676cfedd5caae354147987f8035fa0b747f6c665268215f1f90b2b7",
+      "archived_bytes": 7243,
+      "gzip_sha256": "63f5d3f9c7ccabbcdc6dec811316d543c14e327cf724c26c60b0015ebfa214e4",
+      "gzip_bytes": 1378,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-regression-20261004.log",
+      "source_sha256": "5e93c5b1f65f583111a22cd1ba0beaa914f138162db8e9b0d60a3e9e6096fe3a",
+      "source_bytes": 3059,
+      "archive": "stage9-voucher-owner-converged-regression-20261004.log.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "5e93c5b1f65f583111a22cd1ba0beaa914f138162db8e9b0d60a3e9e6096fe3a",
+      "archived_bytes": 3059,
+      "gzip_sha256": "d145a0cdeb6270ff05970ce7140c898f92496187b9c6ac391f7ef8b4401ee69e",
+      "gzip_bytes": 643,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-regression-20261004.xml",
+      "source_sha256": "e8eac1951852a7cdebf504285c0b1cee91669f24c9eb90df457c9cfa7c735d87",
+      "source_bytes": 141973,
+      "archive": "stage9-voucher-owner-converged-regression-20261004.xml.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "e8eac1951852a7cdebf504285c0b1cee91669f24c9eb90df457c9cfa7c735d87",
+      "archived_bytes": 141973,
+      "gzip_sha256": "049732db9bfdf32575569875ae3ef5c5e6969baee5d039fea50604f1787037b8",
+      "gzip_bytes": 18323,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-profile-20261004.py",
+      "source_sha256": "3c84c28f3ff7b2b071c9942da9c0f692cf59a83fb6cfaac46b7430a61897c9c5",
+      "source_bytes": 13428,
+      "archive": "stage9-voucher-owner-converged-profile-20261004.py.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "3c84c28f3ff7b2b071c9942da9c0f692cf59a83fb6cfaac46b7430a61897c9c5",
+      "archived_bytes": 13428,
+      "gzip_sha256": "e9b5c8faee6c4cd0c79787f174f1ff64412095182bbc29a17c36d9d2c8404419",
+      "gzip_bytes": 4744,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-profile-20261004.json",
+      "source_sha256": "df0116aed8b06ffeecc835735308a115cdeabf8cff8080af3fa36c56a4c283af",
+      "source_bytes": 562204,
+      "archive": "stage9-voucher-owner-converged-profile-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "archived_sha256": "6294c72995fc67c281dd8e1b84495e71cc713b87a327a4df6b900053d745e2c0",
+      "archived_bytes": 543524,
+      "gzip_sha256": "d596516ee441137547cd031eac0066692631f0ff9c2d5aafd490e7c1fcb22e68",
+      "gzip_bytes": 85993,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-profile-20261004.log",
+      "source_sha256": "278192a9167e861cee5a8606b7278b1a4da000e434798d5a10ccba8fa7aa09b9",
+      "source_bytes": 11964,
+      "archive": "stage9-voucher-owner-converged-profile-20261004.log.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "278192a9167e861cee5a8606b7278b1a4da000e434798d5a10ccba8fa7aa09b9",
+      "archived_bytes": 11964,
+      "gzip_sha256": "b34409d370e6df6bc655eedbc7250f983872a8e7b7704d390c360950d0d9d375",
+      "gzip_bytes": 3254,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-baseline-20261004.py",
+      "source_sha256": "f2eede4568c3bf64b33cc4047a95695c45952034a067f42db79777791ad59f35",
+      "source_bytes": 10586,
+      "archive": "stage9-voucher-owner-converged-native-baseline-20261004.py.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "f2eede4568c3bf64b33cc4047a95695c45952034a067f42db79777791ad59f35",
+      "archived_bytes": 10586,
+      "gzip_sha256": "6319bb8d726f6465666634fd27d7c2cc6d4d934869514f55187e557f430dee2a",
+      "gzip_bytes": 3782,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-baseline-20261004.json",
+      "source_sha256": "e23a27f7784701da0fd960bd0524c85c0cceb11798389ba48d5c99cb94f4928f",
+      "source_bytes": 27475,
+      "archive": "stage9-voucher-owner-converged-native-baseline-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "archived_sha256": "7cc94bccf94d99cd7f91e64dc6c50be4829c3387662a952d443374473f132aab",
+      "archived_bytes": 22029,
+      "gzip_sha256": "fdbca4181f8e6b06d86d6561d38c6e0239b15d12a6570520fd51921208d513f4",
+      "gzip_bytes": 3560,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-baseline-20261004.log",
+      "source_sha256": "fbcf56794a30e316667a018452e0c8cd3885d9364ea6670e18ce690aca7537eb",
+      "source_bytes": 1331,
+      "archive": "stage9-voucher-owner-converged-native-baseline-20261004.log.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "fbcf56794a30e316667a018452e0c8cd3885d9364ea6670e18ce690aca7537eb",
+      "archived_bytes": 1331,
+      "gzip_sha256": "f1cf466d28e6fd05673b459993cbc287297db660f478c80ef3fb1b50891da750",
+      "gzip_bytes": 560,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-current-20261004.py",
+      "source_sha256": "742e0908fe22b821228634c8192bf581c88dcc74f2d94ff5d41600a382effc1a",
+      "source_bytes": 10589,
+      "archive": "stage9-voucher-owner-converged-native-current-20261004.py.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "742e0908fe22b821228634c8192bf581c88dcc74f2d94ff5d41600a382effc1a",
+      "archived_bytes": 10589,
+      "gzip_sha256": "4d7e2871f75b0041d02facbc95b3a6e9f8764eacd3d7197bd395bcdda01ed45e",
+      "gzip_bytes": 3768,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-current-20261004.json",
+      "source_sha256": "7a99a39d7613926851b5ad78ede76e783d7f4d2cc0e2bd920755033993116620",
+      "source_bytes": 27476,
+      "archive": "stage9-voucher-owner-converged-native-current-20261004.json.gz",
+      "representation": "redacted_analysis",
+      "archived_sha256": "6ed2e18966f91cd34e54e8f819b2b0d36d3c230604a5c8facde5fd93717f8260",
+      "archived_bytes": 22022,
+      "gzip_sha256": "7c1193939bac2bb06d89176c660bbdcb7d7e09c8bb9fd18853d233db63ad162d",
+      "gzip_bytes": 3522,
+      "roundtrip_equal": true
+    },
+    {
+      "source_path": ".tmp/stage9-voucher-owner-converged-native-current-20261004.log",
+      "source_sha256": "35e174e611e6a910bd1afd0a6a2ea9158b8e2175aafadfc702f4193196a91a39",
+      "source_bytes": 1333,
+      "archive": "stage9-voucher-owner-converged-native-current-20261004.log.gz",
+      "representation": "original_bytes",
+      "archived_sha256": "35e174e611e6a910bd1afd0a6a2ea9158b8e2175aafadfc702f4193196a91a39",
+      "archived_bytes": 1333,
+      "gzip_sha256": "45079a6ed28f2452751ce8cbefb5bdec29c2a5ad6baccf485d189a84be1b4a2c",
+      "gzip_bytes": 564,
+      "roundtrip_equal": true
+    }
+  ],
+  "regression": {
+    "modules": 57,
+    "passed": 832,
+    "warnings": 6,
+    "pytest_seconds": 1199.24,
+    "helper_seconds": 1203.4743148999987,
+    "xml_suite_seconds": "1198.898",
+    "strengthened_VM_node": "passed inside group:64refs vs2048repeat+4096unrelated same2IDs; not rerun"
+  },
+  "native_guards": "both source-bound guards true and company/catalog/nonmanifestfiles equal; manifests independently bound; each150success/0errors; tests/profile/agents finished before pure window, OS CPU interference not measured",
+  "native_results": {
+    "stage9-voucher-owner-converged-native-baseline-20261004": [
+      {
+        "page": "assets",
+        "median_ms": 450.6970000002184,
+        "p95_ms": 501.7037000070559,
+        "max_ms": 508.1729999947129,
+        "slow_ge500": 2
+      },
+      {
+        "page": "brief",
+        "median_ms": 338.85510000254726,
+        "p95_ms": 360.44229999242816,
+        "max_ms": 365.4009000019869,
+        "slow_ge500": 0
+      },
+      {
+        "page": "quarterly_report",
+        "median_ms": 395.2916499983985,
+        "p95_ms": 461.7207000119379,
+        "max_ms": 518.7962999916635,
+        "slow_ge500": 1
+      },
+      {
+        "page": "funds",
+        "median_ms": 252.90239999594633,
+        "p95_ms": 326.77179999882355,
+        "max_ms": 330.7860999921104,
+        "slow_ge500": 0
+      },
+      {
+        "page": "employees",
+        "median_ms": 262.58610000513727,
+        "p95_ms": 300.8778000075836,
+        "max_ms": 315.2193999994779,
+        "slow_ge500": 0
+      }
+    ],
+    "stage9-voucher-owner-converged-native-current-20261004": [
+      {
+        "page": "assets",
+        "median_ms": 463.1210999941686,
+        "p95_ms": 481.6668999992544,
+        "max_ms": 551.6531999892322,
+        "slow_ge500": 1
+      },
+      {
+        "page": "brief",
+        "median_ms": 335.81294999748934,
+        "p95_ms": 357.1083999995608,
+        "max_ms": 362.92410000169184,
+        "slow_ge500": 0
+      },
+      {
+        "page": "quarterly_report",
+        "median_ms": 396.71275000000605,
+        "p95_ms": 454.15599999250844,
+        "max_ms": 456.6266000038013,
+        "slow_ge500": 0
+      },
+      {
+        "page": "funds",
+        "median_ms": 242.77874999825144,
+        "p95_ms": 308.4711999981664,
+        "max_ms": 320.82519998948555,
+        "slow_ge500": 0
+      },
+      {
+        "page": "employees",
+        "median_ms": 275.7340000025579,
+        "p95_ms": 317.7601999923354,
+        "max_ms": 326.47039998846594,
+        "slow_ge500": 0
+      }
+    ]
+  }
+}

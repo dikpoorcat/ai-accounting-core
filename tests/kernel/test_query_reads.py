@@ -310,7 +310,8 @@ def test_batch_calculation_still_requires_exact_publication(engine):
     assert missing.value.code == "unknown_calculation"
 
 
-def test_batch_calculation_still_requires_exact_fact_version(engine):
+@pytest.mark.parametrize("owned_snapshot", [False, True])
+def test_batch_calculation_still_requires_exact_fact_version(engine, owned_snapshot):
     from test_integrity_content import damage
 
     save(engine, subject="fact-proof", request="fact-proof")
@@ -326,11 +327,21 @@ def test_batch_calculation_still_requires_exact_fact_version(engine):
         (fact_id,),
         foreign_keys=False,
     )
-    with engine.store.connection(read_only=True) as connection:
-        connection.execute("BEGIN")
+    def assert_missing_source(reads):
         with pytest.raises(KernelError) as missing:
-            QueryReads(engine, connection).calculations((calculation_id,))
-    assert missing.value.code == "unknown_calculation"
+            reads.calculations((calculation_id,))
+        assert missing.value.code == "content_integrity_failed"
+        assert str(missing.value) == "核算元数据与来源事实身份不一致"
+        assert not reads._metadata
+        assert not reads._calculations
+
+    if owned_snapshot:
+        with QueryReads.snapshot(engine) as reads:
+            assert_missing_source(reads)
+    else:
+        with engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            assert_missing_source(QueryReads(engine, connection))
 
 
 def test_summary_does_not_hydrate_history_without_obligation_declarations(engine):
@@ -970,8 +981,10 @@ def test_publication_period_finds_state_adoption_even_if_reverse_index_omits_it(
     assert failure.value.details["reason"] == "direct_adoption_mismatch"
 
 
-def test_publication_period_finds_voucher_even_if_reverse_index_omits_it(engine):
+def test_missing_voucher_reverse_index_is_rejected_after_independent_root_discovery(engine):
     from test_integrity_content import damage
+
+    from ai_accounting.kernel.maintenance import Maintenance
 
     save(engine)
     publish(engine)
@@ -995,11 +1008,22 @@ def test_publication_period_finds_voucher_even_if_reverse_index_omits_it(engine)
         "DELETE FROM close_reference WHERE close_period=? AND path=? AND reference_id=?",
         (month, CLOSE_VOUCHERS, voucher_id),
     )
-    assert canonical(selected()) == canonical(baseline)
+    # The independent root still locates this voucher. The missing derived
+    # mirror must neither hide it nor supply an unverified successful read.
+    with QueryReads.snapshot(engine) as reads:
+        close_row = reads.authoritative_close_rows(periods=[month])[0]
+        accounting = reads.close_accounting(close_row, subjects={"charge"})
+        assert {item["id"] for item in accounting.vouchers} == {voucher_id}
+    with pytest.raises(KernelError) as selected_failure:
+        selected()
+    assert selected_failure.value.code == "content_integrity_failed"
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError) as failure:
             close_rows(connection, periods=[month])
     assert failure.value.details["reason"] == "reference_multiset_mismatch"
+    repaired = Maintenance(engine).repair_read_indexes(request_id="repair-missing-voucher-mirror")
+    assert repaired["changed"]
+    assert canonical(selected()) == canonical(baseline)
 
 
 def test_old_transitive_close_manifest_is_rejected(engine):
@@ -1155,7 +1179,8 @@ def test_scoped_voucher_candidates_use_identity_indexes_and_keep_cross_year_reve
             ]
             assert not any("SEARCH v USING INDEX voucher_period" in row for row in scoped_plan)
             if "kinds" in filters:
-                assert any("calculation_kind_period (kind=?)" in row for row in scoped_plan)
+                assert any("subject_kind (kind=?)" in row for row in scoped_plan)
+                assert any("calculation_subject (subject_id=?)" in row for row in scoped_plan)
 
 
 def test_joined_current_basis_preserves_reviews_replacements_and_closed_reversal(engine):

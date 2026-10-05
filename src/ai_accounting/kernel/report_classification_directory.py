@@ -273,13 +273,13 @@ def _root_content(period, close_digest, tree, nodes, keys):
     )
 
 
-def _reachable_new_nodes(nodes, tree, period):
+def _reachable_new_nodes(nodes, tree, period, *, expanded=()):
     """Keep only new nodes used by this finished root, not insertion intermediates."""
     found = {}
     stack = [tree] if tree is not None else []
     while stack:
         checksum = stack.pop()
-        if checksum not in nodes.overlay or checksum in found:
+        if checksum not in nodes.overlay or checksum in found or checksum in expanded:
             continue
         found[checksum] = nodes.overlay[checksum]
         node = nodes.read(checksum, period)
@@ -617,7 +617,12 @@ def compare_classification_directory(
         )
         tree = json.loads(prepared.content)["tree"]
         expected_nodes.update(
-            _reachable_new_nodes(nodes, bytes.fromhex(tree) if tree else None, period)
+            _reachable_new_nodes(
+                nodes, bytes.fromhex(tree) if tree else None, period,
+                # Prior collectors completed these subtrees from finished roots.
+                # The overlay also holds unreachable insertion intermediates.
+                expanded=expected_nodes,
+            )
         )
         previous = json.loads(prepared.content)
         del manifest
