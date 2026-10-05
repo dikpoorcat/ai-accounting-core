@@ -91,9 +91,11 @@ watch(() => props.focusedVoucher, async voucher => {
   if (typeof document !== "undefined") document.getElementById("selected-voucher")?.scrollIntoView({ block: "center" });
 }, { immediate: true });
 const selectedGroup = ref("");
+const activeGroup = computed(() => props.groups.some(group => group.key === selectedGroup.value)
+  ? selectedGroup.value : props.groups[0]?.key || "");
 const availableItems = computed(() => props.focusedActivity && !props.items.some(item => item.key === props.focusedActivity?.key)
   ? [props.focusedActivity, ...props.items] : props.items);
-const visibleItems = computed(() => availableItems.value.filter(item => !selectedGroup.value || item.group === selectedGroup.value));
+const visibleItems = computed(() => availableItems.value.filter(item => item.group === activeGroup.value));
 watch(() => props.focusedActivity, async item => {
   if (!item) return;
   selectedGroup.value = item.group;
@@ -105,7 +107,7 @@ watch(() => props.focusedActivity, async item => {
 <template>
   <section class="activity-section" aria-labelledby="activity-title">
     <header class="section-heading">
-      <div><h2 id="activity-title">已入账变化</h2><p>本月共 {{ activityCount }} 项 · {{ voucherCount }} 张凭证</p></div>
+      <div><h2 id="activity-title">本月发生</h2><p>本月共 {{ activityCount }} 项 · {{ voucherCount }} 张凭证</p></div>
       <div class="heading-controls">
         <div v-if="mode === 'voucher'" class="voucher-display-toggle">
           <span :class="{ active: voucherDisplayMode === 'paged' }">分页</span>
@@ -121,11 +123,10 @@ watch(() => props.focusedActivity, async item => {
     </header>
     <p v-if="vouchersLoading" role="status" class="voucher-load-status">正在读取凭证…</p>
     <p v-if="vouchersError && mode === 'business'" role="alert" class="voucher-load-status">{{ vouchersError }} · 请再次选择对应凭证。</p>
-    <div v-if="mode === 'business'" class="workbench">
+    <div v-if="mode === 'business'" class="workbench" data-section-focus tabindex="-1">
       <nav class="index" aria-label="业务分类">
         <span class="category-heading">业务分类</span>
-        <button type="button" :aria-pressed="!selectedGroup" @click="selectedGroup = ''"><strong>全部</strong></button>
-        <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="selectedGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.event_count }} 项</b></button>
+        <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.event_count }} 项</b></button>
       </nav>
       <div class="detail">
         <div class="list-columns" aria-hidden="true"><span>对象与事项</span><span>业务时间</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">详情</span></div>
@@ -144,7 +145,7 @@ watch(() => props.focusedActivity, async item => {
     </div>
     <div v-else class="voucher-view" :aria-busy="vouchersLoading || false">
       <p class="voucher-load-status">已加载 {{ vouchers.length }} / 本月 {{ voucherCount }} 张凭证<template v-if="voucherDisplayMode === 'all' && vouchersHasMore"> · 全部凭证尚未读取完</template><template v-if="pendingVoucherPage !== null"> · 正在读取第 {{ pendingVoucherPage }} 页</template></p>
-      <div class="voucher-list" aria-label="凭证清单">
+      <div class="voucher-list" aria-label="凭证清单" data-section-focus tabindex="-1">
         <article v-for="voucher in visibleVouchers" :key="voucher.voucher_version_id" :id="voucher.voucher_version_id === focusedVoucher?.voucher_version_id ? 'selected-voucher' : undefined"
           :class="['voucher-card', { 'is-open': selectedVoucher === voucher.voucher_version_id }]" tabindex="-1">
           <button type="button" class="voucher-row" :aria-expanded="selectedVoucher === voucher.voucher_version_id" @click="selectVoucher(voucher.voucher_version_id)">

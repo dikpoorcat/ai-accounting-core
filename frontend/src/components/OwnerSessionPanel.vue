@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { isSecurityRequestState, isSecuritySessionStatus, localSecurity, localErrorMessage, type LocalSecurityState, type SecurityAction } from "../api/localKernel";
 
 const props = defineProps<{ authenticated: boolean; expanded: boolean; launchError?: string }>();
-const emit = defineEmits<{ authenticated: [value: boolean] }>();
+const emit = defineEmits<{ authenticated: [value: boolean]; close: [] }>();
+const dialog = ref<HTMLDialogElement | null>(null);
 const security = ref<LocalSecurityState | null>(null);
 const loginName = ref("");
 const busy = ref(false);
@@ -11,6 +12,31 @@ const message = ref("");
 const error = ref(props.launchError ?? "");
 let timer: ReturnType<typeof setTimeout> | undefined;
 let stopped = false;
+let previousOverflow: string | undefined;
+
+function syncDialog() {
+  if (!dialog.value) return;
+  if (props.expanded) {
+    if (!dialog.value.open) dialog.value.showModal();
+    if (previousOverflow === undefined) {
+      previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+    }
+  } else {
+    dialog.value.close();
+    restoreScrolling();
+  }
+}
+function restoreScrolling() {
+  if (previousOverflow === undefined) return;
+  document.body.style.overflow = previousOverflow;
+  previousOverflow = undefined;
+}
+function dismissBackdrop(event: MouseEvent) {
+  const bounds = dialog.value?.getBoundingClientRect();
+  if (bounds && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) emit("close");
+}
+watch(() => props.expanded, syncDialog, { flush: "post" });
 
 async function update(result: LocalSecurityState): Promise<void> {
   if (stopped) return;
@@ -50,40 +76,81 @@ async function cancel() {
   catch (caught) { busy.value = false; error.value = localErrorMessage(caught); }
 }
 onMounted(async () => {
+  syncDialog();
   try {
     const session = await localSecurity("session_status");
     security.value = session;
     if (!stopped) emit("authenticated", isSecuritySessionStatus(session) && session.authenticated);
-  } catch (caught) { error.value = localErrorMessage(caught); }
+  } catch (caught) {
+    error.value = localErrorMessage(caught);
+    if (!stopped) emit("authenticated", false);
+  }
 });
-onBeforeUnmount(() => { stopped = true; clearTimeout(timer); });
+onBeforeUnmount(() => { stopped = true; clearTimeout(timer); dialog.value?.close(); restoreScrolling(); });
 </script>
 
 <template>
-  <section v-show="expanded" class="session-panel panel" aria-labelledby="owner-heading" :aria-busy="busy">
-    <h2 id="owner-heading">负责人身份 <small>{{ authenticated ? "本页已登录" : "本页未登录" }}</small></h2>
-    <p>密码与恢复码只在本机安全窗口输入。</p>
-    <div class="session-controls">
-      <template v-if="security && isSecuritySessionStatus(security) && security.provisioned === false">
-        <label>负责人登录名<input v-model="loginName" autocomplete="username" maxlength="100" :disabled="busy"></label>
-        <button class="dashboard-action" :disabled="busy || !loginName.trim()" @click="request('bootstrap_owner')">设置负责人</button>
-      </template>
-      <template v-else>
-        <button class="dashboard-action" :disabled="busy" @click="request('login')">负责人登录</button>
-        <button class="dashboard-action" :disabled="busy" @click="request('change_password')">修改密码</button>
-        <button class="dashboard-action" :disabled="busy" @click="request('recover')">恢复访问</button>
-        <button class="dashboard-action" :disabled="busy" @click="request('replace_recovery_code')">更换恢复码</button>
-      </template>
-      <button v-if="busy && security && isSecurityRequestState(security)" class="dashboard-action" @click="cancel">取消操作</button>
+  <dialog ref="dialog" id="owner-dialog" class="session-dialog" aria-labelledby="owner-heading" aria-describedby="owner-description" :aria-busy="busy" @cancel.prevent="emit('close')" @click.self="dismissBackdrop">
+    <header class="dialog-heading">
+      <div>
+        <h2 id="owner-heading">负责人身份</h2>
+        <span class="session-state" :class="{ authenticated }">{{ authenticated ? "已登录" : "未登录" }}</span>
+      </div>
+      <button class="close-button" type="button" aria-label="关闭负责人身份" autofocus @click="emit('close')">×</button>
+    </header>
+    <p id="owner-description" class="session-note">密码与恢复码只在本机安全窗口输入。</p>
+    <p v-if="security && isSecuritySessionStatus(security) && security.login_name" class="login-name"><span>负责人登录名</span><strong>{{ security.login_name }}</strong></p>
+
+    <div v-if="security && isSecuritySessionStatus(security) && security.provisioned === false" class="setup-controls">
+      <label>负责人登录名<input v-model="loginName" autocomplete="username" maxlength="100" :disabled="busy"></label>
+      <button class="dashboard-action primary-action" type="button" :disabled="busy || !loginName.trim()" @click="request('bootstrap_owner')">设置负责人</button>
     </div>
-    <p v-if="message" role="status">{{ message }}</p><p v-if="error" class="session-error" role="alert">{{ error }}</p>
-  </section>
+    <template v-else>
+      <button v-if="!authenticated" class="dashboard-action primary-action" type="button" :disabled="busy" @click="request('login')">负责人登录</button>
+      <div class="security-actions" aria-label="账号与安全">
+        <button type="button" :disabled="busy" @click="request('change_password')"><span><strong>修改密码</strong><small>更换负责人登录密码</small></span><span aria-hidden="true">›</span></button>
+        <button type="button" :disabled="busy" @click="request('recover')"><span><strong>恢复访问</strong><small>忘记密码时使用恢复码</small></span><span aria-hidden="true">›</span></button>
+        <button type="button" :disabled="busy" @click="request('replace_recovery_code')"><span><strong>更换恢复码</strong><small>生成新的恢复码</small></span><span aria-hidden="true">›</span></button>
+      </div>
+    </template>
+    <div v-if="message || error || busy" class="session-feedback">
+      <p v-if="message" role="status">{{ message }}</p>
+      <p v-if="error" class="session-error" role="alert">{{ error }}</p>
+      <button v-if="busy && security && isSecurityRequestState(security)" class="dashboard-action" type="button" @click="cancel">取消操作</button>
+    </div>
+  </dialog>
 </template>
 
 <style scoped>
-.session-panel { padding: 22px; margin-bottom: 22px; }
-h2 { margin: 0; font-size: 19px; } h2 small, p { color: var(--muted); font-size: 13px; }
-.session-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
-label { display: grid; gap: 6px; font-size: 13px; } input { min-height: 38px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--surface); color: var(--text); }
-.session-error { color: var(--danger); }
+.session-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 24px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--text); box-shadow: var(--shadow-overlay); }
+.session-dialog::backdrop { background: rgb(12 24 17 / 38%); }
+.dialog-heading, .dialog-heading > div { display: flex; align-items: center; gap: 12px; }
+.dialog-heading { justify-content: space-between; }
+h2 { margin: 0; font-size: 20px; }
+.session-state { padding: 2px 8px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.session-state.authenticated { background: var(--accent-soft); color: var(--accent); }
+.close-button { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: var(--radius-control); background: var(--surface-soft); color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; }
+.close-button:hover { background: var(--accent-soft); color: var(--accent); }
+.session-note { margin: 12px 0 20px; color: var(--muted); font-size: 13px; }
+.login-name { display: grid; gap: 4px; margin: 0 0 20px; }
+.login-name span { color: var(--muted); font-size: 12px; }
+.login-name strong { overflow-wrap: anywhere; font-size: 16px; }
+.primary-action { width: 100%; margin-bottom: 16px; background: var(--accent); color: var(--surface); }
+.security-actions { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.security-actions button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border: 0; background: var(--surface); text-align: left; cursor: pointer; }
+.security-actions button + button { border-top: 1px solid var(--line); }
+.security-actions button:hover:not(:disabled) { background: var(--surface-soft); }
+.security-actions button > span:first-child { display: grid; gap: 3px; min-width: 0; }
+.security-actions strong { font-size: 14px; font-weight: 650; }
+.security-actions small { color: var(--muted); font-size: 12px; }
+.security-actions button > span:last-child { color: var(--muted); font-size: 22px; }
+.security-actions button:focus-visible { outline-offset: -3px; }
+button:disabled { opacity: .55; cursor: wait; }
+.setup-controls { display: grid; gap: 14px; }
+label { display: grid; gap: 6px; font-size: 13px; }
+input { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; }
+.session-feedback { display: grid; justify-items: start; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.session-feedback p { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.session-feedback .session-error { color: var(--danger); }
+@media (max-width: 480px) { .session-dialog { padding: 20px; } .dialog-heading > div { gap: 8px; } }
 </style>

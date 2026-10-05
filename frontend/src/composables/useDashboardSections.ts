@@ -27,10 +27,19 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
     lockSectionSync();
     activeSection.value = id;
     positionSection(section);
-    const target = section.matches("[tabindex]") ? section : section.querySelector<HTMLElement>("[tabindex], h2, h3");
+    const content = section.querySelector<HTMLElement>("[data-section-focus]")
+      ?? section.closest<HTMLElement>(".panel")?.querySelector<HTMLElement>("[data-section-focus]");
+    const target = content ?? (section.matches("[tabindex]") ? section : section.querySelector<HTMLElement>("[tabindex], h2, h3"));
     const focusTarget = target ?? section;
     if (!focusTarget.hasAttribute("tabindex")) focusTarget.setAttribute("tabindex", "-1");
     focusTarget.focus({ preventScroll: true });
+  }
+  function focusSelectedPanel(event: MouseEvent) {
+    if (!(event.target instanceof Element) || event.target.closest("button, a, summary, input, select, textarea")) return;
+    const panel = event.target.closest<HTMLElement>("[data-section-focus], .selectable-card")
+      ?? event.target.closest<HTMLElement>(".selectable-section, .section-panel, .panel, .report-review")
+        ?.querySelector<HTMLElement>("[data-section-focus]");
+    panel?.focus({ preventScroll: true });
   }
   function updateSectionFromScroll() {
     if (locked) return;
@@ -81,5 +90,5 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
     window.removeEventListener("keydown", scrollKey);
     window.removeEventListener("pointerdown", scrollbarPointer);
   });
-  return { activeSection, focusSection, positionSection, lockSectionSync };
+  return { activeSection, focusSection, focusSelectedPanel, positionSection, lockSectionSync };
 }

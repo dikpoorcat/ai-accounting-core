@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import type { DashboardBriefContract } from "../../api/generated/dashboardBrief";
-import { fen, formatFen, formatPositiveFen } from "../../utils/money";
+import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../../utils/money";
 
 const props = defineProps<{
   funds: DashboardBriefContract.BriefData["funds_overview"];
@@ -110,7 +110,7 @@ function remainingOtherAssets() {
     </div>
 
     <div class="overview-grid">
-      <article class="overview-card cash-card selectable-card" tabindex="-1">
+      <article class="overview-card cash-card selectable-card" data-section-focus tabindex="-1">
         <div class="cash-body">
           <header>
             <div>
@@ -127,11 +127,11 @@ function remainingOtherAssets() {
           <div class="flow">
             <div>
               <span>对外收款</span>
-              <strong>{{ formatFen(funds.inflow_fen) }}</strong>
+              <strong :class="cashFlowClass(funds.inflow_fen, 'inflow')">{{ formatFen(funds.inflow_fen) }}</strong>
             </div>
             <div>
               <span>对外付款</span>
-              <strong>{{ formatFen(funds.outflow_fen) }}</strong>
+              <strong :class="cashFlowClass(funds.outflow_fen, 'outflow')">{{ formatFen(funds.outflow_fen) }}</strong>
             </div>
           </div>
           <dl class="summary-rows">
@@ -146,7 +146,7 @@ function remainingOtherAssets() {
         </div>
       </article>
 
-      <article id="position-overview" class="overview-card position-card selectable-card" tabindex="-1">
+      <article id="position-overview" class="overview-card position-card selectable-card" data-section-focus tabindex="-1">
         <div class="position-body">
           <header>
             <div>
@@ -261,14 +261,14 @@ function remainingOtherAssets() {
                       <strong>{{ formatFen(position.bank_calculation?.opening_fen) }}</strong>
                     </span>
                     <span class="equation-operator">+</span>
-                    <span class="equation-term asset-term">
+                    <span class="equation-term">
                       <span>本月流入</span>
-                      <strong>{{ formatFen(position.bank_calculation?.inflow_fen) }}</strong>
+                      <strong :class="cashFlowClass(position.bank_calculation?.inflow_fen, 'inflow')">{{ formatFen(position.bank_calculation?.inflow_fen) }}</strong>
                     </span>
                     <span class="equation-operator">−</span>
-                    <span class="equation-term liability-term">
+                    <span class="equation-term">
                       <span>本月流出</span>
-                      <strong>{{ formatFen(position.bank_calculation?.outflow_fen) }}</strong>
+                      <strong :class="cashFlowClass(position.bank_calculation?.outflow_fen, 'outflow')">{{ formatFen(position.bank_calculation?.outflow_fen) }}</strong>
                     </span>
                     <span class="calculation-total">
                       <span class="equation-operator">=</span>
@@ -417,6 +417,9 @@ function remainingOtherAssets() {
   padding: 0;
 }
 
+.financial-section .cash-inflow { color: var(--brief-green); }
+.financial-section .cash-outflow { color: var(--brief-amber); }
+
 .section-heading,
 .overview-card header {
   display: flex;
@@ -455,7 +458,18 @@ h3 {
 }
 
 .equation-status,
-.state-chip,
+.state-chip {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--brief-green-soft);
+  color: var(--brief-green);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .equation-status.error {
   background: var(--brief-red-soft);
   color: var(--brief-red);

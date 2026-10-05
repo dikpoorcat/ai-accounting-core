@@ -119,11 +119,22 @@ button {
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background: var(--surface);
+  outline: none;
+  transition: border-color 150ms ease;
 }
 
-.dashboard-record-card:hover,
-.dashboard-record-card:focus-within,
-.dashboard-record-card[open] {
+.dashboard-record-card:focus,
+.dashboard-record-card:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+}
+
+[data-section-focus] {
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+[data-section-focus][tabindex]:focus,
+[data-section-focus][tabindex]:focus-within {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
 }
 

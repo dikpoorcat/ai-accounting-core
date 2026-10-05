@@ -39,12 +39,14 @@ const briefTitle = computed(() => {
   return month ? `${Number(month)} 月经营简报` : "经营简报";
 });
 const sectionLinks = computed(() => data.value ? [
-  { id: "overview", label: "概览" }, { id: "activity", label: "已入账变化" },
-  { id: "open-items", label: "待收待付" },
+  { id: "overview", label: "概览" },
+  ...(data.value.financial_position ? [{ id: "financial-overview", label: "资金与资产负债" }] : []),
+  { id: "activity", label: "本月发生" },
   ...(data.value.workforce_cost?.has_activity ? [{ id: "workforce", label: "用工成本" }] : []),
+  { id: "open-items", label: "待收待付" },
   { id: "owner-tasks", label: "老板待办" },
 ] : []);
-const { activeSection, focusSection } = useDashboardSections(sectionLinks, "overview");
+const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "overview");
 function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
@@ -184,7 +186,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 </script>
 
 <template>
-  <section class="brief-page">
+  <section class="brief-page" @click="focusSelectedPanel">
     <DashboardModuleHeader :title="briefTitle" :options="periodOptions" :selected="selectedPeriod" :period-status="data?.month_state" :loading="loading" select-label="查看月份" @change="changePeriod" @refresh="refresh">
       <template #navigation><DashboardSectionNav v-if="data" v-show="!loading" :items="sectionLinks" :active="activeSection" label="经营简报区段" @select="focusSection" /></template>
     </DashboardModuleHeader>
@@ -209,35 +211,35 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <div v-if="data.risks.length" class="risks" aria-label="风险与核对进展">
           <h3>风险与核对进展</h3><article v-for="risk in data.risks" :key="risk.key"><strong>{{ risk.title }}</strong><p>{{ risk.impact }} · {{ risk.status === 'ai_reviewing' ? 'AI 会计核对中' : '需要关注' }}</p></article>
         </div>
-        <BriefFinancialOverview v-if="data.financial_position" :funds="data.funds_overview" :position="data.financial_position" />
+        <BriefFinancialOverview v-if="data.financial_position" id="financial-overview" class="section-anchor selectable-section" :funds="data.funds_overview" :position="data.financial_position" />
       </section>
-      <section id="activity" class="section-anchor" tabindex="-1">
+      <section id="activity" class="section-anchor selectable-section" tabindex="-1">
         <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
           <template #pagination><DashboardPagination compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
         </BriefActivityWorkbench>
       </section>
-      <section id="open-items" class="section-anchor" tabindex="-1">
-        <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
-        <DashboardPagination compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
-      </section>
       <section v-if="data.workforce_cost?.has_activity" id="workforce" class="section-anchor" tabindex="-1">
         <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
       </section>
-      <section id="owner-tasks" class="section-anchor tasks" tabindex="-1" aria-labelledby="tasks-title">
+      <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
+        <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
+        <DashboardPagination compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
+      </section>
+      <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
         <h2 id="tasks-title">老板待办</h2>
-        <article v-for="task in data.owner_tasks" :key="task.key">
+        <article v-for="task in data.owner_tasks" :key="task.key" data-section-focus tabindex="-1">
           <strong>{{ task.title }} · {{ task.object }}</strong>
           <p>{{ task.period }}<template v-if="task.amount_status === 'known'"> · {{ formatFen(task.amount_fen) }}</template><template v-else-if="task.amount_status === 'unknown'"> · 金额待确认</template><template v-if="task.deadline"> · 截止 {{ task.deadline }}</template></p>
           <p>{{ task.impact }}</p><p class="next-step">{{ task.next_step }}</p>
           <BusinessStatusDetails v-if="task.subject_id" :subject-id="task.subject_id" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
         </article>
-        <article v-if="needsMonthlyReview" class="owner-review-request">
+        <article v-if="needsMonthlyReview" class="owner-review-request" data-section-focus tabindex="-1">
           <strong>核对本月业务 · {{ selectedPeriod }}</strong>
           <p>查看本月经营金额和已入账业务，确认后告知 AI 会计。</p>
           <button type="button" :aria-expanded="showMonthlyReview" @click="showMonthlyReview = !showMonthlyReview">{{ showMonthlyReview ? '收起本次核对' : '查看本次核对内容' }}</button>
           <CloseReviewPanel v-if="showMonthlyReview && reviewRequest && typeof route.query.company_id === 'string'" :company-id="route.query.company_id" :period="selectedPeriod" :preview-digest="reviewRequest.preview_digest" />
         </article>
-        <p v-if="!data.owner_tasks.length && !needsMonthlyReview">目前没有明确需要您处理的事项。</p>
+        <p v-if="!data.owner_tasks.length && !needsMonthlyReview" data-section-focus tabindex="-1">目前没有明确需要您处理的事项。</p>
       </section>
     </div>
   </section>
@@ -276,6 +278,19 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   margin: 0 auto;
   padding: 26px 0 56px;
   color: var(--brief-text);
+}
+
+.brief-page :deep(.selectable-card) {
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.brief-page :deep(.selectable-card:focus),
+.brief-page :deep(.selectable-card:focus-within) {
+  border-color: color-mix(in srgb, var(--brief-green) 48%, var(--brief-line));
+}
+
+.selectable-section {
+  outline: none;
 }
 
 .section-anchor { min-width: 0; scroll-margin-top: var(--brief-anchor-offset); }
@@ -341,7 +356,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .tasks > article { display: grid; gap: 6px; margin: 10px 0; padding: 14px 16px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: color-mix(in srgb, var(--brief-amber-soft) 38%, var(--brief-surface)); }
 .tasks strong { font-size: 12px; }
 .tasks p { margin: 0; color: var(--brief-muted); font-size: 12px; line-height: 1.6; }
-.tasks > p { padding: 16px; border: 1px dashed var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); }
+.tasks > p { padding: 16px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); }
 .tasks .next-step { color: var(--brief-green); font-weight: 650; }
 .tasks button, .state-panel button { justify-self: start; min-height: 40px; padding: 0 13px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); color: var(--brief-green); font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
 .tasks button:hover { background: var(--brief-green-soft); }

@@ -113,7 +113,7 @@ const sectionLinks = computed(() => {
     ...(report.value.statements.length ? [{ id: "report-statements", label: "财务报表" }] : []),
   ];
 });
-const { activeSection, focusSection } = useDashboardSections(sectionLinks, "report-overview");
+const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "report-overview");
 const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
   if (report.value?.export.available) return "已就绪";
@@ -561,7 +561,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="reports-page">
+  <section class="reports-page" @click="focusSelectedPanel">
     <div class="reports-content">
       <DashboardModuleHeader
         title="季度财务报表"
@@ -699,6 +699,8 @@ onBeforeUnmount(() => {
               <div v-if="taxTemplateMode && activeTemplateMeta" class="template-wrap">
                 <div
                   class="tax-template-sheet"
+                  data-section-focus
+                  tabindex="-1"
                   :class="{ 'balance-sheet': activeStatement.key === 'balance_sheet' }"
                 >
                   <div class="template-title-row">
@@ -818,7 +820,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div v-else class="table-wrap">
+              <div v-else class="table-wrap" data-section-focus tabindex="-1">
                 <table>
                   <thead>
                     <tr>
@@ -849,6 +851,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .reports-page { min-height: 100%; }
+#report-statements { outline: none; }
 [id][tabindex="-1"] { scroll-margin-top: 76px; }
 .reports-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
 .state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);  }
@@ -985,7 +988,7 @@ tr.total td { background: var(--surface-soft); font-weight: 750; }
 .template-switch input:checked + .switch-track span { background: var(--surface); transform: translateX(18px); }
 .template-switch input:focus-visible + .switch-track { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
 .template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: var(--radius-control); background: #e9edf1; }
-.tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
+.tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; border: 1px solid transparent; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
 .tax-template-sheet.balance-sheet { width: 1120px; }
 .template-title-row { position: relative; display: flex; min-height: 76px; align-items: center; justify-content: center; padding-bottom: 14px; }
 .template-title-row h3 { margin: 0; font-family: inherit; font-size: 20px; font-weight: 700; letter-spacing: .02em; text-align: center; white-space: nowrap; }

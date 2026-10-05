@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="openItems.complete === false" class="open-item-issues" role="status">AI 会计核对中，已知余额暂不能代表全部款项。</p>
-    <div v-if="visibleCategories.length" class="open-workbench">
+    <div v-if="visibleCategories.length" class="open-workbench" data-section-focus tabindex="-1">
       <nav class="open-index" aria-label="待收待付分类">
         <span class="category-heading">款项分类</span>
         <button

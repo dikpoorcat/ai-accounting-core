@@ -359,7 +359,7 @@ async function selectPeriod(periodKey: string) {
         />
 
         <div class="sidebar-footer">
-          <button class="theme-button" type="button" :aria-expanded="showSecurity" aria-label="负责人身份" title="负责人身份" @click="showSecurity = !showSecurity"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span class="control-label">负责人身份</span></button>
+          <button class="theme-button" type="button" :aria-expanded="showSecurity" aria-haspopup="dialog" aria-controls="owner-dialog" aria-label="负责人身份" title="负责人身份" @click="showSecurity = true"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span class="control-label">负责人身份</span></button>
           <button
             class="theme-button"
             type="button"
@@ -397,7 +397,10 @@ async function selectPeriod(periodKey: string) {
     </header>
 
     <main id="workspace-content" class="workspace-main" tabindex="-1">
-      <OwnerSessionPanel :authenticated="authenticated" :expanded="!authenticated || showSecurity" :launch-error="launchError" @authenticated="setAuthenticated" />
+      <section v-if="!authenticated" class="login-notice" aria-label="登录提示">
+        <h1>登录后查看公司账务</h1>
+        <button class="dashboard-action" type="button" @click="showSecurity = true">负责人登录</button>
+      </section>
       <div v-if="authenticated && contextError" class="panel" role="alert"><p>{{ contextError }}</p><button class="dashboard-action" @click="loadCompanyContext">重新读取</button></div>
       <p v-else-if="authenticated && contextLoading && !currentCompany" class="panel" role="status">正在读取所选公司的资料…</p>
       <p v-else-if="authenticated && context && !currentCompany" class="panel">还没有添加公司。添加公司后，可在这里查看财务情况。</p>
@@ -412,4 +415,10 @@ async function selectPeriod(periodKey: string) {
       </div>
     </div>
   </div>
+  <OwnerSessionPanel :authenticated="authenticated" :expanded="showSecurity" :launch-error="launchError" @authenticated="setAuthenticated" @close="showSecurity = false" />
 </template>
+
+<style scoped>
+.login-notice { display: grid; min-height: 60vh; align-content: center; justify-items: center; gap: 18px; padding: 24px; text-align: center; }
+.login-notice h1 { margin: 0; font-size: 21px; }
+</style>

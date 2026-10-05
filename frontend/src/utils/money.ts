@@ -7,6 +7,16 @@ export function fen(value: string | number | bigint | null | undefined): bigint 
   return BigInt(value);
 }
 
+export function cashFlowClass(
+  value: string | number | bigint | null | undefined,
+  direction: "inflow" | "outflow",
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const amount = fen(value);
+  if (amount === 0n) return "";
+  return (amount > 0n) === (direction === "inflow") ? "cash-inflow" : "cash-outflow";
+}
+
 export function formatFen(
   value: string | number | bigint | null | undefined,
 ): string {

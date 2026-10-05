@@ -96,7 +96,7 @@ const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
   { id: "asset-list-title", label: "资产卡片" },
   { id: "asset-projects-title", label: "项目投入" },
 ] : []);
-const { activeSection, focusSection, positionSection } = useDashboardSections(sectionLinks, "assets-overview");
+const { activeSection, focusSection, focusSelectedPanel, positionSection } = useDashboardSections(sectionLinks, "assets-overview");
 
 function routePeriod(): string | null {
   const value = route.query.period;
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="assets-page">
+  <section class="assets-page" @click="focusSelectedPanel">
     <div class="assets-content">
       <DashboardModuleHeader
         title="长期资产概览"
@@ -571,7 +571,7 @@ onBeforeUnmount(() => {
           <div class="section-heading">
             <div><h2 id="asset-movements-title" tabindex="-1">资产变动摘要</h2></div>
           </div>
-          <div class="movement-grid">
+          <div class="movement-grid" data-section-focus tabindex="-1">
             <article>
               <span>本月新增</span><strong>{{ countQualifier }}{{ data.month_acquired_count }} 项</strong>
               <small>
@@ -620,7 +620,7 @@ onBeforeUnmount(() => {
             <article
               v-if="isUnestablishedAsset(item)"
               :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card asset-unestablished dashboard-record-card"
+              class="asset-card asset-unestablished dashboard-record-card" data-section-focus
               tabindex="-1"
             >
               <div class="asset-card-summary">
@@ -642,7 +642,7 @@ onBeforeUnmount(() => {
             </article>
             <article v-else
               :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card dashboard-record-card"
+              class="asset-card dashboard-record-card" data-section-focus
               :class="item.status"
               tabindex="-1"
             >
@@ -698,7 +698,7 @@ onBeforeUnmount(() => {
           <p v-if="pageLoading.projects" class="note" role="status">正在读取所选项目…</p>
           <p v-else-if="pageErrors.projects" class="note" role="alert">{{ pageErrors.projects }} <button type="button" @click="retryCollection('projects')">重新读取</button></p>
           <p v-else-if="!projects.length" class="note">本月没有可展示的项目投入。</p>
-          <article v-for="project in pageLoading.projects || pageErrors.projects ? [] : projects" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card">
+          <article v-for="project in pageLoading.projects || pageErrors.projects ? [] : projects" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card" data-section-focus>
             <div class="project-summary">
               <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>已投入成本 {{ formatFen(project.cost_fen) }}</small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
@@ -783,6 +783,7 @@ onBeforeUnmount(() => {
 }
 .movement-grid article { padding: 14px; }
 .movement-grid strong { display: block; margin: 5px 0 3px; font-size: 20px; }
+#asset-movements-title, #asset-list-title, #asset-projects-title { outline: none; }
 .asset-toolbar { display: flex; align-items: center; flex: none; justify-content: flex-end; gap: 14px; margin: 0; }
 /* 与小字同组的标题行：下对齐，并与下方卡片保持 16px 间距。 */
 .section-heading:has(.list-caption) { align-items: flex-end; margin-bottom: 16px; }
@@ -792,7 +793,6 @@ onBeforeUnmount(() => {
 .list-caption strong { font-weight: inherit; }
 .control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
 .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
-.asset-card:target { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
 .asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }
 .asset-card.disposed, .asset-card.retired { opacity: .82; }
 .asset-card-summary { min-height: 228px; padding: 17px 18px 18px; }

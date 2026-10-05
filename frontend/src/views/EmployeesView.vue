@@ -57,7 +57,7 @@ const sectionLinks = computed(() => {
     ...(personalLaborItems.value.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
   ];
 });
-const { activeSection, focusSection } = useDashboardSections(sectionLinks, "employees-overview");
+const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "employees-overview");
 const periodOptions = computed(() => context.value?.periods ?? []);
 const selectedPeriodKey = computed(
   () => response.value?.selected_period?.key ?? routePeriod() ?? "",
@@ -268,7 +268,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 </script>
 
 <template>
-  <section class="employees-page">
+  <section class="employees-page" @click="focusSelectedPanel">
     <DashboardModuleHeader title="员工与薪酬概览" :options="periodOptions" :selected="selectedPeriodKey" :loading="loading" select-label="员工查看月份" @change="selectPeriod" @refresh="refresh">
       <template #navigation><DashboardSectionNav v-if="sectionLinks.length" v-show="!loading" :items="sectionLinks" :active="activeSection" label="员工内容导航" @select="focusSection" /></template>
     </DashboardModuleHeader>
@@ -291,7 +291,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <p v-if="employees.checking" class="muted" role="status">部分薪酬资料由 AI 会计核对中，相关未知金额保留。</p>
         </section>
         <section class="panel">
-          <div class="section-heading"><div><h2 id="employee-list-title" tabindex="-1">人员业务清单</h2><p class="muted">{{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p></div>
+          <div class="section-heading"><div><h2 id="employee-list-title" tabindex="-1">员工明细</h2><p class="muted">{{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p></div>
             <select v-model="filter" class="control" aria-label="筛选员工"><option value="all">全部员工</option><option value="in_period">已确认在册</option><option value="payroll">本月有工资</option><option value="no_payroll">本月暂无工资</option><option value="ended">已确认不在册</option><option value="unknown">在册状态未确认</option></select>
           </div>
           <p v-if="employees.unestablished_count" class="muted">{{ employees.unestablished_count }} 项人员资料由 AI 会计核对中；金额暂无法确定。</p>
@@ -299,8 +299,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <p v-else-if="!filteredEmployees.length && !pageErrors[pageKey('employees')]" class="muted">{{ focusedEmployeeId ? '该员工暂无可展示记录。' : '当前范围没有员工记录。' }}</p>
           <div class="employee-grid">
             <template v-for="item in filteredEmployees" :key="item.employee_id">
-              <article v-if="item.selection_status === 'unestablished'" :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" class="employee-card dashboard-record-card" tabindex="-1"><h3>{{ item.name }}</h3><p class="muted">AI 会计核对中 · 金额暂无法确定</p></article>
-              <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" tabindex="-1">
+              <article v-if="item.selection_status === 'unestablished'" :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" class="employee-card dashboard-record-card" data-section-focus tabindex="-1"><h3>{{ item.name }}</h3><p class="muted">AI 会计核对中 · 金额暂无法确定</p></article>
+              <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
                 <summary class="employee-card-summary dashboard-record-card-summary">
                   <div class="section-heading"><h3>{{ item.name }}</h3><strong>{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
                   <p class="muted">{{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
@@ -318,7 +318,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         </section>
         <section v-if="personalLaborItems.length" class="panel">
           <h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }} · 已加载 {{ personalLaborItems.length }} 笔</p>
-          <div class="employee-grid"><details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card"><summary class="employee-card-summary dashboard-record-card-summary"><div class="section-heading"><h3>{{ labor.name }}</h3><strong>{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p></summary><div class="employee-detail"><p v-if="labor.checking" class="muted">AI 会计核对中</p><div v-for="obligation in labor.obligations" :key="obligation.key"><strong>{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }}</strong><p class="muted">公司已付 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未付 {{ formatFen(obligation.remaining_fen) }}</p></div><BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看收付款事项" @changed="refreshChanged" /></div></details></div>
+          <div class="employee-grid"><details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1"><summary class="employee-card-summary dashboard-record-card-summary"><div class="section-heading"><h3>{{ labor.name }}</h3><strong>{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p></summary><div class="employee-detail"><p v-if="labor.checking" class="muted">AI 会计核对中</p><div v-for="obligation in labor.obligations" :key="obligation.key"><strong>{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }}</strong><p class="muted">公司已付 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未付 {{ formatFen(obligation.remaining_fen) }}</p></div><BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看收付款事项" @changed="refreshChanged" /></div></details></div>
           <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
         </section>
       </div>
@@ -365,8 +365,7 @@ dd { margin: 0; }
 strong, p, h3, dd { overflow-wrap: anywhere; }
 strong, dd { font-variant-numeric: tabular-nums; }
 [tabindex="-1"] { scroll-margin-top: 76px; }
-#employee-card-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+summary:focus-visible { outline: none; }
 @media (max-width: 900px) { .employee-grid { grid-template-columns: 1fr; } }
 @media (max-width: 720px) { .employees-page { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .people-hero { padding: 19px; border-radius: 17px; } .people-kpi-grid, .amount-grid { grid-template-columns: 1fr; } .section-heading { flex-direction: column; } .employee-card-summary > .section-heading > strong { text-align: left; } .control { width: 100%; } }
 </style>

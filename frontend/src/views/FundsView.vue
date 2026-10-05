@@ -19,7 +19,7 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { fen, formatFen, formatPositiveFen } from "../utils/money";
+import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
 
 const route = useRoute();
 const router = useRouter();
@@ -149,7 +149,7 @@ const sectionLinks = computed(() => {
   links.push({ id: "bank-details", label: "资金明细" });
   return links;
 });
-const { activeSection, focusSection, positionSection, lockSectionSync } =
+const { activeSection, focusSection, focusSelectedPanel, positionSection, lockSectionSync } =
   useDashboardSections(sectionLinks, "funds-overview");
 
 function accountKey(type: string, id: string) {
@@ -220,7 +220,7 @@ function bankStatementSummary() {
   if (!statement) return "正在读取银行资料";
   if (statement.coverage_state === "not_applicable") return "暂无银行流水";
   if (["missing", "partial"].includes(statement.coverage_state)) return "流水资料尚未齐全";
-  return statement.review_state === "pending" ? "AI 会计核对中" : "本月银行流水已核对";
+  return statement.review_state === "pending" ? "AI 会计核对中" : "流水已核对";
 }
 
 function routePeriod(): string | null {
@@ -237,7 +237,7 @@ async function revealBankDetails() {
   if (!isCurrent(generation, selection)) return;
   const section = document.getElementById("bank-details");
   if (section) positionSection(section);
-  document.getElementById("fund-detail-tab-bank")?.focus({ preventScroll: true });
+  section?.querySelector<HTMLElement>("[data-section-focus]")?.focus({ preventScroll: true });
 }
 
 async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
@@ -523,7 +523,7 @@ function accountOwnerState(account: FundAccount): { label: string; detail: strin
     return {
       label: "本月已对账",
       detail: account.statement.transaction_count
-        ? "本月银行流水已核对。"
+        ? "流水已核对。"
         : "完整银行流水已确认，本月无发生。",
       tone: "ok",
     };
@@ -691,7 +691,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="funds-page">
+  <div class="funds-page" @click="focusSelectedPanel">
     <div class="page-content">
       <DashboardModuleHeader
         title="资金总览"
@@ -771,10 +771,10 @@ onBeforeUnmount(() => {
           </div>
           <div class="flow-panel">
           <dl class="flow-summary">
-            <div><dt>本月实际收款</dt><dd>{{ formatFen(funds.inflow_fen) }}</dd></div>
-            <div><dt>本月实际付款</dt><dd>{{ formatFen(funds.outflow_fen) }}</dd></div>
+            <div><dt>本月实际收款</dt><dd :class="cashFlowClass(funds.inflow_fen, 'inflow')">{{ formatFen(funds.inflow_fen) }}</dd></div>
+            <div><dt>本月实际付款</dt><dd :class="cashFlowClass(funds.outflow_fen, 'outflow')">{{ formatFen(funds.outflow_fen) }}</dd></div>
             <div><dt>月初账面资金</dt><dd>{{ formatFen(funds.opening_fen) }}</dd></div>
-            <div><dt>本月资金增减</dt><dd :class="{ loss: fen(funds.net_change_fen) < 0n }">{{ formatSigned(funds.net_change_fen) }}</dd></div>
+            <div><dt>本月资金增减</dt><dd :class="{ gain: fen(funds.net_change_fen) > 0n, loss: fen(funds.net_change_fen) < 0n }">{{ formatSigned(funds.net_change_fen) }}</dd></div>
           </dl>
           <p class="flow-note">实际收付款不含公司账户间互转</p>
           </div>
@@ -796,7 +796,7 @@ onBeforeUnmount(() => {
             <article
               v-for="account in accounts"
               :key="accountKey(account.type, account.account_id)"
-              class="account-card dashboard-record-card"
+              class="account-card dashboard-record-card" data-section-focus tabindex="-1"
               :class="{ attention: accountOwnerState(account).tone === 'attention' }"
             >
               <div class="account-card-summary">
@@ -817,7 +817,7 @@ onBeforeUnmount(() => {
                   <div class="account-balance" :class="{ unknown: account.closing_fen === null }">
                     <span>所选月末账面余额</span>
                     <strong :class="{ loss: account.negative_balance }">{{ formatFen(account.closing_fen) }}</strong>
-                    <small :class="{ loss: fen(account.net_change_fen) < 0n }">
+                    <small :class="{ gain: fen(account.net_change_fen) > 0n, loss: fen(account.net_change_fen) < 0n }">
                       {{ accountChangeLabel(account.net_change_fen) }}
                       <template v-if="fen(account.net_change_fen) !== 0n"> {{ formatSigned(account.net_change_fen) }}</template>
                     </small>
@@ -829,11 +829,11 @@ onBeforeUnmount(() => {
                 <div class="account-owner-grid">
                   <div>
                     <span>本月账面流入</span>
-                    <strong>{{ formatFen(account.inflow_fen) }}</strong>
+                    <strong :class="cashFlowClass(account.inflow_fen, 'inflow')">{{ formatFen(account.inflow_fen) }}</strong>
                   </div>
                   <div>
                     <span>本月账面流出</span>
-                    <strong>{{ formatFen(account.outflow_fen) }}</strong>
+                    <strong :class="cashFlowClass(account.outflow_fen, 'outflow')">{{ formatFen(account.outflow_fen) }}</strong>
                   </div>
                   <div>
                     <span>资金活动</span>
@@ -857,9 +857,9 @@ onBeforeUnmount(() => {
           </div>
           <p class="muted">按账面成本列示，不代表当前市值；未计入上方账户资金。</p>
           <p class="muted">本月确认收益 {{ formatFen(funds.investments.investment_income_fen) }} ·
-            实际申购付款 {{ formatFen(funds.investments.actual_payments_fen) }} ·
-            实际赎回到账 {{ formatFen(funds.investments.actual_receipts_fen) }}</p>
-          <div class="table-wrap" role="region" aria-label="基金产品汇总" tabindex="0">
+            实际申购付款 <span :class="cashFlowClass(funds.investments.actual_payments_fen, 'outflow')">{{ formatFen(funds.investments.actual_payments_fen) }}</span> ·
+            实际赎回到账 <span :class="cashFlowClass(funds.investments.actual_receipts_fen, 'inflow')">{{ formatFen(funds.investments.actual_receipts_fen) }}</span></p>
+          <div class="table-wrap" data-section-focus role="region" aria-label="基金产品汇总" tabindex="0">
             <table class="investment-table investment-summary-table">
               <colgroup><col><col class="investment-amount-column"><col class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">产品</th><th scope="col" class="number">月末账面成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
@@ -872,7 +872,7 @@ onBeforeUnmount(() => {
           <details class="investment-details">
           <summary>查看申购、赎回与收付款明细</summary>
           <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
-          <div class="table-wrap" role="region" aria-label="基金成本变动" tabindex="0">
+          <div class="table-wrap" data-section-focus role="region" aria-label="基金成本变动" tabindex="0">
             <table class="investment-table investment-cost-table">
               <colgroup><col><col v-for="column in 5" :key="column" class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初成本</th><th scope="col" class="number">申购成本变动</th>
@@ -887,7 +887,7 @@ onBeforeUnmount(() => {
               </tr></tbody></table>
           </div>
           <h3>本月确认及收付款</h3>
-          <div v-if="investmentEvents.length" class="table-wrap" role="region" aria-label="基金确认及收付款明细" tabindex="0">
+          <div v-if="investmentEvents.length" class="table-wrap" data-section-focus role="region" aria-label="基金确认及收付款明细" tabindex="0">
             <table class="investment-table investment-events-table">
               <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
@@ -990,7 +990,7 @@ onBeforeUnmount(() => {
             :inert="selectedDetailView !== 'book'"
             :tabindex="selectedDetailView === 'book' ? 0 : -1"
           >
-            <div class="fund-business-workbench">
+            <div class="fund-business-workbench" :data-section-focus="selectedDetailView === 'book' ? '' : undefined" tabindex="-1">
               <nav class="fund-account-index" aria-label="资金账户">
                 <span class="fund-account-heading">资金账户</span>
                 <button
@@ -1050,7 +1050,7 @@ onBeforeUnmount(() => {
             :inert="selectedDetailView !== 'bank'"
             :tabindex="selectedDetailView === 'bank' ? 0 : -1"
           >
-            <div v-if="visibleBankRows.length" class="bank-activity-feed" role="region" aria-label="银行流水明细" tabindex="0">
+            <div v-if="visibleBankRows.length" class="bank-activity-feed" :data-section-focus="selectedDetailView === 'bank' ? '' : undefined" role="region" aria-label="银行流水明细" tabindex="0">
               <ol class="bank-activity-list">
                 <li v-for="item in visibleBankRows" :key="item.id" class="bank-activity-item">
                   <details class="bank-activity-record">
@@ -1237,6 +1237,9 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
+.gain, .funds-page .cash-inflow { color: var(--accent); }
+.funds-page .cash-outflow { color: var(--warning); }
+
 .investment-details {
   margin-top: 14px;
 }
@@ -1320,13 +1323,12 @@ summary {
   color: var(--text);
 }
 
-.view-switch button:focus-visible,
-[role="tabpanel"]:focus-visible {
+.view-switch button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* 标题与小字同属左侧一组，结构对齐简报页“本月发生了什么 / 27 张凭证 · 7 类业务”。 */
+/* 标题与小字同属左侧一组，结构对齐简报页“本月发生 / 本月共 27 项 · 7 张凭证”。 */
 .list-caption {
   margin: 3px 0 0;
   color: var(--muted);
@@ -1562,8 +1564,7 @@ summary {
 }
 
 .book-activity-feed:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .book-list-columns,
@@ -1795,8 +1796,7 @@ summary {
 }
 
 .bank-activity-feed:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .bank-activity-summary {
@@ -2144,8 +2144,7 @@ table {
 .investment-events-table { min-width: 1040px; }
 
 .table-wrap:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .investment-table td {
@@ -2289,7 +2288,8 @@ tbody tr:last-child td {
 .account-balance { display: grid; min-width: 160px; justify-items: end; gap: 2px; text-align: right; white-space: nowrap; }
 .account-balance span, .account-balance small { color: var(--muted); font-size: 11px; }
 .account-balance strong { display: block; margin: 0; font-size: 22px; line-height: 1.2; }
-.account-balance small { color: var(--accent); font-weight: 720; }
+.account-balance small { color: var(--muted); font-weight: 720; }
+.account-balance small.gain { color: var(--accent); }
 .account-balance small.loss { color: var(--danger); }
 .account-balance.unknown strong { color: var(--warning); font-size: 17px; }
 .account-owner-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 11px; background: var(--surface-soft); }
@@ -2307,7 +2307,7 @@ tbody tr:last-child td {
 .review-action > span { display: inline-block; }
 .funds-review[open] .review-action > span { transform: rotate(180deg); }
 .review-content { padding: 0 20px 16px; font-size: 12px; }
-#bank-details { padding: 0; border: 0; border-radius: 0; background: transparent; }
+#bank-details { padding: 0; border: 0; border-radius: 0; background: transparent; outline: none; }
 #bank-details .view-switch { padding: 3px; }
 #bank-details .view-switch button { min-height: 34px; padding: 0 12px; }
 @media (min-width: 761px) and (max-width: 1199px) {
@@ -2374,7 +2374,7 @@ tbody tr:last-child td {
 
 
 
-  .bank-activity-feed { overflow: visible; border: 0; background: transparent; }
+  .bank-activity-feed { overflow: visible; background: transparent; }
   .bank-activity-list { display: grid; gap: 10px; }
   .bank-activity-item {
     overflow: hidden;
