@@ -4440,6 +4440,57 @@
         "title": "BriefActivityRow",
         "type": "object"
       },
+      "BriefBankComposition": {
+        "additionalProperties": false,
+        "properties": {
+          "opening_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Fen"
+          },
+          "inflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inflow Fen"
+          },
+          "outflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outflow Fen"
+          }
+        },
+        "required": [
+          "opening_fen",
+          "inflow_fen",
+          "outflow_fen"
+        ],
+        "title": "BriefBankComposition",
+        "type": "object"
+      },
       "BriefCollections": {
         "additionalProperties": false,
         "properties": {
@@ -4525,6 +4576,12 @@
           "position": {
             "$ref": "#/$defs/BriefPosition"
           },
+          "financial_position": {
+            "$ref": "#/$defs/BriefFinancialPosition"
+          },
+          "workforce_cost": {
+            "$ref": "#/$defs/BriefWorkforceCost"
+          },
           "funds_overview": {
             "$ref": "#/$defs/FundsOverview"
           },
@@ -4567,6 +4624,424 @@
           "collections"
         ],
         "title": "BriefData",
+        "type": "object"
+      },
+      "BriefEmployeeCost": {
+        "additionalProperties": false,
+        "properties": {
+          "has_activity": {
+            "title": "Has Activity",
+            "type": "boolean"
+          },
+          "breakdown_available": {
+            "title": "Breakdown Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "total_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Fen"
+          },
+          "controlled_total_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controlled Total Fen"
+          },
+          "settlement_adjustment_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Adjustment Fen"
+          },
+          "gross_salary_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Salary Fen"
+          },
+          "annual_bonus_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annual Bonus Fen"
+          },
+          "employer_social_insurance_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Employer Social Insurance Fen"
+          },
+          "employer_housing_fund_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Employer Housing Fund Fen"
+          },
+          "employee_social_insurance_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Employee Social Insurance Fen"
+          },
+          "employee_housing_fund_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Employee Housing Fund Fen"
+          }
+        },
+        "required": [
+          "has_activity",
+          "breakdown_available",
+          "reason",
+          "total_fen",
+          "controlled_total_fen",
+          "settlement_adjustment_fen",
+          "gross_salary_fen",
+          "annual_bonus_fen",
+          "employer_social_insurance_fen",
+          "employer_housing_fund_fen",
+          "employee_social_insurance_fen",
+          "employee_housing_fund_fen"
+        ],
+        "title": "BriefEmployeeCost",
+        "type": "object"
+      },
+      "BriefFinancialPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "assets_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assets Fen"
+          },
+          "liabilities_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liabilities Fen"
+          },
+          "capital_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capital Fen"
+          },
+          "equity_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Fen"
+          },
+          "bank_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Fen"
+          },
+          "fixed_asset_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixed Asset Cost Fen"
+          },
+          "accumulated_depreciation_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accumulated Depreciation Fen"
+          },
+          "fixed_asset_net_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixed Asset Net Fen"
+          },
+          "intangible_asset_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intangible Asset Cost Fen"
+          },
+          "accumulated_amortization_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accumulated Amortization Fen"
+          },
+          "intangible_asset_net_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intangible Asset Net Fen"
+          },
+          "other_assets_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Assets Fen"
+          },
+          "cumulative_result_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Result Fen"
+          },
+          "equation_valid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equation Valid"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/BriefPositionNotice"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "bank_calculation": {
+            "$ref": "#/$defs/BriefBankComposition"
+          },
+          "liability_calculation": {
+            "$ref": "#/$defs/BriefLiabilityComposition"
+          }
+        },
+        "required": [
+          "assets_fen",
+          "liabilities_fen",
+          "capital_fen",
+          "equity_fen",
+          "bank_fen",
+          "fixed_asset_cost_fen",
+          "accumulated_depreciation_fen",
+          "fixed_asset_net_fen",
+          "intangible_asset_cost_fen",
+          "accumulated_amortization_fen",
+          "intangible_asset_net_fen",
+          "other_assets_fen",
+          "cumulative_result_fen",
+          "equation_valid",
+          "complete",
+          "issues",
+          "bank_calculation",
+          "liability_calculation"
+        ],
+        "title": "BriefFinancialPosition",
+        "type": "object"
+      },
+      "BriefLiabilityComposition": {
+        "additionalProperties": false,
+        "properties": {
+          "current_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Fen"
+          },
+          "non_current_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Current Fen"
+          }
+        },
+        "required": [
+          "current_fen",
+          "non_current_fen"
+        ],
+        "title": "BriefLiabilityComposition",
         "type": "object"
       },
       "BriefNote": {
@@ -4917,6 +5392,70 @@
         "title": "BriefOpenSummary",
         "type": "object"
       },
+      "BriefPersonalLaborCost": {
+        "additionalProperties": false,
+        "properties": {
+          "has_activity": {
+            "title": "Has Activity",
+            "type": "boolean"
+          },
+          "breakdown_available": {
+            "title": "Breakdown Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "total_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Fen"
+          },
+          "gross_remuneration_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Remuneration Fen"
+          },
+          "withholding_note": {
+            "title": "Withholding Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "has_activity",
+          "breakdown_available",
+          "reason",
+          "total_fen",
+          "gross_remuneration_fen",
+          "withholding_note"
+        ],
+        "title": "BriefPersonalLaborCost",
+        "type": "object"
+      },
       "BriefPosition": {
         "additionalProperties": false,
         "properties": {
@@ -4973,6 +5512,26 @@
         "title": "BriefPosition",
         "type": "object"
       },
+      "BriefPositionNotice": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "BriefPositionNotice",
+        "type": "object"
+      },
       "BriefRisk": {
         "additionalProperties": false,
         "properties": {
@@ -5004,6 +5563,56 @@
           "status"
         ],
         "title": "BriefRisk",
+        "type": "object"
+      },
+      "BriefWorkforceCost": {
+        "additionalProperties": false,
+        "properties": {
+          "has_activity": {
+            "title": "Has Activity",
+            "type": "boolean"
+          },
+          "total_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Fen"
+          },
+          "capitalized_labor_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capitalized Labor Fen"
+          },
+          "employee": {
+            "$ref": "#/$defs/BriefEmployeeCost"
+          },
+          "personal_labor": {
+            "$ref": "#/$defs/BriefPersonalLaborCost"
+          }
+        },
+        "required": [
+          "has_activity",
+          "total_fen",
+          "capitalized_labor_fen",
+          "employee",
+          "personal_labor"
+        ],
+        "title": "BriefWorkforceCost",
         "type": "object"
       },
       "CollectionPage": {
@@ -5901,7 +6510,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 11,
+        "const": 12,
         "title": "Schema Version",
         "type": "integer"
       },

@@ -34,7 +34,7 @@ from .response_types import (
     Version6,
     Version9,
     Version10,
-    Version11,
+    Version12,
     WireFen,
 )
 
@@ -916,6 +916,75 @@ class BriefPosition(ResponseObject):
     complete: bool
 
 
+class BriefPositionNotice(ResponseObject):
+    message: str
+    amount_fen: NotRequired[WireFen]
+
+
+class BriefBankComposition(ResponseObject):
+    opening_fen: WireFen | None
+    inflow_fen: WireFen | None
+    outflow_fen: WireFen | None
+
+
+class BriefLiabilityComposition(ResponseObject):
+    current_fen: WireFen | None
+    non_current_fen: WireFen | None
+
+
+class BriefFinancialPosition(ResponseObject):
+    assets_fen: WireFen | None
+    liabilities_fen: WireFen | None
+    capital_fen: WireFen | None
+    equity_fen: WireFen | None
+    bank_fen: WireFen | None
+    fixed_asset_cost_fen: WireFen | None
+    accumulated_depreciation_fen: WireFen | None
+    fixed_asset_net_fen: WireFen | None
+    intangible_asset_cost_fen: WireFen | None
+    accumulated_amortization_fen: WireFen | None
+    intangible_asset_net_fen: WireFen | None
+    other_assets_fen: WireFen | None
+    cumulative_result_fen: WireFen | None
+    equation_valid: bool | None
+    complete: bool
+    issues: list[BriefPositionNotice]
+    bank_calculation: BriefBankComposition
+    liability_calculation: BriefLiabilityComposition
+
+
+class BriefEmployeeCost(ResponseObject):
+    has_activity: bool
+    breakdown_available: bool
+    reason: str | None
+    total_fen: WireFen | None
+    controlled_total_fen: WireFen | None
+    settlement_adjustment_fen: WireFen | None
+    gross_salary_fen: WireFen | None
+    annual_bonus_fen: WireFen | None
+    employer_social_insurance_fen: WireFen | None
+    employer_housing_fund_fen: WireFen | None
+    employee_social_insurance_fen: WireFen | None
+    employee_housing_fund_fen: WireFen | None
+
+
+class BriefPersonalLaborCost(ResponseObject):
+    has_activity: bool
+    breakdown_available: bool
+    reason: str | None
+    total_fen: WireFen | None
+    gross_remuneration_fen: WireFen | None
+    withholding_note: str
+
+
+class BriefWorkforceCost(ResponseObject):
+    has_activity: bool
+    total_fen: WireFen | None
+    capitalized_labor_fen: WireFen | None
+    employee: BriefEmployeeCost
+    personal_labor: BriefPersonalLaborCost
+
+
 class BriefCash(ResponseObject):
     transaction_count: Count
     matched_count: Count
@@ -1215,6 +1284,8 @@ class BriefData(ResponseObject):
     focused_voucher: OwnerBriefVoucher | None
     activity_groups: list[BriefActivityGroup]
     position: BriefPosition
+    financial_position: NotRequired[BriefFinancialPosition]
+    workforce_cost: NotRequired[BriefWorkforceCost]
     funds_overview: FundsOverview
     open_items: BriefOpenSummary
     risks: list[BriefRisk]
@@ -1223,7 +1294,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version11
+    schema_version: Version12
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

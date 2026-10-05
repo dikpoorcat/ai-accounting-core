@@ -192,7 +192,7 @@ def test_brief_journal_summary_uses_one_selection_for_page_and_all_totals(bank_b
         assert reads._report_snapshot_cache == {}
 
 
-def test_journal_summary_preserves_zero_line_count_and_reversal_group():
+def test_journal_summary_preserves_zero_line_count_and_reversal_group(monkeypatch):
     connection = connect(":memory:")
     connection.row_factory = Row
     connection.executescript(
@@ -205,6 +205,10 @@ def test_journal_summary_preserves_zero_line_count_and_reversal_group():
     snapshot = SimpleNamespace(connection=connection, reads=reads, month=1)
     journal = Journal(snapshot, month=1)
     journal.sql = lambda: ("SELECT id,basis_kind,reverses_id FROM picked", [])
+    # This hand-written relation isolates SQL grouping, including a zero-line
+    # row that is not a formal voucher. Real publication/adoption proof remains
+    # covered by the synthetic-company tests above and the production reader.
+    monkeypatch.setattr(journal, "_verify_frozen_headers", lambda **_kwargs: None)
     try:
         journal.prime_summary()
         assert len(journal) == 3

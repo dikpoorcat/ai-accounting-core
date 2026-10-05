@@ -86,6 +86,15 @@ def _assert_brief_asset_summary_parity(engine, period):
     complete = dashboard.assets(period, preparation="deferred")["data"]
     brief = dashboard.brief(period, preparation="deferred")["data"]
     assert "long_term_assets" not in brief
+    position = brief["financial_position"]
+    for field in ("fixed_asset_net_fen", "intangible_asset_net_fen"):
+        assert position[field] == complete[field]
+    assert position["fixed_asset_net_fen"] == (
+        position["fixed_asset_cost_fen"] - position["accumulated_depreciation_fen"]
+    )
+    assert position["intangible_asset_net_fen"] == (
+        position["intangible_asset_cost_fen"] - position["accumulated_amortization_fen"]
+    )
     assert complete["ledger_net_fen"] == (
         complete["fixed_asset_net_fen"] + complete["intangible_asset_net_fen"]
     )

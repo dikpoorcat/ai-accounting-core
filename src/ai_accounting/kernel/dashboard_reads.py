@@ -918,12 +918,16 @@ def metric_rows(journal, fields, *, cost_accounts=()):
         )
     )
     pairs = ",".join(f"'{field}',json_extract(c.outcome,'$.values.{field}')" for field in fields)
+    cost_sql = (
+        "coalesce((SELECT sum(l.debit-l.credit) FROM voucher_line l "
+        "WHERE l.version_id=j.id AND l.account IN (SELECT value FROM json_each(?))),0)"
+        if cost_accounts else "0"
+    )
     rows = snapshot.connection.execute(
-        f"SELECT j.*,json_object({pairs}) AS metric_values,coalesce((SELECT sum(l.debit-l.credit) "
-        "FROM voucher_line l WHERE l.version_id=j.id AND l.account IN "
-        f"(SELECT value FROM json_each(?))),0) AS metric_cost FROM ({query}) j "
+        f"SELECT j.*,json_object({pairs}) AS metric_values,{cost_sql} AS metric_cost "
+        f"FROM ({query}) j "
         "JOIN calculation c ON c.id=j.basis_calculation_id ORDER BY j.period,j.number,j.id",
-        [canonical(sorted(cost_accounts)), *parameters],
+        [*([canonical(sorted(cost_accounts))] if cost_accounts else []), *parameters],
     ).fetchall()
     journal._verify_frozen_headers(rows=rows)
     metadata = snapshot.reads.metadata({row["basis_calculation_id"] for row in rows})
@@ -949,6 +953,29 @@ def metric_rows(journal, fields, *, cost_accounts=()):
         record["calculation_id"] = meta["id"]
         result.append(record)
     return result
+
+
+def _checked_posted_lines(row, actual_lines, expected):
+    """Compare exact saved voucher lines with an authenticated result."""
+    from .integrity import _invalid, _lines
+    from .types import sum_fen
+
+    ident = row["id"]
+    if any(item["line_no"] != index for index, item in enumerate(actual_lines, 1)):
+        _invalid("voucher", ident, "voucher_line_order_mismatch")
+    actual = [(item["account"], item["debit"], item["credit"], item["cashflow"])
+              for item in actual_lines]
+    if any(type(item[1]) is not int or type(item[2]) is not int for item in actual):
+        _invalid("voucher", ident, "invalid_line")
+    if not actual or sum_fen(line[1] for line in actual) != row["total"]:
+        _invalid("voucher", ident, "voucher_total_mismatch")
+    if actual != expected:
+        _lines(
+            [{key: item[key] for key in ("account", "debit", "credit", "cashflow")}
+             for item in actual_lines], "voucher", ident,
+        )
+        _invalid("voucher", ident, "voucher_lines_mismatch")
+    return actual
 
 
 class CalculationView(dict):
@@ -1374,7 +1401,7 @@ class Journal:
             _selected_current_voucher_publications,
             verify_current_voucher_publications,
         )
-        from .types import checked, sum_fen
+        from .types import checked
 
         reads, connection = self.snapshot.reads, self.snapshot.connection
         query, parameters = self.sql()
@@ -1468,19 +1495,6 @@ class Journal:
         for row in [*originals.values(), *rows]:
             ident = row["id"]
             actual_lines = lines[ident]
-            if any(item["line_no"] != index for index, item in enumerate(actual_lines, 1)):
-                _invalid("voucher", ident, "voucher_line_order_mismatch")
-            # Equality with a strictly checked saved result proves the same
-            # complete line shape, amounts and balance. Keep integer types
-            # explicit: Python equality alone also accepts bools and floats.
-            actual = [
-                (item["account"], item["debit"], item["credit"], item["cashflow"])
-                for item in actual_lines
-            ]
-            if any(type(item[1]) is not int or type(item[2]) is not int for item in actual):
-                _invalid("voucher", ident, "invalid_line")
-            if not actual or sum_fen(line[1] for line in actual) != row["total"]:
-                _invalid("voucher", ident, "voucher_total_mismatch")
             publication = publications.get(row["calculation_id"])
             if publication is None or publication["posting_period"] != row["period"]:
                 _invalid("voucher", ident, "voucher_publication_mismatch")
@@ -1496,13 +1510,7 @@ class Journal:
                 if publication["voucher_id"] != row["voucher_id"]:
                     _invalid("voucher", ident, "voucher_publication_identity_mismatch")
                 expected = result_lines(row["calculation_id"])
-            if actual != expected:
-                # Preserve the original malformed-line diagnostics on failure.
-                _lines(
-                    [{key: item[key] for key in ("account", "debit", "credit", "cashflow")}
-                     for item in actual_lines], "voucher", ident,
-                )
-                _invalid("voucher", ident, "voucher_lines_mismatch")
+            actual = _checked_posted_lines(row, actual_lines, expected)
             frozen = frozen_vouchers.get(ident)
             if frozen:
                 if any(
@@ -1559,10 +1567,92 @@ class Journal:
         }
         cache = self._cache()
         if cache is not None:
+            cache.update(
+                (("authenticated_voucher_lines", row["id"], row["voucher_calculation_id"],
+                  row["basis_calculation_id"]), True) for row in rows
+            )
             cache[self._key("journal_summary")] = summary
             cache[self._key("journal_count")] = summary["count"]
             cache[self._key("journal_verified_rows")] = tuple(rows)
         return amounts
+
+    def authenticated_selected_lines(self, rows):
+        """Prove only selected financial-position vouchers and reversal originals.
+
+        Whole-month money proofs publish the same successful line binding, so
+        the current month can reuse it without decoding a result a second time.
+        """
+        from .integrity import _invalid, _lines
+
+        rows = tuple(rows)
+        self._verify_frozen_headers(rows=rows)
+        reads, cache = self.snapshot.reads, self._cache()
+        keys = {
+            row["id"]: ("authenticated_voucher_lines", row["id"],
+                        row["voucher_calculation_id"], row["basis_calculation_id"])
+            for row in rows
+        }
+        pending = [row for row in rows if cache is None or keys[row["id"]] not in cache]
+        originals = reads.vouchers(row["reverses_id"] for row in pending if row["reverses_id"])
+        lines = reads.voucher_lines({row["id"] for row in rows} | originals.keys())
+        if not pending:
+            return lines
+        original_headers = []
+        if originals:
+            query, parameters = selected_voucher_sql(
+                self.snapshot.period, voucher_ids=originals,
+            )
+            original_headers = list(self.snapshot.connection.execute(query, parameters))
+            if {row["id"] for row in original_headers} != originals.keys() or any(
+                row["close_period"] is None for row in original_headers
+            ):
+                _invalid("voucher", self.snapshot.month, "reversal_frozen_source_missing")
+            reads.verify_selected_voucher_adoptions(
+                original_headers, through_period=self.snapshot.month,
+            )
+        used_rows = (*original_headers, *pending)
+        identifiers = {
+            row[field] for row in used_rows
+            for field in ("voucher_calculation_id", "basis_calculation_id")
+        }
+        outcomes = reads.verify_selected_content(identifiers)
+        owner_ids = {row["voucher_calculation_id"] for row in used_rows}
+        publications = {
+            row["calculation_id"]: row for row in self.snapshot.connection.execute(
+                "SELECT p.* FROM json_each(?) ids JOIN calculation_publication p "
+                "ON p.calculation_id=ids.value", (canonical(sorted(owner_ids)),),
+            )
+        }
+        reads.verify_publication_records(publications.values())
+        verified_originals = {}
+        for row in used_rows:
+            ident = row["id"]
+            owner = row["voucher_calculation_id"]
+            publication = publications.get(owner)
+            if publication is None or publication["posting_period"] != row["period"]:
+                _invalid("voucher", ident, "voucher_publication_mismatch")
+            if row["reverses_id"]:
+                original = originals[row["reverses_id"]]
+                if original["period"] >= row["period"] or original["reverses_id"] is not None:
+                    _invalid("voucher", ident, "invalid_reversal_source")
+                expected = [
+                    (account, credit, debit, cashflow)
+                    for account, debit, credit, cashflow in verified_originals[original["id"]]
+                ]
+            else:
+                if publication["voucher_id"] != row["voucher_id"]:
+                    _invalid("voucher", ident, "voucher_publication_identity_mismatch")
+                expected = _lines(outcomes[owner]["lines"], "calculation", owner)
+            actual = _checked_posted_lines(row, lines[ident], expected)
+            if ident in originals:
+                verified_originals[ident] = actual
+            if not row["reverses_id"]:
+                adopted_id = row["basis_calculation_id"]
+                if actual != _lines(outcomes[adopted_id]["lines"], "calculation", adopted_id):
+                    _invalid("voucher", ident, "adopted_lines_mismatch")
+        if cache is not None:
+            cache.update((keys[row["id"]], True) for row in pending)
+        return lines
 
     def kind_counts(self):
         cache, key = self._cache(), self._key("journal_summary")

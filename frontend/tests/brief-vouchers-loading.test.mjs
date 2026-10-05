@@ -36,9 +36,10 @@ async function harness() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const rows = (start, count) => Array.from({ length: count }, (_, index) => ({ voucher_version_id: `v${start + index}` }));
 const response = (start, count, total = 45) => ({
-  schema_version: 11, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
+  schema_version: 12, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
   selected_period: { key: "2026-02" }, data: {
     month_state: "closed", owner_review_request: null,
+    ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" } } : {}),
     position: { month_result_fen: "12345" }, voucher_count: total, focused_voucher: null, focused_activity: null,
     collections: { vouchers: { items: rows(start, count), page: {
       total_count: total, filtered_count: total, returned_count: count,
@@ -62,6 +63,8 @@ test("all vouchers loads the entire month through bounded pages using one snapsh
     assert.deepEqual(h.response.value.data.collections.vouchers.items.map(item => item.voucher_version_id), rows(0, 45).map(item => item.voucher_version_id));
     assert.equal(h.response.value.data.collections.vouchers.page.has_more, false);
     assert.equal(h.response.value.data.position.month_result_fen, "12345");
+    assert.equal(h.response.value.data.financial_position.assets_fen, "32100");
+    assert.equal(h.response.value.data.workforce_cost.total_fen, "77700");
   } finally { h.close(); }
 });
 

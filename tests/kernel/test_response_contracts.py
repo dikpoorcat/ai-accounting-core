@@ -50,6 +50,7 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     assert "movement_page" not in samples["page_accounts"]["response"]["data"]
     assert "page" not in samples["page_accounts"]["response"]["data"]["bank_statement"]
     brief = samples["brief"]["response"]["data"]
+    assert {"financial_position", "workforce_cost"} <= brief.keys()
     assert "adopted_basis" not in brief
     vouchers = brief["collections"]["vouchers"]
     assert vouchers["page"]["returned_count"] == len(vouchers["items"])
@@ -64,6 +65,47 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     assert brief["collections"]["activity"]["page"]["returned_count"] == len(
         brief["collections"]["activity"]["items"]
     )
+
+
+@pytest.mark.parametrize("path", [
+    ("financial_position", "assets_fen"),
+    ("financial_position", "bank_calculation", "opening_fen"),
+    ("financial_position", "liability_calculation", "current_fen"),
+    ("workforce_cost", "total_fen"),
+    ("workforce_cost", "capitalized_labor_fen"),
+    ("workforce_cost", "employee", "gross_salary_fen"),
+    ("workforce_cost", "personal_labor", "total_fen"),
+])
+def test_restored_summary_amounts_use_exact_int64_contract(samples, path):
+    response = copy.deepcopy(samples["brief"]["response"])
+    target = response["data"]
+    for key in path[:-1]:
+        target = target[key]
+    for amount in (None, 0, 2**53 + 1, -(2**63), 2**63 - 1):
+        target[path[-1]] = amount
+        assert validate_response("dashboard_brief", response) == response
+        wire = http_response("dashboard_brief", response)["data"]
+        for key in path:
+            wire = wire[key]
+        assert wire == (None if amount is None else str(amount))
+    for amount in (True, 1.0, "1", 2**63, -(2**63) - 1):
+        target[path[-1]] = amount
+        with pytest.raises(KernelError) as failure:
+            validate_response("dashboard_brief", response)
+        assert failure.value.code == "response_contract_mismatch"
+        assert all(path[-1] in item for item in failure.value.details["paths"])
+
+
+def test_restored_summary_nested_shape_is_strict(samples):
+    for section in ("financial_position", "workforce_cost"):
+        value = copy.deepcopy(samples["brief"]["response"])
+        value["data"][section]["hidden_amount_fen"] = 1
+        with pytest.raises(KernelError):
+            validate_response("dashboard_brief", value)
+        del value["data"][section]["hidden_amount_fen"]
+        del value["data"][section]["complete" if section == "financial_position" else "total_fen"]
+        with pytest.raises(KernelError):
+            validate_response("dashboard_brief", value)
 
 
 def _personnel_date_value(response, sample):

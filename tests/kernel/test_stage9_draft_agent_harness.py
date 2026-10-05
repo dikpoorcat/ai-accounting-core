@@ -101,7 +101,7 @@ def mocked_pair(case):
         "as_of": "2026-10-03", "read_version": case["company"]["id"] + "-read",
     }
     brief = {
-        "schema_version": 11, "read_context": context,
+        "schema_version": 12, "read_context": context,
         "selected_period": {"key": case["open_periods"][0]},
         "data": {"activity_count": 1, "funds_overview": {"total_fen": 100}, "position": {}},
     }

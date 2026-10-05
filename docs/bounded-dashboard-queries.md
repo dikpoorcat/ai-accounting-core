@@ -19,8 +19,9 @@ wire 层继续验证请求与响应合同、最终请求 URL 与公司／期间�
 | 合同 | 版本 |
 | --- | ---: |
 | `context` | 3 |
-| `brief` | 11 |
-| `funds`、`assets` | 9 |
+| `brief` | 12 |
+| `funds` | 9 |
+| `assets` | 10 |
 | `employees` | 9 |
 | `business-status` | 6 |
 | `quarterly-report` | 5 |

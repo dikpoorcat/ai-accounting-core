@@ -55,6 +55,9 @@ const refreshRoots = {
 function readRefreshProjection(document, rootSelector) {
   const root = document.querySelector(rootSelector);
   if (!root) return null;
+  // Each visible child contributes its complete innerText: financial cards and
+  // the conditional workforce section are included in the existing two-frame
+  // stable-projection endpoint without adding assertions to the timed path.
   const visibleText = Array.from(root.children)
     .filter(node => node.getClientRects().length
       && document.defaultView.getComputedStyle(node).visibility !== "hidden")
@@ -334,6 +337,7 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
     verifyBriefState(payload.data, selected);
     const { vouchers, activity } = payload.data.collections;
     if (!section) {
+      assert(payload.data.financial_position && payload.data.workforce_cost, "brief: main financial/workforce summaries missing");
       assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
       assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
       if (requireVouchers) assert(vouchers.page.total_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
@@ -551,7 +555,66 @@ async function run(config) {
       }
     }
   }
+  async function verifyBriefSummaries(data) {
+    const financial = data.financial_position, workforce = data.workforce_cost;
+    assert(financial && workforce, "brief: main summaries missing");
+    const overview = page.locator(".financial-section");
+    await overview.waitFor({ state: "visible" });
+    assert.equal(await overview.locator(".overview-card").count(), 2, "brief: financial cards missing");
+    const amount = async (selector, value, label) => {
+      const node = page.locator(selector);
+      await node.waitFor({ state: "visible" });
+      assert.equal((await node.textContent())?.trim(), formatFen(value), `brief: ${label} differs from main response`);
+    };
+    await amount(".cash-card .flow > div:nth-child(1) strong", data.funds_overview.inflow_fen, "external receipts");
+    await amount(".cash-card .flow > div:nth-child(2) strong", data.funds_overview.outflow_fen, "external payments");
+    await amount(".cash-card .summary-rows > div:first-child dd", data.funds_overview.total_fen, "closing funds");
+    const assetsLabel = financial.assets_fen === null ? "资产 无法完整建立" : `资产 ${formatFen(financial.assets_fen)}`;
+    assert.equal((await page.locator(".balance-trigger").textContent())?.trim(), assetsLabel, "brief: assets total differs");
+    for (const [id, field] of [["bank-asset-tooltip", "bank_fen"], ["fixed-asset-tooltip", "fixed_asset_net_fen"], ["intangible-asset-tooltip", "intangible_asset_net_fen"], ["other-assets-tooltip", "other_assets_fen"], ["liability-tooltip", "liabilities_fen"]]) {
+      await amount(`[aria-describedby="${id}"]`, financial[field], field);
+    }
+    // Read the explanation DOM by its field group; visual opening is checked
+    // separately in layout_only so it cannot influence refresh timestamps.
+    const tooltipAmounts = async (id, values) => {
+      const text = await page.locator(`#${id}`).textContent();
+      for (const value of values) assert(text.includes(formatFen(value)), `brief: ${id} calculation amount missing`);
+    };
+    if (financial.equation_valid !== null) {
+      await tooltipAmounts("balance-tooltip", [financial.assets_fen, financial.liabilities_fen, financial.equity_fen, financial.capital_fen]);
+      const profit = financial.cumulative_result_fen;
+      await tooltipAmounts("balance-tooltip", [profit === null ? null : (BigInt(profit) < 0n ? -BigInt(profit) : BigInt(profit)).toString()]);
+    }
+    const bank = financial.bank_calculation;
+    if (financial.bank_fen !== null && [bank.opening_fen, bank.inflow_fen, bank.outflow_fen].every(value => value !== null)
+      && BigInt(bank.opening_fen) + BigInt(bank.inflow_fen) - BigInt(bank.outflow_fen) === BigInt(financial.bank_fen)) {
+      await tooltipAmounts("bank-asset-tooltip", [bank.opening_fen, bank.inflow_fen, bank.outflow_fen, financial.bank_fen]);
+    }
+    for (const [id, fields] of [["fixed-asset-tooltip", ["fixed_asset_cost_fen", "accumulated_depreciation_fen", "fixed_asset_net_fen"]], ["intangible-asset-tooltip", ["intangible_asset_cost_fen", "accumulated_amortization_fen", "intangible_asset_net_fen"]]]) {
+      if (fields.every(field => financial[field] !== null)) await tooltipAmounts(id, fields.map(field => financial[field]));
+    }
+    const liabilities = financial.liability_calculation;
+    if (financial.liabilities_fen !== null && liabilities.current_fen !== null && liabilities.non_current_fen !== null
+      && BigInt(liabilities.current_fen) + BigInt(liabilities.non_current_fen) === BigInt(financial.liabilities_fen)) {
+      await tooltipAmounts("liability-tooltip", [liabilities.current_fen, liabilities.non_current_fen, financial.liabilities_fen]);
+    }
+    if (financial.other_assets_fen !== null && data.funds_overview.cash_fen !== null && data.funds_overview.payment_platform_fen !== null) {
+      await tooltipAmounts("other-assets-tooltip", [data.funds_overview.cash_fen, data.funds_overview.payment_platform_fen,
+        (BigInt(financial.other_assets_fen) - BigInt(data.funds_overview.cash_fen) - BigInt(data.funds_overview.payment_platform_fen)).toString(), financial.other_assets_fen]);
+    }
+    assert.equal(await page.locator("#workforce").count(), workforce.has_activity ? 1 : 0, "brief: workforce visibility differs from activity");
+    if (workforce.has_activity) {
+      await page.locator("#workforce").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#workforce .workforce-card").count(), 2, "brief: workforce cards missing");
+      await page.locator("#employee-title").waitFor({ state: "visible" });
+      await page.locator("#labor-title").waitFor({ state: "visible" });
+      await amount("#workforce .total-help-trigger", workforce.total_fen, "total workforce cost");
+      await amount("#workforce .workforce-card:nth-child(1) .subtotal strong", workforce.employee.total_fen, "employee cost");
+      await amount("#workforce .workforce-card:nth-child(2) .subtotal strong", workforce.personal_labor.total_fen, "personal labor cost");
+    }
+  }
   async function verifyBriefVisible(data) {
+    await verifyBriefSummaries(data);
     await page.waitForFunction(({ state, required }) => {
       const content = document.querySelector(".brief-content");
       return document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
@@ -788,7 +851,7 @@ async function run(config) {
             range.selectNodeContents(element);
             return Array.from(range.getClientRects());
           };
-          const currencyOverflow = Array.from(document.querySelectorAll("strong, dd, td"))
+          const currencyOverflow = Array.from(document.querySelectorAll("strong, dd, td, .component-value-trigger, .balance-trigger, .total-help-trigger"))
             .filter(element => visible(element) && /[¥￥]/.test(element.textContent ?? ""))
             .flatMap(element => textBounds(element)
               .filter(rect => rect.left < -1 || rect.right > innerWidth + 1)
@@ -901,6 +964,31 @@ async function run(config) {
             }
           }
           if (module.key === "brief") {
+            if (width === 375) {
+              for (const selector of [".financial-section .overview-card", "#workforce .workforce-card"]) {
+                const bounds = await page.locator(selector).evaluateAll(nodes => nodes.map(node => {
+                  const rect = node.getBoundingClientRect();
+                  return { left: rect.left, right: rect.right, viewport: innerWidth };
+                }));
+                for (const rect of bounds) assert(rect.left >= -1 && rect.right <= rect.viewport + 1, `brief: ${selector} outside mobile viewport`);
+              }
+              const triggers = page.locator(".financial-section [aria-describedby], #workforce .total-help-trigger");
+              for (let index = 0; index < await triggers.count(); index++) {
+                const trigger = triggers.nth(index), id = await trigger.getAttribute("aria-describedby");
+                await localChange(module, async () => {
+                  await trigger.focus();
+                  await page.locator(`#${id}`).waitFor({ state: "visible" });
+                  await page.waitForFunction(id => {
+                    const style = getComputedStyle(document.getElementById(id));
+                    return style.visibility === "visible" && Number(style.opacity) === 1;
+                  }, id);
+                });
+                await checkOwnerLayout(module, `summary_tooltip_${id}`);
+                const bounds = await page.locator(`#${id}`).boundingBox();
+                assert(bounds && bounds.x >= -1 && bounds.x + bounds.width <= width + 1, `brief: ${id} outside mobile viewport`);
+                await trigger.evaluate(node => node.blur());
+              }
+            }
             const categories = page.locator("#activity .index button");
             if (await categories.count() > 1) {
               await localChange(module, () => categories.nth(1).click());

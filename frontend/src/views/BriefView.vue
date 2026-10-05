@@ -8,6 +8,7 @@ import DashboardPagination from "../components/DashboardPagination.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.vue";
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
+import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue";
 import BriefOpenItems from "../components/brief/BriefOpenItems.vue";
 import CloseReviewPanel from "../components/CloseReviewPanel.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
@@ -39,7 +40,9 @@ const briefTitle = computed(() => {
 });
 const sectionLinks = computed(() => data.value ? [
   { id: "overview", label: "概览" }, { id: "activity", label: "已入账变化" },
-  { id: "open-items", label: "待收待付" }, { id: "owner-tasks", label: "老板待办" },
+  { id: "open-items", label: "待收待付" },
+  ...(data.value.workforce_cost?.has_activity ? [{ id: "workforce", label: "用工成本" }] : []),
+  { id: "owner-tasks", label: "老板待办" },
 ] : []);
 const { activeSection, focusSection } = useDashboardSections(sectionLinks, "overview");
 function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
@@ -206,7 +209,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <div v-if="data.risks.length" class="risks" aria-label="风险与核对进展">
           <h3>风险与核对进展</h3><article v-for="risk in data.risks" :key="risk.key"><strong>{{ risk.title }}</strong><p>{{ risk.impact }} · {{ risk.status === 'ai_reviewing' ? 'AI 会计核对中' : '需要关注' }}</p></article>
         </div>
-        <BriefFinancialOverview :funds="data.funds_overview" />
+        <BriefFinancialOverview v-if="data.financial_position" :funds="data.funds_overview" :position="data.financial_position" />
       </section>
       <section id="activity" class="section-anchor" tabindex="-1">
         <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
@@ -216,6 +219,9 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <section id="open-items" class="section-anchor" tabindex="-1">
         <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
         <DashboardPagination compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
+      </section>
+      <section v-if="data.workforce_cost?.has_activity" id="workforce" class="section-anchor" tabindex="-1">
+        <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
       </section>
       <section id="owner-tasks" class="section-anchor tasks" tabindex="-1" aria-labelledby="tasks-title">
         <h2 id="tasks-title">老板待办</h2>

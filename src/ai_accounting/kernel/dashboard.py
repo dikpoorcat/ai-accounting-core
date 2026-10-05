@@ -1884,7 +1884,7 @@ class Dashboard:
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 11}
+                return {**self._response(None, None), "schema_version": 12}
             self._check_page_version(snap, cursor, expected_version)
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
@@ -2007,8 +2007,22 @@ class Dashboard:
                 "risks": risks, "owner_tasks": owner_tasks(snap),
                 "collections": collections,
             }
+            if section is None:
+                financial_position = _position(snap)
+                data["financial_position"] = {
+                    key: value for key, value in financial_position.items()
+                    if not key.startswith("month_") and key != "issues"
+                } | {
+                    "bank_calculation": funds["bank_calculation"],
+                    "issues": [
+                        {"message": item["message"]}
+                        | ({"amount_fen": item["amount_fen"]} if "amount_fen" in item else {})
+                        for item in financial_position["issues"]
+                    ],
+                }
+                data["workforce_cost"] = _brief_workforce_cost(snap)
             return {**self._response(snap, seal_collections(snap, "brief", data, {})),
-                    "schema_version": 11}
+                    "schema_version": 12}
 
     def funds(
         self,
@@ -2605,7 +2619,8 @@ def _brief_amounts(snap):
     }
 
 
-def _position(snap):
+def _position_party_rows(snap):
+    """Keep exact party ownership separate from scalar ledger classification."""
     balances = snap.accounts
     source_issues = []
     known = KNOWN_POSITION_ACCOUNTS
@@ -2685,6 +2700,20 @@ def _position(snap):
         if obligation["account"] in RECLASS
         and (obligation["counterparty_id"] is None or obligation["unknown"])
     }
+    obligation_totals = defaultdict(int)
+    for obligation in position_obligations:
+        if not obligation["unknown"]:
+            obligation_totals[obligation["account"]] += (
+                obligation["remaining"] if obligation["category"] == "receivable"
+                else -obligation["remaining"]
+            )
+    # A complete obligation aggregate can be used directly only if it covers
+    # the ledger account. A zero net account may still contain opposite party
+    # balances, so absence of obligations also requires exact party ownership.
+    fallback_accounts.update(
+        account for account in set(balances) & set(RECLASS)
+        if account not in obligation_totals or balances[account] != obligation_totals[account]
+    )
     # Report classifications may contain only profit or cash details. Those
     # facts do not affect a financial-position party split. Keep duplicate
     # voucher classifications and missing typed rows in the checked set, but
@@ -2750,7 +2779,7 @@ def _position(snap):
         )
     projected_fallback = set()
     net_party_lines = None
-    if fallback_accounts and not classifications:
+    if fallback_accounts and not classifications and has_classification_type:
         from .report_projection import (
             _PARTY_POSITION_SUMMARY_UNSAFE,
             _party_balance_position_lines,
@@ -2779,11 +2808,21 @@ def _position(snap):
         else set()
     )
     if journal_accounts:
-        events = list(snap.journal.select(accounts=journal_accounts))
-        resolutions = snap.reads.relations_many(event["basis_calculation_id"] for event in events)
+        # Only affected accounts need saved lines and their party relation.
+        # Do not hydrate all historical JournalRow/calculation display records.
+        journal = snap.journal.select(accounts=journal_accounts)
+        query, parameters = journal.sql()
+        events = list(snap.connection.execute(query, parameters))
+        lines = journal.authenticated_selected_lines(events)
+        lines_by_source = defaultdict(list)
+        for event in events:
+            lines_by_source[event["basis_calculation_id"]].extend(
+                line for line in lines[event["id"]] if line["account"] in journal_accounts
+            )
+        resolutions = snap.reads.report_line_relations_many(lines_by_source)
         for event in events:
             resolution = resolutions[event["basis_calculation_id"]]
-            for line in event["lines"]:
+            for line in lines[event["id"]]:
                 if line["account"] not in journal_accounts:
                     continue
                 row = {
@@ -2803,10 +2842,14 @@ def _position(snap):
                     row["party_splits"] = party["splits"]
                     source_issues.extend(party["issues"])
                 rows.append(row)
-        for calculation in snap.openings:
-            members = calculation["outcome"]["values"].get("members")
+        opening_ids = {
+            item["calculation_id"] for item in snap.opening_selection["state_results"]
+        }
+        opening_outcomes = snap.reads.verify_selected_content(opening_ids)
+        for outcome in opening_outcomes.values():
+            members = outcome["values"].get("members")
             if members is None:
-                members = [calculation["outcome"]]
+                members = [outcome]
             for member in members:
                 for line in member.get("opening_lines", ()):
                     if line["account"] not in journal_accounts:
@@ -2854,6 +2897,12 @@ def _position(snap):
         residual = balances[account] - projected[account]
         if residual:
             rows.append({"account": account, "amount": residual})
+    return rows, net_party_lines, source_issues
+
+
+def _position(snap):
+    balances = snap.accounts
+    rows, net_party_lines, source_issues = _position_party_rows(snap)
     position = classify_financial_position(rows, _net_party_lines=net_party_lines)
     if snap.opening_selection["unestablished_state_selections"]:
         source_issues.append(
@@ -3222,10 +3271,7 @@ def _workforce_payroll_rows(snap, *, wage_heads=None):
             "net_fen",
             "tax_status",
             "obligations",
-            "actual_withholding",
-            "calculated_tax_fen",
         ),
-        cost_accounts={"560201", "560101", "540101"},
     )
     posted = {row["basis"]["subject_id"] for row in rows}
     current_heads = (
@@ -3255,7 +3301,6 @@ def _workforce_payroll_rows(snap, *, wage_heads=None):
             "calculation_id": calc["id"],
             "lines": [],
             "period": snap.month,
-            "metric_cost": 0,
         }
         for calc in state_calculations
         if calc["kind"] in PAYROLL_KINDS
@@ -3265,9 +3310,8 @@ def _workforce_payroll_rows(snap, *, wage_heads=None):
     return rows
 
 
-def _workforce_payroll_aggregates(rows, identity):
+def _workforce_payroll_aggregates(rows, identity, *, include_details=True):
     aggregates = {}
-    period_rows = defaultdict(list)
     for row in rows:
         calc, sign = row["basis"], row["sign"]
         data, values = calc["fact"]["data"], calc["outcome"]["values"]
@@ -3275,18 +3319,17 @@ def _workforce_payroll_aggregates(rows, identity):
             identity(calc),
             {
                 **dict.fromkeys(_WORKFORCE_MONEY_KEYS, 0),
-                "batches": set(),
-                "periods": set(),
-                "areas": set(),
-                "scopes": set(),
+                **({"batches": set(), "periods": set(), "areas": set(), "scopes": set()}
+                   if include_details else {}),
             },
         )
-        item["batches"].add(calc["subject_id"])
-        item["periods"].add(data["period"])
-        item["areas"].add(data.get("expense_class", "management"))
-        item["scopes"].add(
-            "contributions_only" if values.get("tax_status") == "not_started" else "wage_income"
-        )
+        if include_details:
+            item["batches"].add(calc["subject_id"])
+            item["periods"].add(data["period"])
+            item["areas"].add(data.get("expense_class", "management"))
+            item["scopes"].add(
+                "contributions_only" if values.get("tax_status") == "not_started" else "wage_income"
+            )
         item["annual_bonus_fen" if calc["kind"] == "annual_bonus" else "gross_salary_fen"] += (
             sign * values.get("gross_fen", 0)
         )
@@ -3297,165 +3340,34 @@ def _workforce_payroll_aggregates(rows, identity):
         for side in ("employee", "employer"):
             for kind, label in (("social", "social_insurance"), ("housing", "housing_fund")):
                 item[f"{side}_{label}_fen"] += sign * contributions.get(f"{side}_{kind}", 0)
-        period_rows[data["period"]].append(row)
-    return aggregates, period_rows
+    return aggregates
 
 
-def _workforce_cost_from_rows(
-    snap, rows, aggregates, period_rows, unestablished_employees, *, verify_sources=False
-):
+def _workforce_employee_amounts(snap, aggregates):
+    """Shared posted payroll amounts, separate from roster/detail presentation."""
     sums = {key: sum(item[key] for item in aggregates.values()) for key in _WORKFORCE_MONEY_KEYS}
     sums["personal_deduction_fen"] = (
-        sums["employee_social_insurance_fen"]
-        + sums["employee_housing_fund_fen"]
+        sums["employee_social_insurance_fen"] + sums["employee_housing_fund_fen"]
         + sums["individual_income_tax_fen"]
     )
-    sums["company_cost_fen"] = (
-        sums["gross_salary_fen"]
-        + sums["annual_bonus_fen"]
-        + sums["employer_social_insurance_fen"]
-        + sums["employer_housing_fund_fen"]
+    controlled = (
+        sums["gross_salary_fen"] + sums["annual_bonus_fen"]
+        + sums["employer_social_insurance_fen"] + sums["employer_housing_fund_fen"]
     )
-    controlled = sums["company_cost_fen"]
     ledger = sum(
-        value
-        for account, value in snap.month_accounts.items()
+        value for account, value in snap.month_accounts.items()
         if account in {"560201", "560101", "540101"}
     )
-    adjustment = ledger - controlled
-    periods = []
-    for period, records in sorted(period_rows.items()):
-        total = sum(row["metric_cost"] for row in records)
-        correction_ids = [row["calculation_id"] for row in records if row["sign"] < 0]
-        values = {
-            "gross_salary_fen": 0,
-            "employer_social_insurance_fen": 0,
-            "employer_housing_fund_fen": 0,
-            "employee_social_insurance_fen": 0,
-            "employee_housing_fund_fen": 0,
-        }
-        for row in records:
-            out = row["basis"]["outcome"]["values"]
-            values["gross_salary_fen"] += row["sign"] * out.get("gross_fen", 0)
-            obligations = {item["name"]: item["amount_fen"] for item in out.get("obligations", ())}
-            for side in ("employer", "employee"):
-                for field, suffix in (("social", "social_insurance"), ("housing", "housing_fund")):
-                    values[f"{side}_{suffix}_fen"] += row["sign"] * obligations.get(
-                        f"{side}_{field}", 0
-                    )
-        periods.append(
-            {
-                "payroll_period": period,
-                "total_fen": total,
-                "has_reversal": bool(correction_ids),
-                "has_amendment": any(row["basis"]["fact"]["revision"] > 1 for row in records),
-                "correction_ids": correction_ids,
-                **values,
-            }
-        )
-    employee_cost = {
-        "has_activity": bool(rows) or ledger != 0,
-        "breakdown_available": adjustment == 0,
-        "reason": None if adjustment == 0 else "账面人工成本包含未能按人员分配的调整，请查看凭证。",
-        "total_fen": ledger,
-        "controlled_total_fen": controlled,
-        "settlement_adjustment_fen": adjustment,
-        "prior_period_settlement_adjustment_fen": 0,
-        "batch_count": len({row["basis"]["subject_id"] for row in rows}),
-        "periods": periods,
-        **{
-            key: sums[key]
-            for key in (
-                "gross_salary_fen",
-                "annual_bonus_fen",
-                "employer_social_insurance_fen",
-                "employer_housing_fund_fen",
-                "employee_social_insurance_fen",
-                "employee_housing_fund_fen",
-            )
-        },
-        "personal_withholding_fen": sums["personal_deduction_fen"],
-    }
-    if unestablished_employees:
-        employee_cost.update(
-            breakdown_available=False,
-            reason="部分员工来源的冻结采用未能证明，保留已证明月度账面金额与精确追溯。",
-            controlled_total_fen=None,
-            settlement_adjustment_fen=None,
-        )
-    labor_rows = metric_rows(
-        snap.month_journal.select(kinds=LABOR_KINDS),
-        ("gross_fen", "tax_fen", "theoretical_tax_fen", "unwithheld_tax_fen", "withholding_method"),
-    )
-    labor_periods = defaultdict(list)
-    for row in labor_rows:
-        labor_periods[row["basis"]["fact"]["data"]["period"]].append(row)
+    return sums, controlled, ledger, ledger - controlled
 
-    def labor_sum(key):
-        numbers = [row["basis"]["outcome"]["values"].get(key) for row in labor_rows]
-        return (
-            None
-            if any(value is None for value in numbers)
-            else sum(row["sign"] * value for row, value in zip(labor_rows, numbers, strict=True))
-        )
 
-    modes = sorted({row["basis"]["outcome"]["values"]["withholding_method"] for row in labor_rows})
-    gross = labor_sum("gross_fen") or 0
-    labor = {
-        "has_activity": bool(labor_rows),
-        "breakdown_available": True,
-        "reason": None,
-        "total_fen": gross,
-        "gross_remuneration_fen": gross,
-        "theoretical_withholding_tax_fen": labor_sum("theoretical_tax_fen"),
-        "booked_withholding_tax_fen": labor_sum("tax_fen"),
-        "unwithheld_tax_fen": labor_sum("unwithheld_tax_fen"),
-        "withholding_status": "none"
-        if not labor_rows
-        else "not_withheld"
-        if any(mode != "net_after_withholding" for mode in modes)
-        else "booked",
-        "withholding_note": "尚未记录扣缴及申报；未从理论税額推定实际完成。"
-        if "not_withheld_not_filed" in modes
-        else "已确认按毛额支付、未扣税。"
-        if "gross_paid_without_withholding" in modes
-        else "按核算事实确认扣税义务，实际付款及申报分别查看。",
-        "settlement_modes": modes,
-        "batch_count": len({row["basis"]["subject_id"] for row in labor_rows}),
-        "periods": [
-            {
-                "remuneration_period": period,
-                "total_fen": sum(
-                    row["sign"] * row["basis"]["outcome"]["values"]["gross_fen"] for row in records
-                ),
-                "gross_remuneration_fen": sum(
-                    row["sign"] * row["basis"]["outcome"]["values"]["gross_fen"] for row in records
-                ),
-                "theoretical_withholding_tax_fen": None
-                if any(
-                    row["basis"]["outcome"]["values"].get("theoretical_tax_fen") is None
-                    for row in records
-                )
-                else sum(
-                    row["sign"] * row["basis"]["outcome"]["values"]["theoretical_tax_fen"]
-                    for row in records
-                ),
-                "has_reversal": any(row["sign"] < 0 for row in records),
-                "has_amendment": any(row["basis"]["fact"]["revision"] > 1 for row in records),
-                "correction_ids": [row["calculation_id"] for row in records if row["sign"] < 0],
-            }
-            for period, records in sorted(labor_periods.items())
-        ],
-    }
+def _workforce_labor_amounts(snap, payroll_rows, *, with_withholding=False, verify_sources=False):
+    fields = ("gross_fen", "withholding_method") if with_withholding else ("gross_fen",)
+    labor_rows = metric_rows(snap.month_journal.select(kinds=LABOR_KINDS), fields)
     capital_rows = metric_rows(
         snap.month_journal.select(kinds={"labor_project_cost"}), ("capitalized_fen",)
     )
-    capitalized_labor = sum(
-        row["sign"] * row["basis"]["outcome"]["values"]["capitalized_fen"]
-        for row in capital_rows
-        if row["basis"]["kind"] == "labor_project_cost"
-    )
-    amount_rows = (*rows, *labor_rows, *capital_rows)
+    amount_rows = (*payroll_rows, *labor_rows, *capital_rows)
     calculation_ids = {row["calculation_id"] for row in amount_rows}
     if calculation_ids:
         snap.reads.verify_selected_content(calculation_ids)
@@ -3465,34 +3377,53 @@ def _workforce_cost_from_rows(
         fact_ids = {row["basis"]["fact_id"] for row in amount_rows}
         if fact_ids:
             verify_hits(
-                snap.connection,
-                [{"fact_id": ident} for ident in fact_ids],
+                snap.connection, [{"fact_id": ident} for ident in fact_ids],
                 identity_match="recorded" if snap.close else "current",
                 registry=snap.store.registry,
             )
-    return {
-        "workforce_cost": {
-            "has_activity": employee_cost["has_activity"]
-            or labor["has_activity"]
-            or capitalized_labor != 0,
-            "total_fen": ledger + gross,
-            "capitalized_labor_fen": capitalized_labor,
-            "employee": employee_cost,
-            "personal_labor": labor,
-        },
-        "sums": sums,
-        "controlled": controlled,
-        "ledger": ledger,
-        "adjustment": adjustment,
-    }
+    labor = sum(
+        row["sign"] * row["basis"]["outcome"]["values"]["gross_fen"] for row in labor_rows
+    )
+    capitalized = sum(
+        row["sign"] * row["basis"]["outcome"]["values"]["capitalized_fen"] for row in capital_rows
+    )
+    return labor_rows, capital_rows, labor, capitalized
 
 
 def _brief_workforce_cost(snap):
     rows = _workforce_payroll_rows(snap)
-    aggregates, periods = _workforce_payroll_aggregates(rows, lambda _calc: None)
-    return _workforce_cost_from_rows(snap, rows, aggregates, periods, {}, verify_sources=True)[
-        "workforce_cost"
-    ]
+    aggregates = _workforce_payroll_aggregates(rows, lambda _calc: None, include_details=False)
+    sums, controlled, ledger, adjustment = _workforce_employee_amounts(snap, aggregates)
+    labor_rows, capital_rows, labor, capitalized = _workforce_labor_amounts(
+        snap, rows, with_withholding=True, verify_sources=True
+    )
+    modes = {row["basis"]["outcome"]["values"]["withholding_method"] for row in labor_rows}
+    employee = {
+        "has_activity": bool(rows) or ledger != 0,
+        "breakdown_available": adjustment == 0,
+        "reason": None if adjustment == 0 else "账面人工成本包含尚需核对的调整。",
+        "total_fen": ledger, "controlled_total_fen": controlled,
+        "settlement_adjustment_fen": adjustment,
+        **{key: sums[key] for key in (
+            "gross_salary_fen", "annual_bonus_fen", "employer_social_insurance_fen",
+            "employer_housing_fund_fen", "employee_social_insurance_fen",
+            "employee_housing_fund_fen",
+        )},
+    }
+    return {
+        "has_activity": employee["has_activity"] or bool(labor_rows) or bool(capital_rows),
+        "total_fen": ledger + labor,
+        "capitalized_labor_fen": capitalized,
+        "employee": employee,
+        "personal_labor": {
+            "has_activity": bool(labor_rows), "breakdown_available": True, "reason": None,
+            "total_fen": labor, "gross_remuneration_fen": labor,
+            "withholding_note": "本月无个人劳务费用。" if not labor_rows
+            else "尚未记录扣缴及申报。" if "not_withheld_not_filed" in modes
+            else "已确认按毛额支付、未扣税。" if "gross_paid_without_withholding" in modes
+            else "已按核算事实确认扣税义务，付款及申报状态分别核对。",
+        },
+    }
 
 
 def _prepare_people_asset_settlements(snap, subjects):
@@ -3611,7 +3542,7 @@ def _employees(
         for head in wage_heads
     ):
         raise KernelError("entity_reference_corrupt", "工资人员名单见证与精确来源归属不匹配")
-    aggregates, period_rows = _workforce_payroll_aggregates(
+    aggregates = _workforce_payroll_aggregates(
         rows,
         lambda calc: confirmed_employees.get(calc["fact_id"], calc["fact"]["data"]["employee_id"]),
     )
@@ -3898,33 +3829,8 @@ def _employees(
         )
     items.sort(key=lambda item: item["employee_id"])
     unknown = sum(item["in_period"] is None for item in all_items)
-    sums = {key: sum(item[key] for item in aggregates.values()) for key in money_keys}
-    sums["personal_deduction_fen"] = (
-        sums["employee_social_insurance_fen"] + sums["employee_housing_fund_fen"]
-        + sums["individual_income_tax_fen"]
-    )
-    controlled = (
-        sums["gross_salary_fen"] + sums["annual_bonus_fen"]
-        + sums["employer_social_insurance_fen"] + sums["employer_housing_fund_fen"]
-    )
-    ledger = sum(
-        value for account, value in snap.month_accounts.items()
-        if account in {"560201", "560101", "540101"}
-    )
-    adjustment = ledger - controlled
-    labor_rows = metric_rows(snap.month_journal.select(kinds=LABOR_KINDS), ("gross_fen",))
-    capital_rows = metric_rows(
-        snap.month_journal.select(kinds={"labor_project_cost"}), ("capitalized_fen",)
-    )
-    amount_ids = {row["calculation_id"] for row in (*rows, *labor_rows, *capital_rows)}
-    if amount_ids:
-        snap.reads.verify_selected_content(amount_ids)
-    labor_cost = sum(
-        row["sign"] * row["basis"]["outcome"]["values"]["gross_fen"] for row in labor_rows
-    )
-    capitalized_labor = sum(
-        row["sign"] * row["basis"]["outcome"]["values"]["capitalized_fen"] for row in capital_rows
-    )
+    sums, controlled, ledger, adjustment = _workforce_employee_amounts(snap, aggregates)
+    labor_rows, capital_rows, labor_cost, capitalized_labor = _workforce_labor_amounts(snap, rows)
     labor_items = []
     labor_heads = adopted_head_metadata(
         snap, LABOR_KINDS | {"labor_project_cost"}, posting_period=snap.period

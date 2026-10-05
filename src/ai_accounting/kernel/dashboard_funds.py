@@ -1904,7 +1904,12 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
         # The owner brief consumes money amounts. account_summary has already
         # proved the full money scope and independent monetary opening states.
         accounts = [*read.account_rows.values(), *read.omitted_account_rows.values()]
+        bank_accounts = [item for item in accounts if item["type"] == "bank"]
         return {
+            "bank_calculation": {
+                name: _sum(bank_accounts, name)
+                for name in ("opening_fen", "inflow_fen", "outflow_fen")
+            },
             "total_fen": _sum(accounts, "closing_fen"),
             "net_change_fen": _sum(accounts, "net_change_fen"),
             **{

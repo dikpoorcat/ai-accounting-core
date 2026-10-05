@@ -231,7 +231,7 @@ MCP 金额保持整数分，HTTP 金额使用十进制整数分字符串，浏�
 
 默认每个明细集合 20 条，同时给出完整范围汇总和全量数量。筛选在后端完整集合上应用后再分页；精确业务直跳不受默认前 20 条限制。摘要和待办不能从当前页凑数。员工页只展开本月薪酬，退出各月份工资与付款、专用历史读取和人员历史页缓存；截至月末未付仍保留必要历史汇总及核验，核心历史查询和冻结读取不变。HTTP 金额为十进制整数分字符串；请求与响应合同、精确请求关联、失效处理和快照一致性检查继续留在 wire 层，不展示为技术信息。
 
-看板响应版本为 `context` 3、`brief` 11、`funds`／`assets`／`employees` 9、`business-status` 6、`quarterly-report` 5；关账核对存储为 4，`OwnerReview` 为 1。老板看板默认不运行完整 readiness。AI workflow、完整 `period_readiness` 和 corebusiness trace 仍提供完整业务工作流及核算追踪能力。以上是目标定位，不表示整阶段验收已经完成。
+看板响应版本为 `context` 3、`brief` 12、`funds`／`employees` 9、`assets` 10、`business-status` 6、`quarterly-report` 5；关账核对存储为 4，`OwnerReview` 为 1。简报保留 2.1 的资产负债与本月用工成本，以同一快照的资金、账面和本月入账结果汇总，不额外请求其他整页；集合续页不重算这些摘要。老板看板默认不运行完整 readiness。AI workflow、完整 `period_readiness` 和 corebusiness trace 仍提供完整业务工作流及核算追踪能力。验证结果及未验证范围以阶段记录为准。
 
 ### 8.3 会计工作按真实状态推进
 

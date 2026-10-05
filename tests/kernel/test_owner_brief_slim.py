@@ -39,14 +39,25 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     import ai_accounting.kernel.close_review as review_module
     import ai_accounting.kernel.dashboard as dashboard_module
 
-    # Source/line authentication may read the selected journal; it must not
-    # reconstruct party-dependent balance-sheet presentation for these totals.
-    monkeypatch.setattr(dashboard_module, "_position", forbidden)
+    summary_reads = {"position": 0, "workforce": 0}
+    original_position = dashboard_module._position
+    original_workforce = dashboard_module._brief_workforce_cost
+
+    def position(snap):
+        summary_reads["position"] += 1
+        return original_position(snap)
+
+    def workforce(snap):
+        summary_reads["workforce"] += 1
+        return original_workforce(snap)
+
+    monkeypatch.setattr(dashboard_module, "_position", position)
+    monkeypatch.setattr(dashboard_module, "_brief_workforce_cost", workforce)
     monkeypatch.setattr(review_module, "business_adopted_basis", forbidden)
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 11
+    assert response["schema_version"] == 12
     assert data["month_state"] == "open"
     assert data["owner_review_request"] is None
     assert data["activity_count"] == 31
@@ -54,6 +65,15 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     assert data["voucher_count"] == 31
     assert len(data["collections"]["vouchers"]["items"]) == 20
     assert data["funds_overview"]["total_fen"] == 31
+    assert data["financial_position"]["assets_fen"] == 31
+    assert data["financial_position"]["bank_fen"] == 31
+    assert data["financial_position"]["liabilities_fen"] == 0
+    assert data["financial_position"]["equity_fen"] == 31
+    assert data["financial_position"]["bank_calculation"] == {
+        "opening_fen": 0, "inflow_fen": 31, "outflow_fen": 0,
+    }
+    assert data["workforce_cost"]["total_fen"] == 0
+    assert summary_reads == {"position": 1, "workforce": 1}
     assert data["owner_tasks"] == []
     # Missing statement/matching work belongs to the AI accountant and funds
     # detail; it does not change the confirmed money into an owner warning.
@@ -72,6 +92,8 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     )
     assert len(following["data"]["collections"]["activity"]["items"]) == 11
     assert following["data"]["funds_overview"] == data["funds_overview"]
+    assert {"financial_position", "workforce_cost"}.isdisjoint(following["data"])
+    assert summary_reads == {"position": 1, "workforce": 1}
     assert http_response("dashboard_brief", response)["data"]["funds_overview"]["total_fen"] == "31"
     # An explicit former mode cannot re-enable the removed technical workload.
     assert (

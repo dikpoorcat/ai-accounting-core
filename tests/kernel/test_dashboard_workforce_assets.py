@@ -393,7 +393,12 @@ def test_bonus_is_separate_but_included_in_workforce_breakdown(tmp_path, monkeyp
     monkeypatch.setattr(
         "ai_accounting.kernel.dashboard.payroll_head_metadata", unexpected_historical_wage_scan
     )
-    assert "workforce_cost" not in dashboard.brief("2026-01", preparation="deferred")["data"]
+    brief = dashboard.brief("2026-01", preparation="deferred")["data"]["workforce_cost"]
+    assert brief["total_fen"] == brief["employee"]["annual_bonus_fen"] == 3000000
+    assert brief["employee"]["gross_salary_fen"] == 0
+    assert {"periods", "batch_count", "prior_period_settlement_adjustment_fen"}.isdisjoint(
+        brief["employee"]
+    )
 
 
 def test_brief_workforce_cost_rejects_changed_calculation_body(tmp_path):
@@ -436,6 +441,13 @@ def test_brief_workforce_cost_matches_closed_month_and_later_reversal(company):
     assert march["workforce_cost"]["total_fen"] == march["employees"]["ledger_cost_fen"]
     assert january["employees"]["gross_salary_fen"] == 1000000
     assert march["employees"]["gross_salary_fen"] == 0
+    for period, detail in (("2026-01", january), ("2026-03", march)):
+        brief = dashboard.brief(period)["data"]["workforce_cost"]
+        assert brief["total_fen"] == detail["workforce_cost"]["total_fen"]
+        assert brief["employee"]["gross_salary_fen"] == detail["employees"]["gross_salary_fen"]
+        assert {"periods", "correction_ids", "prior_period_settlement_adjustment_fen"}.isdisjoint(
+            brief["employee"]
+        )
 
 
 def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_path):
@@ -467,6 +479,12 @@ def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_p
     assert "theoretical_tax_fen" not in labor_items[0]
     assert labor_items[0]["obligations"][0]["remaining_fen"] == 500000
     assert "settled_gross_fen" not in labor and "actual_withholding_tax_fen" not in labor
+    brief_labor = dashboard.brief("2026-01")["data"]["workforce_cost"]["personal_labor"]
+    assert brief_labor["gross_remuneration_fen"] == brief_labor["total_fen"] == 500000
+    assert "尚未记录扣缴及申报" in brief_labor["withholding_note"]
+    assert {"periods", "theoretical_withholding_tax_fen", "unwithheld_tax_fen"}.isdisjoint(
+        brief_labor
+    )
     assert (
         response["data"]["workforce_cost"]["total_fen"]
         == response["data"]["employees"]["ledger_cost_fen"]
@@ -552,6 +570,10 @@ def test_capitalized_labor_and_pending_intangible_are_visible_without_double_cos
     workforce = dashboard.employees("2026-11")["data"]["workforce_cost"]
     assert workforce["total_fen"] == 0
     assert workforce["capitalized_labor_fen"] == 1600000
+    brief_cost = dashboard.brief("2026-11")["data"]["workforce_cost"]
+    assert brief_cost["total_fen"] == 0
+    assert brief_cost["capitalized_labor_fen"] == 1600000
+    assert brief_cost["personal_labor"]["total_fen"] == 0
     labor = dashboard.employees("2026-11", section="labor_sources")["data"]["collections"][
         "labor_sources"
     ]["items"][0]

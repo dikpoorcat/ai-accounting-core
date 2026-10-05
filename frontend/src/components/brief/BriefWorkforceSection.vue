@@ -1,0 +1,391 @@
+<script setup lang="ts">
+import type { DashboardBriefContract } from "../../api/generated/dashboardBrief";
+import { fen, formatFen } from "../../utils/money";
+
+const props = defineProps<{
+  workforce: DashboardBriefContract.BriefWorkforceCost;
+  periodLabel: string;
+}>();
+
+function employeeCostNote() {
+  const employee = props.workforce.employee;
+  if (!employee.has_activity) return "本月没有入账的正式员工职工薪酬。";
+  if (!employee.breakdown_available) {
+    return employee.reason || "现有数据缺少可靠拆分依据，仅展示职工薪酬小计。";
+  }
+  const parts: string[] = [];
+  if (employee.employee_social_insurance_fen === null || fen(employee.employee_social_insurance_fen)) {
+    parts.push(`个人承担社保医保 ${formatFen(employee.employee_social_insurance_fen)}`);
+  }
+  if (employee.employee_housing_fund_fen === null || fen(employee.employee_housing_fund_fen)) {
+    parts.push(`个人承担住房公积金 ${formatFen(employee.employee_housing_fund_fen)}`);
+  }
+  if (parts.length) parts.push("已包含在工资总额中，仅由工资代扣，不会重复计入公司成本");
+  if (fen(employee.settlement_adjustment_fen)) {
+    parts.push("工资结算调整已单列反映，不属于本月工资计提");
+  }
+  return parts.length
+    ? `${parts.join("；")}。`
+    : "本月没有从工资代扣的个人社保医保或住房公积金。";
+}
+
+function laborCostNote() {
+  const labor = props.workforce.personal_labor;
+  if (!labor.has_activity) return "本月没有入账的非员工个人劳务报酬。";
+  if (!labor.breakdown_available) {
+    return labor.reason || "现有数据缺少可靠拆分依据，仅展示劳务报酬小计。";
+  }
+  return labor.withholding_note;
+}
+</script>
+
+<template>
+  <section class="brief-section workforce" aria-labelledby="workforce-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="workforce-title">本月用工成本</h2>
+      </div>
+      <div class="total">
+        <span class="total-help">
+          <button type="button" class="total-help-trigger" aria-describedby="workforce-payment-help">
+            {{ formatFen(workforce.total_fen) }}
+          </button>
+          <span id="workforce-payment-help" class="total-help-content" role="tooltip">
+            这里展示本月确认的用工成本。工资、社保医保及个人劳务的实际付款只清偿已确认的应付款，不会在付款时再次计入成本。
+          </span>
+        </span>
+      </div>
+    </div>
+
+    <div class="workforce-grid">
+      <article class="workforce-card selectable-card" aria-labelledby="employee-title" tabindex="-1">
+        <header>
+          <div>
+            <h3 id="employee-title">正式员工</h3>
+            <p>工资及公司承担的社保医保、公积金</p>
+          </div>
+          <div class="subtotal">
+            <span>员工成本小计</span>
+            <strong>{{ formatFen(workforce.employee.total_fen) }}</strong>
+          </div>
+        </header>
+        <div v-if="workforce.employee.breakdown_available" class="cost-grid">
+          <div class="cost">
+            <span>工资总额</span>
+            <strong>{{ formatFen(workforce.employee.gross_salary_fen) }}</strong>
+          </div>
+          <div v-if="workforce.employee.annual_bonus_fen === null || fen(workforce.employee.annual_bonus_fen)" class="cost">
+            <span>全年一次性奖金</span>
+            <strong>{{ formatFen(workforce.employee.annual_bonus_fen) }}</strong>
+          </div>
+          <div class="cost">
+            <span>公司承担社保医保</span>
+            <strong>{{ formatFen(workforce.employee.employer_social_insurance_fen) }}</strong>
+          </div>
+          <div v-if="workforce.employee.employer_housing_fund_fen === null || fen(workforce.employee.employer_housing_fund_fen)" class="cost">
+            <span>公司承担住房公积金</span>
+            <strong>{{ formatFen(workforce.employee.employer_housing_fund_fen) }}</strong>
+          </div>
+        </div>
+        <dl v-if="workforce.employee.settlement_adjustment_fen === null || fen(workforce.employee.settlement_adjustment_fen)" class="reconciliation">
+          <div>
+            <dt>{{ periodLabel }}工资及公司社保</dt>
+            <dd>{{ formatFen(workforce.employee.controlled_total_fen) }}</dd>
+          </div>
+          <span>+</span>
+          <div>
+            <dt>工资结算调整</dt>
+            <dd>{{ formatFen(workforce.employee.settlement_adjustment_fen) }}</dd>
+          </div>
+          <span>=</span>
+          <div>
+            <dt>员工成本小计</dt>
+            <dd>{{ formatFen(workforce.employee.total_fen) }}</dd>
+          </div>
+        </dl>
+        <p :class="['note', { attention: !workforce.employee.breakdown_available }]">
+          {{ employeeCostNote() }}
+        </p>
+      </article>
+
+      <article class="workforce-card selectable-card" aria-labelledby="labor-title" tabindex="-1">
+        <header>
+          <div>
+            <h3 id="labor-title">非员工个人劳务</h3>
+            <p>个人劳务报酬及佣金，不作为员工工资</p>
+          </div>
+          <div class="subtotal">
+            <span>劳务成本小计</span>
+            <strong>{{ formatFen(workforce.personal_labor.total_fen) }}</strong>
+          </div>
+        </header>
+        <div v-if="workforce.personal_labor.breakdown_available" class="cost-grid single">
+          <div class="cost">
+            <span>个人劳务报酬 / 佣金毛额</span>
+            <strong>{{ formatFen(workforce.personal_labor.gross_remuneration_fen) }}</strong>
+          </div>
+        </div>
+        <p :class="['note', { attention: !workforce.personal_labor.breakdown_available }]">
+          {{ laborCostNote() }}
+        </p>
+      </article>
+    </div>
+    <p v-if="workforce.capitalized_labor_fen === null || fen(workforce.capitalized_labor_fen)" class="payment-note">本月另有资本化劳务 {{ formatFen(workforce.capitalized_labor_fen) }}，计入项目或资产成本，不计入上述用工费用；可在员工与资产页面查看成本和付款情况。</p>
+  </section>
+</template>
+
+<style scoped>
+.brief-section {
+  padding: 0;
+}
+
+.section-heading,
+.workforce-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.section-heading {
+  align-items: flex-end;
+  margin-bottom: 14px;
+  padding: 0 2px;
+}
+
+.section-kicker {
+  margin: 0 0 4px;
+  color: var(--brief-green);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+h3 {
+  margin-bottom: 4px;
+}
+
+.total,
+.subtotal {
+  display: grid;
+  justify-items: end;
+  white-space: nowrap;
+}
+
+.total > span,
+.subtotal span,
+.workforce-card header p,
+.cost span {
+  color: var(--brief-muted);
+  font-size: 12px;
+}
+
+.total-help {
+  position: relative;
+}
+
+.total-help-trigger {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brief-text);
+  font: inherit;
+  font-size: 23px;
+  font-weight: 700;
+  cursor: help;
+}
+
+.total-help-trigger:focus-visible {
+  outline: 2px solid var(--brief-green);
+  outline-offset: 3px;
+}
+
+.total-help-content {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 48px));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--brief-green) 24%, var(--brief-line));
+  border-radius: 10px;
+  background: var(--brief-surface);
+  box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
+  opacity: 0;
+  color: var(--brief-text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.total-help:hover .total-help-content,
+.total-help:focus-within .total-help-content {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.subtotal strong {
+  font-size: 18px;
+}
+
+.workforce-card header p {
+  margin-bottom: 0;
+}
+
+.workforce-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.workforce-card {
+  padding: 15px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-panel-radius, 14px);
+  background: var(--brief-surface);
+}
+
+.cost-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+  border-radius: var(--brief-control-radius, 9px);
+  background: var(--brief-metric-surface);
+}
+
+.cost-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.cost {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 12px;
+  color: var(--brief-text);
+}
+
+.cost strong {
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reconciliation {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--brief-line);
+  border-radius: 11px;
+  background: var(--brief-soft);
+}
+
+.reconciliation div {
+  display: grid;
+  gap: 2px;
+}
+
+.reconciliation dt {
+  color: var(--brief-muted);
+  font-size: 10px;
+}
+
+.reconciliation dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.reconciliation > span {
+  color: var(--brief-muted);
+}
+
+.note,
+.payment-note {
+  margin: 9px 0 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.note {
+  padding: 9px 0 0;
+}
+
+.note.attention {
+  padding: 8px 10px;
+  border-top: 0;
+  border-radius: var(--brief-control-radius, 9px);
+  background: var(--brief-amber-soft);
+  color: var(--brief-amber);
+}
+
+.payment-note {
+  margin-bottom: 0;
+  padding-left: 2px;
+}
+
+@media (max-width: 900px) {
+  .workforce-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .section-heading,
+  .workforce-card header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .total,
+  .subtotal {
+    justify-items: start;
+  }
+
+  .total-help-content {
+    right: auto;
+    left: 0;
+  }
+
+  .cost-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reconciliation {
+    grid-template-columns: 1fr;
+  }
+
+  .reconciliation > span {
+    display: none;
+  }
+}
+.workforce, .workforce-card { min-width: 0; }
+.subtotal, .cost strong, .reconciliation dd { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .total-help-trigger { overflow-wrap: anywhere; } }
+</style>
