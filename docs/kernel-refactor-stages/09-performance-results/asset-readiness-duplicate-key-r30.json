@@ -1,6 +1,0 @@
-{
-  "stored_outcome": "{\"values\":{\"asset_id\":\"a\",\"asset_id\":\"b\"}}",
-  "python_json_loads_asset_id": "b",
-  "sqlite_json_extract_asset_id": "a",
-  "scope": "private SQLite/Python parser contrast, not a production damage test"
-}

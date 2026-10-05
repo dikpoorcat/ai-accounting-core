@@ -1,8 +1,0 @@
-{
-  "status": "diagnostic_invalid_interrupted",
-  "script": ".tmp/stage9-http-gc-r26.py",
-  "reason": "Private wrapper omitted the Windows multiprocessing main guard; children executed probe setup, failed, and the pool attempted replacement workers.",
-  "action": "Verified the diagnostic Python command and stopped only process 80992 and its recorded immediate multiprocessing children. Kept failed script and partial files. Corrected wrapper uses a main guard and writes new r2 outputs.",
-  "measurement": "No performance or business conclusion is taken from this failed diagnostic.",
-  "scope": "Synthetic .tmp main48 only. No real service or source code changed."
-}

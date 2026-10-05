@@ -1,5 +1,7 @@
 # 当前 c063 四分布真实浏览器
 
+本文件保留最终结果。逐次原始记录、失败与慢样本已合并至[完整实验归档](../09-performance-history.zip)；链接备注标明归档内原路径，解压后可按原目录核对。
+
 四组完整实际终态、纯窗及owned正常退出已核对；每页30个成功样本。P50/P95为nearest-rank第15/29样本，压力只诊断不承诺500ms；slow保留，技术错误不能算完成。
 
 资格复用525f content_3完整目标证明，fresh=false；当前正常Store结构/身份/状态/读取修复/历史/checkpoint及SQLite/FK、主文件SHA边界和实际preview独立成立。不是当前fresh完整Q，不继承主450通过。
@@ -36,4 +38,4 @@
 
 v2 history BLOB启动失败actual1（此前readonly守卫确实执行，但未timing/owned worker）；v3 release KeyError sample原attempt1和root release-v1修正均保留，未重Q/preview。normal_tree_exited/forced=false仅对应所持owned句柄范围，不冒充强kill、真人窗口或Windows全部外部进程清理。主a5/525f/8c/c063各自窗口历史不改写，跨窗不单点因果归因。阶段仍实施中，draft0及真实5173/资料身份保持，正式延期。
 
-原件SHA、脱敏gzip及helper私有SHA见[manifest](current-four-distribution-browser-c063-20261005-evidence/manifest.json)。
+原件SHA、脱敏gzip及helper私有SHA见[manifest](../09-performance-history.zip "归档内：09-performance-results/current-four-distribution-browser-c063-20261005-evidence/manifest.json")。

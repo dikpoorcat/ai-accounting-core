@@ -1,5 +1,7 @@
 # c063三主规模实际整页刷新
 
+本文件保留最终结果。逐次原始记录、失败与慢样本已合并至[完整实验归档](../09-performance-history.zip)；链接备注标明归档内原路径，解压后可按原目录核对。
+
 450次有效热刷新，450次<500ms、0次≥500ms；本组三主严格门槛通过。
 
 固定源 `c063fdbf18975e1a3eab102116014de30f3bb58c8ae99ded406e51afaefeaf99`，777文件；source-manifest SHA `0c8ac9a2744d8e41ac66a8b03c811b337831660591eead1155cb0eca331a17c0`。50员工／每月1000笔，五页默认20条，每页3warm／30样本，release静态前端与隔离常驻服务。
@@ -54,10 +56,10 @@ P50、P95 沿用 harness 的 nearest-rank 口径：每页 n=30，P50 取排序�
 | 120 | 资产 | 457.2/477.6/637.6 | 434.8/454.5/456.2 | 1→0 |
 | 120 | 报表 | 397.5/417.6/437.6 | 409.3/436.2/436.6 | 0→0 |
 
-[8c98原组](current-three-scale-browser-8c98-20261005.md)448／450、[525f原组](current-three-scale-browser-525f-count-recovery-20261005.md)447／450、[a5原组](current-three-scale-browser-a5d4-20261005.md)450／450各有自身来源和完整失败／冷态记录，不回写历史结论。
+[8c98原组](../09-performance-history.zip "归档内：09-performance-results/current-three-scale-browser-8c98-20261005.md")448／450、[525f原组](../09-performance-history.zip "归档内：09-performance-results/current-three-scale-browser-525f-count-recovery-20261005.md")447／450、[a5原组](../09-performance-history.zip "归档内：09-performance-results/current-three-scale-browser-a5d4-20261005.md")450／450各有自身来源和完整失败／冷态记录，不回写历史结论。
 
 全部raw／ResourceTiming／冷态及错误字段保留，错误响应不算成功，慢样本不剔除。公司主文件物理摘要及业务／身份／历史／来源守卫成立，既有会话保持、合成新会话正常撤销；目录库正常认证时间及会话改变不宣称整文件不变。
 
 本组不是主规模按需／公司切换、独立／压力、资源前台影响或正式released发行验收；不因本组三主通过即宣称第9阶段完成。敏感helper仅保留私有SHA，路径／PID／nonce／认证值脱敏，无DB、ZIP或凭据归档。
 
-[脱敏原始证据](current-three-scale-browser-c063-20261005-evidence/manifest.json)，29份确定性gzip，manifest SHA `86bba876f4be5fbddcc1443bfa8580164a8481a25cf5856c942450b053768201`。
+[脱敏原始证据](../09-performance-history.zip "归档内：09-performance-results/current-three-scale-browser-c063-20261005-evidence/manifest.json")，29份确定性gzip，manifest SHA `86bba876f4be5fbddcc1443bfa8580164a8481a25cf5856c942450b053768201`。

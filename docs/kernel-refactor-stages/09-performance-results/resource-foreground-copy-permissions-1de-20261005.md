@@ -1,5 +1,7 @@
 # 1de两档大原件资源与前台诊断（测量与只读补证完成）
 
+本文件保留最终结果。逐次原始记录、失败与慢样本已合并至[完整实验归档](../09-performance-history.zip)；链接备注标明归档内原路径，解压后可按原目录核对。
+
 240／1536MiB两档普通服务的verify、backup、restore、restored_verify四个API均已完成。240原v4整轮实际exit1保留，其45次前台诊断及后续只读postcert v2实际exit0分别有证据；1536原v5整轮实际exit1保留，独立第四前台补测已完成，新runner末尾私有JSON记录失败实际exit1，1536只读postcert v1实际exit0。API／前台的completed及后续只读补证不代表原整轮exit0；本轮开发范围已完成，原失败终态和未验边界保留。完整有限文本证据已归档，具体范围与manifest见末段。
 
 固定源 `1de644587eb0dddaee6a09739a825e78fa04f28cabd0c2af047c5378d3dc0b33`，777文件，source-manifest SHA `c2c3b858c0e3c28e338d2ada07d68e9a181516957c080f80f05154e5b2f58ddb`。两档准备分别完成当前三次fresh完整内容核验、原表／身份／业务／BLOB与来源守卫。240接续原合成副本并修正复制权限，1536按既有计划新建独占合成副本；不把准备记成服务资源phase或重建原件。读取汇总SHA `2e5bd93e0a22e301aa6551a8d811f023775e1206f90e26ae8eb4d600529f9f16`，具体数据仍绑定原worker／supervisor／actual终态及各自raw。
@@ -63,4 +65,4 @@ RSS按同一采样批次分别汇总owned服务树与前台浏览器树，observ
 
 旧凭据退役记录按自身24b9来源保留，不标成1de业务操作。当前distinct小session catalog使用独立新测试owner映射已有大公司副本；旧目录／旧owner原样，不称旧身份登录接续或凭据重置。两档原大BLOB样本均0 closes，仅证明开放范围；冻结恢复另由[1de非空开发包MCP桥](development-package-copy-sidecars-1de-20261005.md)保存自身证据，不能借给本样本当大BLOB冻结验收。
 
-资源测量、独立前台补测与两档只读补证已完成；240 postcert v2和1536 postcert v1实际exit0，原runtime和独立补测exit1保留，不把“measurements completed”改写成原整轮exit0。[有限文本证据manifest](resource-foreground-copy-permissions-1de-20261005-evidence/manifest.json)，SHA `57c6be9905fec9ef1a02e2a25ec326e403599a741980574dc49aa7d315435e4f`：117个gzip、18项私有helper SHA、11份实际终态，原失败exit全部保留；归档与独立回读／SHA／逐JSONL／已知秘密及绝对路径检查实际exit0。全部6份JSONL分别保留21／33／15／177／483／121条原记录，memberErrors未删。真实5173、资料与身份未操作，目录／公司draft／0保持；正式冻结、正式包交付及运行切换延期。真人密码窗口、强制崩溃、inflight中断和整轮AI GUI不由本资源诊断证明。
+资源测量、独立前台补测与两档只读补证已完成；240 postcert v2和1536 postcert v1实际exit0，原runtime和独立补测exit1保留，不把“measurements completed”改写成原整轮exit0。[有限文本证据manifest](../09-performance-history.zip "归档内：09-performance-results/resource-foreground-copy-permissions-1de-20261005-evidence/manifest.json")，SHA `57c6be9905fec9ef1a02e2a25ec326e403599a741980574dc49aa7d315435e4f`：117个gzip、18项私有helper SHA、11份实际终态，原失败exit全部保留；归档与独立回读／SHA／逐JSONL／已知秘密及绝对路径检查实际exit0。全部6份JSONL分别保留21／33／15／177／483／121条原记录，memberErrors未删。真实5173、资料与身份未操作，目录／公司draft／0保持；正式冻结、正式包交付及运行切换延期。真人密码窗口、强制崩溃、inflight中断和整轮AI GUI不由本资源诊断证明。

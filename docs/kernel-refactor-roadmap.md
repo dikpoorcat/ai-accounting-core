@@ -222,7 +222,7 @@
 | §6 科目扩展、本月非零累计为零 | 基础修订、7 | 已接通共同定义和完整展示；未映射问题分别保留本月／期末范围，零累计不抹去本月问题 |
 | §6 身份候选误报／漏报 | 4 | 已验证同名异人、等额月租、共享文件不同明细、合法拆分、跨月同原件及后补资料，不用模糊评分决定业务 |
 | §6 AI 整轮联调 | 8 | 后端测试之外完成对话验收 |
-| AD 已知下一步的结构化出路 | 8 | 阶段8已提供结构化命令、事实类型或候选，核算缺项使用fact_issues，不将内部错误转成负责人追问。阶段9a5d4独立MCP实际验证缺工资plan及期初被阻断、逐公司追问后类型化登记发布、资料重复的公开纠正、丢响应回执查询和正常接续；甲10月缺全月覆盖及新工资仍未完成。c063包正常同根10MCP接续另见[接续档案](kernel-refactor-stages/09-performance-results/current-package-normal-restart-c063-20261005.md)，v2认证整行摘要失败保留、v3修正通过；不代表真人密码窗口或强制崩溃恢复，见[独立MCP](kernel-refactor-stages/09-performance-results/independent-mcp-a5d4-20261005.md) |
+| AD 已知下一步的结构化出路 | 8 | 阶段8已提供结构化命令、事实类型或候选，核算缺项使用fact_issues，不将内部错误转成负责人追问。阶段9a5d4独立MCP实际验证缺工资plan及期初被阻断、逐公司追问后类型化登记发布、资料重复的公开纠正、丢响应回执查询和正常接续；甲10月缺全月覆盖及新工资仍未完成。c063包正常同根10MCP接续另见[接续档案](kernel-refactor-stages/09-performance-history.zip "归档内：09-performance-results/current-package-normal-restart-c063-20261005.md")，v2认证整行摘要失败保留、v3修正通过；不代表真人密码窗口或强制崩溃恢复，见[独立MCP](kernel-refactor-stages/09-performance-history.zip "归档内：09-performance-results/independent-mcp-a5d4-20261005.md") |
 | §3 无明确归属期资料的期间判断 | 6、8 | 沿用事实语义与先查后问流程：资料未明确核算归属期时不得推断，不把管理日期复制为核算日期；缺少影响处理的事实仍返回needs_information。不新增期间默认值或业务规则 |
 | §7 证据 BLOB 规模、核验与恢复 | 9 | 240／1536MiB当前准备及各三次完整Q已验，原件保留；240普通服务四API／45诊断刷新与只读postcert v2完成，原合法backup三记录被错误纳入整库历史比较的失败保留。1536四API已完成verify4452／backup51946／restore33001／restored_verify3718ms，独立第四前台补测另窗完成、verify4478.6ms，两档只读补证实际exit0；原marker及末尾JSON序列化失败的exit1保留，见[资源档案](kernel-refactor-stages/09-performance-results/resource-foreground-copy-permissions-1de-20261005.md)。旧ACL／退役凭据认证／WAL前提失败保留，不重新设置旧身份；有限RSS窗口不作绝对峰，前台诊断不增500ms门槛，旧资源桥／新1de包各保留来源 |
 | §7 tax_import 个人扣款映射 | 6 | 已前移至工资准备和期间待办；映射缺失、模板不足和内容损坏分别处理，只影响个税文件 |

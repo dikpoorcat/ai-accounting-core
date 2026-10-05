@@ -1,9 +1,0 @@
-{
-  "status": "built_not_verified",
-  "source": ".tmp/stage9-build-source-r22-release",
-  "construction_does_not_replace_full_verification": true,
-  "source_file": ".tmp\\stage9-release-main-120-build-r22h.json",
-  "archive": "stage9-release-main-120-built-r22h.json.gz",
-  "source_bytes": 63542,
-  "sha256": "a33b6998b50bd5c3b435b0e4f9ea4907f1328a2cc17814085b56566a675bd7f1"
-}
