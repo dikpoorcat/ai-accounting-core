@@ -59,7 +59,7 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const { fetchDeferredBrief } = await server.ssrLoadModule("/src/api/brief.ts");
     const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
     const value = structuredClone(samples.brief.response);
-    value.schema_version = 13; value.data.financial_position = position; value.data.workforce_cost = workforce;
+    value.schema_version = 14; value.data.financial_position = position; value.data.workforce_cost = workforce;
     const company = value.read_context.company_id, period = value.selected_period.key;
     globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` } };
     globalThis.fetch = async () => new Response(JSON.stringify(value));

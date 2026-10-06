@@ -33,14 +33,14 @@ async function run(config) {
     await page.locator("#open-items").waitFor();
     await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false");
     assert.equal(requests.filter(url => url.pathname.endsWith("business-status")).length, 0, "default page requested details");
-    const category = brief.data.open_items.categories.find(category => brief.data.collections.open_items.items.some(item => item.category_key === category.key && item.subject_id));
+    const isSingle = item => item.subject_id && !(item.contribution_group_key && item.contribution_component && item.payroll_period);
+    const category = brief.data.open_items.categories.find(category => brief.data.collections.open_items.items.some(item => item.category_key === category.key && isSingle(item)));
     assert(category, "real book has no loaded business category");
     await page.locator("#open-items .open-index button").nth(brief.data.open_items.categories.filter(item => item.count).indexOf(category)).click();
     await page.locator("#open-items .open-event-row").first().waitFor();
-    const selected = brief.data.collections.open_items.items.find(item => item.category_key === category.key && item.subject_id);
+    const selected = brief.data.collections.open_items.items.find(item => item.category_key === category.key && isSingle(item));
     assert(selected, "real book has no selectable business row");
-    const index = brief.data.collections.open_items.items.filter(item => item.category_key === category.key).indexOf(selected);
-    const row = page.locator("#open-items .open-event-row").nth(index);
+    const row = page.locator("#open-items .open-event-row").filter({ hasText: selected.party }).filter({ hasText: selected.description }).first();
     const trigger = row, panel = row.locator(".business-detail-panel");
     const detailReply = reply("business-status"); await trigger.focus(); await trigger.press("Enter");
     phase = "real detail";
@@ -74,7 +74,7 @@ async function run(config) {
     const later = config.period === "2026-12" ? "2027-01" : `${config.period.slice(0, 4)}-${String(Number(config.period.slice(5)) + 1).padStart(2, "0")}`;
     const source = { key, name: "net", direction: "payable", category_key: "payroll_payables", source_period: config.period, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
     synthetic.data.open_items = { ...synthetic.data.open_items, receivable_count: 0, receivable_fen: "0", payable_count: 1, payable_fen: "200000", total_count: 1, complete: true, cutoff_period: config.period, current_cutoff_period: later, categories: [{ key: "payroll_payables", label: "待付工资、社保与个税", direction: "payable", unit: "笔", count: 1, loaded_count: 1, outstanding_fen: "200000" }] };
-    synthetic.data.collections.open_items = { items: [{ id: key, category_key: "payroll_payables", party: "演示员工张某（长名称换行测试）", description: "本月工资及已记录的业务用途", status: "partial", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", outstanding_fen: "200000", current_status: "settled", current_outstanding_fen: "0", subject_id: subject }], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
+    synthetic.data.collections.open_items = { items: [{ id: key, category_key: "payroll_payables", party: "演示员工张某（长名称换行测试）", description: "本月工资及已记录的业务用途", status: "partial", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", outstanding_fen: "200000", current_status: "settled", current_outstanding_fen: "0", subject_id: subject, contribution_group_key: null, contribution_component: null, payroll_period: null }], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
     detail.data.identity.subject_id = subject; detail.data.identity.kind = "payroll"; detail.data.latest_source.deleted = false;
     detail.data.settlements = { cutoff_period: config.period, status: "established", checking: false, obligations: [source, { ...source, key: "synthetic-tax", name: "tax", remaining_fen: "12345" }] };
     detail.data.current_followups.settlements = { ...detail.data.settlements, cutoff_period: later, obligations: [{ ...source, paid_fen: "800000", remaining_fen: "0", settlement_status: "settled" }] };

@@ -433,6 +433,17 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
     }
     assert by_component["employee_social"]["creditor_id"] is None
     assert by_component["employee_social"]["field_sources"]["party"]["id"] == profile["id"]
+    contributions = [item for item in payroll_items if item["contribution_component"]]
+    assert {item["contribution_component"] for item in contributions} == {
+        "employee_social", "employer_social"
+    }
+    assert {item["payroll_period"] for item in contributions} == {"2026-01"}
+    assert len({item["contribution_group_key"] for item in contributions}) == 1
+    assert all(item["contribution_group_key"] for item in contributions)
+    assert all(
+        item["contribution_group_key"] is None and item["payroll_period"] is None
+        for item in payroll_items if not item["contribution_component"]
+    )
 
 
 def test_bonus_remains_separate_from_regular_wages(tmp_path):
@@ -449,6 +460,38 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
     assert employee["individual_income_tax_fen"] == 90000
     assert employee["company_cost_fen"] == 3000000
     assert employee["has_annual_bonus"]
+
+
+def test_opening_contributions_keep_four_obligations_and_form_one_prior_month_group(opening_book):
+    engine, save, _, package, _ = opening_book
+    members = complete_members(save)
+    wage = next(fields for kind, _, fields in members if kind == "opening_payroll_payable")
+    members = [member for member in members if member[0] != "opening_payroll_payable"]
+    components = ("employee_social", "employer_social", "employee_housing", "employer_housing")
+    members.extend(
+        ("opening_payroll_payable", component, {
+            **wage, "component": component, "outstanding_fen": 12_500
+        })
+        for component in components
+    )
+    package(members)
+    response = Dashboard(engine).brief("2026-01", section="open_items", limit=2)
+    data = response["data"]
+    collection = data["collections"]["open_items"]
+    items = list(collection["items"])
+    while collection["page"]["has_more"]:
+        collection = Dashboard(engine).brief(
+            "2026-01", section="open_items", limit=2, cursor=collection["page"]["next_cursor"],
+            expected_version=response["snapshot_version"],
+        )["data"]["collections"]["open_items"]
+        items.extend(collection["items"])
+    contributions = [item for item in items if item["contribution_component"]]
+    assert len(contributions) == 4
+    assert {item["contribution_component"] for item in contributions} == set(components)
+    assert {item["payroll_period"] for item in contributions} == {"2025-12"}
+    assert len({item["contribution_group_key"] for item in contributions}) == 1
+    assert all(item["contribution_group_key"] for item in contributions)
+    assert sum(item["outstanding_fen"] for item in contributions) == 50_000
 
 
 def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstanding(
@@ -527,6 +570,10 @@ def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_compa
     company = payroll_company
     company.publish("january", "february")
     company.close("2026-01")
+    dashboard = Dashboard(company.engine)
+    frozen_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
+        "open_items"
+    ]["items"]
     company.save(
         payroll(accounting_gross_salary_fen=1_500_000, tax_reported_salary_fen=1_500_000),
         "january",
@@ -543,6 +590,13 @@ def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_compa
     assert data["current_business_result"]["amount_label"] == "税前工资"
     assert data["frozen_adoption"]["amount_fen"] == 1_000_000
     assert data["frozen_adoption"]["amount_label"] == "税前工资"
+    corrected_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
+        "open_items"
+    ]["items"]
+    fields = ("id", "outstanding_fen", "contribution_group_key", "contribution_component", "payroll_period")
+    assert [tuple(item[field] for field in fields) for item in corrected_items] == [
+        tuple(item[field] for field in fields) for item in frozen_items
+    ]
 
 
 def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path):

@@ -34,7 +34,7 @@ from .response_types import (
     Version7,
     Version9,
     Version10,
-    Version13,
+    Version14,
     WireFen,
 )
 
@@ -1203,6 +1203,11 @@ class BriefOpenItem(ResponseObject):
     current_status: str | None
     current_outstanding_fen: WireFen | None
     subject_id: str | None
+    contribution_group_key: str | None
+    contribution_component: Literal[
+        "employee_social", "employer_social", "employee_housing", "employer_housing"
+    ] | None
+    payroll_period: Month | None
 
 
 class BriefOpenCategory(ResponseObject):
@@ -1294,7 +1299,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version13
+    schema_version: Version14
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

@@ -27,7 +27,7 @@ async function run(config) {
   b.activity_groups = b.activity_groups.filter(group => group.key === activity.group).map(group => ({ ...group, event_count: 45 }));
   b.open_items = { ...b.open_items, receivable_count: 0, receivable_fen: "0", payable_count: 45, payable_fen: "9000000", total_count: 45, complete: true, cutoff_period: config.period, current_cutoff_period: config.period,
     categories: [{ key: "payroll_payables", label: "待付工资、社保与个税", direction: "payable", unit: "笔", count: 45, loaded_count: 20, outstanding_fen: "9000000" }] };
-  const openItems = expand({ id: "", category_key: "payroll_payables", party: "演示员工", description: "实发工资", status: "partial", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", outstanding_fen: "200000", current_status: "partial", current_outstanding_fen: "200000", subject_id: "auto-payroll" }, "id");
+  const openItems = expand({ id: "", category_key: "payroll_payables", party: "演示员工", description: "实发工资", status: "partial", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", outstanding_fen: "200000", current_status: "partial", current_outstanding_fen: "200000", subject_id: "auto-payroll", contribution_group_key: null, contribution_component: null, payroll_period: null }, "id");
   const f = bases.funds.data, account = f.collections.accounts.items[0];
   const employee = bases.employees.data.collections.employees.items[0];
   bases.employees.data.employee_filter = "all"; bases.employees.data.employee_id = null;
@@ -50,7 +50,12 @@ async function run(config) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage(), requests = [], errors = [];
   page.setDefaultTimeout(10000);
-  page.on("pageerror", () => errors.push("browser script error"));
+  const sanitize = value => {
+    let message = String(value).replace(/https?:\/\/[^\s"']+/g, "[URL]").replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[ID]");
+    for (const sensitive of [config.company_id, config.ticket_url]) if (sensitive) message = message.split(sensitive).join("[REDACTED]");
+    return message;
+  };
+  page.on("pageerror", error => errors.push({ phase, message: sanitize(error.message) }));
   const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const idle = async () => { await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames(); };
   let fail = false, holdTarget = null, release, phase = "login";
@@ -182,7 +187,7 @@ async function run(config) {
     }
     assert.equal(errors.length, 0);
     return { status: "passed", modules: results, failed_page_retry: true, filter_continuation: true, deselection_cancellation: true, cancellation_pages: 4, late_response_rejected: true, repeated_selection_requests: 0, browser_errors: 0 };
-  } catch (error) { return { status: "failed", phase, message: error.message, browser_errors: errors.length }; }
+  } catch (error) { return { status: "failed", phase, message: sanitize(error.message), browser_errors: errors.length, errors, requests }; }
   finally { release?.(); await browser.close(); }
 }
 let input = "";

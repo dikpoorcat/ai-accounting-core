@@ -67,6 +67,32 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     )
 
 
+@pytest.mark.parametrize("field", [
+    "contribution_group_key", "contribution_component", "payroll_period"
+])
+def test_brief_contribution_metadata_is_required_and_nullable(samples, field):
+    response = copy.deepcopy(samples["brief_payroll_open_items"]["response"])
+    item = response["data"]["collections"]["open_items"]["items"][0]
+    item[field] = None
+    assert validate_response("dashboard_brief", response) == response
+    del item[field]
+    with pytest.raises(KernelError):
+        validate_response("dashboard_brief", response)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("contribution_component", "net"),
+    ("contribution_component", "social"),
+    ("payroll_period", "2026-13"),
+    ("payroll_period", "2026-01-01"),
+])
+def test_brief_rejects_invalid_contribution_metadata(samples, field, value):
+    response = copy.deepcopy(samples["brief_payroll_open_items"]["response"])
+    response["data"]["collections"]["open_items"]["items"][0][field] = value
+    with pytest.raises(KernelError):
+        validate_response("dashboard_brief", response)
+
+
 @pytest.mark.parametrize("path", [
     ("financial_position", "assets_fen"),
     ("financial_position", "bank_calculation", "opening_fen"),

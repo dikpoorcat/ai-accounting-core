@@ -263,6 +263,10 @@ def native_samples(root):
     display_profile(personnel.engine, "employee", "employee", employment_start="2025-12")
     display_profile(personnel.engine, "business", "january", display_name="合成工资业务")
     personnel_dashboard = Dashboard(personnel.engine)
+    add(
+        "brief_payroll_open_items", "dashboard_brief",
+        personnel_dashboard.brief("2026-01", section="open_items"),
+    )
     add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
     add(
         "employees_focused", "dashboard_employees",

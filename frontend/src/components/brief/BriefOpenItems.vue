@@ -6,33 +6,44 @@ import { useRoute } from "vue-router";
 import { fen, formatFen } from "../../utils/money";
 import { businessStateLabel } from "../../api/dashboardContracts";
 import BusinessStatusDetails from "../BusinessStatusDetails.vue";
+import { contributionProgressRows, payrollMonthLabel, type BriefOpenRow } from "../../utils/briefOpenItems";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   openItems: BriefOpenItems;
-  items: BriefOpenItem[];
+  items: BriefOpenRow[];
+  itemsComplete?: boolean;
+  itemsError?: string | null;
   periodLabel: string;
   periodStatus: string;
   period: string;
   snapshotVersion?: string | null;
   focusRequest?: number;
-}>();
+}>(), { itemsComplete: true, itemsError: null });
 defineEmits<{ changed: [] }>();
 
 const route = useRoute();
 const expandedItemId = ref("");
-function toggleItem(item: BriefOpenItem, event: Event) {
-  if (!item.subject_id) return;
+function canExpand(item: BriefOpenRow) { return !!item.subject_id || !!item.contributionMembers; }
+function toggleItem(item: BriefOpenRow, event: Event) {
+  if (!canExpand(item)) return;
   const target = event.target;
-  if (typeof Element !== "undefined" && target instanceof Element && target.closest("button, a, details, .business-status-details")) return;
+  if (typeof Element !== "undefined" && target instanceof Element && target.closest("button, a, details, .business-status-details, .contribution-detail")) return;
   expandedItemId.value = expandedItemId.value === item.id ? "" : item.id;
 }
-function itemKeydown(item: BriefOpenItem, event: KeyboardEvent) {
+function itemKeydown(item: BriefOpenRow, event: KeyboardEvent) {
   if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
-  if (!item.subject_id) return;
+  if (!canExpand(item)) return;
   event.preventDefault(); toggleItem(item, event);
 }
 
 const isClosed = computed(() => props.periodStatus === "closed");
+const expandedContributionRows = computed(() => {
+  const item = props.items.find(item => item.id === expandedItemId.value && item.contributionMembers);
+  return item && props.itemsComplete ? contributionProgressRows(item) : [];
+});
+const changedContributionRows = computed(() => expandedContributionRows.value.filter(item => item.changed));
+const collectionState = computed(() => props.itemsError ? "尚未读全" : "正在汇总");
+const countUnit = computed(() => props.itemsComplete ? "项" : "余额分项");
 const visibleCategories = computed(() => props.openItems.categories.filter((item) => item.count).map(category => ({
   ...category,
   items: props.items.filter(item => item.category_key === category.key),
@@ -52,7 +63,12 @@ function categoryLabel(label: string) {
   return label.replace(/^待收回/, "应收").replace(/^待收/, "应收").replace(/^待付/, "应付");
 }
 
-function openStateLabel(direction: "receivable" | "payable", item: BriefOpenItem) {
+function openStateLabel(direction: "receivable" | "payable", item: BriefOpenRow) {
+  if (item.contributionMembers && !props.itemsComplete) return collectionState.value;
+  if (item.contributionMembers) {
+    const prefix = item.current_status ? "当前" : isClosed.value ? "关账时" : "";
+    return `${prefix}${contributionStateLabel(item.current_status || item.status)}`;
+  }
   if (item.category_key === "supplier_advances") {
     const status = item.current_status || item.status;
     const prefix = item.current_status ? "当前" : isClosed.value ? "关账时" : "";
@@ -76,12 +92,22 @@ function openStateLabel(direction: "receivable" | "payable", item: BriefOpenItem
   return item.status === "partial" ? "部分支付" : "尚未支付";
 }
 
-function statusClass(item: BriefOpenItem) {
-  const status = item.current_status || item.status;
+function progressStatusClass(status: BriefOpenItem["status"]) {
   if (["withdrawn", "reversed"].includes(status)) return "status-historical";
   if (status === "checking" || status === "over_settled") return "status-checking";
   if (status === "settled") return "status-settled";
-  if (!item.current_status && isClosed.value && (item.status === "partial" || item.status === "open")) {
+  return "";
+}
+function contributionStateLabel(status: BriefOpenItem["status"]) {
+  const labels: Record<string, string> = { open: "待支付", partial: "部分支付", settled: "已结清", checking: "待核对", reversed: "更正原业务", withdrawn: "已撤回" };
+  return labels[status] ?? businessStateLabel(status);
+}
+function statusClass(item: BriefOpenRow) {
+  if (item.contributionMembers && !props.itemsComplete) return "status-historical";
+  const status = item.current_status || item.status;
+  const classification = progressStatusClass(status);
+  if (classification) return classification;
+  if (!item.contributionMembers && !item.current_status && isClosed.value && (item.status === "partial" || item.status === "open")) {
     return "status-historical";
   }
   return "";
@@ -93,8 +119,9 @@ function outstandingLabel(direction: "receivable" | "payable") {
 }
 
 function categorySummary(category: BriefOpenCategory) {
-  return `${category.count} ${category.unit}`;
+  return `${category.count} ${countUnit.value}`;
 }
+function amountLabel(value: string | null) { return value == null ? "待核对" : formatFen(value); }
 
 function selectCategory(key: string) {
   selectedCategoryKey.value = key;
@@ -162,7 +189,7 @@ onBeforeUnmount(() => {
           待收与待付
         </h2>
         <p>
-          截至 {{ periodLabel }}末 · {{ isClosed ? `${openItems.total_count} 项关账时有余额` : `${openItems.total_count} 项未完全结清` }}
+          截至 {{ periodLabel }}末 · {{ openItems.total_count }} {{ countUnit }}{{ isClosed ? '关账时有余额' : '未完全结清' }}
         </p>
       </div>
       <div v-if="openItems.total_count" class="heading-balances" :aria-label="isClosed ? '关账时点往来汇总' : '期末往来汇总'">
@@ -205,23 +232,51 @@ onBeforeUnmount(() => {
           <li
             v-for="item in selectedCategory.items"
             :key="item.id"
-            :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id), expandable: !!item.subject_id }]"
-            :role="item.subject_id ? 'button' : undefined"
-            :tabindex="item.subject_id ? 0 : undefined"
-            :aria-expanded="item.subject_id ? expandedItemId === item.id : undefined"
-            :aria-label="item.subject_id ? `${item.party}，${expandedItemId === item.id ? '收起' : '展开'}业务详情` : undefined"
+            :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id), expandable: canExpand(item) }]"
+            :role="canExpand(item) ? 'button' : undefined"
+            :tabindex="canExpand(item) ? 0 : undefined"
+            :aria-expanded="canExpand(item) ? expandedItemId === item.id : undefined"
+            :aria-label="canExpand(item) ? `${item.party}，${item.description}，${expandedItemId === item.id ? '收起' : '展开'}业务详情` : undefined"
             @click="toggleItem(item, $event)"
             @keydown="itemKeydown(item, $event)"
           >
             <span class="open-event-copy">
-              <strong>{{ item.party }}<span v-if="item.subject_id" class="row-chevron" :class="{ expanded: expandedItemId === item.id }" aria-hidden="true"></span></strong>
-              <small v-if="item.description && item.description !== item.party">{{ item.description }}</small>
+              <strong>{{ item.party }}<span v-if="canExpand(item)" class="row-chevron" :class="{ expanded: expandedItemId === item.id }" aria-hidden="true"></span></strong>
+              <small v-if="item.contributionMembers || (item.description && item.description !== item.party)">{{ item.description }}</small>
+              <small v-if="item.contribution_component && !item.contributionMembers">分组资料待核对</small>
+              <small v-for="notice in item.contributionNotices" :key="notice">{{ notice }}</small>
             </span>
             <span :class="['status', statusClass(item)]">{{ openStateLabel(selectedCategory.direction, item) }}</span>
             <span class="open-event-money">
               <small>{{ outstandingLabel(selectedCategory.direction) }}</small>
-              <b>{{ item.outstanding_fen == null ? "待核对" : formatFen(item.outstanding_fen) }}</b>
+              <b>{{ item.contributionMembers && !itemsComplete ? collectionState : amountLabel(item.outstanding_fen) }}</b>
             </span>
+            <section v-if="item.contributionMembers && expandedItemId === item.id" class="contribution-detail" aria-label="社保与公积金款项拆解" @click.stop @keydown.stop>
+              <p v-if="!itemsComplete" class="contribution-reading" role="status">{{ collectionState }} · 读取全部余额分项后显示四项拆解。</p>
+              <template v-else>
+                <p v-if="item.payroll_period && item.payroll_period !== period" class="contribution-cutoff">工资所属月：{{ payrollMonthLabel(item.payroll_period) }}</p>
+                <p class="contribution-cutoff">截至{{ payrollMonthLabel(openItems.cutoff_period) }}末{{ isClosed ? '（关账时）' : '' }}</p>
+                <table>
+                  <thead><tr><th scope="col">款项</th><th scope="col">原应付</th><th scope="col">实际已付</th><th scope="col">抵销／代付</th><th scope="col">月末待付</th></tr></thead>
+                  <tbody>
+                    <tr v-for="part in expandedContributionRows" :key="part.component">
+                      <th scope="row">{{ part.label }}</th>
+                      <template v-if="part.present">
+                        <td data-label="原应付">{{ amountLabel(part.sourceAmountFen) }}</td><td data-label="实际已付">{{ amountLabel(part.paidFen) }}</td><td data-label="抵销／代付">{{ amountLabel(part.otherSettledFen) }}</td>
+                        <td class="contribution-remaining" data-label="月末待付"><strong>{{ amountLabel(part.outstandingFen) }}</strong><span v-if="['checking', 'over_settled', 'reversed', 'withdrawn'].includes(part.status)" :class="['status', progressStatusClass(part.status)]">{{ contributionStateLabel(part.status) }}</span><small v-for="notice in part.notices" :key="notice" class="contribution-notice">{{ notice }}</small></td>
+                      </template>
+                      <td v-else colspan="4" class="contribution-missing">该月末未列待付款项</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-if="changedContributionRows.length" class="contribution-latest">
+                  <p class="contribution-cutoff">后续进展 · 截至{{ payrollMonthLabel(openItems.current_cutoff_period) }}末</p>
+                  <div v-for="part in changedContributionRows" :key="part.component" class="contribution-current">
+                    <span>{{ part.label }}</span><span :class="['status', progressStatusClass(part.currentStatus)]">{{ contributionStateLabel(part.currentStatus) }}</span><small v-for="notice in part.currentNotices" :key="notice">{{ notice }}</small><strong>{{ amountLabel(part.currentOutstandingFen) }}</strong>
+                  </div>
+                </div>
+              </template>
+            </section>
             <div v-if="item.subject_id" class="open-event-source">
               <BusinessStatusDetails
                 :subject-id="item.subject_id"
@@ -612,6 +667,23 @@ h3 {
   display: contents;
 }
 
+.contribution-detail { grid-column: 1 / -1; min-width: 0; padding: 12px 14px; border: 1px solid var(--brief-line); border-radius: 10px; background: var(--brief-soft); cursor: default; }
+.contribution-cutoff, .contribution-reading { margin: 0 0 10px; color: var(--brief-muted); font-size: 12px; }
+.contribution-reading { margin-bottom: 0; }
+.contribution-detail table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.contribution-detail th, .contribution-detail td { padding: 10px 6px; text-align: right; border-bottom: 1px solid var(--brief-line); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.contribution-detail th:first-child { text-align: left; }
+.contribution-detail thead th { color: var(--brief-muted); font-weight: 500; }
+.contribution-detail tbody tr:last-child > * { border-bottom: 0; }
+.contribution-detail .contribution-missing { color: var(--brief-muted); text-align: left; }
+.contribution-remaining strong { color: var(--brief-amber); }
+.contribution-remaining .status { display: flex; width: fit-content; margin: 4px 0 0 auto; }
+.contribution-notice { display: block; margin-top: 4px; color: var(--brief-muted); font-weight: 400; }
+.contribution-latest { margin-top: 12px; }
+.contribution-current { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 6px; border-bottom: 1px solid var(--brief-line); font-size: 12px; }
+.contribution-current:last-child { border-bottom: 0; }
+.contribution-current strong { margin-left: auto; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
 @media (prefers-reduced-motion: reduce) {
   .open-index button.focus-highlight,
   .open-event-row.focus-highlight {
@@ -700,6 +772,17 @@ h3 {
 }
 
 @media (max-width: 760px) {
+  .contribution-detail { padding: 12px; }
+  .contribution-detail table, .contribution-detail tbody, .contribution-detail tr { display: block; }
+  .contribution-detail thead { display: none; }
+  .contribution-detail tbody tr { padding: 10px 0; border-bottom: 1px solid var(--brief-line); }
+  .contribution-detail tbody tr:last-child { border-bottom: 0; }
+  .contribution-detail th, .contribution-detail td { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; }
+  .contribution-detail td[data-label]::before { content: attr(data-label); color: var(--brief-muted); text-align: left; flex-shrink: 0; }
+  .contribution-detail th { justify-content: flex-start; }
+  .contribution-detail .contribution-missing { display: block; }
+  .contribution-remaining { flex-wrap: wrap; }
+  .contribution-remaining .status { margin-top: 0; }
   .section-heading {
     align-items: flex-start;
     flex-direction: column;

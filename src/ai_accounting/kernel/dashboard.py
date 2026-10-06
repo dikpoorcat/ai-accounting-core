@@ -10,6 +10,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import re
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -1886,7 +1887,7 @@ class Dashboard:
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 13}
+                return {**self._response(None, None), "schema_version": 14}
             self._check_page_version(snap, cursor, expected_version)
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
@@ -2024,7 +2025,7 @@ class Dashboard:
                 }
                 data["workforce_cost"] = _brief_workforce_cost(snap)
             return {**self._response(snap, seal_collections(snap, "brief", data, {})),
-                    "schema_version": 13}
+                    "schema_version": 14}
 
     def funds(
         self,
@@ -2472,7 +2473,8 @@ def _brief_open_item(item):
         key: item.get(key) for key in (
             "id", "category_key", "party", "description", "status",
             "source_amount_fen", "paid_fen", "other_settled_fen", "outstanding_fen",
-            "current_status", "current_outstanding_fen", "subject_id"
+            "current_status", "current_outstanding_fen", "subject_id",
+            "contribution_group_key", "contribution_component", "payroll_period"
         )
     }
 
@@ -2969,6 +2971,37 @@ def _nullable_sum(values):
     return None if any(value is None for value in numbers) else sum(numbers)
 
 
+def _contribution_identity(company_id, kind, fact_data, component):
+    """Group presentation by formal employee/month facts, never by display names."""
+    empty = {
+        "contribution_group_key": None,
+        "contribution_component": None,
+        "payroll_period": None,
+    }
+    if kind not in {"payroll", "payroll_bounded", "opening_payroll_payable"} or component not in {
+        "employee_social", "employer_social", "employee_housing", "employer_housing"
+    }:
+        return empty
+    period = fact_data.get(
+        "payroll_period" if kind == "opening_payroll_payable" else "period"
+    )
+    period = period if isinstance(period, str) and re.fullmatch(
+        r"[0-9]{4}-(0[1-9]|1[0-2])", period
+    ) else None
+    employee_id = fact_data.get("employee_id")
+    key = None
+    if period is not None and isinstance(employee_id, str) and employee_id and company_id:
+        key = hashlib.sha256(
+            json.dumps([company_id, employee_id, period], ensure_ascii=False, separators=(",", ":"))
+            .encode("utf-8")
+        ).hexdigest()
+    return {
+        "contribution_group_key": key,
+        "contribution_component": component,
+        "payroll_period": period,
+    }
+
+
 def _open_items(snap, *, after=None, limit=100, summary_only=False):
     from .settlement_projection import settlement_dashboard_open
 
@@ -3107,6 +3140,7 @@ def _open_items(snap, *, after=None, limit=100, summary_only=False):
                     current_source.get("remaining_fen") if current_source is not None else None
                 ),
                 "subject_id": business.get("subject_id"),
+                **_contribution_identity(snap.store.company_id, business.get("kind"), fact_data, component),
             }
             rows.append(row)
             items.append(row)

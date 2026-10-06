@@ -16,6 +16,7 @@ import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
+import { createBriefOpenItemGrouping, type BriefOpenRow } from "../utils/briefOpenItems";
 
 const route = useRoute(), router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
@@ -36,6 +37,14 @@ const needsMonthlyReview = computed(() => reviewRequest.value !== null);
 const activity = computed(() => data.value?.collections.activity?.items ?? []);
 const vouchers = computed(() => data.value?.collections.vouchers?.items ?? []);
 const openItems = computed(() => data.value?.collections.open_items?.items ?? []);
+const openItemsComplete = computed(() => {
+  const page = data.value?.collections.open_items?.page;
+  return !!page && !page.has_more && openItems.value.length === page.filtered_count;
+});
+function newOpenItemGrouping() { return createBriefOpenItemGrouping(() => shallowReactive<BriefOpenRow[]>([])); }
+let groupOpenItems = newOpenItemGrouping();
+const openItemDisplay = computed(() => data.value ? groupOpenItems(data.value.open_items, openItems.value, openItemsComplete.value) : null);
+const openItemCountUnit = computed(() => openItemsComplete.value ? "项" : "余额分项");
 const periodOptions = computed(() => context.value?.periods || []);
 const briefTitle = computed(() => {
   const month = /\d{4}-(\d{2})/.exec(selectedPeriod.value || queryPeriod() || "")?.[1];
@@ -66,7 +75,7 @@ function invalidateRequests(keepContent = false) {
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
   voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
-  if (!keepContent) response.value = null;
+  if (!keepContent) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
   showMonthlyReview.value = false; loading.value = keepContent;
 }
 async function loadData(period: string | null, contextGate?: Promise<void>) {
@@ -77,7 +86,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
   voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
   const request = new AbortController(); controller = request;
   loading.value = true;
-  if (!contextGate) response.value = null;
+  if (!contextGate) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
   showMonthlyReview.value = false; error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("请先选择公司。");
@@ -223,8 +232,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
         <div class="kpi-grid">
           <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
-          <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} 项</small></button>
-          <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} 项</small></button>
+          <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ openItemDisplay?.summary.receivable_count }} {{ openItemCountUnit }}</small></button>
+          <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ openItemDisplay?.summary.payable_count }} {{ openItemCountUnit }}</small></button>
         </div>
         </div>
         <div v-if="data.management_commentary_details.current" class="note"><strong>经营说明</strong><p>{{ data.management_commentary_details.current.text }}</p></div>
@@ -244,8 +253,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
       </section>
       <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
-        <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
-        <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
+        <BriefOpenItems v-if="openItemDisplay" :open-items="openItemDisplay.summary" :items="openItemDisplay.items" :items-complete="openItemsComplete" :items-error="sectionErrors.open_items" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
+        <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="余额分项" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
       </section>
       <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
         <h2 id="tasks-title">老板待办</h2>

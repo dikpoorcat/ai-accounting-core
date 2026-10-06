@@ -5293,6 +5293,46 @@
               }
             ],
             "title": "Subject Id"
+          },
+          "contribution_group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contribution Group Key"
+          },
+          "contribution_component": {
+            "anyOf": [
+              {
+                "enum": [
+                  "employee_social",
+                  "employer_social",
+                  "employee_housing",
+                  "employer_housing"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contribution Component"
+          },
+          "payroll_period": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Period"
           }
         },
         "required": [
@@ -5307,7 +5347,10 @@
           "outstanding_fen",
           "current_status",
           "current_outstanding_fen",
-          "subject_id"
+          "subject_id",
+          "contribution_group_key",
+          "contribution_component",
+          "payroll_period"
         ],
         "title": "BriefOpenItem",
         "type": "object"
@@ -6510,7 +6553,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 13,
+        "const": 14,
         "title": "Schema Version",
         "type": "integer"
       },

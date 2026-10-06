@@ -4,6 +4,7 @@ import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs";
 
 let sequence = 0;
 async function harness() {
@@ -11,13 +12,13 @@ async function harness() {
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/import[\s\S]*?from "[^"]+";/g, "");
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02" } });
-  const environment = { Vue, route, appendDashboardCollection, calls: [], unmount: [] };
+  const environment = { Vue, route, appendDashboardCollection, createBriefOpenItemGrouping, calls: [], unmount: [] };
   const key = `briefVoucherLoading${++sequence}`;
   globalThis[key] = environment;
   const { outputText } = ts.transpileModule(`const environment = globalThis.${key};
     export function instantiate() {
       const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
-      const { appendDashboardCollection } = environment;
+      const { appendDashboardCollection, createBriefOpenItemGrouping } = environment;
       const useRoute = () => environment.route;
       const useRouter = () => ({ replace() {}, push() {} });
       const useDashboardContext = () => ({ context: ref(null), load: async () => null, refresh: async () => null });
@@ -38,7 +39,7 @@ async function harness() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const rows = (start, count) => Array.from({ length: count }, (_, index) => ({ voucher_version_id: `v${start + index}` }));
 const response = (start, count, total = 45) => ({
-  schema_version: 13, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
+  schema_version: 14, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
   selected_period: { key: "2026-02" }, data: {
     month_state: "closed", owner_review_request: null,
     ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" } } : {}),
