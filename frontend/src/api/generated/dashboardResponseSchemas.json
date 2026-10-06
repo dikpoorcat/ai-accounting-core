@@ -6510,7 +6510,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 12,
+        "const": 13,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -11260,6 +11260,31 @@
             "title": "Name",
             "type": "string"
           },
+          "direction": {
+            "enum": [
+              "receivable",
+              "payable",
+              "unknown"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "category_key": {
+            "enum": [
+              "customer_receivables",
+              "supplier_advances",
+              "refundable_deposit_receivables",
+              "other_receivables",
+              "supplier_payables",
+              "employee_payables",
+              "payroll_payables",
+              "labor_payables",
+              "other_payables",
+              "unknown"
+            ],
+            "title": "Category Key",
+            "type": "string"
+          },
           "source_period": {
             "anyOf": [
               {
@@ -11332,6 +11357,8 @@
         "required": [
           "key",
           "name",
+          "direction",
+          "category_key",
           "source_period",
           "source_amount_fen",
           "paid_fen",
@@ -11627,7 +11654,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 6,
+        "const": 7,
         "title": "Schema Version",
         "type": "integer"
       },

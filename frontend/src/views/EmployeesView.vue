@@ -224,6 +224,11 @@ async function loadEmployeeList() {
   } finally { if (valid()) { pageLoading.value[key] = false; pageControllers.delete(key); } }
 }
 
+function paginationScope() { return JSON.stringify([selectionKey(), response.value?.snapshot_version, requestGeneration]); }
+function pausePages(section: string, scope: string) {
+  if (scope !== paginationScope()) return;
+  const key = pageKey(section); pageControllers.get(key)?.abort(); pageControllers.delete(key); pageLoading.value[key] = false;
+}
 function companyContribution(item: EstablishedEmployeeItem) {
   return item.employer_social_insurance_fen === null || item.employer_housing_fund_fen === null
     ? null
@@ -314,12 +319,12 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               </details>
             </template>
           </div>
-          <DashboardPagination :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
+          <DashboardPagination automatic :active="!loading && activeSection === 'employee-list-title'" :scope="paginationScope()" @pause="pausePages('employees', $event)" :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
         </section>
         <section v-if="personalLaborItems.length" class="panel">
           <h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }} · 已加载 {{ personalLaborItems.length }} 笔</p>
           <div class="employee-grid"><details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1"><summary class="employee-card-summary dashboard-record-card-summary"><div class="section-heading"><h3>{{ labor.name }}</h3><strong>{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p></summary><div class="employee-detail"><p v-if="labor.checking" class="muted">AI 会计核对中</p><div v-for="obligation in labor.obligations" :key="obligation.key"><strong>{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }}</strong><p class="muted">公司已付 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未付 {{ formatFen(obligation.remaining_fen) }}</p></div><BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" summary-label="查看收付款事项" @changed="refreshChanged" /></div></details></div>
-          <DashboardPagination :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
+          <DashboardPagination automatic :active="!loading && activeSection === 'labor-title'" :scope="paginationScope()" @pause="pausePages('labor_sources', $event)" :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
         </section>
       </div>
     </div>

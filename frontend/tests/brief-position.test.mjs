@@ -59,7 +59,7 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const { fetchDeferredBrief } = await server.ssrLoadModule("/src/api/brief.ts");
     const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
     const value = structuredClone(samples.brief.response);
-    value.schema_version = 12; value.data.financial_position = position; value.data.workforce_cost = workforce;
+    value.schema_version = 13; value.data.financial_position = position; value.data.workforce_cost = workforce;
     const company = value.read_context.company_id, period = value.selected_period.key;
     globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` } };
     globalThis.fetch = async () => new Response(JSON.stringify(value));
@@ -72,5 +72,26 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const page = structuredClone(value); delete page.data.financial_position; delete page.data.workforce_cost;
     globalThis.fetch = async () => new Response(JSON.stringify(page));
     await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "vouchers" });
+    await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" });
+    const missingVouchers = structuredClone(page); delete missingVouchers.data.collections.vouchers;
+    globalThis.fetch = async () => new Response(JSON.stringify(missingVouchers));
+    await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+    for (const change of [
+      changed => { changed.data.collections.vouchers.items[0].voucher_version_id = "wrong-identity"; },
+      changed => { changed.data.collections.vouchers.items.reverse(); },
+    ]) {
+      const changed = structuredClone(page); change(changed);
+      globalThis.fetch = async () => new Response(JSON.stringify(changed));
+      await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+    }
+    const focused = structuredClone(value), target = focused.data.collections.vouchers.items[0];
+    assert.ok(target);
+    focused.data.focused_voucher = target;
+    globalThis.fetch = async () => new Response(JSON.stringify(focused));
+    await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { voucher_version_id: target.voucher_version_id });
+    await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { voucher_version_id: "wrong-identity" }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+    await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { voucher_number: Number(target.number) + 1 }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+    focused.data.focused_voucher = null;
+    await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { voucher_version_id: target.voucher_version_id }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
   } finally { await server.close(); globalThis.window = oldWindow; globalThis.fetch = oldFetch; }
 });

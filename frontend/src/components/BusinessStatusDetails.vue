@@ -8,9 +8,10 @@ import { localBusinessName } from "../api/localKernel";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
+import type { BriefActivityRow } from "../api/brief";
 
 interface BriefStatusContext {
-  obligationKey: string; categoryKey: string; categoryLabel: string;
+  obligationKey: string; categoryKey: string;
   cutoffPeriod: string; currentCutoffPeriod: string; status: string;
   direction: "receivable" | "payable"; party: string; description?: string;
   sourceAmountFen?: string | null; paidFen?: string | null;
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
   subjectId: string; period: string; snapshotVersion?: string | null;
   settlementView?: "historical" | "current"; summaryLabel?: string;
   presentation?: "default" | "brief"; briefContext?: BriefStatusContext;
+  activityContext?: BriefActivityRow;
   expanded?: boolean; hideSummary?: boolean;
 }>(), { presentation: "default", expanded: undefined });
 const emit = defineEmits<{ changed: [] }>();
@@ -43,6 +45,52 @@ const showCurrent = computed(() => currentSettlements.value && currentSettlement
 const collection = computed(() => data.value?.collections.settlement_events);
 const panelOpen = computed(() => props.expanded ?? openedPanel.value);
 const isOpenItem = computed(() => props.presentation === "brief" && Boolean(props.briefContext));
+const isActivity = computed(() => props.presentation === "brief" && Boolean(props.activityContext));
+const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value);
+const ownerPurposes = computed(() => {
+  const context = props.activityContext || props.briefContext;
+  const rowTexts = [context?.party, context?.description, props.activityContext?.title];
+  return purposes.value.filter(value => !rowTexts.includes(value));
+});
+type Obligation = BusinessStatusData["settlements"]["obligations"][number];
+const activityObjects = computed(() => {
+  const profiles = data.value?.display_profiles;
+  return [
+    { label: "员工", profiles: profiles?.employees },
+    { label: "往来方", profiles: profiles?.counterparties },
+    { label: "相关资产", profiles: profiles?.assets },
+    { label: "相关账户", profiles: profiles?.fund_accounts },
+  ].map(group => ({ label: group.label, names: [...new Set((group.profiles ?? []).map(item => item.values.display_name).filter((name): name is string => Boolean(name)))] }))
+    .filter(group => group.names.length)
+    .map((group, _, groups) => ({ ...group, names: group.names.filter(name => name !== props.activityContext?.party || groups.filter(other => other.names.includes(name)).length > 1) }))
+    .filter(group => group.names.length);
+});
+const activityFollowups = computed(() => {
+  if (!data.value || !showCurrent.value || !currentSettlements.value) return [];
+  const historical = new Map(data.value.settlements.obligations.map(item => [item.key, item]));
+  const latest = new Map(currentSettlements.value.obligations.map(item => [item.key, item]));
+  return [...new Set([...historical.keys(), ...latest.keys()])].flatMap(key => {
+    const before = historical.get(key), after = latest.get(key);
+    return !before || !after || (["source_amount_fen", "paid_fen", "other_settled_fen", "remaining_fen", "settlement_status", "direction", "category_key"] as const).some(field => before[field] !== after[field])
+      ? [{ key, before, after, name: (after || before)?.name || "" }] : [];
+  });
+});
+function activityLabels(item: Obligation) {
+  if (item.category_key === "supplier_advances") return { original: "预付金额", paid: "已退回", other: "已冲抵", remaining: "尚未冲抵" };
+  if (item.direction === "receivable") return { original: "原应收", paid: "已收", other: "抵销、代付等已处理", remaining: "还需收回" };
+  if (item.direction === "payable") return { original: "原应付", paid: "已付", other: "抵销、代付等已处理", remaining: "还需支付" };
+  return { original: "款项总额", paid: "实际收付", other: "其他已处理", remaining: "未结金额" };
+}
+function activityState(item: Obligation, checking: boolean) {
+  if (item.settlement_status === "withdrawn") return "业务已撤回";
+  if (item.settlement_status === "reversed") return "原业务已更正";
+  if (checking || item.direction === "unknown" || item.category_key === "unknown" || item.remaining_fen === null) return "AI 会计核对中";
+  if (fen(item.remaining_fen) < 0n || item.settlement_status === "over_settled") return "存在超额结算";
+  if (item.settlement_status === "settled" && fen(item.remaining_fen) === 0n) return item.category_key === "supplier_advances" ? "已处理完毕" : "已结清";
+  if (item.settlement_status === "partial") return item.category_key === "supplier_advances" ? "部分冲抵或退回" : item.direction === "receivable" ? "部分收回" : "部分支付";
+  if (item.settlement_status === "open") return item.category_key === "supplier_advances" ? "待冲抵" : item.direction === "receivable" ? "待收回" : "待支付";
+  return "AI 会计核对中";
+}
 const isAdvance = computed(() => props.briefContext?.categoryKey === "supplier_advances");
 const selectedObligation = computed(() => data.value?.settlements.obligations.find(item => item.key === props.briefContext?.obligationKey));
 const currentObligation = computed(() => currentSettlements.value?.obligations.find(item => item.key === props.briefContext?.obligationKey));
@@ -85,17 +133,29 @@ const relatedObjects = computed(() => {
     { label: "员工", profiles: profiles?.employees },
     { label: "相关资产", profiles: profiles?.assets },
     { label: "相关账户", profiles: profiles?.fund_accounts },
-  ].map(group => ({ label: group.label, names: [...new Set((group.profiles ?? []).map(item => item.values.display_name).filter((name): name is string => Boolean(name) && name !== props.briefContext?.party))] })).filter(group => group.names.length);
+  ].map(group => ({ label: group.label, names: [...new Set((group.profiles ?? []).map(item => item.values.display_name).filter((name): name is string => Boolean(name) && (name !== props.briefContext?.party || group.label !== (props.briefContext?.categoryKey === "payroll_payables" ? "员工" : partyLabel))))] })).filter(group => group.names.length);
 });
 function ownerMoney(value: string | null | undefined) { return value === null || value === undefined ? "待核对" : formatFen(value); }
 function periodText(value: string | undefined) { return value ? value.replace(/^(\d{4})-0?(\d{1,2})$/, "$1年$2月") : "月份待核对"; }
 function progressState(status: string | null | undefined, remaining: string | null | undefined, checking: boolean) {
+  if (status === "withdrawn") return "业务已撤回";
+  if (status === "reversed") return "原业务已更正";
   if (checking || remaining === null || remaining === undefined || !status) return "AI 会计核对中";
-  if (status === "settled" && fen(remaining) === 0n) return isAdvance.value ? "已全部冲抵" : "已结清";
+  if (status === "settled" && fen(remaining) === 0n) return isAdvance.value ? "已处理完毕" : "已结清";
   if (status === "over_settled" || fen(remaining) < 0n) return "存在超额结算";
-  if (status === "partial") return isAdvance.value ? "部分冲抵" : props.briefContext?.direction === "receivable" ? "部分收回" : "部分支付";
+  if (status === "partial") return isAdvance.value ? "部分冲抵或退回" : props.briefContext?.direction === "receivable" ? "部分收回" : "部分支付";
   if (status === "open") return isAdvance.value ? "待冲抵" : props.briefContext?.direction === "receivable" ? "待收回" : "待支付";
   return "AI 会计核对中";
+}
+function progressTone(status: string | null | undefined, remaining: string | null | undefined, checking: boolean) {
+  if (status && ["withdrawn", "reversed"].includes(status)) return "withdrawn";
+  if (checking || status === "checking" || remaining == null || status === "over_settled" || fen(remaining) < 0n) return "attention";
+  if (status === "settled" && fen(remaining) === 0n) return "settled";
+  if (status === "open" || status === "partial") return "pending";
+  return "withdrawn";
+}
+function activityTone(item: Obligation, checking: boolean) {
+  return progressTone(item.settlement_status, item.remaining_fen, checking || item.direction === "unknown" || item.category_key === "unknown");
 }
 function movementPurpose(name: string) {
   const kind = data.value?.identity.kind;
@@ -103,7 +163,7 @@ function movementPurpose(name: string) {
   const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
 }
-function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey]); }
+function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key]); }
 function invalidate() {
   generation += 1; controller?.abort(); pageController?.abort(); controller = null; pageController = null;
   data.value = null; loading.value = false; moreLoading.value = false; error.value = ""; moreError.value = ""; notice.value = ""; responseVersion.value = "";
@@ -136,6 +196,11 @@ async function loadMore() {
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) moreError.value = dashboardErrorMessage(caught); } }
   finally { if (valid()) { moreLoading.value = false; pageController = null; } }
 }
+function paginationScope() { return `${selection()}:${generation}`; }
+function pausePages(scope: string) {
+  if (scope !== paginationScope()) return;
+  pageController?.abort(); pageController = null; moreLoading.value = false;
+}
 function loadOnExpansion() { if (panelOpen.value && !data.value && !loading.value && !notice.value) void load(); }
 function toggle(event: Event) {
   if (props.expanded !== undefined) return;
@@ -159,28 +224,50 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
     <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation === 'brief' }" role="status">正在读取业务详情…</p>
     <p v-else-if="error" class="business-detail-state error" :class="{ 'compact-status-panel': presentation === 'brief' }" role="alert">{{ error }} <button type="button" @click="load">重新读取</button></p>
     <section v-else-if="data" class="business-detail-panel" :class="{ 'compact-status-panel': presentation === 'brief' }">
-      <template v-if="isOpenItem && briefContext">
-        <header>
-          <div class="owner-item-heading"><p>{{ briefContext.categoryLabel }}</p><h3>{{ briefContext.party }}<template v-if="briefContext.description && briefContext.description !== briefContext.party"> · {{ briefContext.description }}</template></h3></div>
-          <span class="business-state" :class="{ attention: data.settlements.checking || !selectedObligation, withdrawn: data.latest_source.deleted }">{{ data.latest_source.deleted ? '业务已撤回' : progressState(selectedProgress.status, selectedProgress.remaining, data.settlements.checking || !selectedObligation) }}</span>
-        </header>
-        <div class="owner-item-description">
-          <p v-if="selectedObligation?.source_period">业务所属月份：{{ periodText(selectedObligation.source_period) }}</p>
-          <p v-for="purpose in purposes" :key="purpose">{{ purpose }}</p>
+      <template v-if="isActivity">
+        <p v-if="data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+        <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
+        <p v-for="group in activityObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
+        <template v-if="data.settlements.obligations.length">
+          <h4>整笔业务的款项进度 · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
+          <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
+          <div class="owner-activity-obligations">
+            <article v-for="item in data.settlements.obligations" :key="item.key" class="owner-activity-obligation">
+              <header><div class="owner-item-heading"><h4>{{ movementPurpose(item.name) }}</h4><p v-if="item.source_period && item.source_period !== period">业务所属月份：{{ periodText(item.source_period) }}</p></div><span class="business-state" :class="activityTone(item, data.settlements.checking)">{{ activityState(item, data.settlements.checking) }}</span></header>
+              <div class="owner-item-progress">
+                <div class="owner-item-balance"><span>{{ activityLabels(item).remaining }}</span><strong>{{ ownerMoney(item.remaining_fen) }}</strong></div>
+                <dl class="owner-item-amounts"><div><dt>{{ activityLabels(item).original }}</dt><dd>{{ ownerMoney(item.source_amount_fen) }}</dd></div><div><dt>{{ activityLabels(item).paid }}</dt><dd>{{ ownerMoney(item.paid_fen) }}</dd></div><div v-if="item.other_settled_fen !== '0' || item.category_key === 'supplier_advances'"><dt>{{ activityLabels(item).other }}</dt><dd>{{ ownerMoney(item.other_settled_fen) }}</dd></div></dl>
+              </div>
+              <p v-if="item.direction === 'unknown' || item.category_key === 'unknown'" class="checking">这项款项的收付分类待核对。</p>
+            </article>
+          </div>
+        </template>
+        <template v-if="activityFollowups.length && currentSettlements">
+          <h4>后续进展 · 截至最新月份（{{ periodText(currentSettlements.cutoff_period) }}末）</h4>
+          <p v-if="currentSettlements.checking" class="checking">AI 会计核对中，当前收付结果尚不能完整确认。</p>
+          <div v-for="change in activityFollowups" :key="change.key" class="owner-item-latest">
+            <div><h4>{{ movementPurpose(change.name) }}{{ !change.before ? ' · 后续新增款项' : '' }}</h4><span class="business-state" :class="change.after ? activityTone(change.after, currentSettlements.checking) : 'attention'">{{ change.after ? activityState(change.after, currentSettlements.checking) : '最新进度待核对' }}</span></div>
+            <div v-if="change.after"><span>{{ activityLabels(change.after).remaining }}</span><strong>{{ ownerMoney(change.after.remaining_fen) }}</strong><p>{{ activityLabels(change.after).original }} {{ ownerMoney(change.after.source_amount_fen) }} · {{ activityLabels(change.after).paid }} {{ ownerMoney(change.after.paid_fen) }}</p><p v-if="change.after.other_settled_fen !== '0' || change.after.category_key === 'supplier_advances'">{{ activityLabels(change.after).other }} {{ ownerMoney(change.after.other_settled_fen) }}</p></div>
+          </div>
+        </template>
+      </template>
+      <template v-else-if="isOpenItem && briefContext">
+        <div v-if="(selectedObligation?.source_period && selectedObligation.source_period !== period) || ownerPurposes.length || relatedObjects.length" class="owner-item-description">
+          <p v-if="selectedObligation?.source_period && selectedObligation.source_period !== period">业务所属月份：{{ periodText(selectedObligation.source_period) }}</p>
+          <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
           <p v-for="group in relatedObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         </div>
-        <div class="owner-item-progress">
-          <div class="owner-item-balance"><p>截至{{ periodText(selectedProgress.cutoff) }}末{{ briefContext.selectedPeriodClosed ? '（关账时）' : '' }}</p><span>{{ remainingLabel }}</span><strong>{{ ownerMoney(selectedProgress.remaining) }}</strong></div>
-          <dl class="owner-item-amounts">
-            <div><dt>{{ originalLabel }}</dt><dd>{{ ownerMoney(selectedProgress.amount) }}</dd></div>
-            <div><dt>{{ isAdvance ? '已退回' : paidLabel }}</dt><dd>{{ ownerMoney(selectedProgress.paid) }}</dd></div>
-            <div v-if="selectedProgress.other !== '0'"><dt>{{ isAdvance ? '已冲抵' : '抵销、代付等已处理' }}</dt><dd>{{ ownerMoney(selectedProgress.other) }}</dd></div>
-          </dl>
-        </div>
-        <p v-if="!selectedObligation" class="checking">这项款项的详情进度待核对，以上保留列表已确认的金额。</p>
-        <p v-else-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
+        <h4>款项拆解 · 截至{{ periodText(selectedProgress.cutoff) }}末{{ briefContext.selectedPeriodClosed ? '（关账时）' : '' }}</h4>
+        <dl class="owner-item-amounts">
+          <div><dt>{{ originalLabel }}</dt><dd>{{ ownerMoney(selectedProgress.amount) }}</dd></div>
+          <div><dt>{{ isAdvance ? '已退回' : paidLabel }}</dt><dd>{{ ownerMoney(selectedProgress.paid) }}</dd></div>
+          <div v-if="selectedProgress.other !== '0' || isAdvance"><dt>{{ isAdvance ? '已冲抵' : '抵销、代付等已处理' }}</dt><dd>{{ ownerMoney(selectedProgress.other) }}</dd></div>
+        </dl>
+        <p v-if="data.latest_source.deleted">业务已撤回；所选月末余额保留历史口径。</p>
+        <p v-if="!selectedObligation" class="checking">这项款项的详情进度待核对，原行及拆解保留列表已确认的金额。</p>
+        <p v-else-if="data.settlements.checking || selectedProgress.remaining == null" class="checking">AI 会计核对中，详情进度暂不能完整确认；原行保留列表金额。</p>
         <div v-if="showLatestProgress" class="owner-item-latest">
-          <div><h4>后续进展 · 截至{{ periodText(latestProgress.cutoff) }}末</h4><p>{{ progressState(latestProgress.status, latestProgress.remaining, Boolean(currentSettlements?.checking) || !currentObligation) }}</p></div>
+          <div><h4>后续进展 · 截至最新月份（{{ periodText(latestProgress.cutoff) }}末）</h4><span class="business-state" :class="progressTone(latestProgress.status, latestProgress.remaining, Boolean(currentSettlements?.checking) || !currentObligation)">{{ progressState(latestProgress.status, latestProgress.remaining, Boolean(currentSettlements?.checking) || !currentObligation) }}</span></div>
           <div><span>{{ remainingLabel }}</span><strong>{{ ownerMoney(latestProgress.remaining) }}</strong></div>
         </div>
       </template>
@@ -205,12 +292,12 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       </template>
       </template>
       <template v-if="collection?.page.total_count">
-        <h4>{{ isOpenItem ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
-        <p v-if="isOpenItem">以下包含整笔业务的其他款项，金额不全部属于上方选中的事项。记录截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末。</p>
-        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOpenItem ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOpenItem"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}</span><strong>{{ item.relation_state === 'unresolved' ? 'AI 会计核对中' : isOpenItem ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
-        <DashboardPagination :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
+        <h4>{{ isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
+        <p v-if="isOwnerDetail">含本业务其他款项 · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
+        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}</span><strong>{{ item.relation_state === 'unresolved' ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
+        <DashboardPagination automatic :active="panelOpen" :scope="paginationScope()" @pause="pausePages" :compact="isOwnerDetail" :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
       </template>
-      <p v-else-if="isOpenItem">这笔业务暂无相关收付记录。</p>
+      <p v-else-if="isOwnerDetail">这笔业务暂无相关收付记录。</p>
     </section>
   </details>
 </template>
@@ -257,6 +344,9 @@ h3 { font-size: 15px; }
 h4 { font-size: 12px; }
 p { color: var(--muted); font-size: 12px; line-height: 1.7; }
 .business-state { flex: none; max-width: 100%; padding: 4px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 750; }
+.business-state.settled { background: var(--accent-soft); color: var(--accent); }
+.business-state.pending { background: var(--warning-soft); color: var(--warning); }
+.compact-status-panel .business-state.attention { border: 1px solid var(--warning); }
 .business-state.attention { background: var(--warning-soft); color: var(--warning); }
 .business-state.withdrawn { background: var(--surface); color: var(--muted); }
 .checking { padding: 9px; border-left: 3px solid var(--warning); background: var(--warning-soft); }
@@ -267,6 +357,7 @@ dt { color: var(--muted); font-size: 11px; }
 dd { margin: 3px 0 0; font-size: 15px; font-weight: 750; overflow-wrap: anywhere; }
 ul { margin: 0; padding: 0; list-style: none; }
 li { display: flex; gap: 12px; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+li:last-child { border-bottom: 0; }
 li span { color: var(--muted); }
 button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .compact-status-details { display: contents; }
@@ -275,14 +366,17 @@ button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; b
 .compact-status-details:not([open]) > :not(summary) { display: none; }
 .compact-status-panel { grid-column: 1 / -1; }
 .owner-item-heading { min-width: 0; display: grid; gap: 4px; }
+.owner-activity-obligations { display: grid; gap: 16px; }
+.owner-activity-obligation { display: grid; min-width: 0; gap: 8px; }
 .owner-item-description { display: grid; gap: 3px; }
 .owner-item-progress { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 20px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .owner-item-balance { min-width: 0; display: grid; gap: 5px; }
 .owner-item-balance > span, .owner-item-latest span { color: var(--muted); font-size: 12px; }
 .owner-item-balance > strong { font-size: 26px; font-weight: 800; }
 .owner-item-amounts { align-content: center; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
-.owner-item-latest { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); }
+.owner-item-latest { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-left: 3px solid var(--line); background: var(--surface); }
 .owner-item-latest > div { min-width: 0; display: grid; gap: 4px; }
+.owner-item-latest .business-state { justify-self: start; }
 .owner-item-latest strong { font-size: 18px; }
 @media (max-width: 720px) {
   .owner-item-progress { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; }

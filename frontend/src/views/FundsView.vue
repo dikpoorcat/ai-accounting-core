@@ -368,6 +368,11 @@ async function loadMore(kind: PageKind) {
   finally { if (isPageCurrent(kind, generation, selection) && pageRequests.get(kind) === request) { pageRequests.delete(kind); state.loading = false; } }
 }
 
+function paginationScope(kind: PageKind) { return JSON.stringify([pageSelectionKey(kind), snapshotVersion.value, requestGeneration]); }
+function pausePages(kind: PageKind, scope: string) {
+  if (scope !== paginationScope(kind)) return;
+  pageRequests.get(kind)?.abort(); pageRequests.delete(kind); pageStates.value[kind].loading = false;
+}
 function changePeriod(value: string) {
   void router.push({ query: { company_id: route.query.company_id, period: value || undefined } });
 }
@@ -846,7 +851,7 @@ onBeforeUnmount(() => {
             </article>
           </div>
           <p v-else class="empty">本月暂无已入账的公司资金账户。</p>
-          <DashboardPagination compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
+          <DashboardPagination automatic :active="!loading && ['fund-accounts', 'funds-attention', 'bank-details'].includes(activeSection)" :scope="paginationScope('accounts')" @pause="pausePages('accounts', $event)" compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
         </section>
 
         <section v-if="investmentProducts.length" id="fund-investments"
@@ -868,7 +873,7 @@ onBeforeUnmount(() => {
                 <td class="number">{{ formatFen(item.investment_income_fen) }}</td>
               </tr></tbody></table>
           </div>
-          <DashboardPagination compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="investmentProducts.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
+          <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment_products')" @pause="pausePages('investment_products', $event)" compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="investmentProducts.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
           <details class="investment-details">
           <summary>查看申购、赎回与收付款明细</summary>
           <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
@@ -901,7 +906,7 @@ onBeforeUnmount(() => {
               </tr></tbody></table>
           </div>
           <p v-else class="empty">{{ loading ? "正在读取基金明细…" : "本月没有已确认的申赎或实际收付款。" }}</p>
-          <DashboardPagination compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="investmentEvents.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
+          <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment')" @pause="pausePages('investment', $event)" compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="investmentEvents.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
           </details>
         </section>
 
@@ -948,7 +953,7 @@ onBeforeUnmount(() => {
                   </option>
                 </select>
               </label>
-              <button v-if="selectedDetailView === 'bank' && funds.collections.accounts?.page.has_more" class="control" :disabled="pageStates.accounts.loading" @click="loadMore('accounts')">{{ pageStates.accounts.loading ? '正在加载账户…' : pageStates.accounts.error ? '重试加载账户' : '继续加载账户选项' }}</button>
+              <button v-if="selectedDetailView === 'bank' && pageStates.accounts.error" class="control" @click="loadMore('accounts')">重试加载账户</button>
               <span v-if="selectedDetailView === 'bank' && pageStates.accounts.error" role="alert">{{ pageStates.accounts.error }}</span>
               <div class="view-switch" role="tablist" aria-label="选择资金明细口径">
                 <button
@@ -1006,11 +1011,9 @@ onBeforeUnmount(() => {
                   </span>
                   <b>{{ account.movementCount === null ? `${visibleMovementCount} 笔` : `${account.movementCount} 笔` }}</b>
                 </button>
-                <div v-if="funds.collections.accounts?.page.has_more || pageStates.accounts.error" class="fund-account-more">
-                  <button type="button" :disabled="pageStates.accounts.loading" @click="loadMore('accounts')">
-                    {{ pageStates.accounts.loading ? '正在加载账户…' : pageStates.accounts.error ? '重试加载账户' : '继续加载账户选项' }}
-                  </button>
-                  <span v-if="pageStates.accounts.error" role="alert">{{ pageStates.accounts.error }}</span>
+                <div v-if="pageStates.accounts.error" class="fund-account-more">
+                  <button type="button" :disabled="pageStates.accounts.loading" @click="loadMore('accounts')">重试加载账户</button>
+                  <span role="alert">{{ pageStates.accounts.error }}</span>
                 </div>
               </nav>
 
@@ -1035,7 +1038,7 @@ onBeforeUnmount(() => {
               </ol>
             </div>
             <p v-else class="empty">{{ loading || pageStates.book.loading ? "正在读取资金明细…" : selectedAccount ? "该账户本月没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
-            <DashboardPagination compact item-label="笔变动" :page="!movements.length && (pageStates.book.loading || pageStates.book.error) ? undefined : funds.collections.movements?.page" :loaded="movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
+            <DashboardPagination automatic :active="!loading && activeSection === 'bank-details' && selectedDetailView === 'book'" :scope="paginationScope('book')" @pause="pausePages('book', $event)" compact item-label="笔变动" :page="!movements.length && (pageStates.book.loading || pageStates.book.error) ? undefined : funds.collections.movements?.page" :loaded="movements.length" :loading="pageStates.book.loading" :error="pageStates.book.error" @more="loadMore('book')" @retry="loadMore('book')" />
               </div>
             </div>
           </div>
@@ -1116,7 +1119,7 @@ onBeforeUnmount(() => {
             </div>
             <p v-else class="empty">{{ loading || pageStates.bank.loading ? "正在读取银行流水…" : selectedBankAccount ? "该账户本月没有已提供的银行流水。" : "本月没有已提供的银行流水。" }}</p>
             <button v-if="!visibleBankRows.length && selectedBankAccount" class="control" @click="selectedBankAccount = ''">清除账户筛选</button>
-            <DashboardPagination compact item-label="笔流水" :page="!bankRows.length && (pageStates.bank.loading || pageStates.bank.error) ? undefined : funds.collections.statements?.page" :loaded="bankRows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
+            <DashboardPagination automatic :active="!loading && activeSection === 'bank-details' && selectedDetailView === 'bank'" :scope="paginationScope('bank')" @pause="pausePages('bank', $event)" compact item-label="笔流水" :page="!bankRows.length && (pageStates.bank.loading || pageStates.bank.error) ? undefined : funds.collections.statements?.page" :loaded="bankRows.length" :loading="pageStates.bank.loading" :error="pageStates.bank.error" @more="loadMore('bank')" @retry="loadMore('bank')" />
           </div>
           </div>
         </section>

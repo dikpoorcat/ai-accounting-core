@@ -192,3 +192,28 @@ test("owner business contract rejects retired event source and file collections"
     assert.equal(validateDashboardBusinessStatusResponse(response), false, section);
   }
 });
+
+test("activity occurrence and snapshot changes abort stale requests without automatic reload", async () => {
+  for (const field of ["company", "period", "snapshotVersion", "activityKey"]) {
+    const view = await harness("BusinessStatusDetails", "data, load, panelOpen, error", { presentation: "brief", expanded: true, activityContext: { key: "original-event" } });
+    try {
+      assert.equal(view.calls.length, 1);
+      if (field === "company") view.route.query.company_id = "other-company";
+      else if (field === "activityKey") view.props.activityContext.key = "different-event";
+      else view.props[field] += "-changed";
+      view.props.expanded = false;
+      assert.equal(view.calls[0].args[2].aborted, true);
+      view.calls[0].resolve(statusResult()); await Promise.resolve(); await Vue.nextTick();
+      assert.equal(view.data.value, null); assert.equal(view.calls.length, 1);
+      view.props.expanded = true; await Vue.nextTick();
+      assert.equal(view.calls.length, 2);
+      view.calls[1].reject(new Error("详情读取失败")); await Promise.resolve(); await Vue.nextTick();
+      assert.equal(view.error.value, "详情读取失败");
+      const retry = view.load();
+      assert.equal(view.calls.length, 3);
+      view.calls[2].resolve(statusResult()); await retry;
+      view.props.expanded = false; await Vue.nextTick(); view.props.expanded = true; await Vue.nextTick();
+      assert.equal(view.calls.length, 3);
+    } finally { view.unmount(); }
+  }
+});

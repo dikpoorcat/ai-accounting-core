@@ -57,7 +57,7 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 12
+    assert response["schema_version"] == 13
     assert data["month_state"] == "open"
     assert data["owner_review_request"] is None
     assert data["activity_count"] == 31

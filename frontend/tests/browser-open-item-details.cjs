@@ -41,7 +41,7 @@ async function run(config) {
     assert(selected, "real book has no selectable business row");
     const index = brief.data.collections.open_items.items.filter(item => item.category_key === category.key).indexOf(selected);
     const row = page.locator("#open-items .open-event-row").nth(index);
-    const trigger = row.locator("summary"), panel = row.locator(".business-detail-panel");
+    const trigger = row, panel = row.locator(".business-detail-panel");
     const detailReply = reply("business-status"); await trigger.focus(); await trigger.press("Enter");
     phase = "real detail";
     const response = await detailReply, realDetail = await response.json();
@@ -49,11 +49,11 @@ async function run(config) {
     await panel.waitFor();
     const exact = realDetail.data.settlements.obligations.find(item => item.key === selected.id);
     assert(exact, "real detail cannot locate selected obligation");
-    assert.equal((await panel.locator(".owner-item-balance > strong").textContent()).trim(), format(exact.remaining_fen));
-    const requestCount = requests.length;
+    assert.equal((await row.locator(".open-event-money b").textContent()).trim(), format(selected.outstanding_fen));
+    const requestCount = requests.filter(url => url.pathname.endsWith("business-status")).length;
     await trigger.press("Space"); await panel.waitFor({ state: "hidden" });
     await trigger.press("Enter"); await panel.waitFor(); await frames();
-    assert.equal(requests.length, requestCount, "same snapshot re-expansion requested data");
+    assert.equal(requests.filter(url => url.pathname.endsWith("business-status")).length, requestCount, "same snapshot re-expansion requested data");
     const realLayouts = [];
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 }); await frames();
@@ -61,7 +61,7 @@ async function run(config) {
       assert(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1), `real detail overflows at ${width}`);
       realLayouts.push(width);
     }
-    await trigger.click(); await panel.waitFor({ state: "hidden" });
+    await trigger.click({ position: { x: 12, y: 12 } }); await panel.waitFor({ state: "hidden" });
     const countBeforeRefresh = requests.filter(url => url.pathname.endsWith("business-status")).length;
     phase = "real refresh";
     const refreshed = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await refreshed;
@@ -72,7 +72,7 @@ async function run(config) {
     const synthetic = structuredClone(brief), detail = structuredClone(realDetail);
     const key = "synthetic-net", subject = "synthetic-payroll";
     const later = config.period === "2026-12" ? "2027-01" : `${config.period.slice(0, 4)}-${String(Number(config.period.slice(5)) + 1).padStart(2, "0")}`;
-    const source = { key, name: "net", source_period: config.period, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
+    const source = { key, name: "net", direction: "payable", category_key: "payroll_payables", source_period: config.period, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
     synthetic.data.open_items = { ...synthetic.data.open_items, receivable_count: 0, receivable_fen: "0", payable_count: 1, payable_fen: "200000", total_count: 1, complete: true, cutoff_period: config.period, current_cutoff_period: later, categories: [{ key: "payroll_payables", label: "待付工资、社保与个税", direction: "payable", unit: "笔", count: 1, loaded_count: 1, outstanding_fen: "200000" }] };
     synthetic.data.collections.open_items = { items: [{ id: key, category_key: "payroll_payables", party: "演示员工张某（长名称换行测试）", description: "本月工资及已记录的业务用途", status: "partial", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", outstanding_fen: "200000", current_status: "settled", current_outstanding_fen: "0", subject_id: subject }], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
     detail.data.identity.subject_id = subject; detail.data.identity.kind = "payroll"; detail.data.latest_source.deleted = false;
@@ -82,7 +82,7 @@ async function run(config) {
     const event = n => ({ id: `synthetic-${n}`, subject_id: `synthetic-payment-${n}`, source_subject_id: subject, posting_period: config.period, direction: n === 4 ? -1 : 1, signed_amount_fen: n === 4 ? "-10000" : "10000", relation_state: "resolved", kind: "payment", name: n % 2 ? "tax" : "net", mode: ["payment", "offset", "advance", "accepted"][n % 4] });
     detail.data.collections.settlement_events = { items: Array.from({ length: 20 }, (_, n) => event(n)), page: { total_count: 21, filtered_count: 21, returned_count: 20, has_more: true, next_cursor: "synthetic-next" }, scope_period: config.period, current_cutoff_period: later, cutoff_semantics: "current_published_relations_independent_of_as_of" };
     assert(validateDashboardBriefResponse(synthetic), "synthetic brief contract failed"); assert(validateDashboardBusinessStatusResponse(detail), "synthetic detail contract failed");
-    let continuationAttempts = 0;
+    let initialAttempts = 0, continuationAttempts = 0, delayed = false, pendingRoute, releasePending, pendingRead;
     phase = "synthetic refresh";
     await page.route("**/api/dashboard/brief?*", route => route.fulfill({ json: synthetic }));
     await page.route("**/api/dashboard/business-status?*", async route => {
@@ -96,33 +96,83 @@ async function run(config) {
         next.data.collections.settlement_events.page = { total_count: 21, filtered_count: 21, returned_count: 1, has_more: false, next_cursor: null };
         return route.fulfill({ json: next });
       }
+      initialAttempts++;
+      if (initialAttempts === 1) return route.fulfill({ status: 500, json: { code: "synthetic_initial", message: "合成首次读取失败，请重试" } });
+      if (delayed) { pendingRoute = route; pendingRead(); const stale = structuredClone(detail); await new Promise(resolve => releasePending = resolve); try { await route.fulfill({ json: stale }); } catch { /* Canceled read. */ } return; }
       return route.fulfill({ json: detail });
     });
     const mockRefresh = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await mockRefresh;
     await page.locator("#open-items .open-event-copy strong").filter({ hasText: "演示员工" }).waitFor();
     const mockRow = page.locator("#open-items .open-event-row").first(), mockPanel = mockRow.locator(".business-detail-panel");
     phase = "synthetic detail";
-    await mockRow.locator("summary").click(); await mockPanel.waitFor();
-    assert.equal((await mockPanel.locator(".owner-item-balance > strong").textContent()).trim(), "¥2,000.00");
+    const beforeExpand = requests.filter(url => url.pathname.endsWith("business-status")).length;
+    await mockRow.click({ position: { x: 12, y: 12 } });
+    await mockRow.getByRole("button", { name: "重新读取", exact: true }).waitFor();
+    assert.equal((await mockRow.locator(".open-event-money b").textContent()).trim(), "¥2,000.00");
+    await mockRow.getByRole("button", { name: "重新读取", exact: true }).click(); await mockPanel.waitFor();
+    await mockPanel.getByRole("button", { name: "重试读取", exact: true }).waitFor();
+    assert.equal(requests.filter(url => url.pathname.endsWith("business-status")).length, beforeExpand + 3);
+    assert.equal(await mockRow.getAttribute("aria-expanded"), "true");
+    assert.equal((await mockRow.locator(".open-event-money b").textContent()).trim(), "¥2,000.00");
     assert.equal((await mockPanel.locator(".owner-item-latest strong").textContent()).trim(), "¥0.00");
+    assert.equal(await mockPanel.locator(".owner-item-progress").count(), 0);
+    assert.equal((await mockPanel.locator(".owner-item-amounts dd").first().textContent()).trim(), "¥8,000.00");
+    assert(!(await mockPanel.textContent()).includes("演示员工"));
+    assert.equal(await mockRow.locator("summary:visible").count(), 0);
     const syntheticLayouts = [];
     phase = "synthetic layouts";
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 }); await frames();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `synthetic page overflows at ${width}`);
       assert(await mockPanel.evaluate(element => element.scrollWidth <= element.clientWidth + 1), `synthetic detail overflows at ${width}`);
-      if (config.screenshot_directory) { fs.mkdirSync(config.screenshot_directory, { recursive: true }); await mockPanel.screenshot({ path: path.join(config.screenshot_directory, `detail-${width}.png`), style: "body * { visibility: hidden !important; } .business-detail-panel, .business-detail-panel * { visibility: visible !important; }" }); }
-      syntheticLayouts.push(width);
+      if (config.screenshot_directory) { fs.mkdirSync(config.screenshot_directory, { recursive: true }); await mockPanel.screenshot({ path: path.join(config.screenshot_directory, `detail-${theme}-${width}.png`), style: "body * { visibility: hidden !important; } .business-detail-panel, .business-detail-panel * { visibility: visible !important; }" }); }
+      syntheticLayouts.push({ theme, width });
+      assert(await mockRow.locator(".status").evaluate(element => {
+        const probe = document.createElement("span"); probe.style.color = "var(--brief-green)"; element.append(probe);
+        const ok = getComputedStyle(element).color === getComputedStyle(probe).color; probe.remove(); return ok;
+      }));
     }
-    await mockPanel.getByRole("button", { name: "加载更多", exact: true }).click();
+    }
+    assert.equal(await mockPanel.getByRole("button", { name: "加载更多", exact: true }).count(), 0);
     phase = "synthetic continuation";
     await mockPanel.getByRole("button", { name: "重试读取", exact: true }).waitFor();
     assert.equal(await mockPanel.locator("ul > li").count(), 20);
     await mockPanel.getByRole("button", { name: "重试读取", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll("#open-items .business-detail-panel ul > li").length === 21);
     assert.equal(continuationAttempts, 2);
+    assert.equal(await mockRow.getAttribute("aria-expanded"), "true");
+    assert(!(await mockPanel.textContent()).includes("本次筛选已全部加载"));
+    assert.equal(await mockPanel.locator("ul > li").last().evaluate(element => getComputedStyle(element).borderBottomWidth), "0px");
+    const cached = requests.length;
+    await mockRow.focus(); await mockRow.press("Space"); await mockPanel.waitFor({ state: "hidden" });
+    await mockRow.press("Enter"); await mockPanel.waitFor(); await frames(); assert.equal(requests.length, cached);
+    phase = "status colors";
+    for (const [status, token] of [["partial", "--brief-amber"], ["open", "--brief-amber"], ["settled", "--brief-green"], [null, "--brief-muted"]]) {
+      synthetic.data.collections.open_items.items[0].current_status = status;
+      const pending = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await pending; await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames();
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+        assert(await mockRow.locator(".status").evaluate((element, token) => {
+          const probe = document.createElement("span"); probe.style.color = `var(${token})`; element.append(probe);
+          const ok = getComputedStyle(element).color === getComputedStyle(probe).color; probe.remove(); return ok;
+        }, token), `status ${status}/${theme}`);
+      }
+    }
+    phase = "late open-item response";
+    synthetic.data.collections.open_items.items[0].id = "synthetic-next-selection";
+    const changedRow = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await changedRow; await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames();
+    const readStarted = new Promise(resolve => pendingRead = resolve);
+    delayed = true; await mockRow.focus(); await mockRow.press("Enter");
+    await mockRow.locator(".business-detail-state").filter({ hasText: "正在读取" }).waitFor();
+    await readStarted; assert(pendingRoute);
+    synthetic.snapshot_version = "synthetic-changed-snapshot";
+    const changedSnapshot = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await changedSnapshot; await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames();
+    const canceledCount = requests.length; releasePending(); await frames();
+    assert.equal(await mockRow.getAttribute("aria-expanded"), "false"); assert.equal(await mockPanel.count(), 0); assert.equal(requests.length, canceledCount);
     assert.equal(failures.length, 0);
-    return { status: "passed", real_layouts: realLayouts, synthetic_layouts: syntheticLayouts, exact_obligation: true, keyboard: true, same_snapshot_reuse: true, refresh_without_details: true, continuation_retry: true, related_records: 21, browser_errors: failures.length };
+    return { status: "passed", real_layouts: realLayouts, synthetic_layouts: syntheticLayouts, exact_obligation: true, keyboard: true, same_snapshot_reuse: true, refresh_without_details: true, continuation_retry: true, initial_retry: true, late_response: true, status_colors: true, related_records: 21, browser_errors: failures.length };
   } catch (error) { throw new Error(`${phase}: ${error.message}`); }
   finally { await browser.close(); }
 }

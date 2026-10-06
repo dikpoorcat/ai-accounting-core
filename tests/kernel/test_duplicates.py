@@ -1945,7 +1945,7 @@ def test_business_status_exposes_review_and_exact_registered_entity(company):
         request_id="save-status",
     )
     response = Dashboard(engine).business_status("2026-01", "expense-status")
-    assert response["schema_version"] == 6
+    assert response["schema_version"] == 7
     assert {"duplicate_checks", "identity_corrections", "entity_references"}.isdisjoint(
         response["data"]
     )

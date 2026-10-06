@@ -133,7 +133,7 @@ async function briefHarness() {
   const brief = scope.run(() => module.instantiate());
   return { ...brief, calls, route, close() { unmount.forEach(callback => callback()); scope.stop(); } };
 }
-const briefResult = (monthState, request = null) => ({ selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request } });
+const briefResult = (monthState, request = null) => ({ selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request, collections: {} } });
 
 test("only an open month with a valid review locator shows a confirmation task", async () => {
   const h = await briefHarness();

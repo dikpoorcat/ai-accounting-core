@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import type { BriefOpenCategory, BriefOpenItem, BriefOpenItems } from "../../api/brief";
+import { useRoute } from "vue-router";
 import { fen, formatFen } from "../../utils/money";
 import { businessStateLabel } from "../../api/dashboardContracts";
 import BusinessStatusDetails from "../BusinessStatusDetails.vue";
@@ -16,6 +17,20 @@ const props = defineProps<{
   focusRequest?: number;
 }>();
 defineEmits<{ changed: [] }>();
+
+const route = useRoute();
+const expandedItemId = ref("");
+function toggleItem(item: BriefOpenItem, event: Event) {
+  if (!item.subject_id) return;
+  const target = event.target;
+  if (typeof Element !== "undefined" && target instanceof Element && target.closest("button, a, details, .business-status-details")) return;
+  expandedItemId.value = expandedItemId.value === item.id ? "" : item.id;
+}
+function itemKeydown(item: BriefOpenItem, event: KeyboardEvent) {
+  if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
+  if (!item.subject_id) return;
+  event.preventDefault(); toggleItem(item, event);
+}
 
 const isClosed = computed(() => props.periodStatus === "closed");
 const visibleCategories = computed(() => props.openItems.categories.filter((item) => item.count).map(category => ({
@@ -38,6 +53,13 @@ function categoryLabel(label: string) {
 }
 
 function openStateLabel(direction: "receivable" | "payable", item: BriefOpenItem) {
+  if (item.category_key === "supplier_advances") {
+    const status = item.current_status || item.status;
+    const prefix = item.current_status ? "当前" : isClosed.value ? "关账时" : "";
+    if (status === "settled") return `${prefix}已处理完毕`;
+    if (status === "partial") return `${prefix}部分冲抵或退回`;
+    if (status === "open") return `${prefix}待冲抵`;
+  }
   if (item.current_status === "open") return direction === "receivable" ? "当前待收" : "当前待付";
   if (item.current_status === "partial") {
     return direction === "receivable" ? "当前部分收回" : "当前部分支付";
@@ -55,7 +77,10 @@ function openStateLabel(direction: "receivable" | "payable", item: BriefOpenItem
 }
 
 function statusClass(item: BriefOpenItem) {
-  if (item.current_status === "settled") return "status-settled";
+  const status = item.current_status || item.status;
+  if (["withdrawn", "reversed"].includes(status)) return "status-historical";
+  if (status === "checking" || status === "over_settled") return "status-checking";
+  if (status === "settled") return "status-settled";
   if (!item.current_status && isClosed.value && (item.status === "partial" || item.status === "open")) {
     return "status-historical";
   }
@@ -65,29 +90,6 @@ function statusClass(item: BriefOpenItem) {
 function outstandingLabel(direction: "receivable" | "payable") {
   if (isClosed.value) return direction === "receivable" ? "应收" : "应付";
   return direction === "receivable" ? "待收" : "待付";
-}
-
-function settledLabel(direction: "receivable" | "payable") {
-  return direction === "receivable" ? "已收" : "已付";
-}
-
-function hasSettlementProgress(item: BriefOpenItem) {
-  return item.status === "partial" && (
-    (item.source_amount_fen !== null && item.source_amount_fen !== undefined)
-    || fen(item.paid_fen) !== 0n
-    || fen(item.other_settled_fen) !== 0n
-  );
-}
-
-function settlementProgress(item: BriefOpenItem, direction: "receivable" | "payable") {
-  if (!hasSettlementProgress(item)) return "";
-  const parts: string[] = [];
-  if (item.source_amount_fen !== null && item.source_amount_fen !== undefined) {
-    parts.push(`原金额 ${formatFen(item.source_amount_fen)}`);
-  }
-  if (fen(item.paid_fen) !== 0n) parts.push(`${settledLabel(direction)} ${formatFen(item.paid_fen)}`);
-  if (fen(item.other_settled_fen) !== 0n) parts.push(`抵销等 ${formatFen(item.other_settled_fen)}`);
-  return parts.join(" · ");
 }
 
 function categorySummary(category: BriefOpenCategory) {
@@ -140,6 +142,8 @@ watch(visibleCategories, (categories) => {
     selectedCategoryKey.value = categories[0]?.key || "";
   }
 }, { immediate: true });
+
+watch(() => [route.query.company_id, props.period, props.snapshotVersion, selectedCategoryKey.value], () => { expandedItemId.value = ""; }, { flush: "sync" });
 
 watch(() => props.focusRequest, (request, previous) => {
   if (request && request !== previous) void revealCurrentOutstanding();
@@ -195,37 +199,42 @@ onBeforeUnmount(() => {
 
       <section v-if="selectedCategory" :class="['open-detail', selectedCategory.direction]" :aria-label="`${categoryLabel(selectedCategory.label)}明细`" aria-live="polite">
         <div class="list-columns" aria-hidden="true">
-          <span>对象与事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span><span class="column-action">详情</span>
+          <span>对象与事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span>
         </div>
         <ul class="open-event-list" aria-label="待收待付明细">
           <li
             v-for="item in selectedCategory.items"
             :key="item.id"
-            :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id) }]"
+            :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id), expandable: !!item.subject_id }]"
+            :role="item.subject_id ? 'button' : undefined"
+            :tabindex="item.subject_id ? 0 : undefined"
+            :aria-expanded="item.subject_id ? expandedItemId === item.id : undefined"
+            :aria-label="item.subject_id ? `${item.party}，${expandedItemId === item.id ? '收起' : '展开'}业务详情` : undefined"
+            @click="toggleItem(item, $event)"
+            @keydown="itemKeydown(item, $event)"
           >
             <span class="open-event-copy">
-              <strong>{{ item.party }}</strong>
+              <strong>{{ item.party }}<span v-if="item.subject_id" class="row-chevron" :class="{ expanded: expandedItemId === item.id }" aria-hidden="true"></span></strong>
               <small v-if="item.description && item.description !== item.party">{{ item.description }}</small>
-              <small v-if="hasSettlementProgress(item)" class="settlement-progress">
-                {{ settlementProgress(item, selectedCategory.direction) }}
-              </small>
             </span>
             <span :class="['status', statusClass(item)]">{{ openStateLabel(selectedCategory.direction, item) }}</span>
             <span class="open-event-money">
               <small>{{ outstandingLabel(selectedCategory.direction) }}</small>
-              <b>{{ formatFen(item.outstanding_fen) }}</b>
+              <b>{{ item.outstanding_fen == null ? "待核对" : formatFen(item.outstanding_fen) }}</b>
             </span>
             <div v-if="item.subject_id" class="open-event-source">
               <BusinessStatusDetails
                 :subject-id="item.subject_id"
                 :period="period"
                 :snapshot-version="snapshotVersion"
-                summary-label="业务详情"
+                :expanded="expandedItemId === item.id"
+                hide-summary
+                @click.stop
+                @keydown.stop
                 presentation="brief"
                 :brief-context="{
                   obligationKey: item.id,
                   categoryKey: selectedCategory.key,
-                  categoryLabel: categoryLabel(selectedCategory.label),
                   cutoffPeriod: openItems.cutoff_period,
                   currentCutoffPeriod: openItems.current_cutoff_period,
                   status: item.status,
@@ -352,7 +361,7 @@ h3 {
 }
 
 .open-workbench {
-  --list-columns: minmax(110px, 1fr) 88px 144px 80px;
+  --list-columns: minmax(110px, 1fr) 106px 144px;
   display: grid;
   min-width: 0;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -493,8 +502,7 @@ h3 {
   font-size: 11px;
 }
 
-.column-money,
-.column-action {
+.column-money {
   text-align: right;
 }
 
@@ -520,6 +528,11 @@ h3 {
   background: transparent;
   transition: background 140ms ease;
 }
+
+.open-event-row.expandable { cursor: pointer; }
+.open-event-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 8px; }
+.row-chevron { display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 10px; border-right: 1.5px solid var(--brief-muted); border-bottom: 1.5px solid var(--brief-muted); transform: rotate(-45deg); }
+.row-chevron.expanded { transform: rotate(45deg); }
 
 .open-event-row > .status {
   justify-self: start;
@@ -556,9 +569,7 @@ h3 {
 
 .open-event-copy strong,
 .open-event-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .open-event-copy strong {
@@ -570,9 +581,6 @@ h3 {
   font-size: 11px;
 }
 
-.open-event-copy .settlement-progress {
-  color: var(--brief-text);
-}
 
 .open-event-money {
   display: grid;
@@ -617,11 +625,6 @@ h3 {
   display: contents;
 }
 
-.open-event-source :deep(.compact-status-trigger) {
-  grid-column: 4;
-  justify-self: end;
-}
-
 .open-event-source :deep(.compact-status-panel) {
   grid-column: 1 / -1;
 }
@@ -644,6 +647,8 @@ h3 {
   color: var(--brief-muted);
   font-weight: 600;
 }
+
+.status-checking { border: 1px solid var(--brief-amber); }
 
 .status-settled {
   background: var(--brief-green-soft);
@@ -691,12 +696,6 @@ h3 {
     grid-column: 1;
     justify-items: start;
     text-align: left;
-  }
-
-  .open-event-source :deep(.compact-status-trigger) {
-    grid-row: 2;
-    grid-column: 2;
-    justify-self: end;
   }
 }
 
@@ -766,14 +765,7 @@ h3 {
     text-align: left;
   }
 
-  .open-event-source :deep(.compact-status-trigger) {
-    grid-row: 3;
-    grid-column: 2;
-    justify-self: end;
-  }
-
   .open-event-source :deep(.compact-status-panel) {
-    grid-row: 4;
     grid-column: 1 / -1;
   }
 }

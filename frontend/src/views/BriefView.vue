@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { fetchDeferredBrief, type BriefQuery } from "../api/brief";
+import { fetchDeferredBrief, type BriefQuery, type BriefVoucher } from "../api/brief";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
@@ -19,6 +19,8 @@ import { fen, formatFen } from "../utils/money";
 const route = useRoute(), router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const response = shallowRef<Awaited<ReturnType<typeof fetchDeferredBrief>> | null>(null);
+const voucherPreviewIndex = shallowRef(new Map<string, BriefVoucher>());
+const focusedVoucherSelection = ref(0);
 const loading = ref(false), error = ref(""), updateNotice = ref("");
 type BriefSection = NonNullable<BriefQuery["section"]>;
 const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
@@ -50,10 +52,18 @@ const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections
 function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
+function indexVouchers(result: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
+  const index = new Map(voucherPreviewIndex.value);
+  for (const voucher of result.data?.collections.vouchers?.items ?? []) index.set(voucher.voucher_version_id, voucher);
+  const focused = result.data?.focused_voucher;
+  if (focused) index.set(focused.voucher_version_id, focused);
+  voucherPreviewIndex.value = index;
+}
 function invalidateRequests(keepContent = false) {
   requestGeneration += 1; controller?.abort(); controller = null;
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
+  voucherPreviewIndex.value = new Map(); focusedVoucherSelection.value = 0;
   if (!keepContent) response.value = null;
   showMonthlyReview.value = false; loading.value = keepContent;
 }
@@ -62,6 +72,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
+  voucherPreviewIndex.value = new Map(); focusedVoucherSelection.value = 0;
   const request = new AbortController(); controller = request;
   loading.value = true;
   if (!contextGate) response.value = null;
@@ -74,6 +85,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
     const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
     if (!isCurrent(generation, selection) || controller !== request) return;
     response.value = result;
+    indexVouchers(result);
     if (!result.data) request.abort();
     if (target) focusSection("activity");
   } catch (caught) {
@@ -104,6 +116,7 @@ async function loadMore(section: BriefSection) {
     } else {
       return false;
     }
+    indexVouchers(next);
     return true;
   } catch (caught) {
     if (!valid()) return false;
@@ -122,24 +135,19 @@ async function loadAllVouchers() {
     if (!await loadMore("vouchers")) return;
   }
 }
-async function openVoucher(voucherVersionId: string) {
+function paginationScope() { return JSON.stringify([selectionKey(), response.value?.snapshot_version, requestGeneration]); }
+function pausePages(section: BriefSection, scope: string) {
+  if (scope !== paginationScope()) return;
+  pageControllers.get(section)?.abort(); pageControllers.delete(section); sectionLoading.value[section] = false;
+}
+function openVoucher(voucherVersionId: string) {
   const current = response.value;
   if (!current?.data || !selectedPeriod.value) return;
-  const generation = requestGeneration, selection = selectionKey(), request = new AbortController();
-  pageControllers.get("vouchers")?.abort();
-  pageControllers.set("vouchers", request); sectionLoading.value.vouchers = true; sectionErrors.value.vouchers = "";
-  const valid = () => isCurrent(generation, selection) && pageControllers.get("vouchers") === request;
-  try {
-    const next = await fetchDeferredBrief(current.read_context.company_id, selectedPeriod.value, request.signal, current.snapshot_version, { section: "vouchers", voucher_version_id: voucherVersionId });
-    if (!valid() || !next.data || !response.value?.data) return;
-    const latest = response.value, before = latest.data;
-    if (!before) return;
-    response.value = { ...latest, data: { ...before, focused_voucher: next.data.focused_voucher, focused_activity: next.data.focused_activity } };
-  } catch (caught) {
-    if (!valid()) return;
-    if (isDashboardSnapshotChanged(caught)) await refreshChanged();
-    else sectionErrors.value.vouchers = dashboardErrorMessage(caught);
-  } finally { if (valid()) { sectionLoading.value.vouchers = false; pageControllers.delete("vouchers"); } }
+  const voucher = voucherPreviewIndex.value.get(voucherVersionId);
+  if (!voucher) { sectionErrors.value.vouchers = "未找到这项业务的对应凭证，请刷新后重新查看。"; return; }
+  sectionErrors.value.vouchers = "";
+  response.value = { ...current, data: { ...current.data, focused_voucher: voucher } };
+  focusedVoucherSelection.value += 1;
 }
 function refresh() { return refreshCurrent(true); }
 function refreshChanged() {
@@ -214,8 +222,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefFinancialOverview v-if="data.financial_position" id="financial-overview" class="section-anchor selectable-section" :funds="data.funds_overview" :position="data.financial_position" />
       </section>
       <section id="activity" class="section-anchor selectable-section" tabindex="-1">
-        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
-          <template #pagination><DashboardPagination compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
+        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
+          <template #pagination><DashboardPagination automatic :active="!loading && activeSection === 'activity'" :scope="paginationScope()" @pause="pausePages('activity', $event)" compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
         </BriefActivityWorkbench>
       </section>
       <section v-if="data.workforce_cost?.has_activity" id="workforce" class="section-anchor" tabindex="-1">
@@ -223,7 +231,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       </section>
       <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
         <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
-        <DashboardPagination compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
+        <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="项往来" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
       </section>
       <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
         <h2 id="tasks-title">老板待办</h2>

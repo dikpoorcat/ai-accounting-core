@@ -26,7 +26,7 @@ async function harness() {
       const dashboardErrorMessage = error => error.message;
       const isDashboardSnapshotChanged = () => false;
       ${source}
-      return { response, loading, sectionLoading, sectionErrors, loadData, loadMore, loadAllVouchers, openVoucher };
+      return { response, loading, sectionLoading, sectionErrors, loadData, loadMore, loadAllVouchers, openVoucher, indexVouchers, voucherPreviewIndex, focusedVoucherSelection, invalidateRequests };
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const module = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
   delete globalThis[key];
@@ -36,7 +36,7 @@ async function harness() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const rows = (start, count) => Array.from({ length: count }, (_, index) => ({ voucher_version_id: `v${start + index}` }));
 const response = (start, count, total = 45) => ({
-  schema_version: 12, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
+  schema_version: 13, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
   selected_period: { key: "2026-02" }, data: {
     month_state: "closed", owner_review_request: null,
     ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" } } : {}),
@@ -96,19 +96,74 @@ test("company changes cancel voucher paging and late replies cannot restore the 
   } finally { h.close(); }
 });
 
-test("opening a voucher outside the first page only replaces the focused record", async () => {
+test("opening loaded and focused vouchers is local, repeats focus, and never guesses missing matches", async () => {
   const h = await harness();
   try {
     h.response.value = response(0, 20);
     const firstCollection = h.response.value.data.collections.vouchers;
-    const target = h.openVoucher("v44");
+    h.response.value.data.focused_voucher = { voucher_version_id: "v44" };
+    h.indexVouchers(h.response.value);
+    h.openVoucher("v0");
+    assert.equal(h.response.value.data.focused_voucher.voucher_version_id, "v0");
+    h.openVoucher("v44");
     assert.equal(h.loading.value, false);
     assert.equal(h.response.value.data.collections.vouchers, firstCollection);
-    assert.deepEqual(h.calls[0].args[4], { section: "vouchers", voucher_version_id: "v44" });
-    const next = response(0, 20); next.data.focused_voucher = { voucher_version_id: "v44" };
-    h.calls[0].resolve(next); await target;
+    assert.equal(h.response.value.data.focused_voucher.voucher_version_id, "v44");
+    h.openVoucher("v44");
+    assert.equal(h.focusedVoucherSelection.value, 3);
+    assert.equal(h.calls.length, 0);
+    h.openVoucher("missing");
+    assert.match(h.sectionErrors.value.vouchers, /未找到.*对应凭证/);
     assert.equal(h.response.value.data.focused_voucher.voucher_version_id, "v44");
     assert.equal(h.response.value.data.collections.vouchers, firstCollection);
     assert.equal(h.route.query.voucher, undefined, "opening a local record must not trigger whole-page route loading");
+  } finally { h.close(); }
+});
+
+test("activity continuation previews its exact vouchers without advancing voucher paging", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(0, 20); h.indexVouchers(h.response.value);
+    h.response.value.data.collections.activity = { items: [{ key: "first" }], page: { has_more: true, next_cursor: "activity-next" } };
+    const voucherCollection = h.response.value.data.collections.vouchers;
+    const pending = h.loadMore("activity");
+    const page = response(40, 2);
+    page.data.collections.activity = { items: [{ key: "second", voucher_version_id: "v41" }], page: { has_more: false, next_cursor: null } };
+    h.calls[0].resolve(page); await pending;
+    assert.equal(h.response.value.data.collections.vouchers, voucherCollection);
+    assert.equal(h.voucherPreviewIndex.value.get("v41").voucher_version_id, "v41");
+    h.openVoucher("v41");
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.response.value.data.focused_voucher.voucher_version_id, "v41");
+  } finally { h.close(); }
+});
+
+test("refresh clears preview indexes even while retaining content and rejects late continuation", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(0, 20); h.indexVouchers(h.response.value);
+    const pending = h.loadMore("vouchers");
+    h.invalidateRequests(true);
+    assert.equal(h.response.value.data.collections.vouchers.items.length, 20);
+    assert.equal(h.voucherPreviewIndex.value.size, 0);
+    assert.equal(h.calls[0].args[2].aborted, true);
+    h.calls[0].resolve(response(20, 20)); await pending;
+    assert.equal(h.voucherPreviewIndex.value.size, 0);
+    const main = h.loadData("2026-02");
+    const fresh = response(0, 1); fresh.snapshot_version = "new-snapshot";
+    h.calls[1].resolve(fresh); await main;
+    assert.deepEqual([...h.voucherPreviewIndex.value.keys()], ["v0"]);
+  } finally { h.close(); }
+});
+
+test("an external voucher route is located in the first main request", async () => {
+  const h = await harness();
+  try {
+    h.route.query.voucher = "44"; await Vue.nextTick();
+    const pending = h.loadData("2026-02");
+    assert.deepEqual(h.calls[0].args[4], { voucher_number: 44 });
+    const fresh = response(0, 20); fresh.data.focused_voucher = { voucher_version_id: "v44" };
+    h.calls[0].resolve(fresh); await pending;
+    assert.equal(h.voucherPreviewIndex.value.has("v44"), true);
   } finally { h.close(); }
 });

@@ -14,7 +14,7 @@ def test_dashboard_current_and_frozen_wage_details_retain_monthly_plan_evidence(
     dashboard = Dashboard(company.engine)
 
     current_response = dashboard.business_status("2026-01", "january", as_of="2026-02-01")
-    assert current_response["schema_version"] == 6
+    assert current_response["schema_version"] == 7
     assert "payroll_confirmation" not in current_response["data"]["current_business_result"]
     current = BusinessQueries(company.engine).business_status(
         "january", "2026-01", as_of="2026-02-01"

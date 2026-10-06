@@ -80,6 +80,8 @@ test("owner history preserves business uncertainty and batch amounts without sou
       data.unestablished_count = 4;
       data.collections.assets.items = [];
       data.collections.assets.page = { total_count: 8, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null };
+      assert.doesNotMatch(visible(await render("Assets", "&asset_filter=active")), /完整总计 8 项 · 筛选总计 0 项/);
+      data.asset_filter = "active";
       const html = visible(await render("Assets", "&asset_filter=active"));
       assert.match(html, /全公司有 4 项资产资料尚未确认/);
       assert.match(html, /数量仅列已确认部分，不代表完整数量/);

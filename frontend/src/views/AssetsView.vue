@@ -291,6 +291,11 @@ async function loadMore(section: "assets" | "projects" = "assets") {
   } finally { if (isCurrent(generation, selection) && pageControllers.get(section) === request) { pageLoading.value[section] = false; pageControllers.delete(section); } }
 }
 
+function paginationScope() { return JSON.stringify([selectionKey(), response.value?.snapshot_version, requestGeneration]); }
+function pausePages(section: string, scope: string) {
+  if (scope !== paginationScope()) return;
+  pageControllers.get(section)?.abort(); pageControllers.delete(section); pageLoading.value[section] = false;
+}
 function isFixedAsset(item: EstablishedAssetItem): item is FixedAssetItem {
   return item.asset_type === "fixed";
 }
@@ -600,7 +605,7 @@ onBeforeUnmount(() => {
           <div class="section-heading">
             <div>
               <h2 id="asset-list-title" tabindex="-1">资产明细</h2>
-              <p class="list-caption"><strong>{{ data.unestablished_count ? "已确认" : "共" }} {{ data.registered_count }}</strong> 项资产 · {{ filterLabel }} <template v-if="!pageLoading.assets && !pageErrors.assets">· 已加载 {{ filteredItems.length }} 项</template></p>
+              <p class="list-caption"><strong>{{ data.unestablished_count ? "已确认" : "共" }} {{ data.registered_count }}</strong> 项资产 · {{ filterLabel }} <template v-if="collectionMatchesSelection('assets') && !pageLoading.assets && !pageErrors.assets">· 已加载 {{ filteredItems.length }} 项</template></p>
             </div>
             <div class="asset-toolbar">
               <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">当前筛选只显示资料已确认的资产；待确认项目会另行提示。</p>
@@ -613,9 +618,8 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="data.unestablished_count">另有 {{ data.unestablished_count }} 项资产资料尚未确认，暂不计入资产数量和金额。</p>
-          <p v-if="pageLoading.assets" class="note" role="status">正在读取所选资产…</p>
-          <p v-else-if="pageErrors.assets" class="note" role="alert">{{ pageErrors.assets }} <button type="button" @click="retryCollection('assets')">重新读取</button></p>
-          <div v-else-if="filteredItems.length" class="asset-grid">
+          <p v-if="pageLoading.assets && !collectionMatchesSelection('assets')" class="note" role="status">正在读取所选资产…</p>
+          <div v-if="collectionMatchesSelection('assets') && filteredItems.length" class="asset-grid">
             <template v-for="item in filteredItems" :key="item.asset_id">
             <article
               v-if="isUnestablishedAsset(item)"
@@ -689,22 +693,21 @@ onBeforeUnmount(() => {
             </article>
             </template>
           </div>
-          <div v-else class="empty-filter">{{ filter === 'all' ? '本月没有资产，项目投入另列。' : '当前筛选条件下没有资产。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
-          <DashboardPagination v-if="!pageLoading.assets && !pageErrors.assets" :page="data.collections.assets?.page" :loaded="filteredItems.length" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="loadMore()" />
+          <div v-else-if="!pageLoading.assets && !pageErrors.assets" class="empty-filter">{{ filter === 'all' ? '本月没有资产，项目投入另列。' : '当前筛选条件下没有资产。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
+          <DashboardPagination automatic :active="!loading && ['asset-list-title', 'asset-movements-title'].includes(activeSection)" :scope="paginationScope()" @pause="pausePages('assets', $event)" :page="collectionMatchesSelection('assets') ? data.collections.assets?.page : undefined" :loaded="collectionMatchesSelection('assets') ? filteredItems.length : 0" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="retryCollection('assets')" />
         </section>
 
         <section class="panel">
           <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
-          <p v-if="pageLoading.projects" class="note" role="status">正在读取所选项目…</p>
-          <p v-else-if="pageErrors.projects" class="note" role="alert">{{ pageErrors.projects }} <button type="button" @click="retryCollection('projects')">重新读取</button></p>
-          <p v-else-if="!projects.length" class="note">本月没有可展示的项目投入。</p>
-          <article v-for="project in pageLoading.projects || pageErrors.projects ? [] : projects" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card" data-section-focus>
+          <p v-if="pageLoading.projects && !collectionMatchesSelection('projects')" class="note" role="status">正在读取所选项目…</p>
+          <p v-else-if="collectionMatchesSelection('projects') && !projects.length && !pageErrors.projects" class="note">本月没有可展示的项目投入。</p>
+          <article v-for="project in collectionMatchesSelection('projects') ? projects : []" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card" data-section-focus>
             <div class="project-summary">
               <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>已投入成本 {{ formatFen(project.cost_fen) }}</small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
             </div>
           </article>
-          <DashboardPagination v-if="!pageLoading.projects && !pageErrors.projects" :page="data.collections.projects?.page" :loaded="projects.length" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="retryCollection('projects')" />
+          <DashboardPagination automatic :active="!loading && activeSection === 'asset-projects-title'" :scope="paginationScope()" @pause="pausePages('projects', $event)" :page="collectionMatchesSelection('projects') ? data.collections.projects?.page : undefined" :loaded="collectionMatchesSelection('projects') ? projects.length : 0" :loading="pageLoading.projects" :error="pageErrors.projects" @more="loadMore('projects')" @retry="retryCollection('projects')" />
         </section>
 
       </div>

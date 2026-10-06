@@ -31,9 +31,10 @@ from .response_types import (
     Version4,
     Version5,
     Version6,
+    Version7,
     Version9,
     Version10,
-    Version12,
+    Version13,
     WireFen,
 )
 
@@ -1293,7 +1294,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version12
+    schema_version: Version13
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -2079,6 +2080,12 @@ class OwnerScopedSettlementCollection(Collection[OwnerSettlementEvent]):
 class OwnerObligation(ResponseObject):
     key: str
     name: str
+    direction: Literal["receivable", "payable", "unknown"]
+    category_key: Literal[
+        "customer_receivables", "supplier_advances", "refundable_deposit_receivables",
+        "other_receivables", "supplier_payables", "employee_payables", "payroll_payables",
+        "labor_payables", "other_payables", "unknown",
+    ]
     source_period: Month | None
     source_amount_fen: WireFen | None
     paid_fen: WireFen | None
@@ -2173,7 +2180,7 @@ class BusinessStatusData(ResponseObject):
 
 
 class DashboardBusinessStatusResponse(ResponseObject):
-    schema_version: Version6
+    schema_version: Version7
     snapshot_version: str
     selected_period: DashboardPeriod
     read_semantics: ReadSemantics

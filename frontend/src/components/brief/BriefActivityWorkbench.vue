@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { BriefActivityGroup, BriefActivityRow, BriefVoucher } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
@@ -9,6 +9,7 @@ const props = defineProps<{
   groups: BriefActivityGroup[]; items: BriefActivityRow[]; activityCount: number;
   focusedActivity?: BriefActivityRow | null; period: string; snapshotVersion?: string | null;
   vouchers: BriefVoucher[]; voucherCount: number; focusedVoucher?: BriefVoucher | null;
+  voucherPreviewIndex?: ReadonlyMap<string, BriefVoucher>; focusedVoucherSelection?: number;
   vouchersLoading?: boolean; vouchersError?: string; vouchersHasMore?: boolean;
 }>();
 const emit = defineEmits<{ changed: []; moreVouchers: []; allVouchers: []; requestVoucher: [voucherVersionId: string] }>();
@@ -17,6 +18,50 @@ const mode = ref<"business" | "voucher">("business");
 const voucherDisplayMode = ref<"paged" | "all">("paged");
 const voucherPage = ref(1), pendingVoucherPage = ref<number | null>(null);
 const selectedVoucher = ref("");
+const expandedBusinessKey = ref(""), previewBusinessKey = ref(""), previewVoucherId = ref("");
+const previewPosition = ref({ offset: 0, arrowTop: "50%" });
+let previewPositionGeneration = 0;
+const vouchersByVersion = computed(() => props.voucherPreviewIndex ?? new Map([
+  ...props.vouchers.map(voucher => [voucher.voucher_version_id, voucher] as const),
+  ...(props.focusedVoucher ? [[props.focusedVoucher.voucher_version_id, props.focusedVoucher] as const] : []),
+]));
+const previewVoucher = computed(() => vouchersByVersion.value.get(previewVoucherId.value));
+function clearPreview(key?: string) {
+  if (key && previewBusinessKey.value !== key) return;
+  previewPositionGeneration += 1; previewPosition.value = { offset: 0, arrowTop: "50%" };
+  previewBusinessKey.value = ""; previewVoucherId.value = "";
+}
+async function showPreview(item: BriefActivityRow) {
+  if (typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches) return;
+  const generation = ++previewPositionGeneration;
+  const selection = JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, mode.value, activeGroup.value]);
+  const index = props.voucherPreviewIndex;
+  previewPosition.value = { offset: 0, arrowTop: "50%" };
+  previewBusinessKey.value = item.key; previewVoucherId.value = item.voucher_version_id ?? "";
+  await nextTick();
+  if (generation !== previewPositionGeneration || previewBusinessKey.value !== item.key || index !== props.voucherPreviewIndex
+    || selection !== JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, mode.value, activeGroup.value])
+    || typeof document === "undefined" || typeof window === "undefined") return;
+  const tooltip = document.getElementById("activity-voucher-preview"), button = tooltip?.previousElementSibling;
+  if (!tooltip || !button) return;
+  const bounds = tooltip.getBoundingClientRect(), anchor = button.getBoundingClientRect();
+  const top = Math.max(12, Math.min(bounds.top, window.innerHeight - 12 - bounds.height));
+  previewPosition.value = { offset: top - bounds.top, arrowTop: `${anchor.top + anchor.height / 2 - top}px` };
+}
+onBeforeUnmount(() => clearPreview());
+function toggleBusiness(item: BriefActivityRow, event: Event) {
+  const target = event.target;
+  if (typeof Element !== "undefined" && target instanceof Element && target.closest("button, a, details, .business-status-details")) return;
+  expandedBusinessKey.value = expandedBusinessKey.value === item.key ? "" : item.key;
+}
+function businessKeydown(item: BriefActivityRow, event: KeyboardEvent) {
+  if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault(); toggleBusiness(item, event);
+}
+function openBusinessVoucher(item: BriefActivityRow) {
+  clearPreview();
+  if (item.voucher_version_id) emit("requestVoucher", item.voucher_version_id);
+}
 const VOUCHER_PAGE_SIZE = 20;
 const voucherPageCount = computed(() => Math.max(1, Math.ceil(props.voucherCount / VOUCHER_PAGE_SIZE)));
 const visibleVouchers = computed(() => {
@@ -78,11 +123,14 @@ watch(() => props.vouchers.length, () => {
     voucherPage.value = target; pendingVoucherPage.value = null; selectedVoucher.value = "";
   }
 });
-watch(() => [props.period, props.snapshotVersion], () => {
+watch(() => [route.query.company_id, props.period, props.snapshotVersion], () => {
   mode.value = "business"; voucherDisplayMode.value = "paged";
   voucherPage.value = 1; pendingVoucherPage.value = null; selectedVoucher.value = "";
+  expandedBusinessKey.value = ""; clearPreview();
 });
-watch(() => props.focusedVoucher, async voucher => {
+watch(() => props.voucherPreviewIndex, () => clearPreview());
+watch(mode, () => clearPreview());
+watch(() => [props.focusedVoucher, props.focusedVoucherSelection] as const, async ([voucher]) => {
   if (!voucher) return;
   mode.value = "voucher"; selectedVoucher.value = voucher.voucher_version_id;
   const index = props.vouchers.findIndex(item => item.voucher_version_id === voucher.voucher_version_id);
@@ -96,6 +144,7 @@ const activeGroup = computed(() => props.groups.some(group => group.key === sele
 const availableItems = computed(() => props.focusedActivity && !props.items.some(item => item.key === props.focusedActivity?.key)
   ? [props.focusedActivity, ...props.items] : props.items);
 const visibleItems = computed(() => availableItems.value.filter(item => item.group === activeGroup.value));
+watch(activeGroup, () => { expandedBusinessKey.value = ""; clearPreview(); });
 watch(() => props.focusedActivity, async item => {
   if (!item) return;
   selectedGroup.value = item.group;
@@ -129,14 +178,23 @@ watch(() => props.focusedActivity, async item => {
         <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.event_count }} 项</b></button>
       </nav>
       <div class="detail">
-        <div class="list-columns" aria-hidden="true"><span>对象与事项</span><span>业务时间</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">详情</span></div>
+        <div class="list-columns" aria-hidden="true"><span>对象与事项</span><span>业务时间</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">凭证</span></div>
         <ul class="event-list">
-          <li v-for="item in visibleItems" :id="item.key === focusedActivity?.key ? 'selected-business' : undefined" :key="item.key" :class="['event-row', { highlighted: item.key === focusedActivity?.key }]">
-            <div class="event-copy"><strong>{{ item.party || item.title }}</strong><p>{{ item.description }}</p><button v-if="item.voucher_version_id" type="button" class="event-voucher-button" @click="$emit('requestVoucher', item.voucher_version_id)">查看对应凭证</button></div>
+          <li v-for="item in visibleItems" :id="item.key === focusedActivity?.key ? 'selected-business' : undefined" :key="item.key" :class="['event-row', { highlighted: item.key === focusedActivity?.key }]" role="button" tabindex="0" :aria-expanded="expandedBusinessKey === item.key" :aria-label="`${item.party || item.title}，${expandedBusinessKey === item.key ? '收起' : '展开'}业务详情`" @click="toggleBusiness(item, $event)" @keydown="businessKeydown(item, $event)">
+            <div class="event-copy"><strong>{{ item.party || item.title }}<span class="row-chevron" :class="{ expanded: expandedBusinessKey === item.key }" aria-hidden="true"></span></strong><p>{{ item.description }}</p></div>
             <small class="event-date">{{ item.date || item.recognition.period + ' · 按月确认' }}</small>
-            <span class="state">{{ item.state }}</span>
-            <span class="event-money"><small>{{ item.amount_label }}</small><b>{{ formatFen(item.amount_fen) }}</b></span>
-            <BusinessStatusDetails :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="业务详情" presentation="brief" @changed="$emit('changed')" />
+            <span :class="['state', { correction: item.state === '更正原业务' || item.state.includes('冲正') || item.state.includes('撤回') }]">{{ item.state }}</span>
+            <span class="event-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? "待核对" : formatFen(item.amount_fen) }}</b></span>
+            <span v-if="item.voucher_version_id" class="event-voucher-link" @mouseenter="showPreview(item)" @mouseleave="clearPreview(item.key)">
+              <button type="button" class="event-voucher-button" :disabled="!vouchersByVersion.has(item.voucher_version_id)" :aria-describedby="previewBusinessKey === item.key && previewVoucher ? 'activity-voucher-preview' : undefined" @focus="showPreview(item)" @blur="clearPreview(item.key)" @click.stop="openBusinessVoucher(item)">{{ vouchersByVersion.has(item.voucher_version_id) ? '凭证 ' + vouchersByVersion.get(item.voucher_version_id)?.number : '凭证未加载' }}</button>
+              <span v-if="previewBusinessKey === item.key && previewVoucher" id="activity-voucher-preview" class="event-voucher-preview" :class="{ correction: !!previewVoucher.reverses_version_id }" :style="{ '--preview-offset': `${previewPosition.offset}px`, '--preview-arrow-top': previewPosition.arrowTop }" role="tooltip">
+                <span class="voucher-preview-heading"><span><small>凭证 {{ previewVoucher.number }} · {{ voucherDate(previewVoucher) }}</small><strong>{{ previewVoucher.list_summary }}</strong></span><span class="voucher-preview-amount"><small>{{ previewVoucher.business_amount_label }}</small><b>{{ formatFen(previewVoucher.business_amount_fen) }}</b></span></span>
+                <span class="voucher-preview-lines"><span v-for="line in previewVoucher.lines" :key="line.line_number"><span>{{ line.account }}</span><strong>{{ fen(line.debit_fen) ? '借 ' + formatFen(line.debit_fen) : '贷 ' + formatFen(line.credit_fen) }}</strong></span></span>
+                <span class="voucher-preview-footer"><span :class="['state', { correction: !!previewVoucher.reverses_version_id }]">{{ previewVoucher.state }}</span><small>点击打开凭证详情</small></span>
+              </span>
+            </span>
+            <span v-else class="event-voucher-link">—</span>
+            <BusinessStatusDetails :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :activity-context="item" :expanded="expandedBusinessKey === item.key" hide-summary presentation="brief" @click.stop @keydown.stop @changed="$emit('changed')" />
           </li>
         </ul>
         <p v-if="!visibleItems.length" class="empty">当前已加载记录中没有此类业务。</p>
@@ -207,7 +265,9 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .event-list { margin: 0; padding: 0; list-style: none; }
 .event-row { position: relative; display: grid; min-width: 0; min-height: 76px; grid-template-columns: var(--list-columns); gap: 12px; align-items: center; padding: 14px 4px; transition: background 140ms ease; }
 .event-row + .event-row { border-top: 1px solid var(--line); }
-.event-row:hover, .event-row:focus-within { background: var(--surface-soft); }
+.event-row:hover, .event-row:focus-within { z-index: 4; background: var(--surface-soft); }
+.event-row { cursor: pointer; }
+.event-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 8px; }
 .event-copy { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }
 .event-copy strong { font-size: 14px; }
 .event-copy p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
@@ -217,8 +277,27 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .event-money small { color: var(--muted); font-size: 11px; }
 .event-money b { font-size: 14px; overflow-wrap: anywhere; }
 .event-row :deep(.compact-status-details) { display: contents; }
-.event-row :deep(.compact-status-trigger) { grid-column: 5; justify-self: end; }
 .event-row :deep(.compact-status-panel) { grid-column: 1 / -1; }
+.event-voucher-link { position: relative; min-width: 0; justify-self: end; font-size: 11px; color: var(--muted); }
+.event-voucher-button { min-height: 32px; padding: 0 9px; border-radius: 8px; font-weight: 750; white-space: nowrap; }
+.event-voucher-button:hover, .event-voucher-button:focus-visible { background: var(--accent-soft); }
+.event-voucher-button:disabled { color: var(--muted); cursor: default; }
+.event-voucher-preview { --preview-accent: var(--accent); position: absolute; top: 50%; right: calc(100% + 10px); z-index: 30; display: grid; width: min(380px, calc(100vw - 48px)); gap: 10px; padding: 13px; border: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); pointer-events: none; text-align: left; transform: translateY(calc(-50% + var(--preview-offset))); }
+.event-voucher-preview.correction { --preview-accent: var(--warning); }
+.event-voucher-preview::after { position: absolute; top: calc(var(--preview-arrow-top) - 5px); right: -6px; width: 10px; height: 10px; border-top: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); border-right: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); background: var(--surface); content: ""; transform: rotate(45deg); }
+.voucher-preview-heading, .voucher-preview-footer, .voucher-preview-lines > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.voucher-preview-heading > span { display: grid; min-width: 0; gap: 3px; }
+.voucher-preview-heading small, .voucher-preview-footer small { color: var(--muted); font-size: 10px; }
+.voucher-preview-heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.voucher-preview-amount { flex: none; text-align: right; }
+.voucher-preview-amount b { font-size: 14px; white-space: nowrap; }
+.voucher-preview-lines { display: grid; gap: 5px; padding: 8px 9px; border-radius: 8px; background: var(--surface-soft); }
+.voucher-preview-lines > span { align-items: flex-start; min-width: 0; color: var(--muted); font-size: 11px; }
+.voucher-preview-lines > span > span { min-width: 0; overflow-wrap: anywhere; }
+.voucher-preview-lines strong { flex: none; color: var(--text); font-size: 11px; white-space: nowrap; }
+.state.correction { background: var(--surface-soft); color: var(--muted); }
+.row-chevron { display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 10px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }
+.row-chevron.expanded { transform: rotate(45deg); }
 .highlighted, .event-row.highlighted:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); border-radius: 8px; }
 .empty { margin: 0; padding: 22px 4px; color: var(--muted); font-size: 13px; }
 @media (max-width: 1199px) {
@@ -233,10 +312,13 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
   .category-heading { width: 100%; }
   .index button { width: auto; max-width: 100%; min-height: 44px; padding: 9px 12px; }
   .list-columns { display: none; }
-  .event-row { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 14px 4px; }
+  .event-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 14px 4px; }
+  .event-copy { grid-column: 1 / -1; }
+  .event-date { grid-column: 1; grid-row: 2; }
+  .event-row > .state { grid-column: 2; grid-row: 2; justify-self: end; }
   .event-money { text-align: left; }
-  .event-row :deep(.compact-status-trigger) { grid-column: 1; justify-self: start; }
-  .event-row :deep(.compact-status-panel) { grid-column: 1; }
+  .event-voucher-link { grid-column: 2; grid-row: 3; }
+  .event-row :deep(.compact-status-panel) { grid-column: 1 / -1; }
 }
 .heading-controls {
   display: flex;
@@ -577,7 +659,8 @@ td:nth-child(2) > small {
 
 
 .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.event-voucher-button, .voucher-retry { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+.event-voucher-button { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
+.voucher-retry { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .voucher-row-amount { display: grid; min-width: 0; gap: 3px; white-space: normal; overflow-wrap: anywhere; }
 .voucher-row-amount small, .voucher-load-status { color: var(--muted); font-size: 12px; }
 .voucher-copy strong, .voucher-copy small, .voucher-reference small { white-space: normal; overflow-wrap: anywhere; }
@@ -598,6 +681,8 @@ tfoot th, tfoot td { border-top: 1px solid var(--line); }
   .voucher-row-amount { max-width: 130px; font-size: 13px; }
 }
 @media (max-width: 760px) {
+  .event-voucher-preview { display: none; }
+  .event-voucher-button { min-height: 44px; }
   .heading-controls { width: 100%; }
   .view-switch button { min-height: 44px; }
   .voucher-inline-detail { padding: 2px 11px 13px; }

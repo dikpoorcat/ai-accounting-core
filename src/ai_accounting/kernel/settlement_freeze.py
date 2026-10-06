@@ -1653,7 +1653,7 @@ def frozen_employee_net_summary(
     }
 
 
-def _category(category, account, source_kind) -> str:
+def obligation_category(category, account, source_kind) -> str:
     if category == "receivable":
         if account == "1122":
             return "customer_receivables"
@@ -1909,7 +1909,7 @@ def frozen_dashboard_open(
         unknown = unknown or bool(group[_G_UNKNOWN_COUNT])
         if not group[_G_OPEN_COUNT]:
             continue
-        label = _category(key[1], key[2], key[4])
+        label = obligation_category(key[1], key[2], key[4])
         item = categories.setdefault(label, {"count": 0, "amount": 0, "unknown": False})
         item["count"] += group[_G_OPEN_COUNT]
         item["amount"] = checked(item["amount"] + group[_G_OPEN_SUM])

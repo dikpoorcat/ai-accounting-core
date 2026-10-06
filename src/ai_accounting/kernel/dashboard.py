@@ -1884,7 +1884,7 @@ class Dashboard:
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 12}
+                return {**self._response(None, None), "schema_version": 13}
             self._check_page_version(snap, cursor, expected_version)
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
@@ -1892,7 +1892,7 @@ class Dashboard:
             after = decode_cursor(snap, "brief", section, cursor, {})
             if section in {None, "activity", "vouchers"}:
                 rows, page = snap.month_journal.page(
-                    after or 0, limit, include_lines=section != "activity"
+                    after or 0, limit, include_lines=True
                 )
             else:
                 rows, page = [], None
@@ -1938,7 +1938,7 @@ class Dashboard:
             collections = {}
             if section in {None, "activity"}:
                 collections["activity"] = {"items": activity, "page": page}
-            if section in {None, "vouchers"}:
+            if section in {None, "activity", "vouchers"}:
                 collections["vouchers"] = {
                     "items": [snap.owner_voucher(row) for row in rows], "page": page,
                 }
@@ -2022,7 +2022,7 @@ class Dashboard:
                 }
                 data["workforce_cost"] = _brief_workforce_cost(snap)
             return {**self._response(snap, seal_collections(snap, "brief", data, {})),
-                    "schema_version": 12}
+                    "schema_version": 13}
 
     def funds(
         self,
@@ -2321,7 +2321,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", projected, filters)
             )
-            response["schema_version"] = 6
+            response["schema_version"] = 7
             return response
 
     def quarterly_report(

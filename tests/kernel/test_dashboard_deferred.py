@@ -104,7 +104,7 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
     assert sum(line["debit"] for event in posted for line in event["lines"]) == 12000
     assert complete["data"]["collections"]["activity"]["items"][0]["subject_id"]
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 12
+    assert deferred["schema_version"] == complete["schema_version"] == 13
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
     assert_pending_checks(deferred)
@@ -288,7 +288,7 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 12
+    assert result["schema_version"] == 13
     assert result["read_context"]["company_id"] == "empty"
     assert result["read_context"]["database_id"] == "empty-db"
     assert result["data"] is None

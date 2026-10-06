@@ -104,9 +104,21 @@ def owner_tasks(snapshot):
 
 
 def obligation_view(item):
+    from .settlement_freeze import obligation_category
+
+    direction = item.get("category")
+    if direction not in {"receivable", "payable"}:
+        direction = "unknown"
+    category = (
+        "unknown" if direction == "unknown" else obligation_category(
+            direction, item.get("account"), (item.get("source_business") or {}).get("kind")
+        )
+    )
     return {
         "key": item["key"],
         "name": item["name"],
+        "direction": direction,
+        "category_key": category,
         "source_period": item.get("source_period"),
         "source_amount_fen": item.get("source_amount_fen"),
         "paid_fen": item.get("paid_fen"),

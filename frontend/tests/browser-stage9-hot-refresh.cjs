@@ -791,7 +791,11 @@ async function run(config) {
     const firstReplies = [response("context"), response("brief")];
     await page.goto(ticket.href);
     const firstNavigation = await navigationRendered(modules[0]);
-    for (const reply of await Promise.all(firstReplies)) await verifyReply(reply, modules[0]);
+    let firstBriefPayload;
+    for (const reply of await Promise.all(firstReplies)) {
+      const payload = await verifyReply(reply, modules[0]);
+      if (new URL(reply.url()).pathname === "/api/dashboard/brief") firstBriefPayload = payload;
+    }
     assertNoBrowserFailures();
     if (config.no_jobs_panel) {
       assert.equal(await page.getByRole("button", { name: "文件与处理进度", exact: true }).count(), 0);
@@ -804,6 +808,91 @@ async function run(config) {
       first_render_epoch_ms: firstNavigation.epoch_ms,
     };
     Object.assign(partialNavigation, navigationBase);
+    if (config.activity_interactions) {
+      const requests = [];
+      page.on("request", request => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith("/api/dashboard/")) requests.push(url);
+      });
+      const businessRows = page.locator("#activity .event-row");
+      assert(await businessRows.count(), "activity: no business row to inspect");
+      const row = businessRows.first();
+      const button = row.locator(".event-voucher-button");
+      const number = (await button.textContent()).trim().match(/^凭证 ([1-9][0-9]*)$/)?.[1];
+      assert(number, "activity: public voucher number missing");
+      const voucher = firstBriefPayload.data.collections.vouchers.items.find(item => item.number === number);
+      assert(voucher, "activity: displayed voucher is outside the authenticated page");
+      const tooltip = page.locator("#activity [role=tooltip]");
+      assert.equal(await tooltip.count(), 0, "activity: hidden voucher details eagerly mounted");
+      assert.equal(await row.locator(".business-detail-trigger:visible").count(), 0, "activity: duplicate business detail entry");
+      await button.hover();
+      await tooltip.waitFor({ state: "visible" });
+      assert.equal(await tooltip.count(), 1, "activity: multiple voucher popovers mounted");
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const previewBounds = await tooltip.boundingBox();
+      assert(previewBounds && previewBounds.y >= 11 && previewBounds.y + previewBounds.height <= page.viewportSize().height - 11,
+        "activity: voucher popover is clipped by the viewport");
+      assert.equal((await tooltip.locator(".voucher-preview-heading strong").textContent()).trim(), voucher.list_summary);
+      assert.equal((await tooltip.locator(".voucher-preview-amount b").textContent()).trim(), formatFen(voucher.business_amount_fen));
+      const lines = tooltip.locator(".voucher-preview-lines > span");
+      assert.equal(await lines.count(), voucher.lines.length);
+      for (let index = 0; index < voucher.lines.length; index++) {
+        const saved = voucher.lines[index];
+        assert.equal((await lines.nth(index).locator("span").textContent()).trim(), saved.account);
+        assert.equal((await lines.nth(index).locator("strong").textContent()).trim(),
+          BigInt(saved.debit_fen) ? `借 ${formatFen(saved.debit_fen)}` : `贷 ${formatFen(saved.credit_fen)}`);
+      }
+      if (config.screenshot_directory) {
+        fs.mkdirSync(config.screenshot_directory, { recursive: true });
+        await page.screenshot({ path: path.join(config.screenshot_directory, "activity-voucher-desktop.png") });
+      }
+      await page.mouse.move(0, 0);
+      await page.waitForFunction(() => !document.querySelector("#activity [role=tooltip]"));
+      await button.focus();
+      await tooltip.waitFor({ state: "visible" });
+      assert.deepEqual(requests, [], "activity: hover or focus fetched data");
+      await button.click();
+      await page.waitForFunction(() => document.querySelector(".view-switch button[aria-pressed=true]")?.textContent.trim() === "按凭证");
+      assert.equal(await page.locator("#activity .voucher-card.is-open .voucher-inline-detail").count(), 1);
+      assert.equal((await page.locator("#activity .voucher-card.is-open .voucher-reference strong").textContent()).trim(), `凭证 ${number}`);
+      assert.deepEqual(requests, [], "activity: loaded voucher click fetched data");
+      await page.getByRole("button", { name: "按业务", exact: true }).click();
+      const businessReply = page.waitForResponse(reply => new URL(reply.url()).pathname === "/api/dashboard/business-status");
+      await businessRows.first().locator(".event-copy").click();
+      const reply = await businessReply;
+      assert.equal(reply.status(), 200);
+      const payload = await reply.json();
+      const target = new URL(reply.url());
+      assert.equal(target.searchParams.get("company_id"), company.id);
+      assert.equal(target.searchParams.get("period"), company.period);
+      assert.equal(target.searchParams.get("expected_version"), firstBriefPayload.snapshot_version);
+      assert.equal(payload.schema_version, responseVersions.dashboard_business_status);
+      const panel = businessRows.first().locator(".business-detail-panel");
+      await panel.waitFor({ state: "visible" });
+      assert.equal(await businessRows.first().getAttribute("aria-expanded"), "true");
+      await panel.click({ position: { x: 12, y: 12 } });
+      assert.equal(await businessRows.first().getAttribute("aria-expanded"), "true", "activity: detail click collapsed its row");
+      await businessRows.first().locator(".event-copy").click();
+      assert.equal(await businessRows.first().getAttribute("aria-expanded"), "false");
+      await businessRows.first().focus();
+      await businessRows.first().press("Enter");
+      await panel.waitFor({ state: "visible" });
+      assert.equal(await businessRows.first().getAttribute("aria-expanded"), "true");
+      await businessRows.first().press("Space");
+      assert.equal(await businessRows.first().getAttribute("aria-expanded"), "false");
+      assert(requests.length && requests.every(url => url.pathname === "/api/dashboard/business-status"),
+        "activity: row expansion reloaded unrelated page data");
+      assert.equal(await page.locator(".module-header").getAttribute("aria-busy"), "false");
+      await page.setViewportSize({ width: 375, height: 812 });
+      await businessRows.first().locator(".event-voucher-button").click();
+      await page.waitForFunction(() => document.querySelector(".view-switch button[aria-pressed=true]")?.textContent.trim() === "按凭证");
+      assert.equal(await page.locator("#activity [role=tooltip]:visible").count(), 0);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "activity: mobile horizontal overflow");
+      if (config.screenshot_directory) await page.screenshot({ path: path.join(config.screenshot_directory, "activity-voucher-mobile.png") });
+      assertNoBrowserFailures();
+      return { status: "passed", activity_interactions: { hover: true, focus: true, local_voucher: true,
+        row_toggle: true, keyboard: true, mobile: true, requests: requests.length }, navigation: navigationBase };
+    }
     if (config.layout_only) {
       const layouts = [];
       // These interaction checks are outside every default/cold/refresh timing.
@@ -1044,7 +1133,8 @@ async function run(config) {
                 .locator(":scope > summary").click();
             }
             const reply = response("business-status");
-            await detail.locator("summary").click();
+            if (module.key === "brief") await detail.locator("xpath=ancestor::li[contains(@class,'event-row')]").locator(".event-copy").click();
+            else await detail.locator("summary").click();
             await verifyReply(await reply, module);
             await detail.locator(".business-detail-panel").waitFor();
             assert.equal(await detail.locator("[role=alert]").count(), 0, `${module.key}: business detail failed`);
@@ -1132,6 +1222,10 @@ async function run(config) {
       coldOpen[module.key] = (await navigationRendered(module)).elapsed_ms;
       partialNavigation.cold_open_ms = coldOpen;
       for (const reply of await Promise.all(expected)) await verifyReply(reply, module);
+      if (config.refresh_pages && !config.refresh_pages.includes(module.key)) {
+        delete result[module.key];
+        continue;
+      }
       for (let i = 0; i < warmups; i++) await measure(module);
       const timings = [];
       const resourceSamples = [];
@@ -1158,7 +1252,7 @@ async function run(config) {
     partialNavigation.company_switch = companySwitch;
     assertNoBrowserFailures();
     return {
-      status: Object.values(result).every(page => page.over_500_ms === 0) ? "passed" : "over_target",
+      status: Object.keys(result).length > 0 && Object.values(result).every(page => page.samples.length === samples && page.over_500_ms === 0) ? "passed" : "over_target",
       company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
     };
