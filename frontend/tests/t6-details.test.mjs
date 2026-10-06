@@ -121,6 +121,47 @@ test("inline business details read only on expansion and reject a late response 
   }
 });
 
+test("controlled row details load only on expansion and retain their response when collapsed", async () => {
+  const view = await harness("BusinessStatusDetails", "data, loading, panelOpen", { expanded: false, hideSummary: true });
+  try {
+    assert.equal(view.calls.length, 0);
+    view.props.expanded = true; await Vue.nextTick();
+    assert.equal(view.calls.length, 1);
+    view.calls[0].resolve(statusResult()); await Promise.resolve(); await Vue.nextTick();
+    assert.equal(view.panelOpen.value, true);
+    view.props.expanded = false; await Vue.nextTick();
+    assert.equal(view.panelOpen.value, false);
+    view.props.expanded = true; await Vue.nextTick();
+    assert.equal(view.calls.length, 1);
+    assert.equal(view.data.value.marker, "original-summary");
+  } finally { view.unmount(); }
+});
+
+test("open item scope changes close stale detail without automatically requesting another version", async () => {
+  for (const field of ["company", "period", "snapshotVersion", "obligationKey"]) {
+    const view = await harness("BusinessStatusDetails", "toggle, panelOpen, data", { presentation: "brief", briefContext: { obligationKey: "exact-pay" } });
+    try {
+      view.toggle({ target: { open: true } });
+      assert.equal(view.calls.length, 1);
+      if (field === "company") view.route.query.company_id = "another-company";
+      else if (field === "obligationKey") view.props.briefContext.obligationKey = "exact-tax";
+      else view.props[field] += "-changed";
+      assert.equal(view.calls[0].args[2].aborted, true);
+      assert.equal(view.panelOpen.value, false);
+      view.calls[0].resolve(statusResult()); await Promise.resolve(); await Vue.nextTick();
+      assert.equal(view.data.value, null);
+      assert.equal(view.calls.length, 1);
+      view.toggle({ target: { open: false } });
+      assert.equal(view.calls.length, 1);
+      view.toggle({ target: { open: true } });
+      assert.equal(view.calls.length, 2);
+      view.calls[1].resolve(statusResult()); await Promise.resolve(); await Vue.nextTick();
+      view.toggle({ target: { open: false } }); view.toggle({ target: { open: true } });
+      assert.equal(view.calls.length, 2);
+    } finally { view.unmount(); }
+  }
+});
+
 test("fund and employee rows bind explicit business identity, selected period and snapshot to lazy details", () => {
   for (const [name, subjects, period, version] of [
     ["Funds", ["item.subject_id"], "selectedPeriod", "snapshotVersion"],

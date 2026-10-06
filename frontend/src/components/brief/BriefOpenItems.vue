@@ -223,6 +223,12 @@ onBeforeUnmount(() => {
                 summary-label="业务详情"
                 presentation="brief"
                 :brief-context="{
+                  obligationKey: item.id,
+                  categoryKey: selectedCategory.key,
+                  categoryLabel: categoryLabel(selectedCategory.label),
+                  cutoffPeriod: openItems.cutoff_period,
+                  currentCutoffPeriod: openItems.current_cutoff_period,
+                  status: item.status,
                   direction: selectedCategory.direction,
                   party: item.party,
                   description: item.description,
