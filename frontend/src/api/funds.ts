@@ -6,6 +6,7 @@ import { validateDashboardFundsResponse } from "./generated/dashboardFunds.js";
 export type FundsDashboardResponse = DashboardFundsResponse;
 export type FundsData = DashboardFundsContract.FundsData;
 export type FundAccount = DashboardFundsContract.FundAccount;
+export type FundMovement = DashboardFundsContract.FundMovement;
 
 export interface FundsQuery {
   section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";

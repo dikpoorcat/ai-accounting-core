@@ -10,6 +10,7 @@ import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 import type { BriefActivityRow } from "../api/brief";
+import type { FundMovement } from "../api/funds";
 
 interface BriefStatusContext {
   obligationKey: string; categoryKey: string;
@@ -22,8 +23,9 @@ interface BriefStatusContext {
 const props = withDefaults(defineProps<{
   subjectId: string; period: string; snapshotVersion?: string | null;
   settlementView?: "historical" | "current"; summaryLabel?: string;
-  presentation?: "default" | "brief"; briefContext?: BriefStatusContext;
+  presentation?: "default" | "brief" | "funds"; briefContext?: BriefStatusContext;
   activityContext?: BriefActivityRow;
+  fundsContext?: FundMovement;
   expanded?: boolean; hideSummary?: boolean;
 }>(), { presentation: "default", expanded: undefined });
 const emit = defineEmits<{ changed: [] }>();
@@ -47,10 +49,17 @@ const collection = computed(() => data.value?.collections.settlement_events);
 const panelOpen = computed(() => props.expanded ?? openedPanel.value);
 const isOpenItem = computed(() => props.presentation === "brief" && Boolean(props.briefContext));
 const isActivity = computed(() => props.presentation === "brief" && Boolean(props.activityContext));
-const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value);
+const isFunds = computed(() => props.presentation === "funds" && Boolean(props.fundsContext));
+const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value);
+const fundsDescription = computed(() => {
+  const item = props.fundsContext;
+  return item?.display_summary && ![item.list_summary, item.type, item.party].includes(item.display_summary) ? item.display_summary : "";
+});
 const ownerPurposes = computed(() => {
   const context = props.activityContext || props.briefContext;
-  const rowTexts = [context?.party, context?.description, props.activityContext?.title];
+  const rowTexts = isFunds.value
+    ? [props.fundsContext?.party, props.fundsContext?.list_summary, props.fundsContext?.type, fundsDescription.value]
+    : [context?.party, context?.description, props.activityContext?.title];
   return purposes.value.filter(value => !rowTexts.includes(value));
 });
 type Obligation = BusinessStatusData["settlements"]["obligations"][number];
@@ -61,9 +70,15 @@ const activityObjects = computed(() => {
     { label: "往来方", profiles: profiles?.counterparties },
     { label: "相关资产", profiles: profiles?.assets },
     { label: "相关账户", profiles: profiles?.fund_accounts },
-  ].map(group => ({ label: group.label, names: [...new Set((group.profiles ?? []).map(item => item.values.display_name).filter((name): name is string => Boolean(name)))] }))
+  ].map(group => {
+    const members = (group.profiles ?? []).filter(item => !isFunds.value || group.label !== "相关账户" || item.entity_id !== props.fundsContext?.account_id);
+    const names = isFunds.value
+      ? [...new Map(members.map(item => [item.entity_id, item])).values()].flatMap(item => item.values.display_name ? [item.values.display_name] : [])
+      : [...new Set(members.map(item => item.values.display_name).filter((name): name is string => Boolean(name)))];
+    return { label: group.label, names };
+  })
     .filter(group => group.names.length)
-    .map((group, _, groups) => ({ ...group, names: group.names.filter(name => name !== props.activityContext?.party || groups.filter(other => other.names.includes(name)).length > 1) }))
+    .map((group, _, groups) => ({ ...group, names: group.names.filter(name => name !== (isFunds.value ? props.fundsContext?.party : props.activityContext?.party) || groups.filter(other => other.names.includes(name)).length > 1) }))
     .filter(group => group.names.length);
 });
 const activityFollowups = computed(() => {
@@ -164,7 +179,7 @@ function movementPurpose(name: string) {
   const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
 }
-function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key]); }
+function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, props.fundsContext?.id, props.fundsContext?.account_id]); }
 function invalidate() {
   generation += 1; controller?.abort(); pageController?.abort(); controller = null; pageController = null;
   data.value = null; loading.value = false; moreLoading.value = false; error.value = ""; moreError.value = ""; notice.value = ""; responseVersion.value = "";
@@ -221,18 +236,20 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
 </script>
 
 <template>
-  <details class="business-status-details" :class="{ 'compact-status-details': presentation === 'brief' }" :open="panelOpen" @toggle="toggle">
-    <summary class="business-detail-trigger" :class="{ 'compact-status-trigger': presentation === 'brief', 'hidden-summary': hideSummary }" :aria-hidden="hideSummary || undefined" :tabindex="hideSummary ? -1 : undefined"><span>{{ summaryLabel || '业务详情' }}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></summary>
-    <p v-if="notice" class="business-detail-state" :class="{ 'compact-status-panel': presentation === 'brief' }" role="status">{{ notice }}</p>
-    <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation === 'brief' }" role="status">正在读取业务详情…</p>
-    <p v-else-if="error" class="business-detail-state error" :class="{ 'compact-status-panel': presentation === 'brief' }" role="alert">{{ error }} <button type="button" @click="load">重新读取</button></p>
-    <section v-else-if="data" class="business-detail-panel" :class="{ 'compact-status-panel': presentation === 'brief' }">
-      <template v-if="isActivity">
-        <p v-if="data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+  <details class="business-status-details" :class="{ 'compact-status-details': presentation !== 'default' }" :open="panelOpen" @toggle="toggle">
+    <summary class="business-detail-trigger" :class="{ 'compact-status-trigger': presentation !== 'default', 'hidden-summary': hideSummary }" :aria-hidden="hideSummary || undefined" :tabindex="hideSummary ? -1 : undefined"><span>{{ summaryLabel || '业务详情' }}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></summary>
+    <p v-if="notice" class="business-detail-state" :class="{ 'compact-status-panel': presentation !== 'default' }" role="status">{{ notice }}</p>
+    <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation !== 'default' }" role="status">正在读取业务详情…</p>
+    <p v-else-if="error" class="business-detail-state error" :class="{ 'compact-status-panel': presentation !== 'default' }" role="alert">{{ error }} <button type="button" @click="load">重新读取</button></p>
+    <section v-else-if="data" class="business-detail-panel" :class="{ 'compact-status-panel': presentation !== 'default' }">
+      <template v-if="isActivity || isFunds">
+        <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
+        <p v-else-if="!isFunds && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+        <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
         <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
         <p v-for="group in activityObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         <template v-if="data.settlements.obligations.length">
-          <h4>整笔业务的款项进度 · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
+          <h4>{{ isFunds ? '款项进度' : '整笔业务的款项进度' }} · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
           <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
           <div class="owner-activity-obligations">
             <article v-for="item in data.settlements.obligations" :key="item.key" class="owner-activity-obligation">
@@ -295,12 +312,12 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       </template>
       </template>
       <template v-if="collection?.page.total_count">
-        <h4>{{ isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
+        <h4>{{ isFunds ? '相关款项处理' : isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
         <p v-if="isOwnerDetail">含本业务其他款项 · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
-        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}</span><strong>{{ item.relation_state === 'unresolved' ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
+        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}<template v-if="isFunds && item.relation_state === 'unresolved'"> · AI 会计核对中</template></span><strong>{{ item.relation_state === 'unresolved' && !isFunds ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
         <DashboardPagination automatic :active="panelOpen" :scope="paginationScope()" @pause="pausePages" :compact="isOwnerDetail" :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
       </template>
-      <p v-else-if="isOwnerDetail">这笔业务暂无相关收付记录。</p>
+      <p v-else-if="isOwnerDetail">{{ isFunds ? '这笔业务暂无相关款项处理记录。' : '这笔业务暂无相关收付记录。' }}</p>
     </section>
   </details>
 </template>
@@ -367,7 +384,7 @@ button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; b
 .compact-status-trigger { white-space: nowrap; }
 .compact-status-details::details-content { display: contents; }
 .compact-status-details:not([open]) > :not(summary) { display: none; }
-.compact-status-panel { grid-column: 1 / -1; }
+.compact-status-panel { grid-column: 1 / -1; cursor: default; }
 .owner-item-heading { min-width: 0; display: grid; gap: 4px; }
 .owner-activity-obligations { display: grid; gap: 16px; }
 .owner-activity-obligation { display: grid; min-width: 0; gap: 8px; }

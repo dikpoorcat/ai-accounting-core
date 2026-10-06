@@ -10,6 +10,7 @@ import {
   fundAccountLabel,
   rememberFundAccounts,
   type FundAccount,
+  type FundMovement,
   type FundsData,
   type FundsQuery,
 } from "../api/funds";
@@ -48,6 +49,7 @@ const pageRequests = new Map<PageKind, AbortController>();
 const selectedAccount = ref(routeAccount());
 const selectedBankAccount = ref(queryText("statement_account_id"));
 const selectedDetailView = ref<"book" | "bank">(queryText("funds_view") === "bank" ? "bank" : "book");
+const expandedMovementId = ref("");
 const funds = ref<FundsData | null>(null);
 const snapshotVersion = ref("");
 const selectedPeriodLabel = ref("");
@@ -205,6 +207,17 @@ function invalidateRequests(keepContent = false) {
 function selectMovementAccount(value: string) {
   if (selectedAccount.value === value) return;
   selectedAccount.value = value;
+}
+
+function toggleMovement(item: FundMovement, event?: Event) {
+  if (!item.subject_id || (event?.target instanceof Element && event.target.closest("button,a,details,.business-status-details"))) return;
+  expandedMovementId.value = expandedMovementId.value === item.id ? "" : item.id;
+}
+
+function handleMovementKey(item: FundMovement, event: KeyboardEvent) {
+  if (event.target !== event.currentTarget || !item.subject_id || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  toggleMovement(item);
 }
 
 function bankOwnerNote() {
@@ -581,6 +594,12 @@ function handleDetailTabKey(event: KeyboardEvent, index: number) {
 function reconciliationAttention(state: string): boolean {
   return ["attention", "pending", "not_configured"].includes(state);
 }
+
+watch(
+  () => [route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, snapshotVersion.value, selectedDetailView.value],
+  () => { expandedMovementId.value = ""; },
+  { flush: "sync" },
+);
 
 watch(
   () => [route.query.company_id, route.query.period],
@@ -1024,17 +1043,23 @@ onBeforeUnmount(() => {
                 <span>日期</span><span>业务与对象</span><span>方向</span><span class="book-column-number">金额</span>
               </div>
               <ol class="book-activity-list">
-                <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row">
+                <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row"
+                  :class="{ expandable: item.subject_id, expanded: expandedMovementId === item.id }"
+                  :role="item.subject_id ? 'button' : undefined" :tabindex="item.subject_id ? 0 : undefined"
+                  :aria-expanded="item.subject_id ? expandedMovementId === item.id : undefined"
+                  @click="toggleMovement(item, $event)" @keydown="handleMovementKey(item, $event)">
                   <time :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
                   <div class="book-movement-copy">
                     <strong>{{ item.list_summary || item.type }}</strong>
                     <small>{{ item.party || "无需往来对象" }}<template v-if="item.internal_transfer"> · 账户互转</template></small>
-                    <BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" />
                   </div>
-                  <span class="direction" :class="item.direction">
-                    {{ item.correction ? "更正" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
+                  <span class="direction" :class="item.correction ? 'correction' : item.direction">
+                    {{ item.correction ? "更正原业务" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
                   </span>
-                  <strong class="book-movement-amount" :class="item.direction">{{ item.correction ? "更正 " + formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong>
+                  <div class="book-movement-end"><strong class="book-movement-amount" :class="item.correction ? 'correction' : item.direction">{{ item.correction ? formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong><svg v-if="item.subject_id" class="book-expand-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></div>
+                  <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
+                    presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary
+                    @click.stop @keydown.stop @changed="refreshChanged" />
                 </li>
               </ol>
             </div>
@@ -1563,7 +1588,7 @@ summary {
 }
 
 .book-activity-feed {
-  --book-list-columns: 88px minmax(220px, 1fr) 62px minmax(122px, auto);
+  --book-list-columns: 88px minmax(180px, 1fr) auto minmax(122px, auto);
   min-width: 0;
 }
 
@@ -1587,8 +1612,7 @@ summary {
   font-size: 11px;
 }
 
-.book-column-number,
-.book-column-action {
+.book-column-number {
   text-align: right;
 }
 
@@ -1614,6 +1638,15 @@ summary {
   z-index: 4;
   background: var(--surface-soft);
 }
+.book-activity-row.expandable { cursor: pointer; }
+.book-activity-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.book-activity-row.expanded { background: var(--surface-soft); }
+.book-movement-end { display: flex; min-width: 0; gap: 10px; align-items: center; justify-content: flex-end; }
+.book-expand-arrow { width: 12px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+.book-activity-row.expanded .book-expand-arrow { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .book-expand-arrow { transition: none; } }
+.book-movement-amount.correction { color: var(--muted); }
+.direction.correction { color: var(--muted); background: var(--surface-soft); }
 
 .book-activity-row > time {
   overflow: hidden;
@@ -1631,9 +1664,7 @@ summary {
 
 .book-movement-copy strong,
 .book-movement-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .book-movement-copy small {
@@ -1653,7 +1684,7 @@ summary {
   justify-self: end;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .book-movement-amount.inflow {
@@ -1679,71 +1710,6 @@ summary {
 
 
 
-
-.book-preview-heading,
-.book-preview-footer,
-.book-preview-lines > span {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.book-preview-heading > span {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.book-preview-heading small,
-.book-preview-footer small {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.book-preview-heading strong {
-  overflow-wrap: anywhere;
-  font-size: 13px;
-}
-
-.book-preview-heading b {
-  flex: none;
-  font-size: 14px;
-  white-space: nowrap;
-}
-
-.book-preview-lines {
-  display: grid;
-  gap: 5px;
-  padding: 8px 9px;
-  border-radius: 8px;
-  background: var(--surface-soft);
-}
-
-.book-preview-lines > span {
-  align-items: flex-start;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.book-preview-lines > span > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.book-preview-lines strong {
-  flex: none;
-  color: var(--text);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.book-preview-footer > .direction {
-  min-height: 20px;
-  padding: 1px 6px;
-  font-size: 10px;
-}
 
 /* 摘要卡内的银行流水核对结论，位置与资产页的核对区块对应。 */
 .reconciliation {
@@ -2325,7 +2291,7 @@ tbody tr:last-child td {
   .book-activity-row > time { grid-row: 1; grid-column: 1; }
   .book-activity-row > .direction { grid-row: 1; grid-column: 2; justify-self: end; }
   .book-movement-copy { grid-row: 2; grid-column: 1 / -1; }
-  .book-movement-amount { grid-row: 3; grid-column: 1; justify-self: start; }
+  .book-movement-end { grid-row: 3; grid-column: 1 / -1; justify-content: space-between; }
 
 }
 @media (max-width: 760px) {
@@ -2362,7 +2328,8 @@ tbody tr:last-child td {
     grid-template-areas:
       "date direction"
       "copy copy"
-      "amount amount";
+      "amount amount"
+      "detail detail";
     gap: 5px 10px;
     align-items: start;
     padding: 9px 10px;
@@ -2374,7 +2341,8 @@ tbody tr:last-child td {
   .book-activity-row > time { grid-area: date; }
   .book-movement-copy { grid-area: copy; }
   .book-activity-row > .direction { grid-area: direction; justify-self: end; }
-  .book-movement-amount { grid-area: amount; justify-self: start; align-self: center; }
+  .book-movement-end { grid-area: amount; justify-content: space-between; }
+  .book-activity-row :deep(.compact-status-panel) { grid-area: detail; }
 
 
 
