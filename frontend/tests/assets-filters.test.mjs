@@ -3,18 +3,20 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let number = 0;
 async function assetView(fetchAssetsDashboard) {
   const key = `assetFilterHarness${++number}`;
   const route = Vue.reactive({ query: { company_id: "co", period: "2026-03" }, hash: "" });
   const context = Vue.ref({ current_company: { company_id: "co" }, periods: [{ key: "2026-03" }], default_period: "2026-03" });
-  globalThis[key] = { Vue, route, context, fetchAssetsDashboard };
+  globalThis[key] = { Vue, route, context, fetchAssetsDashboard, appendDashboardCollection };
   const originalDocument = globalThis.document;
   globalThis.document = { getElementById: () => null };
   const source = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const imports = `
     const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;
+    const { appendDashboardCollection } = globalThis.${key};
     const onMounted = () => {}; const onBeforeUnmount = () => {};
     const { fetchAssetsDashboard } = globalThis.${key};
     const useRoute = () => globalThis.${key}.route;
@@ -96,6 +98,32 @@ test("company and month changes cancel local filtering and prevent an old respon
       assert.equal(view.response.value, null);
       calls[0].resolve(response("fixed")); await flush();
       assert.notEqual(view.response.value?.data?.asset_filter, "fixed");
+    } finally { view.cleanup(); }
+  }
+});
+
+test("asset and project continuations retain reactive arrays and reject detached late pages", async () => {
+  for (const section of ["assets", "projects"]) {
+    const calls = [];
+    const view = await assetView((period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+    try {
+      view.response.value = response();
+      const original = view.response.value.data.collections[section].items;
+      const renderedCount = Vue.computed(() => view.response.value.data.collections[section].items.length);
+      assert.equal(renderedCount.value, 1);
+      const pending = view.loadMore(section), next = response("all", "v1", "next-asset");
+      next.data.collections.projects.items = [{ project_id: "next-project" }];
+      next.data.collections[section].page.next_cursor = "following";
+      calls.at(-1).resolve(next); await pending;
+      assert.equal(view.response.value.data.collections[section].items, original);
+      assert.equal(renderedCount.value, 2);
+      assert.equal(view.response.value.data.collections[section].page.next_cursor, "following");
+      const late = view.loadMore(section), request = calls.at(-1);
+      view.route.query.company_id = "other-company";
+      assert.equal(request.signal.aborted, true);
+      request.resolve(response("all", "v1", "late")); await late;
+      assert.equal(original.length, 2);
+      assert.equal(view.response.value, null);
     } finally { view.cleanup(); }
   }
 });

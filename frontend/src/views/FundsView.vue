@@ -20,6 +20,7 @@ import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
+import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 const route = useRoute();
 const router = useRouter();
@@ -356,7 +357,7 @@ async function loadMore(kind: PageKind) {
     const collection = next.data.collections[section];
     const previousCollection = latest.collections[section];
     if (!collection || !previousCollection) return;
-    const appended = { ...collection, items: [...previousCollection.items, ...collection.items] };
+    const appended = appendDashboardCollection(previousCollection, collection);
     funds.value = { ...latest, collections: { ...latest.collections, [section]: appended } };
     if (kind === "accounts") rememberFundAccounts(queryText("company_id"), selectedPeriod.value, collection.items);
   } catch (caught) {

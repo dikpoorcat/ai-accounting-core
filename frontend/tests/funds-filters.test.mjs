@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let harnessNumber = 0;
 async function fundsApi(requestDashboardFunds = async () => ({})) {
@@ -18,13 +19,14 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
   const key = `fundsViewHarness${++harnessNumber}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09", ...query }, hash: "" });
   const dashboardContext = Vue.ref(null);
-  globalThis[key] = { Vue, route, fetchFundsDashboard, refreshContext, dashboardContext, api: await fundsApi() };
+  globalThis[key] = { Vue, route, fetchFundsDashboard, refreshContext, dashboardContext, api: await fundsApi(), appendDashboardCollection };
   globalThis.document = { getElementById: () => null, querySelector: () => null };
   const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/import[\s\S]*?from "[^"]+";/g, "");
   const imports = `
     const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;
+    const { appendDashboardCollection } = globalThis.${key};
     const onMounted = () => {}; const onBeforeUnmount = () => {};
     const { fetchFundsDashboard } = globalThis.${key};
     const { fundAccountDisplayLabel, fundAccountDisplayName, fundAccountLabel, rememberFundAccounts } = globalThis.${key}.api;
@@ -205,6 +207,9 @@ test("independent continuations merge into the latest snapshot and failures stay
   const calls = [];
   const view = await fundsView((period, signal, query) => new Promise((resolve, reject) => calls.push({ query, resolve, reject })));
   view.funds.value = data(); view.snapshotVersion.value = "version";
+  const originalBook = view.funds.value.collections.movements.items, originalBank = view.funds.value.collections.statements.items;
+  const visibleCount = Vue.computed(() => view.funds.value.collections.statements.items.length);
+  assert.equal(visibleCount.value, 1);
   const book = view.loadMore("book"), bank = view.loadMore("bank");
   assert.equal(calls.length, 2);
   assert.equal(view.pageStates.value.book.loading, true);
@@ -214,13 +219,40 @@ test("independent continuations merge into the latest snapshot and failures stay
   assert.equal(view.requestError.value, "");
   const nextBank = data(); nextBank.collections.statements.items = [{ id: "bank-next" }];
   calls[1].resolve(response(nextBank)); await bank;
+  assert.equal(view.funds.value.collections.statements.items, originalBank);
+  assert.equal(visibleCount.value, 2);
   assert.deepEqual(view.funds.value.collections.statements.items.map(item => item.id), ["old-statement", "bank-next"]);
   const retry = view.loadMore("book");
   const nextBook = data("bank-a", null); nextBook.collections.movements.items = [{ id: "book-next" }];
   calls[2].resolve(response(nextBook)); await retry;
+  assert.equal(view.funds.value.collections.movements.items, originalBook);
   assert.equal(view.pageStates.value.book.error, "");
   assert.deepEqual(view.funds.value.collections.movements.items.map(item => item.id), ["bank-a-first", "book-next"]);
   assert.equal(view.funds.value.collections.statements.items.length, 2);
+});
+
+test("all fund collection kinds append to their reactive array and retain the other collections", async () => {
+  for (const [kind, section] of [["book", "movements"], ["bank", "statements"], ["accounts", "accounts"], ["investment", "investment_events"], ["investment_products", "investment_products"]]) {
+    const calls = [];
+    const view = await fundsView((period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+    view.funds.value = data(); view.snapshotVersion.value = "version";
+    const continuationPage = { ...view.funds.value.collections.movements.page };
+    view.funds.value.collections[section].page = continuationPage;
+    const original = view.funds.value.collections[section].items;
+    const before = original.length;
+    const visibleCount = Vue.computed(() => view.funds.value.collections[section].items.length);
+    assert.equal(visibleCount.value, before);
+    const other = section === "movements" ? "statements" : "movements";
+    const otherCollection = view.funds.value.collections[other];
+    const pending = view.loadMore(kind), next = data();
+    next.collections[section].items = section === "accounts" ? [next.collections.accounts.items[0]] : [{ id: "new-record" }];
+    next.collections[section].page = { ...continuationPage, has_more: false, next_cursor: null };
+    calls[0].resolve(response(next)); await pending;
+    assert.equal(view.funds.value.collections[section].items, original);
+    assert.equal(visibleCount.value, before + 1);
+    assert.equal(view.funds.value.collections[other], otherCollection);
+    assert.equal(view.funds.value.collections[section].page.has_more, false);
+  }
 });
 
 test("account route filters bind the initial server request and each later selection", async () => {
@@ -253,7 +285,7 @@ test("selected later-page account label survives filtering without changing retu
   first.collections.accounts = { items: first.accounts, page: { total_count: 101, filtered_count: 101, returned_count: 1, has_more: true, next_cursor: "account-next" } };
   const later = data(); later.accounts = [{ ...later.accounts[0], account_id: "bank-z", name: "后页账户", code: "101" }];
   later.collections.accounts = { items: later.accounts, page: { ...first.collections.accounts.page, has_more: false, next_cursor: null } };
-  const view = await fundsView(async (period, signal, query) => response(query.section === "accounts" ? later : first));
+  const view = await fundsView(async (period, signal, query) => response(structuredClone(query.section === "accounts" ? later : first)));
   await view.loadFunds("2026-09"); await view.loadMore("accounts");
   view.selectedAccount.value = "bank:bank-z";
   await view.loadFunds("2026-09");

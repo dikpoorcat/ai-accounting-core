@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
 async function harness() {
@@ -10,12 +11,13 @@ async function harness() {
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/import[\s\S]*?from "[^"]+";/g, "");
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02" } });
-  const environment = { Vue, route, calls: [], unmount: [] };
+  const environment = { Vue, route, appendDashboardCollection, calls: [], unmount: [] };
   const key = `briefVoucherLoading${++sequence}`;
   globalThis[key] = environment;
   const { outputText } = ts.transpileModule(`const environment = globalThis.${key};
     export function instantiate() {
-      const { computed, ref, shallowRef, watch } = environment.Vue;
+      const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
+      const { appendDashboardCollection } = environment;
       const useRoute = () => environment.route;
       const useRouter = () => ({ replace() {}, push() {} });
       const useDashboardContext = () => ({ context: ref(null), load: async () => null, refresh: async () => null });
@@ -66,6 +68,36 @@ test("all vouchers loads the entire month through bounded pages using one snapsh
     assert.equal(h.response.value.data.financial_position.assets_fen, "32100");
     assert.equal(h.response.value.data.workforce_cost.total_fen, "77700");
   } finally { h.close(); }
+});
+
+test("100/200/400 voucher pages keep a reactive array and update only new index keys", async () => {
+  for (const total of [100, 200, 400]) {
+    const h = await harness();
+    try {
+      const main = h.loadData("2026-02");
+      h.calls[0].resolve(response(0, 20, total)); await main;
+      const originalItems = h.response.value.data.collections.vouchers.items, originalIndex = h.voucherPreviewIndex.value;
+      assert.equal(Vue.isReactive(originalItems), true);
+      const visible = Vue.computed(() => h.response.value.data.collections.vouchers.items.map(row => row.voucher_version_id));
+      const rawIndex = Vue.toRaw(originalIndex);
+      let indexWrites = 0;
+      rawIndex.set = function (key, value) { indexWrites++; return Map.prototype.set.call(this, key, value); };
+      rawIndex[Symbol.iterator] = () => { throw new Error("index must not be cloned or traversed during paging"); };
+      for (let start = 20; start < total; start += 20) {
+        const pending = h.loadMore("vouchers");
+        h.calls.at(-1).resolve(response(start, 20, total)); await pending;
+        assert.equal(h.response.value.data.collections.vouchers.items, originalItems);
+        assert.equal(h.voucherPreviewIndex.value, originalIndex);
+        assert.equal(visible.value.length, start + 20);
+        assert.equal(visible.value.at(-1), `v${start + 19}`);
+      }
+      assert.equal(indexWrites, total - 20);
+      h.indexVouchers(response(0, 20, total));
+      h.indexVouchers({ data: { collections: { open_items: { items: [] } } } });
+      assert.equal(indexWrites, total - 20, "repeated keys and unrelated pages do not write the index");
+      assert.equal(h.voucherPreviewIndex.value, originalIndex);
+    } finally { h.close(); }
+  }
 });
 
 test("failed all-voucher loading preserves prior rows and resumes from the same cursor", async () => {

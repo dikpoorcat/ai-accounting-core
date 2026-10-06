@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowReactive, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { fetchDeferredBrief, type BriefQuery, type BriefVoucher } from "../api/brief";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -15,11 +15,12 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen } from "../utils/money";
+import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 const route = useRoute(), router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const response = shallowRef<Awaited<ReturnType<typeof fetchDeferredBrief>> | null>(null);
-const voucherPreviewIndex = shallowRef(new Map<string, BriefVoucher>());
+const voucherPreviewIndex = shallowRef(shallowReactive(new Map<string, BriefVoucher>()));
 const focusedVoucherSelection = ref(0);
 const loading = ref(false), error = ref(""), updateNotice = ref("");
 type BriefSection = NonNullable<BriefQuery["section"]>;
@@ -53,17 +54,18 @@ function queryPeriod() { return typeof route.query.period === "string" ? route.q
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
 function indexVouchers(result: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
-  const index = new Map(voucherPreviewIndex.value);
-  for (const voucher of result.data?.collections.vouchers?.items ?? []) index.set(voucher.voucher_version_id, voucher);
+  const index = voucherPreviewIndex.value;
+  for (const voucher of result.data?.collections.vouchers?.items ?? []) {
+    if (!index.has(voucher.voucher_version_id)) index.set(voucher.voucher_version_id, voucher);
+  }
   const focused = result.data?.focused_voucher;
-  if (focused) index.set(focused.voucher_version_id, focused);
-  voucherPreviewIndex.value = index;
+  if (focused && !index.has(focused.voucher_version_id)) index.set(focused.voucher_version_id, focused);
 }
 function invalidateRequests(keepContent = false) {
   requestGeneration += 1; controller?.abort(); controller = null;
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
-  voucherPreviewIndex.value = new Map(); focusedVoucherSelection.value = 0;
+  voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
   if (!keepContent) response.value = null;
   showMonthlyReview.value = false; loading.value = keepContent;
 }
@@ -72,7 +74,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
-  voucherPreviewIndex.value = new Map(); focusedVoucherSelection.value = 0;
+  voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
   const request = new AbortController(); controller = request;
   loading.value = true;
   if (!contextGate) response.value = null;
@@ -84,6 +86,12 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
     const mainRequest = fetchDeferredBrief(companyId, period, request.signal, undefined, options);
     const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
     if (!isCurrent(generation, selection) || controller !== request) return;
+    if (result.data) {
+      const { activity, open_items, vouchers } = result.data.collections;
+      if (activity) activity.items = shallowReactive(activity.items);
+      if (open_items) open_items.items = shallowReactive(open_items.items);
+      if (vouchers) vouchers.items = shallowReactive(vouchers.items);
+    }
     response.value = result;
     indexVouchers(result);
     if (!result.data) request.abort();
@@ -106,13 +114,19 @@ async function loadMore(section: BriefSection) {
     const latest = response.value, before = latest.data!;
     if (section === "activity" && next.data.collections.activity) {
       const collection = next.data.collections.activity;
-      response.value = { ...latest, data: { ...before, collections: { ...before.collections, activity: { ...collection, items: [...before.collections.activity?.items ?? [], ...collection.items] } } } };
+      const previous = before.collections.activity;
+      if (!previous) return false;
+      response.value = { ...latest, data: { ...before, collections: { ...before.collections, activity: appendDashboardCollection(previous, collection) } } };
     } else if (section === "open_items" && next.data.collections.open_items) {
       const collection = next.data.collections.open_items;
-      response.value = { ...latest, data: { ...before, collections: { ...before.collections, open_items: { ...collection, items: [...before.collections.open_items?.items ?? [], ...collection.items] } } } };
+      const previous = before.collections.open_items;
+      if (!previous) return false;
+      response.value = { ...latest, data: { ...before, collections: { ...before.collections, open_items: appendDashboardCollection(previous, collection) } } };
     } else if (section === "vouchers" && next.data.collections.vouchers) {
       const collection = next.data.collections.vouchers;
-      response.value = { ...latest, data: { ...before, collections: { ...before.collections, vouchers: { ...collection, items: [...before.collections.vouchers?.items ?? [], ...collection.items] } } } };
+      const previous = before.collections.vouchers;
+      if (!previous) return false;
+      response.value = { ...latest, data: { ...before, collections: { ...before.collections, vouchers: appendDashboardCollection(previous, collection) } } };
     } else {
       return false;
     }

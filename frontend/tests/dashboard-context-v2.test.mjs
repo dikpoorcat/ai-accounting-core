@@ -6,6 +6,7 @@ import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { validateDashboardEmployeesResponse } from "../src/api/generated/dashboardValidators.js";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 const contractSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 
@@ -22,14 +23,15 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-01", ...initialQuery }, hash: "" });
   const calls = [], unmount = [], replaces = [];
   const dashboardContext = Vue.ref(initialContext);
-  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
   globalThis.document = { getElementById: () => null };
   const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "")
     .replace("let mounted = true", "let mounted = false");
   const prefix = `
     const environment = globalThis.${key};
-    const { ref, shallowRef, computed, nextTick, watch } = environment.Vue;
+    const { ref, shallowReactive, shallowRef, computed, nextTick, watch } = environment.Vue;
+    const { appendDashboardCollection } = environment;
     const onMounted = () => {}; const onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route;
     const useRouter = () => ({ replace: async value => environment.replaces.push(value), push: async () => {} });

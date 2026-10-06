@@ -8,6 +8,7 @@ import { localBusinessName } from "../api/localKernel";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
+import { appendDashboardCollection } from "../utils/dashboardCollections";
 import type { BriefActivityRow } from "../api/brief";
 
 interface BriefStatusContext {
@@ -192,7 +193,9 @@ async function loadMore() {
     const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", limit: 20 });
     if (!valid() || !data.value || !result.data.collections.settlement_events) return;
     const next = result.data.collections.settlement_events, latest = data.value;
-    data.value = { ...latest, collections: { settlement_events: { ...next, items: [...latest.collections.settlement_events?.items ?? [], ...next.items] } } };
+    const previous = latest.collections.settlement_events;
+    if (!previous) return;
+    data.value = { ...latest, collections: { settlement_events: appendDashboardCollection(previous, next) } };
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) moreError.value = dashboardErrorMessage(caught); } }
   finally { if (valid()) { moreLoading.value = false; pageController = null; } }
 }

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { createSSRApp, createRenderer, h, nextTick, reactive, ssrContextKey } from "vue";
+import { createSSRApp, createRenderer, h, nextTick, reactive, shallowReactive, ssrContextKey } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
@@ -116,7 +116,8 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
     });
     await t.test("row keyboard toggle isolates controls and voucher hover/click emit no detail load", async () => {
       const events = [], items = [activity(1)];
-      const props = reactive({ ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 1 }], items, focusedVoucherSelection: 0, onRequestVoucher: id => events.push(id) });
+      const index = shallowReactive(new Map([["voucher-1", voucher(1)]]));
+      const props = reactive({ ...baseProps(), voucherPreviewIndex: index, groups: [{ key: "funds", label: "收付款", event_count: 1 }], items, focusedVoucherSelection: 0, onRequestVoucher: id => events.push(id) });
       let state;
       const host = createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} });
       const wrapped = { ...component, ssrRender: undefined, setup(_actual, context) { state = component.setup(props, context); return state; }, render: () => h("div") };
@@ -149,6 +150,11 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
           await state.showPreview(items[0]);
           assert.equal(state.previewPosition.value.offset, -32, "bottom overflow is moved inside the viewport with a 12px margin");
           assert.equal(state.previewPosition.value.arrowTop, "198px", "arrow stays level with the button center");
+          const indexedPositioning = state.showPreview(items[0]);
+          index.set("voucher-2", voucher(2)); await indexedPositioning;
+          assert.equal(state.previewVoucher.value.number, "1", "unrelated incremental keys preserve the visible preview");
+          assert.equal(state.previewBusinessKey.value, items[0].key);
+          assert.equal(state.previewPosition.value.offset, -32, "unrelated keys do not invalidate pending positioning");
           bounds = { top: -20, height: 220 }; anchor = { top: 50, height: 32 };
           await state.showPreview(items[0]);
           assert.deepEqual(state.previewPosition.value, { offset: 32, arrowTop: "54px" });
@@ -164,6 +170,12 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
           await changing;
           assert.equal(measurements, before + 1, "selection changes cancel late positioning");
           assert.equal(state.previewVoucher.value, undefined);
+          await state.showPreview(items[0]);
+          const replacedPositioning = state.showPreview(items[0]), beforeReplacement = measurements;
+          props.voucherPreviewIndex = shallowReactive(new Map([["voucher-1", voucher(1)]]));
+          await replacedPositioning;
+          assert.equal(state.previewVoucher.value, undefined, "rebuilding the index clears the old preview");
+          assert.equal(measurements, beforeReplacement, "a replaced index rejects pending positioning");
         } finally { globalThis.window = oldWindow; globalThis.document = oldDocument; }
         props.focusedVoucher = voucher(1); props.focusedVoucherSelection++;
         await nextTick();

@@ -16,6 +16,7 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen } from "../utils/money";
+import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
 
@@ -189,7 +190,9 @@ async function loadMore(section: EmployeesQuery["section"] = "employees") {
     if (!latest.data) return;
     const collection = next.data.collections[section!];
     if (!collection) return;
-    const collections = { ...latest.data.collections, [section!]: { ...collection, items: [...(latest.data.collections[section!]?.items ?? []), ...collection.items] } };
+    const previous = latest.data.collections[section!];
+    if (!previous) return;
+    const collections = { ...latest.data.collections, [section!]: appendDashboardCollection(previous, collection) };
     response.value = { ...latest, data: { ...latest.data, collections } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(key) !== request) return;

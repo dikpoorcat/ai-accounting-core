@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
 async function harness(component, exported, suppliedProps = {}) {
@@ -10,13 +11,14 @@ async function harness(component, exported, suppliedProps = {}) {
   const route = Vue.reactive({ query: { company_id: "company-a" } });
   const props = Vue.reactive({ subjectId: "business-a", period: "2026-09", snapshotVersion: "business-v1", settlementView: "historical", ...suppliedProps });
   const calls = [], events = [], cleanup = [];
-  globalThis[key] = { Vue, route, props, events, cleanup, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  globalThis[key] = { Vue, route, props, events, cleanup, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   const source = readFileSync(new URL(`../src/components/${component}.vue`, import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/import[\s\S]*?from "[^"]+";/g, "");
   const prefix = `
     const environment = globalThis.${key};
     const { ref, computed, watch } = environment.Vue;
+    const { appendDashboardCollection } = environment;
     const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route;
     const defineProps = () => environment.props;
@@ -49,6 +51,9 @@ async function businessHarness() {
 
 test("business settlement continuation appends records under the exact scope and version", async () => {
   const view = await businessHarness();
+  const originalItems = view.data.value.collections.settlement_events.items;
+  const visibleIds = Vue.computed(() => view.data.value.collections.settlement_events.items.map(item => item.id));
+  assert.deepEqual(visibleIds.value, ["settlement-first"]);
   const pending = view.loadMore();
   assert.equal(view.moreLoading.value, true);
   assert.equal(view.loading.value, false);
@@ -58,6 +63,8 @@ test("business settlement continuation appends records under the exact scope and
   assert.equal(view.calls[1].args[3].limit, 20);
   view.calls[1].resolve(statusResult(null, "settlement-second")); await pending;
   assert.deepEqual(view.data.value.collections.settlement_events.items.map(item => item.id), ["settlement-first", "settlement-second"]);
+  assert.equal(view.data.value.collections.settlement_events.items, originalItems);
+  assert.deepEqual(visibleIds.value, ["settlement-first", "settlement-second"]);
   assert.equal(view.data.value.marker, "original-summary");
   assert.deepEqual(view.events, []);
   view.unmount();
@@ -92,6 +99,7 @@ test("settlement snapshot changes invalidate all prior detail without silently f
 
 test("company changes abort detail continuation and reject late results", async () => {
   const view = await businessHarness();
+  const originalItems = view.data.value.collections.settlement_events.items;
   const pending = view.loadMore();
   view.route.query.company_id = "company-b";
   assert.equal(view.calls[1].args[2].aborted, true);
@@ -99,6 +107,7 @@ test("company changes abort detail continuation and reject late results", async 
   view.calls[1].resolve(statusResult(null, "late")); await pending;
   assert.equal(view.data.value, null);
   assert.equal(view.moreLoading.value, false);
+  assert.deepEqual(originalItems.map(item => item.id), ["settlement-first"], "late replies cannot mutate detached old arrays");
   view.unmount();
 });
 

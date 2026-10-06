@@ -17,6 +17,7 @@ import DashboardPagination from "../components/DashboardPagination.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen } from "../utils/money";
+import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 const filters = [
   { value: "all", label: "全部资产" },
@@ -282,7 +283,7 @@ async function loadMore(section: "assets" | "projects" = "assets") {
     const following = next.data.collections[section];
     if (!previous || !following) return;
     response.value = { ...latest, data: { ...latest.data,
-      collections: { ...latest.data.collections, [section]: { ...following, items: [...previous.items, ...following.items] } },
+      collections: { ...latest.data.collections, [section]: appendDashboardCollection(previous, following) },
     } };
   } catch (caught) {
     if (!isCurrent(generation, selection) || pageControllers.get(section) !== request) return;

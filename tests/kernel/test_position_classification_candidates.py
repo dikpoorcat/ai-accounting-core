@@ -15,6 +15,120 @@ from ai_accounting.kernel.runtime import _PrivateConnection
 book = _book
 
 
+def test_position_directory_keys_exclude_future_sources_but_keep_frozen_revision(
+    book, monkeypatch
+):
+    from ai_accounting.kernel import report_classification_directory
+
+    engine, save, publish, _ = book
+    scenario(book)
+    with engine.store.connection(read_only=True) as connection:
+        voucher = connection.execute(
+            "SELECT voucher_version_id FROM fact_report_classification"
+        ).fetchone()[0]
+    subject = "class-" + voucher
+    detail = {
+        "voucher_version_id": voucher,
+        "profit_details": [
+            {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
+        ],
+        "counterparties": [{"line_no": 2, "counterparty_id": "supplier"}],
+    }
+    save("report_classification", subject, {"period": "2026-02", **detail}, revision=1)
+    close_quarter(book)
+    requests = []
+    original = report_classification_directory.classification_directory_scope
+
+    def observe(connection, end, keys, *, reads=None):
+        requests.append((end, frozenset(keys)))
+        return original(connection, end, keys, reads=reads)
+
+    monkeypatch.setattr(report_classification_directory, "classification_directory_scope", observe)
+    dashboard = Dashboard(engine)
+    baseline = dashboard.brief("2026-03")["data"]["financial_position"]
+    initial_keys = requests[0][1]
+    assert initial_keys == {voucher}
+    # Replacing the current head does not withdraw the earlier frozen revision.
+    save("report_classification", subject, {"period": "2026-04", **detail}, revision=2)
+    future_vouchers = set()
+    for number in range(3):
+        future_subject = f"future-cost-{number}"
+        save(
+            "expense", future_subject,
+            {"period": "2026-04", "counterparty_id": "supplier", "amount_fen": 100,
+             "expense_class": "administration", "creditor_kind": "supplier"},
+        )
+        publish(future_subject)
+        with engine.store.connection(read_only=True) as connection:
+            future_voucher = connection.execute(
+                "SELECT h.version_id FROM voucher_current h JOIN voucher_version v "
+                "ON v.id=h.version_id JOIN calculation c ON c.id=v.calculation_id "
+                "WHERE c.subject_id=?", (future_subject,),
+            ).fetchone()[0]
+        future_vouchers.add(future_voucher)
+        save(
+            "report_classification", f"future-class-{number}",
+            {"period": "2026-04", "voucher_version_id": future_voucher,
+             "counterparties": [{"line_no": 2, "counterparty_id": "supplier"}]},
+        )
+    requests.clear()
+    assert dashboard.brief("2026-03")["data"]["financial_position"] == baseline
+    assert requests[0][1] == initial_keys
+    requests.clear()
+    with dashboard._snapshot("2026-04") as snap:
+        later = _position(snap)
+    assert future_vouchers <= requests[0][1]
+    assert any(
+        item["field"] == "report_classification" and item["voucher_version_id"] == voucher
+        for item in later["issues"]
+    )
+
+
+@pytest.mark.parametrize("damage_header", ["future_period", "missing"])
+def test_position_keeps_damaged_frozen_header_in_directory_scope(book, monkeypatch, damage_header):
+    from ai_accounting.kernel import report_classification_directory
+    from ai_accounting.kernel.types import YearMonth
+
+    engine, save, _, _ = book
+    scenario(book)
+    with engine.store.connection(read_only=True) as connection:
+        voucher = connection.execute(
+            "SELECT voucher_version_id FROM fact_report_classification"
+        ).fetchone()[0]
+    saved = save(
+        "report_classification", "class-" + voucher,
+        {"period": "2026-02", "voucher_version_id": voucher,
+         "profit_details": [
+             {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
+         ], "counterparties": [{"line_no": 2, "counterparty_id": "supplier"}]},
+        revision=1,
+    )
+    close_quarter(book)
+    if damage_header == "future_period":
+        damage(
+            engine, "fact_revision", "UPDATE fact_revision SET period=? WHERE id=?",
+            (YearMonth("2026-04").ordinal, saved["fact_id"]),
+        )
+    else:
+        damage(
+            engine, "fact_revision", "DELETE FROM fact_revision WHERE id=?",
+            (saved["fact_id"],), foreign_keys=False,
+        )
+    requested = []
+    original = report_classification_directory.classification_directory_scope
+
+    def observe(connection, end, keys, *, reads=None):
+        requested.append(set(keys))
+        return original(connection, end, keys, reads=reads)
+
+    monkeypatch.setattr(report_classification_directory, "classification_directory_scope", observe)
+    with Dashboard(engine)._snapshot("2026-03") as snap:
+        with pytest.raises(KernelError) as caught:
+            _position(snap)
+    assert caught.value.code == "content_integrity_failed"
+    assert voucher in requested[0]
+
+
 def test_position_authenticates_frozen_party_child_and_detects_later_conflict(book):
     engine, save, _, _ = book
     scenario(book)
@@ -218,16 +332,22 @@ def test_position_party_child_drives_key_lookup_with_unrelated_history(book, mon
 
     def record(connection, sql, parameters=()):
         if "SELECT DISTINCT c.voucher_version_id" in sql and "counterparties child" in sql:
-            queries.append(sql)
+            queries.append((sql, tuple(parameters)))
         return original(connection, sql, parameters)
 
     monkeypatch.setattr(_PrivateConnection, "execute", record)
     with Dashboard(engine)._snapshot("2026-02") as snap:
         assert _position(snap)["assets_fen"] == 50000
     assert len(queries) == 1
+    query, parameters = queries[0]
 
     with sqlite3.connect(":memory:") as connection:
         connection.executescript(
+            "CREATE TABLE fact_revision(id TEXT PRIMARY KEY,period INTEGER);"
+            "CREATE TABLE close_reference(reference_type TEXT,reference_id TEXT,"
+            "close_period INTEGER,path TEXT);"
+            "CREATE INDEX close_reference_lookup ON close_reference"
+            "(reference_type,reference_id,close_period);"
             "CREATE TABLE fact_report_classification(revision_id TEXT PRIMARY KEY,"
             "voucher_version_id TEXT);"
             "CREATE INDEX report_classification_voucher_revision "
@@ -241,6 +361,7 @@ def test_position_party_child_drives_key_lookup_with_unrelated_history(book, mon
         connection.execute(
             "INSERT INTO fact_report_classification_counterparties VALUES('selected',2)"
         )
+        connection.execute("INSERT INTO fact_revision VALUES('selected',?)", (parameters[0],))
 
         def measured():
             steps = 0
@@ -252,7 +373,7 @@ def test_position_party_child_drives_key_lookup_with_unrelated_history(book, mon
 
             connection.set_progress_handler(tick, 1)
             try:
-                rows = list(connection.execute(queries[0]))
+                rows = list(connection.execute(query, parameters))
             finally:
                 connection.set_progress_handler(None, 0)
             return rows, steps
@@ -266,8 +387,44 @@ def test_position_party_child_drives_key_lookup_with_unrelated_history(book, mon
         after, new_steps = measured()
         assert after == before
         assert new_steps < old_steps + 1000, (old_steps, new_steps)
-        plan = connection.execute("EXPLAIN QUERY PLAN " + queries[0]).fetchall()
+        plan = connection.execute("EXPLAIN QUERY PLAN " + query, parameters).fetchall()
         assert any("SCAN child" in row[3] for row in plan)
+
+        # The child-driven path still scans future party rows. Only the exact
+        # cutoff keys go to the directory; do not claim fixed SQL work here.
+        connection.executemany(
+            "INSERT INTO fact_revision VALUES(?,?)",
+            [(f"future-{number}", parameters[0] + 1) for number in range(32)],
+        )
+        connection.executemany(
+            "INSERT INTO fact_report_classification VALUES(?,?)",
+            [(f"future-{number}", f"future-voucher-{number}") for number in range(32)],
+        )
+        connection.executemany(
+            "INSERT INTO fact_report_classification_counterparties VALUES(?,2)",
+            [(f"future-{number}",) for number in range(32)],
+        )
+        future_rows, future_steps = measured()
+        assert future_rows == before
+        assert future_steps > new_steps
+
+        path = "readiness.financial_reports.facts[*]"
+        connection.executemany(
+            "INSERT INTO close_reference VALUES('fact',?,?,?)",
+            [("future-0", parameters[0], path),
+             ("future-1", parameters[0] + 1, path),
+             ("future-2", parameters[0], "management_snapshot.typed_facts[*].id")],
+        )
+        connection.execute(
+            "INSERT INTO fact_report_classification VALUES('missing-header','missing-voucher')"
+        )
+        connection.execute(
+            "INSERT INTO fact_report_classification_counterparties VALUES('missing-header',2)"
+        )
+        retained, _ = measured()
+        assert set(retained) == {
+            ("voucher-selected",), ("future-voucher-0",), ("missing-voucher",),
+        }
 
 
 def test_position_missing_typed_probe_preserves_scope_and_ignores_unrelated_growth(

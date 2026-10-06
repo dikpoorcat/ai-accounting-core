@@ -3,18 +3,20 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
 async function harness(query) {
   const key = `assetLocation${++sequence}`, calls = [], focus = [], cleanup = [];
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-09", ...query }, hash: "" });
-  globalThis[key] = { Vue, route, focus, cleanup, fetch: (...args) => new Promise(resolve => calls.push({ args, resolve })) };
+  globalThis[key] = { Vue, route, focus, cleanup, appendDashboardCollection, fetch: (...args) => new Promise(resolve => calls.push({ args, resolve })) };
   const script = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const { outputText } = ts.transpileModule(`
     const environment = globalThis.${key};
     export function instantiate() {
       const { computed, ref, watch, nextTick } = environment.Vue;
+      const { appendDashboardCollection } = environment;
       const useRoute = () => environment.route, useRouter = () => ({ push() {}, replace() {} });
       const onMounted = () => {}, onBeforeUnmount = callback => environment.cleanup.push(callback);
       const useDashboardContext = () => ({ context: ref(null), load: async () => ({ periods: [] }), refresh() {} });

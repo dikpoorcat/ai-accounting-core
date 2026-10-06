@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
 const flush = async () => { for (let index = 0; index < 4; index++) { await Vue.nextTick(); } };
@@ -18,12 +19,13 @@ async function harness() {
   const calls = [], key = `employeeFilters${++sequence}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09" } });
   const context = Vue.ref({ current_company: { company_id: "company-a" }, periods: [{ key: "2026-09" }] });
-  globalThis[key] = { Vue, route, context, calls };
+  globalThis[key] = { Vue, route, context, calls, appendDashboardCollection };
   globalThis.document = { getElementById: () => null };
   const source = readFileSync(new URL("../src/views/EmployeesView.vue", import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const prelude = `const env = globalThis.${key};
     const { computed, nextTick, ref, watch } = env.Vue;
+    const { appendDashboardCollection } = env;
     const useRoute = () => env.route;
     const useRouter = () => ({ push: async target => { env.route.query = target.query; }, replace: async target => { env.route.query = target.query; } });
     const useDashboardContext = () => ({ context: env.context, load: async () => env.context.value, refresh: async () => env.context.value });
@@ -96,5 +98,31 @@ test("an expired employee-list snapshot refreshes the full page before continuin
     h.calls[1].resolve(fresh); await flush();
     assert.equal(h.response.value.snapshot_version, "fresh-version");
     assert.equal(h.loading.value, false);
+  } finally { h.close(); }
+});
+
+test("employee and labor continuations retain reactive arrays and discard late pages on filter changes", async () => {
+  const h = await harness();
+  try {
+    for (const section of ["employees", "labor_sources"]) {
+      const original = h.response.value.data.collections[section].items;
+      const renderedCount = Vue.computed(() => h.response.value.data.collections[section].items.length);
+      assert.equal(renderedCount.value, 1);
+      const pending = h.loadMore(section);
+      const next = response("all", "next-employee");
+      next.data.collections.labor_sources.items = [{ source_id: "next-labor" }];
+      next.data.collections[section].page.next_cursor = "following";
+      h.calls.at(-1).resolve(next); await pending;
+      assert.equal(h.response.value.data.collections[section].items, original);
+      assert.equal(renderedCount.value, 2);
+      assert.equal(h.response.value.data.collections[section].page.next_cursor, "following");
+      const late = h.loadMore(section), request = h.calls.at(-1);
+      h.filter.value = section === "employees" ? "payroll" : "ended"; await flush();
+      assert.equal(request.signal.aborted, true);
+      request.resolve(response("all", "late")); await late;
+      assert.equal(original.length, 2);
+      const filtered = response(h.filter.value, "filtered");
+      h.calls.at(-1).resolve(filtered); await flush();
+    }
   } finally { h.close(); }
 });

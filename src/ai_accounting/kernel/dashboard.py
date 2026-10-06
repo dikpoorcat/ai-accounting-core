@@ -2642,13 +2642,22 @@ def _position_party_rows(snap):
         "SELECT 1 FROM sqlite_master WHERE type='table' "
         "AND name='fact_report_classification'"
     ).fetchone() is not None
+    # Keep the sparse party-child scan, but do not request directory membership
+    # for future sources. Frozen adoption still matters for replaced revisions
+    # and damaged headers; neither these candidates nor current status prove it.
     party_keys = (
         {
             row[0]
             for row in snap.connection.execute(
                 "SELECT DISTINCT c.voucher_version_id "
                 "FROM fact_report_classification_counterparties child "
-                "CROSS JOIN fact_report_classification c ON c.revision_id=child.revision_id"
+                "CROSS JOIN fact_report_classification c ON c.revision_id=child.revision_id "
+                "LEFT JOIN fact_revision f ON f.id=c.revision_id "
+                "WHERE f.id IS NULL OR f.period<=? OR EXISTS("
+                "SELECT 1 FROM close_reference r INDEXED BY close_reference_lookup "
+                "WHERE r.reference_type='fact' AND r.reference_id=c.revision_id "
+                "AND r.path='readiness.financial_reports.facts[*]' AND r.close_period<=?)",
+                (snap.month, snap.month),
             )
         }
         if has_classification_type

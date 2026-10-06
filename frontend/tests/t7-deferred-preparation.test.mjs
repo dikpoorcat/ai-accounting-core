@@ -4,6 +4,7 @@ import { test } from "node:test";
 import * as Vue from "vue";
 import { parse, compileTemplate } from "@vue/compiler-sfc";
 import ts from "typescript";
+import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 import {
   validateDashboardBriefResponse,
   validateDashboardFundsResponse,
@@ -42,7 +43,7 @@ async function viewHarness(kind) {
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02", quarter: "2026-Q1" }, hash: "" });
   const capture = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const context = Vue.ref(null);
-  const environment = { Vue, route, trace, unmount,
+  const environment = { Vue, route, trace, unmount, appendDashboardCollection,
     nextTick: async () => { await Vue.nextTick(); trace.push("paint"); },
     router: { push() {}, replace() {} },
     contextState: { context, load: async () => ({ periods: [{ key: "2026-02", year: 2026, month: 2 }], quarters: [{ key: "2026-Q1", year: 2026, quarter: 1 }] }), refresh: () => capture(calls.context, []) },
@@ -56,7 +57,8 @@ async function viewHarness(kind) {
     ? "response, data, loading, error, reviewRequest, needsMonthlyReview, showMonthlyReview, loadData, loadMore, refresh, invalidateRequests"
     : "report, loading, errorMessage, reportHeadline, preview, refresh, exportReport, invalidateRequests";
   const module = await compile(`export function instantiate() {
-    const { computed, ref, shallowRef, watch } = environment.Vue;
+    const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
+    const { appendDashboardCollection } = environment;
     const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
     const fetchCompleteBrief = fetchDeferredBrief;
     const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);
@@ -114,7 +116,7 @@ test("Brief refresh only loads main and context, closing the old on-demand revie
     const complete = brief();
     complete.data.month_state = "open";
     complete.data.owner_review_request = { preview_digest: "a".repeat(64) };
-    h.calls.main[0].resolve(complete); await first;
+    h.calls.main[0].resolve(structuredClone(complete)); await first;
     assert.equal(h.needsMonthlyReview.value, true);
     assert.equal(h.showMonthlyReview.value, false);
     h.showMonthlyReview.value = true;
