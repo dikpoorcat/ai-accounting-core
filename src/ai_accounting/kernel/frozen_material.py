@@ -21,12 +21,13 @@ from .types import YearMonth, canonical, digest
 # it when parsing, allocation, disposition or competing-use rules change. Version
 # 2 excludes proven empty XLSX formula templates from invented amount positions.
 # 3 additionally validates exact whole-group copies without a second capacity use.
+# 4 retains every transitive duplicate and competing-source read in the proof.
 # Earlier complete proofs were checked under different disposition semantics.
 # Their current reads must run the full checker, without rewriting old anchors.
 # An unknown rule falls back to the full checker; the identity never substitutes
 # for the manifest, current-source and evidence-content checks below.
 MATERIAL_COVERAGE_RULE_DIGEST = digest(
-    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 3}
+    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 4}
 )
 
 

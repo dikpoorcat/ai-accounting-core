@@ -2120,25 +2120,12 @@ def check_completeness_many(
     for source in all_sources.values():
         if source.fact.period.ordinal in review_months:
             relevant.add(source.subject_id)
-    active_business_ids = {
-        link.subject_id
-        for item in (*all_resolutions, *all_groups)
-        if item.fact.source_id in relevant
-        and current_sources.get(item.fact.source_id) == item.fact.source_fact_id
-        for link in item.fact.links
-    }
-    relevant.update(
-        item.fact.source_id
-        for item in (*all_resolutions, *all_groups)
-        if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
-        and any(link.subject_id in active_business_ids for link in item.fact.links)
-    )
-    for item in all_groups:
-        if item.fact.source_id in relevant:
-            group_versions[item.id] = item
-    for item in all_resolutions:
-        if item.fact.source_id in relevant:
-            resolution_versions[item.id] = item
+    sources_by_business = {}
+    for item in (*all_resolutions, *all_groups):
+        if current_sources.get(item.fact.source_id) != item.fact.source_fact_id:
+            continue
+        for link in item.fact.links:
+            sources_by_business.setdefault(link.subject_id, set()).add(item.fact.source_id)
 
     by_id = {
         source_id: all_sources[source_id] for source_id in relevant if source_id in all_sources
@@ -2204,6 +2191,16 @@ def check_completeness_many(
         relevant.update(item.subject_id for item in matches)
     relevant.difference_update(unallocated)
     queue, loaded = list(sorted(relevant)), set()
+
+    def enqueue(source_id):
+        # Every source read through a duplicate or competing use belongs to the
+        # proof, even when all its own rows belong to a future review month.
+        # Discover once so shared business identities do not expand the queue
+        # repeatedly, and retain the complete transitive dependency closure.
+        if source_id not in relevant and source_id not in unallocated:
+            relevant.add(source_id)
+            queue.append(source_id)
+
     while queue:
         source_id = queue.pop()
         if source_id in unallocated:
@@ -2249,8 +2246,12 @@ def check_completeness_many(
         for item in resolutions_by_source.get(source_id, ()):
             resolution_versions[item.id] = item
             if item.fact.treatment == "duplicate" and item.fact.duplicate_source_id:
-                queue.append(item.fact.duplicate_source_id)
+                enqueue(item.fact.duplicate_source_id)
         group_versions.update((item.id, item) for item in source_groups(source_id))
+        for item in (*resolutions_by_source.get(source_id, ()), *source_groups(source_id)):
+            for link in item.fact.links:
+                for competitor_source_id in sorted(sources_by_business.get(link.subject_id, ())):
+                    enqueue(competitor_source_id)
         row = connection.execute(
             "SELECT content FROM evidence WHERE digest=?", (bytes.fromhex(fact.evidence_digest),)
         ).fetchone()
