@@ -225,14 +225,14 @@ onBeforeUnmount(() => {
       </nav>
 
       <section v-if="selectedCategory" :class="['open-detail', selectedCategory.direction]" :aria-label="`${categoryLabel(selectedCategory.label)}明细`" aria-live="polite">
-        <div class="list-columns" aria-hidden="true">
-          <span>对象与事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span>
+        <div class="list-columns business-list-columns" aria-hidden="true">
+          <span>对象</span><span>事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction) }}金额</span><span></span>
         </div>
         <ul class="open-event-list" aria-label="待收待付明细">
           <li
             v-for="item in selectedCategory.items"
             :key="item.id"
-            :class="['open-event-row', { 'focus-highlight': focusedItemIds.includes(item.id), expandable: canExpand(item) }]"
+            :class="['open-event-row', 'business-list-row', { 'focus-highlight': focusedItemIds.includes(item.id), expandable: canExpand(item) }]"
             :role="canExpand(item) ? 'button' : undefined"
             :tabindex="canExpand(item) ? 0 : undefined"
             :aria-expanded="canExpand(item) ? expandedItemId === item.id : undefined"
@@ -240,17 +240,18 @@ onBeforeUnmount(() => {
             @click="toggleItem(item, $event)"
             @keydown="itemKeydown(item, $event)"
           >
-            <span class="open-event-copy">
-              <strong>{{ item.party }}<span v-if="canExpand(item)" class="row-chevron" :class="{ expanded: expandedItemId === item.id }" aria-hidden="true"></span></strong>
-              <small v-if="item.contributionMembers || (item.description && item.description !== item.party)">{{ item.description }}</small>
+            <span class="open-event-copy business-list-object"><strong>{{ item.party }}</strong></span>
+            <span class="open-event-matter business-list-matter">
+              <span>{{ item.description || "未提供事项说明" }}</span>
               <small v-if="item.contribution_component && !item.contributionMembers">分组资料待核对</small>
               <small v-for="notice in item.contributionNotices" :key="notice">{{ notice }}</small>
             </span>
-            <span :class="['status', statusClass(item)]">{{ openStateLabel(selectedCategory.direction, item) }}</span>
-            <span class="open-event-money">
+            <span :class="['status', 'business-list-state', statusClass(item)]">{{ openStateLabel(selectedCategory.direction, item) }}</span>
+            <span class="open-event-money business-list-money">
               <small>{{ outstandingLabel(selectedCategory.direction) }}</small>
               <b>{{ item.contributionMembers && !itemsComplete ? collectionState : amountLabel(item.outstanding_fen) }}</b>
             </span>
+            <svg v-if="canExpand(item)" class="row-chevron business-list-arrow" :class="{ expanded: expandedItemId === item.id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
             <section v-if="item.contributionMembers && expandedItemId === item.id" class="contribution-detail" aria-label="社保与公积金款项拆解" @click.stop @keydown.stop>
               <p v-if="!itemsComplete" class="contribution-reading" role="status">{{ collectionState }} · 读取全部余额分项后显示四项拆解。</p>
               <template v-else>
@@ -416,7 +417,7 @@ h3 {
 }
 
 .open-workbench {
-  --list-columns: minmax(110px, 1fr) 106px 144px;
+  --business-list-columns: minmax(0, 1fr) minmax(0, 1fr) 110px 144px 12px;
   display: grid;
   min-width: 0;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -545,18 +546,6 @@ h3 {
   padding: 12px 20px;
 }
 
-.list-columns {
-  display: grid;
-  grid-template-columns: var(--list-columns);
-  gap: 12px;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--brief-line);
-  color: var(--brief-muted);
-  font-size: 11px;
-}
-
 .column-money {
   text-align: right;
 }
@@ -566,37 +555,6 @@ h3 {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.open-event-list > li + li {
-  border-top: 1px solid var(--brief-line);
-}
-
-.open-event-row {
-  position: relative;
-  display: grid;
-  min-height: 76px;
-  grid-template-columns: var(--list-columns);
-  gap: 12px;
-  align-items: center;
-  padding: 14px 4px;
-  background: transparent;
-  transition: background 140ms ease;
-}
-
-.open-event-row.expandable { cursor: pointer; }
-.open-event-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 8px; }
-.row-chevron { display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 10px; border-right: 1.5px solid var(--brief-muted); border-bottom: 1.5px solid var(--brief-muted); transform: rotate(-45deg); }
-.row-chevron.expanded { transform: rotate(45deg); }
-
-.open-event-row > .status {
-  justify-self: start;
-}
-
-.open-event-row:hover,
-.open-event-row:focus-within {
-  z-index: 4;
-  background: var(--brief-soft);
 }
 
 @keyframes open-item-focus-pulse {
@@ -614,45 +572,6 @@ h3 {
 
 .open-event-row.focus-highlight {
   z-index: 5;
-}
-
-.open-event-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.open-event-copy strong,
-.open-event-copy small {
-  overflow-wrap: anywhere;
-}
-
-.open-event-copy strong {
-  font-size: 14px;
-}
-
-.open-event-copy small {
-  color: var(--brief-muted);
-  font-size: 11px;
-}
-
-
-.open-event-money {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-  justify-items: end;
-  text-align: right;
-}
-
-.open-event-money small {
-  color: var(--brief-muted);
-  font-size: 10px;
-}
-
-.open-event-money b {
-  font-size: 14px;
-  white-space: nowrap;
 }
 
 .open-detail.receivable .open-event-money b {
@@ -741,34 +660,10 @@ h3 {
   .open-workbench {
     grid-template-columns: 264px minmax(0, 1fr);
   }
+}
 
-  .list-columns {
-    display: none;
-  }
-
-  .open-event-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px 12px;
-    padding: 12px 2px;
-  }
-
-  .open-event-row > .status {
-    grid-row: 1;
-    grid-column: 2;
-    justify-self: end;
-  }
-
-  .open-event-copy {
-    grid-row: 1;
-    grid-column: 1;
-  }
-
-  .open-event-money {
-    grid-row: 2;
-    grid-column: 1;
-    justify-items: start;
-    text-align: left;
-  }
+@media (max-width: 1199px) {
+  .open-event-row > .status { grid-column: 1; justify-self: start; }
 }
 
 @media (max-width: 760px) {
@@ -802,10 +697,6 @@ h3 {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .list-columns {
-    display: none;
-  }
-
   .open-index {
     gap: 3px;
     padding: 10px;
@@ -821,31 +712,6 @@ h3 {
 
   .open-detail {
     padding: 4px 12px;
-  }
-
-  .open-event-row {
-    min-height: 82px;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 5px 10px;
-    padding: 9px 10px;
-  }
-
-  .open-event-copy {
-    grid-row: 1;
-    grid-column: 1 / -1;
-  }
-
-  .open-event-row > .status {
-    grid-row: 2;
-    grid-column: 1;
-    justify-self: start;
-  }
-
-  .open-event-money {
-    grid-row: 3;
-    grid-column: 1;
-    justify-items: start;
-    text-align: left;
   }
 
   .open-event-source :deep(.compact-status-panel) {

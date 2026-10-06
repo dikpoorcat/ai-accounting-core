@@ -1874,6 +1874,7 @@ def frozen_dashboard_open(
     summary_only: bool = False,
     include_settled_page: bool = False,
     reads=None,
+    order_rows=None,
 ) -> dict | None:
     """Build the dashboard from frozen cohort measures and a verified open tail."""
     from .settlement_projection import _obligation_view
@@ -1922,21 +1923,52 @@ def frozen_dashboard_open(
     if page_keys is None or page_keys:
         open_entries = _page_entries(
             connection, scope, include_settled=include_settled_page,
-            page_keys=page_keys, after=after, limit=limit, reads=reads,
+            page_keys=page_keys,
+            after=None if order_rows is not None and not summary_only else after,
+            limit=(sum(row["count"] for row in category_rows.values()) + len(scope.overrides)
+                   if order_rows is not None and not summary_only else limit), reads=reads,
         )
     if page_keys is None:
         selected = list(open_entries)
+        if order_rows is not None and not summary_only:
+            # The proven directory determines membership. Scalar state fields
+            # locate display order only; selected full states retain their
+            # independent digest and precise frozen-source verification below.
+            fields = ("source_subject_id", "counterparty_id", "component",
+                      "source_calculation_id", "source_kind", "source_fact_id")
+            candidates = [scope.overrides[key] for key in selected if key in scope.overrides]
+            base = [[key, open_entries[key][0]] for key in selected if key not in scope.overrides]
+            if base:
+                found = list(connection.execute(
+                    "SELECT json_extract(ids.value,'$[0]') obligation_key," + ",".join(
+                        f"json_extract(s.payload,'$.{field}') {field}" for field in fields
+                    ) + " FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
+                    "s.digest=unhex(json_extract(ids.value,'$[1]'))",
+                    (canonical(base),),
+                ))
+                if len(found) != len(base) or any(row["source_kind"] is None for row in found):
+                    _fail("freeze_state_missing_sort_source", scope.base_period)
+                candidates.extend(dict(row) for row in found)
+            ordered = order_rows(candidates)
+            if after is not None and after not in ordered:
+                raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
+            start = ordered.index(after) + 1 if after is not None else 0
+            selected = ordered[start:start + limit + 1]
     else:
         selected = [] if not page_keys else sorted(page_keys & open_entries.keys())[: limit + 1]
     states = []
     if not summary_only:
+        # The ordered directory's extra key proves continuation, not a returned
+        # business item. Keep that lookahead scalar-only; authenticate complete
+        # payloads and sources only for the rows this page actually displays.
+        displayed = selected[:limit] if order_rows is not None else selected
         base_states = _read_states(
             connection, scope.base_period,
-            {key: open_entries[key][0] for key in selected
+            {key: open_entries[key][0] for key in displayed
              if key not in scope.overrides},
             reads=reads,
         )
-        for key in selected:
+        for key in displayed:
             state = scope.overrides.get(key)
             if state is None:
                 state = base_states[key]

@@ -29,7 +29,7 @@ async function harness() {
       const dashboardErrorMessage = error => error.message;
       const isDashboardSnapshotChanged = () => false;
       ${source}
-      return { response, loading, sectionLoading, sectionErrors, loadData, loadMore, loadAllVouchers, openVoucher, indexVouchers, voucherPreviewIndex, focusedVoucherSelection, invalidateRequests };
+      return { response, vouchers, vouchersReady, activeSection, initializeVouchers, loading, sectionLoading, sectionErrors, loadData, loadMore, loadAllVouchers, openVoucher, indexVouchers, voucherPreviewIndex, focusedVoucherSelection, invalidateRequests, paginationScope, pausePages };
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const module = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
   delete globalThis[key];
@@ -55,6 +55,7 @@ test("all vouchers loads the entire month through bounded pages using one snapsh
   const h = await harness();
   try {
     h.response.value = response(0, 20);
+    h.vouchersReady.value = true;
     const all = h.loadAllVouchers();
     assert.equal(h.loading.value, false, "whole-page loading must stay off");
     assert.deepEqual(h.calls[0].args[4], { section: "vouchers", cursor: "cursor-20" });
@@ -77,6 +78,8 @@ test("100/200/400 voucher pages keep a reactive array and update only new index 
     try {
       const main = h.loadData("2026-02");
       h.calls[0].resolve(response(0, 20, total)); await main;
+      const first = h.initializeVouchers();
+      h.calls[1].resolve(response(0, 20, total)); await first;
       const originalItems = h.response.value.data.collections.vouchers.items, originalIndex = h.voucherPreviewIndex.value;
       assert.equal(Vue.isReactive(originalItems), true);
       const visible = Vue.computed(() => h.response.value.data.collections.vouchers.items.map(row => row.voucher_version_id));
@@ -105,6 +108,7 @@ test("failed all-voucher loading preserves prior rows and resumes from the same 
   const h = await harness();
   try {
     h.response.value = response(0, 20);
+    h.vouchersReady.value = true;
     const first = h.loadAllVouchers(); h.calls[0].reject(new Error("读取失败")); await first;
     assert.equal(h.response.value.data.collections.vouchers.items.length, 20);
     assert.equal(h.sectionErrors.value.vouchers, "读取失败");
@@ -120,6 +124,7 @@ test("company changes cancel voucher paging and late replies cannot restore the 
   const h = await harness();
   try {
     h.response.value = response(0, 20);
+    h.vouchersReady.value = true;
     const all = h.loadAllVouchers();
     h.route.query.company_id = "b"; await Vue.nextTick();
     assert.equal(h.calls[0].args[2].aborted, true);
@@ -198,5 +203,104 @@ test("an external voucher route is located in the first main request", async () 
     const fresh = response(0, 20); fresh.data.focused_voucher = { voucher_version_id: "v44" };
     h.calls[0].resolve(fresh); await pending;
     assert.equal(h.voucherPreviewIndex.value.has("v44"), true);
+  } finally { h.close(); }
+});
+
+test("paired previews do not initialize the voucher-number list; first manual read replaces them", async () => {
+  const h = await harness();
+  try {
+    const main = h.loadData("2026-02");
+    const paired = response(20, 20);
+    paired.data.collections.vouchers.page.next_cursor = "paired-date-cursor";
+    h.calls[0].resolve(paired); await main;
+    assert.equal(h.vouchersReady.value, false);
+    assert.deepEqual(h.vouchers.value, []);
+    h.openVoucher("v21");
+    assert.equal(h.calls.length, 1, "precise local lookup does not request an independent list");
+    const first = h.initializeVouchers();
+    assert.deepEqual(h.calls[1].args[4], { section: "vouchers" });
+    assert.equal(h.calls[1].args[3], "same-snapshot");
+    const duplicate = await h.initializeVouchers();
+    assert.equal(duplicate, false); assert.equal(h.calls.length, 2);
+    h.calls[1].resolve(response(0, 20)); await first;
+    assert.equal(h.vouchersReady.value, true);
+    assert.deepEqual(h.vouchers.value.map(row => row.voucher_version_id), rows(0, 20).map(row => row.voucher_version_id));
+    assert.equal(h.response.value.data.focused_voucher.voucher_version_id, "v21");
+    assert.equal(h.voucherPreviewIndex.value.has("v21"), true);
+    assert.equal(await h.initializeVouchers(), true);
+    assert.equal(h.calls.length, 2, "same-scope revisit reuses the first page");
+    const more = h.loadMore("vouchers");
+    assert.equal(h.calls[2].args[4].cursor, "cursor-20");
+    h.calls[2].resolve(response(20, 20)); await more;
+  } finally { h.close(); }
+});
+
+test("failed voucher initialization retries without the paired cursor and preserves local previews", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(30, 10); h.indexVouchers(h.response.value);
+    const first = h.initializeVouchers();
+    h.calls[0].reject(new Error("首屏失败")); await first;
+    assert.equal(h.vouchersReady.value, false);
+    assert.deepEqual(h.vouchers.value, []);
+    assert.equal(h.voucherPreviewIndex.value.has("v30"), true);
+    assert.equal(h.sectionErrors.value.vouchers, "首屏失败");
+    const retry = h.initializeVouchers();
+    assert.deepEqual(h.calls[1].args[4], { section: "vouchers" });
+    h.calls[1].resolve(response(0, 20)); await retry;
+    assert.equal(h.sectionErrors.value.vouchers, "");
+  } finally { h.close(); }
+});
+
+test("all vouchers initializes first, then follows only independent number-order cursors", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(30, 10);
+    const all = h.loadAllVouchers();
+    assert.deepEqual(h.calls[0].args[4], { section: "vouchers" });
+    h.calls[0].resolve(response(0, 20)); await tick();
+    assert.deepEqual(h.calls[1].args[4], { section: "vouchers", cursor: "cursor-20" });
+    h.calls[1].resolve(response(20, 20)); await tick();
+    h.calls[2].resolve(response(40, 5)); await all;
+    assert.equal(h.vouchers.value.length, 45);
+  } finally { h.close(); }
+});
+
+test("switching away cancels voucher initialization; late replies cannot mark its list ready", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(30, 10);
+    const first = h.initializeVouchers();
+    h.pausePages("vouchers", h.paginationScope());
+    assert.equal(h.calls[0].args[2].aborted, true);
+    h.calls[0].resolve(response(0, 20)); await first;
+    assert.equal(h.vouchersReady.value, false);
+    assert.equal(h.response.value.data.collections.vouchers.items[0].voucher_version_id, "v30");
+    const next = h.initializeVouchers();
+    h.route.query.period = "2026-03"; await Vue.nextTick();
+    h.calls[1].resolve(response(0, 20)); await next;
+    assert.equal(h.vouchersReady.value, false);
+    assert.equal(h.response.value, null);
+  } finally { h.close(); }
+});
+
+test("leaving the activity module stops all-voucher paging and revisiting resumes the cached cursor", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(0, 20); h.vouchersReady.value = true;
+    h.activeSection.value = "activity"; await Vue.nextTick();
+    const all = h.loadAllVouchers();
+    h.activeSection.value = "open-items"; await Vue.nextTick();
+    assert.equal(h.calls[0].args[2].aborted, true);
+    h.calls[0].resolve(response(20, 20)); await all;
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.vouchers.value.length, 20);
+    assert.equal(h.vouchersReady.value, true);
+    h.activeSection.value = "activity"; await Vue.nextTick();
+    const resumed = h.loadAllVouchers();
+    assert.deepEqual(h.calls[1].args[4], { section: "vouchers", cursor: "cursor-20" });
+    h.calls[1].resolve(response(20, 20)); await tick();
+    h.calls[2].resolve(response(40, 5)); await resumed;
+    assert.equal(h.vouchers.value.length, 45);
   } finally { h.close(); }
 });

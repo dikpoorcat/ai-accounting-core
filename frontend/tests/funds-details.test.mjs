@@ -66,9 +66,10 @@ test("fund movement details add precise progress and context without repeating t
       assert.doesNotMatch(correction, /重新付款|重新收款|已结清/);
     });
     await t.test("full summary and purpose deduplication compare complete texts only", async () => {
-      for (const display_summary of ["9月工资付款", "工资付款", "张某"]) {
+      for (const display_summary of ["9月工资付款", "张某"]) {
         assert.doesNotMatch(await render(scenario([]), movement({ display_summary })), /事项说明/);
       }
+      assert.match(await render(scenario([]), movement({ display_summary: "工资付款" })), /事项说明：工资付款/);
       const data = scenario([]);
       data.display_profiles.business.values = { purpose: "9月工资付款", note: "9月工资付款补充" };
       let html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
@@ -211,7 +212,7 @@ test("movement rows toggle by stable occurrence id, support row keyboard input a
       view.toggleMovement(first); change(); assert.equal(view.expandedMovementId.value, "", "scope change closes old row");
     }
     const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8");
-    assert.match(source, /:key="item.id" class="book-activity-row"/);
+    assert.match(source, /:key="item.id" class="book-activity-row business-list-row"/);
     assert.match(source, /@click="toggleMovement\(item, \$event\)" @keydown="handleMovementKey\(item, \$event\)"/);
     assert.match(source, /presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary/);
     assert.match(source, /item\.correction \? formatFen\(item\.signed_amount_fen\) : movementAmount\(item\.direction, item\.amount_fen\)/);

@@ -42,7 +42,7 @@ async function run(config) {
       await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
       const categories = real.data.open_items.categories.filter(category => category.count);
       await page.locator("#open-items .open-index button").nth(categories.findIndex(category => category.key === "payroll_payables")).click();
-      const realGroup = page.locator("#open-items .open-event-row").filter({ hasText: realContribution.party }).filter({ has: page.locator(".open-event-copy small", { hasText: "社保与公积金" }) }).first();
+      const realGroup = page.locator("#open-items .open-event-row").filter({ hasText: realContribution.party }).filter({ has: page.locator(".open-event-matter", { hasText: "社保与公积金" }) }).first();
       await realGroup.focus(); await realGroup.press("Enter"); await realGroup.locator(".contribution-detail").waitFor(); await frames();
       assert.equal(details(), 0, "real grouped detail requested business status");
       assert.equal(await realGroup.getAttribute("aria-expanded"), "true");

@@ -724,6 +724,7 @@ def settlement_dashboard_open(
     summary_only=False,
     include_settled_page=False,
     reads=None,
+    order_rows=None,
 ):
     """Aggregate all open obligations in SQL and hydrate only displayed rows."""
 
@@ -733,6 +734,7 @@ def settlement_dashboard_open(
         connection, period, current=current, after=after, limit=limit,
         page_keys=page_keys, summary_only=summary_only,
         include_settled_page=include_settled_page, reads=reads,
+        order_rows=order_rows,
     )
     if frozen is not None:
         return frozen
@@ -781,6 +783,27 @@ def settlement_dashboard_open(
         else "(? IS NULL OR obligation_key>?)"
     )
     page_parameters = [canonical(sorted(page_keys))] if page_keys is not None else [after, after]
+    page_order = "obligation_key"
+    selected_keys = None
+    if order_rows is not None and page_keys is None and not summary_only:
+        # Whole-scope money is already required for the category totals. Only
+        # narrow identities are returned for sorting; selected amounts below
+        # still come from the same verified obligation relation.
+        candidates = connection.execute(
+            _summary_relation(source_keys) + "SELECT obligation_key,source_subject_id,"
+            "counterparty_id,component,source_calculation_id,source_kind,source_fact_id "
+            "FROM obligations WHERE remaining IS NULL OR remaining<>0",
+            [*scope_parameters, through, cutoff, cutoff],
+        ).fetchall()
+        ordered = order_rows(dict(row) for row in candidates)
+        if after is not None and after not in ordered:
+            raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
+        start = ordered.index(after) + 1 if after is not None else 0
+        selected_keys = ordered[start:start + limit + 1]
+        selected_order = canonical(selected_keys)
+        page_condition = "obligation_key IN (SELECT value FROM json_each(?))"
+        page_order = "(SELECT CAST(key AS INTEGER) FROM json_each(?) WHERE value=obligation_key)"
+        page_parameters = [selected_order, selected_order]
     fields = (
         "obligation_key",
         "source_event_count",
@@ -812,7 +835,7 @@ def settlement_dashboard_open(
         + f", open AS MATERIALIZED (SELECT *,{category} category_key FROM obligations "
         "WHERE remaining IS NULL OR remaining<>0), "
         f"page AS (SELECT * FROM {page_relation} WHERE {page_condition} "
-        "ORDER BY obligation_key LIMIT ?) "
+        f"ORDER BY {page_order} LIMIT ?) "
         "SELECT -1 row_type,NULL category_key,count(*) item_count,NULL amount,"
         "max(remaining IS NULL) unknown,NULL cursor_matches,NULL item FROM obligations "
         "UNION ALL SELECT 0,category_key,count(*),sum(remaining),"
@@ -840,6 +863,9 @@ def settlement_dashboard_open(
             page_rows.append(value if summary_only else _obligation_view(value))
     if after is not None and page_keys is None and not cursor_matches:
         raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
+    if selected_keys is not None:
+        ranks = {key: index for index, key in enumerate(selected_keys)}
+        page_rows.sort(key=lambda row: ranks[row.get("key") or row["obligation_key"]])
     total = sum(row["count"] for row in category_rows.values())
     items = page_rows[:limit]
     more = len(page_rows) > limit

@@ -598,6 +598,64 @@ button {
   }
 }
 
+.business-list-columns,
+.business-list-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--business-list-columns);
+  gap: 12px;
+  align-items: center;
+}
+
+.business-list-columns {
+  min-height: 30px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.business-list-row {
+  position: relative;
+  min-height: 76px;
+  padding: 14px 4px;
+  transition: background 140ms ease;
+}
+
+.business-list-row + .business-list-row { border-top: 1px solid var(--line); }
+.business-list-row.expandable { cursor: pointer; }
+.business-list-row:hover,
+.business-list-row:focus-within { z-index: 4; background: var(--surface-soft); }
+.business-list-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 8px; }
+.business-list-object,
+.business-list-matter { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; line-height: 1.5; }
+.business-list-object strong { font-size: 14px; font-weight: 700; }
+.business-list-matter { font-size: 13px; font-weight: 400; }
+.business-list-matter small,
+.business-list-date { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.business-list-state { justify-self: start; }
+.business-list-money { display: grid; min-width: 0; gap: 2px; justify-items: end; text-align: right; font-variant-numeric: tabular-nums; }
+.business-list-money small { color: var(--muted); font-size: 11px; }
+.business-list-money b,
+.business-list-money strong { font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.business-list-arrow,
+.business-list-arrow-space { width: 12px; height: 16px; justify-self: end; }
+.business-list-arrow { fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+.business-list-arrow.expanded { transform: rotate(90deg); }
+
+@media (max-width: 1199px) {
+  .business-list-columns { display: none; }
+  .business-list-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .business-list-object { grid-column: 1; grid-row: 1; }
+  .business-list-matter { grid-column: 1; grid-row: 2; }
+  .business-list-arrow,
+  .business-list-arrow-space { grid-column: 2; grid-row: 1; }
+  .business-list-date { grid-column: 1; grid-row: 3; }
+  .business-list-state { grid-column: 2; grid-row: 3; justify-self: end; }
+  .business-list-money { grid-column: 1; grid-row: 4; justify-items: start; text-align: left; }
+  .business-list-voucher { grid-column: 2; grid-row: 4; }
+}
+
 .dashboard-action {
   min-height: 38px;
   padding: 8px 14px;

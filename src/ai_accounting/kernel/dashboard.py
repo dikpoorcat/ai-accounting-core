@@ -26,6 +26,7 @@ from .account_definitions import (
 from .business_queries import BusinessQueries, business_display_amount
 from .contracts import KernelError
 from .dashboard_pages import (
+    cursor_sort_profile,
     decode_cursor,
     preparation_view,
     seal_collections,
@@ -1892,10 +1893,18 @@ class Dashboard:
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
             position = _brief_amounts(snap)
-            after = decode_cursor(snap, "brief", section, cursor, {})
+            voucher_sort = (
+                "business-paired-date/1" if section in {None, "activity"}
+                or section == "vouchers" and cursor_sort_profile(cursor) == "business-paired-date/1"
+                else "voucher-number/1"
+            )
+            after = decode_cursor(snap, "brief", section, cursor, {},
+                                  sort_profile=voucher_sort if section == "vouchers" else None)
             if section in {None, "activity", "vouchers"}:
-                rows, page = snap.month_journal.page(
-                    after or 0, limit, include_lines=True
+                rows, page = (
+                    snap.month_journal.page(after or 0, limit, include_lines=True)
+                    if voucher_sort == "voucher-number/1"
+                    else snap.month_journal.business_page(after, limit, include_lines=True)
                 )
             else:
                 rows, page = [], None
@@ -2024,7 +2033,9 @@ class Dashboard:
                     ],
                 }
                 data["workforce_cost"] = _brief_workforce_cost(snap)
-            return {**self._response(snap, seal_collections(snap, "brief", data, {})),
+            return {**self._response(snap, seal_collections(
+                snap, "brief", data, {}, sort_profiles={"vouchers": voucher_sort}
+            )),
                     "schema_version": 14}
 
     def funds(
@@ -3004,6 +3015,7 @@ def _contribution_identity(company_id, kind, fact_data, component):
 
 def _open_items(snap, *, after=None, limit=100, summary_only=False):
     from .settlement_projection import settlement_dashboard_open
+    from .dashboard_sort import open_item_order
 
     historical = settlement_dashboard_open(
         snap.connection,
@@ -3012,6 +3024,7 @@ def _open_items(snap, *, after=None, limit=100, summary_only=False):
         limit=limit,
         summary_only=summary_only,
         reads=snap.reads,
+        order_rows=None if summary_only else lambda rows: open_item_order(snap, rows),
     )
     selected = {row["key"] for row in historical["obligations"]}
     current = settlement_dashboard_open(
@@ -3189,6 +3202,8 @@ def _open_items(snap, *, after=None, limit=100, summary_only=False):
             "issues": shared["issues"],
         }
 
+    item_order = {source["key"]: index for index, source in enumerate(historical["obligations"])}
+    items.sort(key=lambda item: item_order[item["id"]])
     return totals(historical) | {
         "categories": categories,
         "current_outstanding": totals(current),

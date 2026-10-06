@@ -71,9 +71,9 @@ test("closed-period open items prefer each item's current settlement status", as
     app.use(router);
     const html = await renderToString(app);
 
-    assert.match(html, /class="status"[^>]*>当前待收<\/span>/);
-    assert.match(html, /class="status status-settled"[^>]*>当前已收回<\/span>/);
-    assert.match(html, /class="status status-historical"[^>]*>关账时待收<\/span>/);
+    assert.match(html, /class="status business-list-state"[^>]*>当前待收<\/span>/);
+    assert.match(html, /class="status business-list-state status-settled"[^>]*>当前已收回<\/span>/);
+    assert.match(html, /class="status business-list-state status-historical"[^>]*>关账时待收<\/span>/);
     assert.equal((html.match(/<details\b[^>]*class="[^"]*\bbusiness-status-details\b[^"]*"/g) ?? []).length, 3);
     assert.equal((html.match(/class="[^"]*\bcompact-status-trigger\b[^"]*"/g) ?? []).length, 3);
     assert.equal((html.match(/role="button" tabindex="0" aria-expanded="false"/g) ?? []).length, 3);

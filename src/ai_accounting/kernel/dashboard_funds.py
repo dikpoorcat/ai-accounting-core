@@ -69,26 +69,54 @@ def _sql_summary_page(
     limit,
     where="1=1",
     filters=(),
+    order_rows=None,
 ):
     """Return a full source summary and bounded page from one selected event set."""
     summary_json = "json_group_array(json_array(" + ",".join(summary_columns) + "))"
+    order_values = []
+    if order_rows is not None:
+        candidates = connection.execute(
+            f"WITH source_rows AS MATERIALIZED ({source}), "
+            f"summary_rows AS MATERIALIZED ({summary_sql}) "
+            f"SELECT page_key,calculation_id,internal_transfer FROM source_rows WHERE {where}",
+            [*parameters, *filters],
+        ).fetchall()
+        ordered = order_rows(candidates)
+        picked, _ = page_keys(ordered, after, limit + 1 if limit < 500 else 500)
+        # page_keys limits public sizes to 500; the final page still needs one
+        # extra scalar candidate to establish continuation at the maximum size.
+        if limit == 500:
+            start = ordered.index(after) + 1 if after is not None else 0
+            picked = ordered[start:start + limit + 1]
+        order_values = [canonical(picked)]
+        page_relation = (
+            "page_rows AS (SELECT f.*,CAST(ids.key AS INTEGER) sort_position "
+            "FROM json_each(?) ids JOIN filtered_rows f ON f.page_key=ids.value) "
+        )
+        page_order = "page_rows.sort_position"
+    else:
+        page_relation = (
+            "page_rows AS (SELECT * FROM filtered_rows WHERE page_key>? "
+            "ORDER BY page_key LIMIT ?) "
+        )
+        order_values = [after or "", limit + 1]
+        page_order = "page_rows.page_key"
     query = (
         f"WITH source_rows AS MATERIALIZED ({source}), "
         f"summary_rows AS MATERIALIZED ({summary_sql}), "
         f"filtered_rows AS MATERIALIZED (SELECT * FROM source_rows WHERE {where}), "
-        "page_rows AS (SELECT * FROM filtered_rows WHERE page_key>? "
-        "ORDER BY page_key LIMIT ?) "
+        + page_relation +
         "SELECT page_rows.*, counts.total_count, counts.filtered_count, "
-        "counts.cursor_present,CASE WHEN row_number() OVER (ORDER BY page_rows.page_key)=1 "
+        f"counts.cursor_present,CASE WHEN row_number() OVER (ORDER BY {page_order})=1 "
         "THEN counts.summary_json END summary_json FROM (SELECT "
         "(SELECT count(*) FROM source_rows) total_count, "
         "(SELECT count(*) FROM filtered_rows) filtered_count, "
         "(SELECT count(*) FROM filtered_rows WHERE page_key=?) cursor_present, "
         f"(SELECT {summary_json} FROM summary_rows) summary_json) counts "
-        "LEFT JOIN page_rows ON 1=1 ORDER BY page_rows.page_key"
+        f"LEFT JOIN page_rows ON 1=1 ORDER BY {page_order}"
     )
     found = connection.execute(
-        query, [*parameters, *filters, after or "", limit + 1, after]
+        query, [*parameters, *filters, *order_values, after]
     ).fetchall()
     summary = json.loads(found[0]["summary_json"])
     if any(row["summary_json"] is not None for row in found[1:]):
@@ -556,6 +584,19 @@ class FundsRead:
         )
         return source, parameters
 
+    def movement_order(self, rows):
+        from .dashboard_sort import business_sort_metadata, date_object_key
+
+        rows = list(rows)
+        metadata = business_sort_metadata(
+            self.snap, {row["calculation_id"] for row in rows}, funds=True,
+        )
+        return [row["page_key"] for row in sorted(rows, key=lambda row: date_object_key(
+            metadata[row["calculation_id"]], None, row["page_key"],
+            month_confirmation=False, internal=bool(row["internal_transfer"]),
+            missing_party="未提供往来对象",
+        ))]
+
     def _verified_money_summary(self):
         """Consume proved effects without building the unused movement page.
 
@@ -829,6 +870,7 @@ class FundsRead:
                 summary_select + " FROM source_rows" + grouping,
                 summary_columns,
                 **page_request,
+                order_rows=self.movement_order,
             )
             self.shared_pages["movements"] = rows, page
         movement_totals = {
@@ -983,7 +1025,7 @@ class FundsRead:
             item["recipient_id"] for item in data.get("allocations", ()) if item.get("recipient_id")
         )
         party = (
-            "、".join(dict.fromkeys(self.snap.party(ident) for ident in sorted(parties)))
+            "、".join(self.snap.party(ident) for ident in sorted(parties))
             if parties
             else "公司账户内部划转"
             if internal_transfer
@@ -1943,6 +1985,7 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
                 read.connection, source, parameters,
                 "SELECT NULL unused WHERE 0", ("unused",),
                 after=None, limit=limit, where=where, filters=values,
+                order_rows=read.movement_order,
             )
             read.shared_pages["movements"] = rows, page
     bank = (

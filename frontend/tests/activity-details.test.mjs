@@ -40,7 +40,8 @@ test("activity details only add information to the exact occurrence row", async 
     await t.test("salary, tax and current result never replace the clicked amount", async () => {
       const html = await render();
       const main = html.split("整笔业务的款项进度")[0];
-      assert.doesNotMatch(main, /本次事项|张某|9月工资|税前工资|按月确认|owner-activity-summary/);
+      assert.match(main, /事项说明：9月工资/);
+      assert.doesNotMatch(main, /本次事项|张某|税前工资|按月确认|owner-activity-summary/);
       assert.match(html, /整笔业务的款项进度 · 截至2026年9月末/);
       assert.match(html, /实发工资[\s\S]*还需支付[\s\S]*¥2,000\.00/);
       assert.match(html, /个人所得税[\s\S]*¥123\.45/);
@@ -69,6 +70,15 @@ test("activity details only add information to the exact occurrence row", async 
       assert.match(html, /用途／备注：另外记录的用途|员工：张小某/); assert.match(html, /相关资产：设备/); assert.match(html, /相关账户：工资账户/);
       data.display_profiles.counterparties = [profile("张某")]; const roles = await render(data);
       assert.match(roles, /员工：张某、张小某/); assert.match(roles, /往来方：张某/);
+    });
+    await t.test("a full occurrence description moves into details and deduplicates only visible complete texts", async () => {
+      const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资", note: "9月工资补充用途" };
+      const html = await render(data);
+      assert.equal((html.match(/事项说明：9月工资/g) ?? []).length, 1);
+      assert.doesNotMatch(html, /用途／备注：9月工资<\/p>/); assert.match(html, /用途／备注：9月工资补充用途/);
+      assert.doesNotMatch(await render(data, activity({ description: "工资" })), /事项说明：工资<\/p>/);
+      data.display_profiles.employees = [{ entity_id: "employee-a", values: { display_name: "张某" } }, { entity_id: "employee-b", values: { display_name: "张某" } }];
+      assert.match(await render(data), /员工：张某、张某/);
     });
     await t.test("later business withdrawal is retained only when it adds to the historical row", async () => {
       const data = scenario(); data.latest_source.deleted = true;

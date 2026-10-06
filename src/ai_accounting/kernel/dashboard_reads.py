@@ -1252,6 +1252,28 @@ class Journal:
             "next_cursor": records[-1]["number"] if more else None,
         }
 
+    def business_page(self, after, limit, *, include_lines=True):
+        """Order verified scalar identities before loading this page's bodies."""
+        from .dashboard_sort import business_sort_metadata, date_object_key
+
+        rows = self.verified_rows()
+        if rows is None:
+            query, parameters = self.sql()
+            rows = list(self.snapshot.connection.execute(query, parameters))
+            self.snapshot.reads.verify_selected_voucher_adoptions(
+                rows, through_period=self.snapshot.month,
+            )
+        metadata = business_sort_metadata(
+            self.snapshot, {row["basis_calculation_id"] for row in rows}
+        )
+        ordered = sorted(rows, key=lambda row: date_object_key(
+            metadata[row["basis_calculation_id"]], str(YearMonth.from_ordinal(row["period"])),
+            (row["subject_id"] if "subject_id" in row.keys() else "", row["id"]),
+        ))
+        by_id = {row["id"]: row for row in ordered}
+        selected, page = page_keys(by_id, after, limit)
+        return self.hydrate([by_id[key] for key in selected], include_lines=include_lines), page
+
     def _verified_page_rows(
         self, after_number, limit, *, voucher_number=None, voucher_version_id=None,
     ):

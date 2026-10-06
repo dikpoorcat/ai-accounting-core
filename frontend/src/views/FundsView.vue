@@ -1039,24 +1039,23 @@ onBeforeUnmount(() => {
 
               <div class="fund-business-detail" :aria-label="`${selectedMovementAccountLabel}资金明细`" :aria-busy="pageStates.book.loading" aria-live="polite">
             <div v-if="visibleMovements.length" class="book-activity-feed" role="region" aria-label="账面资金明细" tabindex="0">
-              <div class="book-list-columns" aria-hidden="true">
-                <span>日期</span><span>业务与对象</span><span>方向</span><span class="book-column-number">金额</span>
+              <div class="book-list-columns business-list-columns" aria-hidden="true">
+                <span>日期</span><span>对象</span><span>事项</span><span>方向</span><span class="book-column-number">金额</span><span></span>
               </div>
               <ol class="book-activity-list">
-                <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row"
+                <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row business-list-row"
                   :class="{ expandable: item.subject_id, expanded: expandedMovementId === item.id }"
                   :role="item.subject_id ? 'button' : undefined" :tabindex="item.subject_id ? 0 : undefined"
                   :aria-expanded="item.subject_id ? expandedMovementId === item.id : undefined"
                   @click="toggleMovement(item, $event)" @keydown="handleMovementKey(item, $event)">
-                  <time :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
-                  <div class="book-movement-copy">
-                    <strong>{{ item.list_summary || item.type }}</strong>
-                    <small>{{ item.party || "无需往来对象" }}<template v-if="item.internal_transfer"> · 账户互转</template></small>
-                  </div>
-                  <span class="direction" :class="item.correction ? 'correction' : item.direction">
+                  <time class="business-list-date" :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
+                  <div class="book-movement-copy business-list-object"><strong>{{ item.party || "无需往来对象" }}</strong></div>
+                  <span class="book-movement-matter business-list-matter">{{ item.list_summary || item.type }}<small v-if="item.internal_transfer && item.list_summary !== '账户互转'">账户互转</small></span>
+                  <span class="direction business-list-state" :class="item.correction ? 'correction' : item.direction">
                     {{ item.correction ? "更正原业务" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
                   </span>
-                  <div class="book-movement-end"><strong class="book-movement-amount" :class="item.correction ? 'correction' : item.direction">{{ item.correction ? formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong><svg v-if="item.subject_id" class="book-expand-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></div>
+                  <div class="book-movement-end business-list-money"><strong class="book-movement-amount" :class="item.correction ? 'correction' : item.direction">{{ item.correction ? formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong></div>
+                  <svg v-if="item.subject_id" class="book-expand-arrow business-list-arrow" :class="{ expanded: expandedMovementId === item.id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
                   <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
                     presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary
                     @click.stop @keydown.stop @changed="refreshChanged" />
@@ -1588,28 +1587,12 @@ summary {
 }
 
 .book-activity-feed {
-  --book-list-columns: 88px minmax(180px, 1fr) auto minmax(122px, auto);
+  --business-list-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 68px 142px 12px;
   min-width: 0;
 }
 
 .book-activity-feed:focus-visible {
   outline: none;
-}
-
-.book-list-columns,
-.book-activity-row {
-  display: grid;
-  grid-template-columns: var(--book-list-columns);
-  gap: 12px;
-  align-items: center;
-}
-
-.book-list-columns {
-  min-height: 34px;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .book-column-number {
@@ -1622,70 +1605,9 @@ summary {
   list-style: none;
 }
 
-.book-activity-row {
-  position: relative;
-  min-height: 76px;
-  padding: 14px 4px;
-  transition: background-color 140ms ease;
-}
-
-.book-activity-row + .book-activity-row {
-  border-top: 1px solid var(--line);
-}
-
-.book-activity-row:hover,
-.book-activity-row:focus-within {
-  z-index: 4;
-  background: var(--surface-soft);
-}
-.book-activity-row.expandable { cursor: pointer; }
-.book-activity-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .book-activity-row.expanded { background: var(--surface-soft); }
-.book-movement-end { display: flex; min-width: 0; gap: 10px; align-items: center; justify-content: flex-end; }
-.book-expand-arrow { width: 12px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
-.book-activity-row.expanded .book-expand-arrow { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .book-expand-arrow { transition: none; } }
 .book-movement-amount.correction { color: var(--muted); }
 .direction.correction { color: var(--muted); background: var(--surface-soft); }
-
-.book-activity-row > time {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.book-movement-copy {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.book-movement-copy strong,
-.book-movement-copy small {
-  overflow-wrap: anywhere;
-}
-
-.book-movement-copy small {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.book-movement-copy > strong {
-  font-size: 14px;
-}
-
-.book-activity-row > .direction {
-  justify-self: start;
-}
-
-.book-movement-amount {
-  justify-self: end;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
 
 .book-movement-amount.inflow {
   color: var(--accent);
@@ -2282,17 +2204,6 @@ tbody tr:last-child td {
 #bank-details .view-switch button { min-height: 34px; padding: 0 12px; }
 @media (min-width: 761px) and (max-width: 1199px) {
   .fund-business-workbench { grid-template-columns: 264px minmax(0, 1fr); }
-  .book-list-columns { display: none; }
-  .book-activity-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px 12px;
-    padding: 12px 2px;
-  }
-  .book-activity-row > time { grid-row: 1; grid-column: 1; }
-  .book-activity-row > .direction { grid-row: 1; grid-column: 2; justify-self: end; }
-  .book-movement-copy { grid-row: 2; grid-column: 1 / -1; }
-  .book-movement-end { grid-row: 3; grid-column: 1 / -1; justify-content: space-between; }
-
 }
 @media (max-width: 760px) {
   .funds-hero { grid-template-columns: minmax(0, 1fr); padding: 22px; gap: 24px; }
@@ -2320,29 +2231,7 @@ tbody tr:last-child td {
   .fund-account-index > button { min-height: 44px; padding: 9px 12px; }
   .fund-business-detail { padding: 4px 12px; }
   .book-activity-feed { border: 0; background: transparent; }
-  .book-list-columns { display: none; }
   .book-activity-list { display: block; }
-  .book-activity-row {
-    min-height: 78px;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "date direction"
-      "copy copy"
-      "amount amount"
-      "detail detail";
-    gap: 5px 10px;
-    align-items: start;
-    padding: 9px 10px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-  .book-activity-row + .book-activity-row { border: 0; border-top: 1px solid var(--line); }
-  .book-activity-row > time { grid-area: date; }
-  .book-movement-copy { grid-area: copy; }
-  .book-activity-row > .direction { grid-area: direction; justify-self: end; }
-  .book-movement-end { grid-area: amount; justify-content: space-between; }
-  .book-activity-row :deep(.compact-status-panel) { grid-area: detail; }
 
 
 

@@ -31,21 +31,23 @@ test("social and housing obligations aggregate only explicit identity and payrol
       const html = await render([item("one"), item("two", { contribution_group_key: "employee-b" }), item("three", { payroll_period: "2026-08" }), item("four", { contribution_component: null }), item("five", { payroll_period: null }), item("six", { contribution_group_key: null })]);
       assert.equal(rowCount(html), 6);
     });
-    await t.test("group object and matter stay on separate lines, and only cross-month expanded details name the payroll month", async () => {
+    await t.test("group object and matter occupy independent cells, and only cross-month expanded details name the payroll month", async () => {
       const html = await render(allComponents());
-      const copy = html.match(/<span class="open-event-copy"[^>]*>[\s\S]*?<\/strong>[\s\S]*?<\/span>/)[0];
-      assert.match(copy, /<strong[^>]*>同名员工/); assert.match(copy, /<small[^>]*>社保与公积金<\/small>/);
-      assert.doesNotMatch(copy, /2026|年|月|工资所属/);
+      const copy = html.match(/<span class="open-event-copy business-list-object"[^>]*>[\s\S]*?<\/strong>[\s\S]*?<\/span>/)[0];
+      const matter = html.match(/<span class="open-event-matter business-list-matter"[^>]*>[\s\S]*?社保与公积金[\s\S]*?<\/span>/)[0];
+      assert.match(copy, /<strong[^>]*>同名员工/); assert.doesNotMatch(copy, /社保与公积金/);
+      assert.doesNotMatch(copy + matter, /2026|年|月|工资所属/);
       const sameMonth = await render(allComponents(), {}, true); assert.doesNotMatch(sameMonth, /工资所属月/);
       const crossMonth = await render([item("previous-month", { payroll_period: "2026-08" })], {}, true);
       assert.match(crossMonth, /工资所属月：2026年8月/);
-      const previousCopy = crossMonth.match(/<span class="open-event-copy"[^>]*>[\s\S]*?<\/strong>[\s\S]*?<\/span>/)[0];
-      assert.match(previousCopy, /<small[^>]*>社保与公积金<\/small>/); assert.doesNotMatch(previousCopy, /2026|年|月|工资所属/);
+      const previousCopy = crossMonth.match(/<span class="open-event-copy business-list-object"[^>]*>[\s\S]*?<\/strong>[\s\S]*?<\/span>/)[0];
+      assert.doesNotMatch(previousCopy, /2026|年|月|工资所属|社保与公积金/);
+      assert.match(crossMonth, /class="open-event-matter business-list-matter"[^>]*>[\s\S]*?社保与公积金/);
     });
     await t.test("incomplete pages cannot publish partial grouped amounts even after a read failure", async () => {
       for (const itemsError of [null, "暂时无法继续读取"]) {
         const html = await render([item("first")], { itemsComplete: false, itemsError });
-        const money = html.match(/<span class="open-event-money"[^>]*>[\s\S]*?<\/span>/)[0];
+        const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0];
         assert.doesNotMatch(money, /¥/); assert.match(html, /正在汇总|尚未读全/);
       }
     });
@@ -53,7 +55,7 @@ test("social and housing obligations aggregate only explicit identity and payrol
       const huge = [item("huge", { outstanding_fen: "9007199254740993" }), item("cent", { contribution_component: "employee_housing", outstanding_fen: "1" })];
       assert.match(await render(huge), /¥90,071,992,547,409\.94/);
       const html = await render([item("known"), item("unknown", { contribution_component: "employee_housing", outstanding_fen: null })]);
-      assert.match(html, /待核对/); const money = html.match(/<span class="open-event-money"[^>]*>[\s\S]*?<\/span>/)[0]; assert.doesNotMatch(money, /¥/);
+      assert.match(html, /待核对/); const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0]; assert.doesNotMatch(money, /¥/);
     });
     await t.test("offsetting excess and unpaid amounts must not advertise settlement", async () => {
       const grouped = groupBriefOpenItems(summary(2), [item("excess", { status: "over_settled", current_status: "over_settled", outstanding_fen: "-10000", current_outstanding_fen: "-10000" }), item("unpaid", { contribution_component: "employee_housing" })], true);

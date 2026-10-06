@@ -53,13 +53,17 @@ const isFunds = computed(() => props.presentation === "funds" && Boolean(props.f
 const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value);
 const fundsDescription = computed(() => {
   const item = props.fundsContext;
-  return item?.display_summary && ![item.list_summary, item.type, item.party].includes(item.display_summary) ? item.display_summary : "";
+  return item?.display_summary && ![item.list_summary || item.type, item.party].includes(item.display_summary) ? item.display_summary : "";
+});
+const activityDescription = computed(() => {
+  const item = props.activityContext;
+  return item?.description && ![item.party, item.title].includes(item.description) ? item.description : "";
 });
 const ownerPurposes = computed(() => {
   const context = props.activityContext || props.briefContext;
   const rowTexts = isFunds.value
-    ? [props.fundsContext?.party, props.fundsContext?.list_summary, props.fundsContext?.type, fundsDescription.value]
-    : [context?.party, context?.description, props.activityContext?.title];
+    ? [props.fundsContext?.party, props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value]
+    : [context?.party, isActivity.value ? props.activityContext?.title : context?.description, activityDescription.value];
   return purposes.value.filter(value => !rowTexts.includes(value));
 });
 type Obligation = BusinessStatusData["settlements"]["obligations"][number];
@@ -72,13 +76,16 @@ const activityObjects = computed(() => {
     { label: "相关账户", profiles: profiles?.fund_accounts },
   ].map(group => {
     const members = (group.profiles ?? []).filter(item => !isFunds.value || group.label !== "相关账户" || item.entity_id !== props.fundsContext?.account_id);
-    const names = isFunds.value
-      ? [...new Map(members.map(item => [item.entity_id, item])).values()].flatMap(item => item.values.display_name ? [item.values.display_name] : [])
-      : [...new Set(members.map(item => item.values.display_name).filter((name): name is string => Boolean(name)))];
+    const identities = new Set<string>();
+    const names = members.filter(item => {
+      if (!item.entity_id) return true;
+      if (identities.has(item.entity_id)) return false;
+      identities.add(item.entity_id); return true;
+    }).flatMap(item => item.values.display_name ? [item.values.display_name] : []);
     return { label: group.label, names };
   })
     .filter(group => group.names.length)
-    .map((group, _, groups) => ({ ...group, names: group.names.filter(name => name !== (isFunds.value ? props.fundsContext?.party : props.activityContext?.party) || groups.filter(other => other.names.includes(name)).length > 1) }))
+    .map((group, _, groups) => ({ ...group, names: group.names.filter(name => name !== (isFunds.value ? props.fundsContext?.party : props.activityContext?.party) || groups.reduce((count, other) => count + other.names.filter(value => value === name).length, 0) > 1) }))
     .filter(group => group.names.length);
 });
 const activityFollowups = computed(() => {
@@ -246,6 +253,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
         <p v-else-if="!isFunds && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
         <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
+        <p v-if="isActivity && activityDescription">事项说明：{{ activityDescription }}</p>
         <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
         <p v-for="group in activityObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         <template v-if="data.settlements.obligations.length">

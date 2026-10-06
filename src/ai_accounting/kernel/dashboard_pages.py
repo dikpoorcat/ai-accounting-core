@@ -25,6 +25,22 @@ SECTIONS = {
     "business-status": frozenset({"settlement_events"}),
 }
 
+# Public response shapes stay unchanged. These internal profiles invalidate old
+# seek positions and distinguish business-paired cards from voucher-number pages.
+SORT_PROFILES = {
+    ("brief", "activity"): "business-date-object/1",
+    ("brief", "vouchers"): "voucher-number/1",
+    ("brief", "open_items"): "object-matter/1",
+    ("funds", "movements"): "business-date-object/1",
+}
+
+
+def cursor_sort_profile(cursor):
+    try:
+        return json.loads(base64.urlsafe_b64decode(cursor.encode())).get("sort")
+    except (ValueError, TypeError, UnicodeError, AttributeError):
+        return None
+
 
 def validate_page(endpoint, section, cursor, limit):
     if section is not None and section not in SECTIONS[endpoint]:
@@ -35,7 +51,7 @@ def validate_page(endpoint, section, cursor, limit):
         raise KernelError("invalid_command", "每页数量必须为 1 至 500")
 
 
-def page_scope(snapshot, endpoint, section, filters, *, collection_version=None):
+def page_scope(snapshot, endpoint, section, filters, *, collection_version=None, sort_profile=None):
     return hashlib.sha256(
         canonical(
             {
@@ -48,18 +64,25 @@ def page_scope(snapshot, endpoint, section, filters, *, collection_version=None)
                 "section": section,
                 "filters": filters,
                 "collection_version": collection_version,
+                "sort": sort_profile or SORT_PROFILES.get((endpoint, section)),
             }
         ).encode()
     ).hexdigest()
 
 
-def decode_cursor(snapshot, endpoint, section, cursor, filters, *, collection_version=None):
+def decode_cursor(snapshot, endpoint, section, cursor, filters, *, collection_version=None, sort_profile=None):
     if cursor is None:
         return None
     try:
         value = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+        if not isinstance(value, dict):
+            raise ValueError("cursor object")
+        profile = sort_profile or SORT_PROFILES.get((endpoint, section))
+        if value.get("sort") != profile:
+            raise ValueError("sort")
         if value["scope"] != page_scope(
-            snapshot, endpoint, section, filters, collection_version=collection_version
+            snapshot, endpoint, section, filters, collection_version=collection_version,
+            sort_profile=profile,
         ):
             raise ValueError("scope")
         if type(value["key"]) not in (str, int):
@@ -71,7 +94,7 @@ def decode_cursor(snapshot, endpoint, section, cursor, filters, *, collection_ve
         ) from exc
 
 
-def seal_page(snapshot, endpoint, section, page, filters):
+def seal_page(snapshot, endpoint, section, page, filters, *, sort_profile=None):
     page = dict(page)
     if page.get("next_cursor") is not None:
         page["next_cursor"] = base64.urlsafe_b64encode(
@@ -83,17 +106,20 @@ def seal_page(snapshot, endpoint, section, page, filters):
                         section,
                         filters,
                         collection_version=page.get("collection_version"),
+                        sort_profile=sort_profile,
                     ),
                     "key": page["next_cursor"],
+                    "sort": sort_profile or SORT_PROFILES.get((endpoint, section)),
                 }
             ).encode()
         ).decode()
     return page
 
 
-def seal_collections(snapshot, endpoint, data, filters):
+def seal_collections(snapshot, endpoint, data, filters, *, sort_profiles=None):
     for section, collection in data.get("collections", {}).items():
-        collection["page"] = seal_page(snapshot, endpoint, section, collection["page"], filters)
+        collection["page"] = seal_page(snapshot, endpoint, section, collection["page"], filters,
+                                       sort_profile=(sort_profiles or {}).get(section))
     return data
 
 

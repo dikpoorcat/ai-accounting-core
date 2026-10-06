@@ -92,8 +92,52 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
       const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 5 }], items }); app.use(await router());
       const html = await renderToString(app);
       for (const amount of ["¥0.00", "待核对", "−¥8,000.00", "¥6,000.00", "¥90,071,992,547,409.93"]) assert(html.includes(amount));
-      assert.match(html, /class="state correction"[^>]*>更正原业务/);
+      assert.match(html, /class="state business-list-state correction"[^>]*>更正原业务/);
       assert.doesNotMatch(html, /owner-activity-summary/);
+    });
+    await t.test("business rows render date, object and short matter in separate cells with a final arrow", async () => {
+      const item = { ...activity(1), date: "2026-03-09", description: "已经记录的完整业务说明" };
+      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 1 }], items: [item] }); app.use(await router());
+      const html = await renderToString(app);
+      assert.match(html, /business-list-columns[^>]*>[\s\S]*?业务时间[\s\S]*?对象[\s\S]*?事项[\s\S]*?状态[\s\S]*?业务金额[\s\S]*?凭证/);
+      assert.match(html, /event-date business-list-date[^>]*>3 月 9 日/);
+      assert.match(html, /event-copy business-list-object[^>]*>[\s\S]*?甲客户/);
+      assert.match(html, /event-matter business-list-matter[^>]*>经营收款/);
+      assert.doesNotMatch(html, /已经记录的完整业务说明|对象与事项/);
+      assert.match(html, /event-voucher-link business-list-voucher[\s\S]*?row-chevron business-list-arrow/);
+    });
+    await t.test("manual voucher mode initializes its independent first page without consuming preview cards", async () => {
+      const events = [], props = reactive({ ...baseProps(), vouchersReady: false, focusedVoucher: voucher(999), onInitializeVouchers: () => events.push("initialize"), onMoreVouchers: () => events.push("more"), onAllVouchers: () => events.push("all") });
+      let state;
+      const host = createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} });
+      const wrapped = { ...component, ssrRender: undefined, setup(_actual, context) { state = component.setup(props, context); return state; }, render: () => h("div") };
+      const app = host.createApp(wrapped, props); app.use(await router()); app.provide(ssrContextKey, { modules: new Set() }); app.mount({});
+      assert.equal(state.mode.value, "voucher"); assert.deepEqual(events, []);
+      assert.deepEqual(state.visibleVouchers.value.map(item => item.number), ["999"]);
+      state.selectVoucherMode(); assert.deepEqual(events, ["initialize"]); assert.equal(state.visibleVouchers.value.length, 0);
+      state.retryVouchers(); assert.deepEqual(events, ["initialize", "initialize"]);
+      state.toggleVoucherDisplayMode(); assert.equal(state.voucherDisplayMode.value, "all"); assert.deepEqual(events, ["initialize", "initialize", "initialize"]);
+      props.vouchersReady = true; await nextTick(); assert.equal(events.at(-1), "all");
+      state.mode.value = "business"; state.selectVoucherMode(); assert.equal(events.at(-1), "all"); assert.equal(events.filter(event => event === "initialize").length, 3);
+      const beforeRevisit = events.length;
+      props.active = false; await nextTick(); props.active = true; await nextTick();
+      assert.equal(events.length, beforeRevisit + 1); assert.equal(events.at(-1), "all", "revisiting a manually selected all-voucher module resumes its collection");
+      props.vouchersReady = false; state.mode.value = "business"; props.focusedVoucher = voucher(998); await nextTick();
+      const before = events.length; props.vouchersReady = true; await nextTick(); assert.equal(events.length, before, "programmatic precise focus does not request all pages");
+      props.active = false; await nextTick(); props.active = true; await nextTick(); assert.equal(events.length, before, "revisiting precise local focus does not initialize or read all pages");
+      app.unmount();
+    });
+    await t.test("leaving voucher mode pauses collection reads while precise focus stays local", async () => {
+      const events = [], props = reactive({ ...baseProps(), vouchersReady: false, onInitializeVouchers: () => events.push("initialize"), onPauseVouchers: () => events.push("pause") });
+      let state;
+      const host = createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} });
+      const wrapped = { ...component, ssrRender: undefined, setup(_actual, context) { state = component.setup(props, context); return state; }, render: () => h("div") };
+      const app = host.createApp(wrapped, props); app.use(await router()); app.provide(ssrContextKey, { modules: new Set() }); app.mount({});
+      state.selectVoucherMode(); await nextTick(); assert.deepEqual(events, ["initialize"]);
+      state.mode.value = "business"; await nextTick(); assert.deepEqual(events, ["initialize", "pause"]);
+      props.focusedVoucher = voucher(999); await nextTick(); assert.equal(state.mode.value, "voucher"); assert.deepEqual(events, ["initialize", "pause"]);
+      state.mode.value = "business"; await nextTick(); assert.deepEqual(events, ["initialize", "pause", "pause"]);
+      app.unmount();
     });
     await t.test("one active preview uses exact business amount and complete lines, including zero, unknown and reversal", async () => {
       for (const amount of ["0", null]) {
