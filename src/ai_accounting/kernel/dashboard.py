@@ -1014,7 +1014,8 @@ class _Snapshot:
         return f"{len(unique)} 张资产卡片：{labels}{suffix}"
 
     def business_summary(
-        self, calc, sign=1, relations=None, *, include_sources=False, asset_references=()
+        self, calc, sign=1, relations=None, *, include_sources=False, asset_references=(),
+        include_parties=True,
     ):
         """Owner-facing wording from exact selected facts, without inferred business causes."""
         data, kind = calc["fact"]["data"], calc["kind"]
@@ -1101,7 +1102,8 @@ class _Snapshot:
         named_parties = [
             self.party_details(i)
             for i in dict.fromkeys(ids)
-            if i and i != "payroll-group" and self.party_details(i).get("source")
+            if include_parties and i and i != "payroll-group"
+            and self.party_details(i).get("source")
         ]
         names = [party["name"] for party in named_parties]
         # Preserve different identities even when their display names happen to be equal.
@@ -2435,7 +2437,7 @@ def _brief_activity_row(snap, row):
         for item in snap.asset_references(calc)
     ]
     title, description = snap.business_summary(
-        calc, row["sign"], relations, asset_references=assets
+        calc, row["sign"], relations, asset_references=assets, include_parties=False
     )
     data = calc["fact"]["data"]
     parties = {

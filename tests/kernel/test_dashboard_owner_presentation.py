@@ -88,7 +88,7 @@ def expense_fields(party, *, amount=1000, period="2026-09"):
     }
 
 
-def test_business_short_title_keeps_supplied_purpose_and_party_in_full_summary(bank_book):
+def test_activity_omits_repeated_party_and_keeps_purpose_and_full_voucher_summary(bank_book):
     engine, save, publish, _ = bank_book
     save("expense", "office", expense_fields("supplier"))
     publish("office")
@@ -106,9 +106,12 @@ def test_business_short_title_keeps_supplied_purpose_and_party_in_full_summary(b
     row = data["collections"]["activity"]["items"][0]
     assert row["title"] == "办公用品采购"
     assert row["description"] == (
-        "办公用品采购（2026-09） · 甲办公用品店；供研发办公室日常使用；已核对本次采购清单"
+        "办公用品采购（2026-09）；供研发办公室日常使用；已核对本次采购清单"
     )
     assert row["party"] == "甲办公用品店"
+    assert data["collections"]["vouchers"]["items"][0]["summary"] == (
+        "办公用品采购（2026-09） · 甲办公用品店；供研发办公室日常使用；已核对本次采购清单"
+    )
     assert row["amount_fen"] == 1000
     assert engine.ledger("2026-09") == before
 
@@ -122,7 +125,7 @@ def test_next_month_wage_payment_summary_names_employee_and_source_month(payroll
     display_profile(company.engine, "business", "salary-paid", purpose="补发一月份工资")
     row = voucher(company.engine, "2026-02", "salary-paid")
     assert row["title"] == "支付工资奖金"
-    assert row["description"] == "支付工资奖金（2026-01） · 甲员工；补发一月份工资"
+    assert row["description"] == "支付工资奖金（2026-01）；补发一月份工资"
     assert row["date"] == "2026-02-10"
     assert row["amount_fen"] == 907400
     assert row["party"] == "甲员工"
@@ -233,7 +236,8 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     )
     replacement = voucher(company.engine, "2026-02", "january")
     assert reversal["title"] == "冲正·计提工资"
-    assert reversal["description"] == "冲销原业务：计提工资（2026-01） · 甲员工；一月份员工工资"
+    assert reversal["description"] == "冲销原业务：计提工资（2026-01）；一月份员工工资"
+    assert reversal["party"] == replacement["party"] == "甲员工"
     assert reversal["amount_fen"] == -1000000
     assert replacement["title"] == "计提工资"
     assert replacement["amount_fen"] == 1100000
@@ -294,6 +298,7 @@ def test_equal_supplier_amounts_follow_explicit_advance_source_order(bank_book, 
         assert line["source_business"]["subject_id"] == source
         assert line["amount_fen"] == 12500 and line["state"] == "resolved"
     assert all(name in row["party"] for name in [*names.values(), "丙股东"])
+    assert row["description"] == "个人代付（2026-09）"
     assert status["current_business_result"]["calculation"]["fact_data"]["payer_id"] == "owner"
     assert_company_money(status, row["voucher_version_id"])
 
@@ -326,6 +331,7 @@ def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_bo
         ("bob", -60000, "resolved"),
     ]
     assert row["party"] == "甲垫付人、乙垫付人"
+    assert "甲垫付人" not in row["description"] and "乙垫付人" not in row["description"]
     assert all(
         item["creditor_id"] is None
         for item in status["settlements"]["line_relations"]

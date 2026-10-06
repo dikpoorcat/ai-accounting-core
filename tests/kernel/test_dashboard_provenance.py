@@ -114,7 +114,9 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert voucher["field_sources"]["list_summary"]["id"] == business["id"]
     activity = brief["collections"]["activity"]["items"][0]
     assert activity["title"] == voucher["list_summary"] == "原业务"
-    assert activity["description"] == voucher["display_summary"]
+    assert activity["party"] == "原姓名"
+    assert activity["description"] == "原业务（2026-01）；后来补齐备注"
+    assert voucher["display_summary"] == "原业务（2026-01） · 原姓名；后来补齐备注"
     assert any(item["id"] == note["id"] for item in voucher["field_sources"]["display_summary"])
     assert frozen_rows(company.engine) == frozen
     assert (
