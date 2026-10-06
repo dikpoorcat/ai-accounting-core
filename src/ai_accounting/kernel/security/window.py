@@ -18,6 +18,10 @@ from .transport import NativeHttpClient, WindowBridge
 from .windows import assert_interactive_desktop
 
 _MESSAGES = {
+    "IDENTITY_LOGIN_NAME_REQUIRED": "请填写负责人登录名。",
+    "IDENTITY_LOGIN_NAME_INVALID": (
+        "登录名须为3—100个英文字母、数字、点、下划线或短横线，并以字母或数字开头。"
+    ),
     "IDENTITY_PASSWORD_CONFIRMATION_MISMATCH": "两次输入的新密码不一致，请重新输入。",
     "IDENTITY_PASSWORD_POLICY_REJECTED": (
         f"新密码须为 {PASSWORD_MIN_LENGTH}—{PASSWORD_MAX_LENGTH} 个字符，不能包含空字符。"
@@ -34,6 +38,7 @@ _MESSAGES = {
     "COMPANY_NOT_ACTIVE": "该公司当前不可操作，请关闭此窗口并核验公司状态。",
 }
 _LABELS = {
+    "login_name": "负责人登录名",
     "password": "当前密码",
     "new_password": "新密码",
     "repeat_password": "再次输入新密码",
@@ -145,7 +150,9 @@ class SecurityForm:
             text=WINDOW_TITLES[self.request.kind].split(" - ")[-1],
             font=("Microsoft YaHei UI", 15, "bold"),
         ).grid(sticky="w", pady=(0, 12))
-        text = f"公司：{facts['company_name']}\n负责人：{facts['login_name']}"
+        text = f"公司：{facts['company_name']}"
+        if self.request.kind != "bootstrap_owner":
+            text += f"\n负责人：{facts['login_name']}"
         if facts.get("target_label"):
             text += f"\n目标库：{facts['target_label']}"
         if self.request.kind == "approve_period_close":
@@ -157,6 +164,8 @@ class SecurityForm:
             text += "\n完成后旧会话和旧恢复码失效，需要重新登录。"
         if self.request.kind in {"bootstrap_owner", "change_password", "recover"}:
             text += f"\n新密码长度：{PASSWORD_MIN_LENGTH}—{PASSWORD_MAX_LENGTH} 个字符。"
+        if self.request.kind == "bootstrap_owner":
+            text += "\n请在此窗口填写登录名：3—100位字母、数字、点、下划线或短横线。"
         if self.request.kind == "replace_recovery_code":
             text += "\n确认后旧恢复码立即失效，请保存新恢复码。"
         ttk.Label(frame, text=text, wraplength=460).grid(sticky="w", pady=(0, 14))
@@ -183,6 +192,8 @@ class SecurityForm:
             "change_password",
         }:
             fields = ["password"]
+        elif self.request.kind == "bootstrap_owner":
+            fields = ["login_name"]
         else:
             fields = []
         if self.request.kind == "recover":
@@ -191,8 +202,10 @@ class SecurityForm:
             fields.extend(["new_password", "repeat_password"])
         for field in fields:
             ttk.Label(frame, text=_LABELS[field]).grid(sticky="w", pady=(6, 3))
-            entry = ttk.Entry(frame, show="●", width=46)
+            entry = ttk.Entry(frame, show="" if field == "login_name" else "●", width=46)
             entry.grid(sticky="ew")
+            if field == "login_name" and facts.get("login_name"):
+                entry.insert(0, facts["login_name"])
             self.entries[field] = entry
         self.message = tk.StringVar(value="请在此窗口完成操作，密码不会发送到聊天。")
         ttk.Label(frame, textvariable=self.message, wraplength=460).grid(sticky="w", pady=14)
@@ -266,9 +279,13 @@ class SecurityForm:
         if self.finished:
             self.destroy()
             return
-        values = {key: SecretStr(entry.get()) for key, entry in self.entries.items()}
-        for entry in self.entries.values():
-            entry.delete(0, "end")
+        values = {
+            key: entry.get() if key == "login_name" else SecretStr(entry.get())
+            for key, entry in self.entries.items()
+        }
+        for key, entry in self.entries.items():
+            if key != "login_name":
+                entry.delete(0, "end")
             entry.configure(state="disabled")
         if self.request.kind == "bootstrap_owner" and not self.recovery_displayed:
             self.saved_new_password = values.get("new_password")

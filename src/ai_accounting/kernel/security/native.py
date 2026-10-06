@@ -154,11 +154,15 @@ class NativeSecurityController:
             if parsed.kind == "bootstrap_owner":
                 if status["provisioned"]:
                     raise IdentityError("IDENTITY_OWNER_ALREADY_PROVISIONED")
-                if not parsed.login_name:
-                    raise IdentityError("IDENTITY_LOGIN_NAME_REQUIRED")
+                name = (
+                    normalize_login_name(parsed.login_name)
+                    if parsed.login_name is not None
+                    else None
+                )
             elif not status["provisioned"]:
                 raise IdentityError("IDENTITY_OWNER_NOT_PROVISIONED")
-            name = normalize_login_name(parsed.login_name or status["login_name"])
+            else:
+                name = normalize_login_name(parsed.login_name or status["login_name"])
             parsed = parsed.model_copy(update={"login_name": name})
             if parsed.kind in {
                 "change_password",
@@ -220,9 +224,20 @@ class NativeSecurityController:
             raise IdentityError("OWNER_SECURITY_OPERATION_ALREADY_COMMITTED")
         request, kind = record.request, record.request.kind
         allowed = {"password", "new_password", "repeat_password", "recovery_code"}
+        if kind == "bootstrap_owner":
+            allowed.add("login_name")
         if set(payload) - allowed:
             raise IdentityError("IDENTITY_REQUEST_INVALID")
-        secrets = {key: SecretStr(secret_text(value)) for key, value in payload.items()}
+        name = None
+        if kind == "bootstrap_owner":
+            if payload.get("login_name") is None:
+                raise IdentityError("IDENTITY_LOGIN_NAME_REQUIRED")
+            name = normalize_login_name(payload["login_name"])
+        secrets = {
+            key: SecretStr(secret_text(value))
+            for key, value in payload.items()
+            if key != "login_name"
+        }
         if kind in {"bootstrap_owner", "change_password", "recover"}:
             if secrets.get("new_password") is None or secrets.get("new_password") != secrets.get(
                 "repeat_password"
@@ -231,8 +246,9 @@ class NativeSecurityController:
         recovery = None
         if kind == "bootstrap_owner":
             recovery = self.service.provision(
-                request.login_name, secrets.get("new_password"), request_id=record.request_id
+                name, secrets.get("new_password"), request_id=record.request_id
             )
+            record.request = request.model_copy(update={"login_name": name})
         elif kind == "login":
             self._publish_login(record, secrets.get("password"))
         elif kind == "change_password":

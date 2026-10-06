@@ -32,7 +32,12 @@ def test_bootstrap_acknowledgement_and_public_secret_boundary(tmp_path):
     with pytest.raises(IdentityError, match="OPERATION_INCOMPLETE"):
         call(native, "native_update", request_id, status="succeeded", operation_committed=True)
     result = call(
-        native, "native_execute", request_id, new_password=PASSWORD, repeat_password=PASSWORD
+        native,
+        "native_execute",
+        request_id,
+        login_name="owner",
+        new_password=PASSWORD,
+        repeat_password=PASSWORD,
     )
     recovery = result["recovery_code"]
     assert isinstance(recovery, str)
@@ -136,3 +141,123 @@ def test_close_context_is_displayed_and_revalidated_by_injected_issuer(tmp_path)
     result = call(native, "native_execute", request_id, password=PASSWORD)
     assert result["approval_id"] == "synthetic"
     assert seen[0]["preview_digest"] == "a" * 64
+
+
+@pytest.mark.parametrize("prefill", [None, "  suggested.owner  "])
+def test_bootstrap_accepts_native_login_name_and_finish_uses_chosen_name(tmp_path, prefill):
+    service, store, native, opened = controller(tmp_path)
+    fields = {"kind": "bootstrap_owner"}
+    if prefill is not None:
+        fields["login_name"] = prefill
+    request_id = native.request(**fields)["request_id"]
+    assert opened == [request_id]
+    inspect = call(native, "native_inspect", request_id)
+    assert inspect["request"]["login_name"] == ("suggested.owner" if prefill else None)
+    assert not service.status()["provisioned"]
+    chosen = "  New.Owner_2026  "
+    result = call(
+        native,
+        "native_execute",
+        request_id,
+        login_name=chosen,
+        new_password=PASSWORD,
+        repeat_password=PASSWORD,
+    )
+    assert result["operation_committed"] and result["recovery_code"]
+    assert service.status()["login_name"] == "New.Owner_2026"
+    assert native._records[request_id].request.login_name == "New.Owner_2026"
+    assert not result["login_completed"] and store.load_session_token() is None
+    call(native, "native_finish", request_id, new_password=PASSWORD)
+    authority = service.authorize(store.load_session_token())
+    assert authority.owner_id == native.session_status()["owner_id"]
+    assert native.status(request_id)["login_completed"]
+
+
+@pytest.mark.parametrize("name", [None, "", "  ", "ab", "bad name", "中文名称", 42])
+def test_invalid_or_missing_native_bootstrap_name_preserves_record_and_owner(tmp_path, name):
+    service, store, native, _ = controller(tmp_path)
+    request_id = native.request(kind="bootstrap_owner", login_name="prefilled.owner")["request_id"]
+    before = vars(native._records[request_id]).copy()
+    data = {"new_password": PASSWORD, "repeat_password": PASSWORD}
+    if name is not None:
+        data["login_name"] = name
+    with pytest.raises(IdentityError, match="LOGIN_NAME_(REQUIRED|INVALID)"):
+        call(native, "native_execute", request_id, **data)
+    assert vars(native._records[request_id]) == before
+    assert not service.status()["provisioned"]
+    assert store.load_session_token() is None
+
+
+def test_bootstrap_password_failure_does_not_adopt_edited_name(tmp_path):
+    service, _, native, _ = controller(tmp_path)
+    request_id = native.request(kind="bootstrap_owner", login_name="suggested.owner")["request_id"]
+    before = vars(native._records[request_id]).copy()
+    with pytest.raises(IdentityError, match="PASSWORD_CONFIRMATION_MISMATCH"):
+        call(
+            native,
+            "native_execute",
+            request_id,
+            login_name="chosen.owner",
+            new_password=PASSWORD,
+            repeat_password=NEW_PASSWORD,
+        )
+    assert vars(native._records[request_id]) == before
+    assert not service.status()["provisioned"]
+
+
+def test_native_bootstrap_name_is_private_and_existing_owner_still_rejects_bootstrap(tmp_path):
+    service, _, native, _ = controller(tmp_path)
+    request_id = native.request(kind="bootstrap_owner")["request_id"]
+    before = vars(native._records[request_id]).copy()
+    with pytest.raises(IdentityError, match="PRIVATE_CHANNEL_REQUIRED"):
+        native.dispatch(
+            "native_execute",
+            {
+                "request_id": request_id,
+                "login_name": "chosen.owner",
+                "new_password": PASSWORD,
+                "repeat_password": PASSWORD,
+            },
+        )
+    assert vars(native._records[request_id]) == before
+    assert not service.status()["provisioned"]
+    service.provision("existing.owner", PASSWORD)
+    with pytest.raises(IdentityError, match="OWNER_ALREADY_PROVISIONED"):
+        native.request(kind="bootstrap_owner")
+    with pytest.raises(IdentityError, match="OWNER_ALREADY_PROVISIONED"):
+        call(
+            native,
+            "native_execute",
+            request_id,
+            login_name="chosen.owner",
+            new_password=PASSWORD,
+            repeat_password=PASSWORD,
+        )
+    assert vars(native._records[request_id]) == before
+    assert service.status()["login_name"] == "existing.owner"
+
+
+@pytest.mark.parametrize(
+    "kind", ["login", "change_password", "recover", "replace_recovery_code", "approve_period_close"]
+)
+def test_nonbootstrap_native_execute_cannot_override_login_name(tmp_path, kind):
+    service, store, native, _ = controller(tmp_path)
+    service.provision("existing.owner", PASSWORD)
+    store.save_session_token(service.login("existing.owner", PASSWORD).session_token)
+    native.inspect_close = lambda request: {}
+    native.close_issuer = lambda *args: pytest.fail("issuer must not be called")
+    fields = {"kind": kind}
+    if kind == "approve_period_close":
+        fields.update(
+            company_id="company",
+            database_id="database",
+            period="2026-09",
+            preview_digest="a" * 64,
+            epochs={"accounting": 1, "material": 1, "management": 1},
+        )
+    request_id = native.request(**fields)["request_id"]
+    before = vars(native._records[request_id]).copy()
+    with pytest.raises(IdentityError, match="REQUEST_INVALID"):
+        call(native, "native_execute", request_id, login_name="another.owner", password=PASSWORD)
+    assert vars(native._records[request_id]) == before
+    assert service.status()["login_name"] == "existing.owner"

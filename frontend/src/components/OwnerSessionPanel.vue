@@ -6,7 +6,6 @@ const props = defineProps<{ authenticated: boolean; expanded: boolean; launchErr
 const emit = defineEmits<{ authenticated: [value: boolean]; close: [] }>();
 const dialog = ref<HTMLDialogElement | null>(null);
 const security = ref<LocalSecurityState | null>(null);
-const loginName = ref("");
 const busy = ref(false);
 const message = ref("");
 const error = ref(props.launchError ?? "");
@@ -49,14 +48,22 @@ async function update(result: LocalSecurityState): Promise<void> {
   busy.value = false;
   if (isSecurityRequestState(result) && result.status === "succeeded") {
     const session = await localSecurity("session_status");
+    if (stopped) return;
     security.value = session;
     const authenticated = isSecuritySessionStatus(session) && session.authenticated;
     emit("authenticated", authenticated);
     message.value = authenticated ? "负责人已登录，可以查看公司账务。" : "安全操作已完成，请登录后查看账务。";
-  } else if (isSecurityRequestState(result) && (result.status === "failed" || result.status === "expired")) {
-    error.value = result.status === "expired" ? "安全窗口操作已超时，请重新发起。" : "安全窗口未完成操作，请查看本机窗口提示后重试。";
-    message.value = "";
-  } else if (isSecurityRequestState(result) && result.status === "cancelled") message.value = "已取消安全窗口操作。";
+  } else if (isSecurityRequestState(result) && ["failed", "expired", "cancelled"].includes(result.status)) {
+    const session = await localSecurity("session_status");
+    if (stopped) return;
+    security.value = session;
+    emit("authenticated", isSecuritySessionStatus(session) && session.authenticated);
+    if (result.status === "cancelled") message.value = "已取消安全窗口操作。";
+    else {
+      error.value = result.status === "expired" ? "安全窗口操作已超时，请重新发起。" : "安全窗口未完成操作，请查看本机窗口提示后重试。";
+      message.value = "";
+    }
+  }
 }
 async function poll() {
   if (!security.value || !isSecurityRequestState(security.value)) return;
@@ -66,7 +73,7 @@ async function poll() {
 async function request(kind: SecurityAction) {
   clearTimeout(timer);
   busy.value = true; error.value = ""; message.value = "正在打开本机安全窗口…";
-  try { await update(await localSecurity("request", { kind, ...(kind === "bootstrap_owner" ? { login_name: loginName.value.trim() } : {}) })); }
+  try { await update(await localSecurity("request", { kind })); }
   catch (caught) { busy.value = false; message.value = ""; error.value = localErrorMessage(caught); }
 }
 async function cancel() {
@@ -98,12 +105,11 @@ onBeforeUnmount(() => { stopped = true; clearTimeout(timer); dialog.value?.close
       </div>
       <button class="close-button" type="button" aria-label="关闭负责人身份" autofocus @click="emit('close')">×</button>
     </header>
-    <p id="owner-description" class="session-note">密码与恢复码只在本机安全窗口输入。</p>
+    <p id="owner-description" class="session-note">负责人设置、密码与恢复码只在本机安全窗口处理。</p>
     <p v-if="security && isSecuritySessionStatus(security) && security.login_name" class="login-name"><span>负责人登录名</span><strong>{{ security.login_name }}</strong></p>
 
     <div v-if="security && isSecuritySessionStatus(security) && security.provisioned === false" class="setup-controls">
-      <label>负责人登录名<input v-model="loginName" autocomplete="username" maxlength="100" :disabled="busy"></label>
-      <button class="dashboard-action primary-action" type="button" :disabled="busy || !loginName.trim()" @click="request('bootstrap_owner')">设置负责人</button>
+      <button class="dashboard-action primary-action" type="button" :disabled="busy" @click="request('bootstrap_owner')">设置负责人</button>
     </div>
     <template v-else>
       <button v-if="!authenticated" class="dashboard-action primary-action" type="button" :disabled="busy" @click="request('login')">负责人登录</button>
@@ -147,8 +153,6 @@ h2 { margin: 0; font-size: 20px; }
 .security-actions button:focus-visible { outline-offset: -3px; }
 button:disabled { opacity: .55; cursor: wait; }
 .setup-controls { display: grid; gap: 14px; }
-label { display: grid; gap: 6px; font-size: 13px; }
-input { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; }
 .session-feedback { display: grid; justify-items: start; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .session-feedback p { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .session-feedback .session-error { color: var(--danger); }
