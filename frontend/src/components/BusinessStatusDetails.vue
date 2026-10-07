@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { fetchBusinessStatus, type BusinessStatusData } from "../api/businessStatus";
+import { fetchBusinessStatus, type BusinessStatusCacheEntry, type BusinessStatusData } from "../api/businessStatus";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import { businessStateLabel } from "../api/dashboardContracts";
 import { localBusinessName } from "../api/localKernel";
@@ -9,7 +9,7 @@ import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
-import type { BriefActivityRow } from "../api/brief";
+import type { BriefActivityRow, BriefVoucher } from "../api/brief";
 import type { FundMovement } from "../api/funds";
 
 interface BriefStatusContext {
@@ -23,9 +23,11 @@ interface BriefStatusContext {
 const props = withDefaults(defineProps<{
   subjectId: string; period: string; snapshotVersion?: string | null;
   settlementView?: "historical" | "current"; summaryLabel?: string;
-  presentation?: "default" | "brief" | "funds"; briefContext?: BriefStatusContext;
+  presentation?: "default" | "brief" | "funds" | "voucher"; briefContext?: BriefStatusContext;
   activityContext?: BriefActivityRow;
   fundsContext?: FundMovement;
+  voucherContext?: BriefVoucher;
+  detailCache?: Map<string, BusinessStatusCacheEntry>;
   expanded?: boolean; hideSummary?: boolean;
 }>(), { presentation: "default", expanded: undefined });
 const emit = defineEmits<{ changed: [] }>();
@@ -50,7 +52,8 @@ const panelOpen = computed(() => props.expanded ?? openedPanel.value);
 const isOpenItem = computed(() => props.presentation === "brief" && Boolean(props.briefContext));
 const isActivity = computed(() => props.presentation === "brief" && Boolean(props.activityContext));
 const isFunds = computed(() => props.presentation === "funds" && Boolean(props.fundsContext));
-const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value);
+const isVoucher = computed(() => props.presentation === "voucher" && Boolean(props.voucherContext));
+const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value || isVoucher.value);
 const fundsDescription = computed(() => {
   const item = props.fundsContext;
   return item?.display_summary && ![item.list_summary || item.type, item.party].includes(item.display_summary) ? item.display_summary : "";
@@ -60,6 +63,14 @@ const activityDescription = computed(() => {
   return item?.description && ![item.party, item.title].includes(item.description) ? item.description : "";
 });
 const ownerPurposes = computed(() => {
+  if (isVoucher.value && props.voucherContext) {
+    const voucher = props.voucherContext;
+    const visibleTexts = [voucher.summary, voucher.list_summary, voucher.type, voucher.business_amount_label,
+      ...voucher.lines.flatMap(line => [line.party, line.source_label, ...line.parties.map(party => party.name)]),
+      ...[...(voucher.asset ? [voucher.asset] : []), ...voucher.asset_members,
+        ...voucher.lines.flatMap(line => line.asset ? [line.asset] : [])].map(asset => asset.name || asset.code || "资产卡片")];
+    return purposes.value.filter(value => !visibleTexts.includes(value));
+  }
   const context = props.activityContext || props.briefContext;
   const rowTexts = isFunds.value
     ? [props.fundsContext?.party, props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value]
@@ -67,6 +78,42 @@ const ownerPurposes = computed(() => {
   return purposes.value.filter(value => !rowTexts.includes(value));
 });
 type Obligation = BusinessStatusData["settlements"]["obligations"][number];
+const voucherObjects = computed(() => {
+  const profiles = data.value?.display_profiles, voucher = props.voucherContext;
+  if (!voucher) return [];
+  const visibleParties = new Set(voucher.lines.flatMap(line => line.parties
+    .filter(party => line.parties.length > 1 || line.party === party.name).map(party => party.id)));
+  const visibleAssets = new Set([
+    ...(voucher.asset ? [voucher.asset.asset_id] : []),
+    ...voucher.asset_members.map(asset => asset.asset_id),
+    ...voucher.lines.flatMap(line => line.asset ? [line.asset.asset_id] : []),
+  ]);
+  const groups = [
+    { label: "员工", profiles: profiles?.employees },
+    { label: "往来方", profiles: profiles?.counterparties },
+    { label: "相关资产", profiles: profiles?.assets },
+    { label: "相关账户", profiles: profiles?.fund_accounts },
+  ];
+  const roles = new Map<string, Set<string>>();
+  for (const group of groups) for (const item of group.profiles ?? []) {
+    if (!item.entity_id) continue;
+    const labels = roles.get(item.entity_id) ?? new Set<string>();
+    labels.add(group.label); roles.set(item.entity_id, labels);
+  }
+  return groups.map(group => {
+    const identities = new Set<string>();
+    const names = (group.profiles ?? []).filter(item => {
+      if (!item.entity_id) return true;
+      if (identities.has(item.entity_id)) return false;
+      identities.add(item.entity_id);
+      if ((roles.get(item.entity_id)?.size ?? 0) > 1) return true;
+      if (group.label === "相关资产") return !visibleAssets.has(item.entity_id);
+      if (group.label === "员工" || group.label === "往来方") return !visibleParties.has(item.entity_id);
+      return true;
+    }).flatMap(item => item.values.display_name ? [item.values.display_name] : []);
+    return { label: group.label, names };
+  }).filter(group => group.names.length);
+});
 const activityObjects = computed(() => {
   const profiles = data.value?.display_profiles;
   return [
@@ -98,12 +145,41 @@ const activityFollowups = computed(() => {
       ? [{ key, before, after, name: (after || before)?.name || "" }] : [];
   });
 });
+const hasVoucherProgress = computed(() => Boolean(data.value && (
+  data.value.latest_source.deleted || ownerPurposes.value.length || voucherObjects.value.length
+  || data.value.settlements.obligations.length || data.value.settlements.checking
+  || activityFollowups.value.length || (showCurrent.value && currentSettlements.value?.checking)
+  || collection.value?.page.total_count
+)));
 function activityLabels(item: Obligation) {
   if (item.category_key === "supplier_advances") return { original: "预付金额", paid: "已退回", other: "已冲抵", remaining: "尚未冲抵" };
   if (item.direction === "receivable") return { original: "原应收", paid: "已收", other: "抵销、代付等已处理", remaining: "还需收回" };
   if (item.direction === "payable") return { original: "原应付", paid: "已付", other: "抵销、代付等已处理", remaining: "还需支付" };
   return { original: "款项总额", paid: "实际收付", other: "其他已处理", remaining: "未结金额" };
 }
+type VoucherProgressRow = { key: string; name: string; item?: Obligation; previous?: Obligation; added?: boolean };
+function groupVoucherProgress(rows: VoucherProgressRow[]) {
+  const groups = new Map<string, { key: string; labels: ReturnType<typeof activityLabels>; showOther: boolean; rows: VoucherProgressRow[] }>();
+  for (const row of rows) {
+    const basis = row.item || row.previous;
+    const labels = basis ? activityLabels(basis) : { original: "款项总额", paid: "实际收付", other: "其他已处理", remaining: "未结金额" };
+    const key = JSON.stringify(labels);
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, labels, showOther: false, rows: [] };
+      groups.set(key, group);
+    }
+    group.showOther ||= Boolean(basis && (basis.other_settled_fen !== '0' || basis.category_key === 'supplier_advances'));
+    group.rows.push(row);
+  }
+  return [...groups.values()];
+}
+const voucherHistoricalGroups = computed(() => isVoucher.value ? groupVoucherProgress(
+  (data.value?.settlements.obligations ?? []).map(item => ({ key: item.key, name: item.name, item })),
+) : []);
+const voucherFollowupGroups = computed(() => isVoucher.value ? groupVoucherProgress(
+  activityFollowups.value.map(change => ({ key: change.key, name: change.name, item: change.after, previous: change.before, added: !change.before })),
+) : []);
 function activityState(item: Obligation, checking: boolean) {
   if (item.settlement_status === "withdrawn") return "业务已撤回";
   if (item.settlement_status === "reversed") return "原业务已更正";
@@ -186,13 +262,29 @@ function movementPurpose(name: string) {
   const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
 }
-function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, props.fundsContext?.id, props.fundsContext?.account_id]); }
-function invalidate() {
-  generation += 1; controller?.abort(); pageController?.abort(); controller = null; pageController = null;
-  data.value = null; loading.value = false; moreLoading.value = false; error.value = ""; moreError.value = ""; notice.value = ""; responseVersion.value = "";
-  if (isOpenItem.value) openedPanel.value = false;
+function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, props.fundsContext?.id, props.fundsContext?.account_id, props.voucherContext?.voucher_version_id]); }
+function cacheKey() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.subjectId, props.settlementView ?? "current"]); }
+function rememberRead() {
+  if (isVoucher.value && props.detailCache && props.snapshotVersion && data.value) {
+    props.detailCache.set(cacheKey(), { data: data.value, snapshotVersion: responseVersion.value, moreError: moreError.value });
+  }
 }
-function changed() { invalidate(); notice.value = "业务资料已变化，请刷新页面后重新查看。"; emit("changed"); }
+function restoreRead() {
+  const cached = isVoucher.value && props.snapshotVersion ? props.detailCache?.get(cacheKey()) : undefined;
+  if (!cached || cached.snapshotVersion !== props.snapshotVersion) return false;
+  data.value = cached.data; responseVersion.value = cached.snapshotVersion; moreError.value = cached.moreError ?? "";
+  return true;
+}
+function cancelRead() {
+  generation += 1; controller?.abort(); pageController?.abort(); controller = null; pageController = null;
+  loading.value = false; moreLoading.value = false;
+}
+function invalidate() {
+  cancelRead();
+  data.value = null; loading.value = false; moreLoading.value = false; error.value = ""; moreError.value = ""; notice.value = ""; responseVersion.value = "";
+  if (isOpenItem.value || isVoucher.value) openedPanel.value = false;
+}
+function changed() { if (isVoucher.value) props.detailCache?.clear(); invalidate(); notice.value = "业务资料已变化，请刷新页面后重新查看。"; emit("changed"); }
 async function load() {
   if (loading.value) return;
   const version = ++generation, key = selection(), request = new AbortController();
@@ -202,6 +294,7 @@ async function load() {
     const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current", limit: 20 });
     if (!valid()) return;
     data.value = result.data; responseVersion.value = result.snapshot_version; notice.value = "";
+    rememberRead();
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) error.value = dashboardErrorMessage(caught); } }
   finally { if (valid()) { loading.value = false; controller = null; } }
 }
@@ -218,15 +311,16 @@ async function loadMore() {
     const previous = latest.collections.settlement_events;
     if (!previous) return;
     data.value = { ...latest, collections: { settlement_events: appendDashboardCollection(previous, next) } };
+    rememberRead();
   } catch (caught) { if (valid()) { if (isDashboardSnapshotChanged(caught)) changed(); else if (!(caught instanceof DOMException && caught.name === "AbortError")) moreError.value = dashboardErrorMessage(caught); } }
-  finally { if (valid()) { moreLoading.value = false; pageController = null; } }
+  finally { if (valid()) { moreLoading.value = false; pageController = null; rememberRead(); } }
 }
 function paginationScope() { return `${selection()}:${generation}`; }
 function pausePages(scope: string) {
   if (scope !== paginationScope()) return;
   pageController?.abort(); pageController = null; moreLoading.value = false;
 }
-function loadOnExpansion() { if (panelOpen.value && !data.value && !loading.value && !notice.value) void load(); }
+function loadOnExpansion() { if (panelOpen.value && !data.value && !loading.value && !notice.value && !restoreRead()) void load(); }
 function toggle(event: Event) {
   if (props.expanded !== undefined) return;
   openedPanel.value = (event.target as HTMLDetailsElement).open;
@@ -238,28 +332,42 @@ function movementLabel(item: NonNullable<BusinessStatusData["collections"]["sett
   return item.direction < 0 ? `更正原${label}` : label;
 }
 watch(selection, invalidate, { flush: "sync" });
+watch(panelOpen, open => { if (!open && isVoucher.value) cancelRead(); }, { flush: "sync" });
 watch(() => props.expanded, loadOnExpansion, { immediate: true });
 onBeforeUnmount(() => { mounted = false; invalidate(); });
 </script>
 
 <template>
-  <details class="business-status-details" :class="{ 'compact-status-details': presentation !== 'default' }" :open="panelOpen" @toggle="toggle">
+  <details class="business-status-details" :class="{ 'compact-status-details': presentation !== 'default', 'voucher-progress': isVoucher }" :open="panelOpen" @toggle="toggle">
     <summary class="business-detail-trigger" :class="{ 'compact-status-trigger': presentation !== 'default', 'hidden-summary': hideSummary }" :aria-hidden="hideSummary || undefined" :tabindex="hideSummary ? -1 : undefined"><span>{{ summaryLabel || '业务详情' }}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></summary>
     <p v-if="notice" class="business-detail-state" :class="{ 'compact-status-panel': presentation !== 'default' }" role="status">{{ notice }}</p>
-    <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation !== 'default' }" role="status">正在读取业务详情…</p>
+    <p v-if="loading" class="business-detail-state" :class="{ 'compact-status-panel': presentation !== 'default' }" role="status">{{ isVoucher ? '正在读取业务进展…' : '正在读取业务详情…' }}</p>
     <p v-else-if="error" class="business-detail-state error" :class="{ 'compact-status-panel': presentation !== 'default' }" role="alert">{{ error }} <button type="button" @click="load">重新读取</button></p>
     <section v-else-if="data" class="business-detail-panel" :class="{ 'compact-status-panel': presentation !== 'default' }">
-      <template v-if="isActivity || isFunds">
+      <template v-if="isActivity || isFunds || isVoucher">
         <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
-        <p v-else-if="!isFunds && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+        <p v-else-if="isActivity && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+        <p v-else-if="isVoucher && data.latest_source.deleted">这笔业务目前已撤回；凭证保留历史记录。</p>
         <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
         <p v-if="isActivity && activityDescription">事项说明：{{ activityDescription }}</p>
-        <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
-        <p v-for="group in activityObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
+        <div v-if="ownerPurposes.length || (isVoucher ? voucherObjects : activityObjects).length" class="owner-detail-context">
+          <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
+          <p v-for="group in (isVoucher ? voucherObjects : activityObjects)" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
+        </div>
+        <p v-if="isVoucher && data.settlements.checking && !data.settlements.obligations.length" class="checking">AI 会计核对中，所选月末的收付进度暂不能完整确认。</p>
         <template v-if="data.settlements.obligations.length">
           <h4>{{ isFunds ? '款项进度' : '整笔业务的款项进度' }} · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
           <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
-          <div class="owner-activity-obligations">
+          <table v-for="group in voucherHistoricalGroups" :key="group.key" class="voucher-progress-table" aria-label="所选月末款项进度">
+            <colgroup><col class="voucher-progress-name-column" /><col /><col /><col v-if="group.showOther" /><col /><col class="voucher-progress-state-column" /></colgroup>
+            <thead><tr><th scope="col">款项</th><th scope="col" class="money">{{ group.labels.original }}</th><th scope="col" class="money">{{ group.labels.paid }}</th><th v-if="group.showOther" scope="col" class="money">{{ group.labels.other }}</th><th scope="col" class="money">{{ group.labels.remaining }}</th><th scope="col" class="status">状态</th></tr></thead>
+            <tbody><tr v-for="row in group.rows" :key="row.key">
+              <th scope="row">{{ movementPurpose(row.name) }}<small v-if="row.item?.source_period && row.item.source_period !== period">{{ periodText(row.item.source_period) }}</small><small v-if="row.item?.direction === 'unknown' || row.item?.category_key === 'unknown'">收付分类待核对</small></th>
+              <td class="money">{{ ownerMoney(row.item?.source_amount_fen) }}</td><td class="money">{{ ownerMoney(row.item?.paid_fen) }}</td><td v-if="group.showOther" class="money">{{ ownerMoney(row.item?.other_settled_fen) }}</td><td class="money remaining">{{ ownerMoney(row.item?.remaining_fen) }}</td>
+              <td class="status"><span v-if="row.item" class="business-state" :class="activityTone(row.item, data.settlements.checking)">{{ activityState(row.item, data.settlements.checking) }}</span></td>
+            </tr></tbody>
+          </table>
+          <div class="owner-activity-obligations" :class="{ 'voucher-progress-mobile': isVoucher }">
             <article v-for="item in data.settlements.obligations" :key="item.key" class="owner-activity-obligation">
               <header><div class="owner-item-heading"><h4>{{ movementPurpose(item.name) }}</h4><p v-if="item.source_period && item.source_period !== period">业务所属月份：{{ periodText(item.source_period) }}</p></div><span class="business-state" :class="activityTone(item, data.settlements.checking)">{{ activityState(item, data.settlements.checking) }}</span></header>
               <div class="owner-item-progress">
@@ -270,10 +378,21 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
             </article>
           </div>
         </template>
+        <p v-if="isVoucher && showCurrent && currentSettlements?.checking && !activityFollowups.length" class="checking">截至{{ periodText(currentSettlements.cutoff_period) }}末的后续收付进度仍在核对中。</p>
+        <p v-if="isVoucher && !hasVoucherProgress">暂无其他业务进展</p>
         <template v-if="activityFollowups.length && currentSettlements">
           <h4>后续进展 · 截至最新月份（{{ periodText(currentSettlements.cutoff_period) }}末）</h4>
           <p v-if="currentSettlements.checking" class="checking">AI 会计核对中，当前收付结果尚不能完整确认。</p>
-          <div v-for="change in activityFollowups" :key="change.key" class="owner-item-latest">
+          <table v-for="group in voucherFollowupGroups" :key="group.key" class="voucher-progress-table" aria-label="后续款项进度">
+            <colgroup><col class="voucher-progress-name-column" /><col /><col /><col v-if="group.showOther" /><col /><col class="voucher-progress-state-column" /></colgroup>
+            <thead><tr><th scope="col">款项</th><th scope="col" class="money">{{ group.labels.original }}</th><th scope="col" class="money">{{ group.labels.paid }}</th><th v-if="group.showOther" scope="col" class="money">{{ group.labels.other }}</th><th scope="col" class="money">{{ group.labels.remaining }}</th><th scope="col" class="status">状态</th></tr></thead>
+            <tbody><tr v-for="row in group.rows" :key="row.key">
+              <th scope="row">{{ movementPurpose(row.name) }}<small v-if="row.added">后续新增款项</small></th>
+              <td class="money">{{ ownerMoney(row.item?.source_amount_fen) }}</td><td class="money">{{ ownerMoney(row.item?.paid_fen) }}</td><td v-if="group.showOther" class="money">{{ ownerMoney(row.item?.other_settled_fen) }}</td><td class="money remaining">{{ ownerMoney(row.item?.remaining_fen) }}</td>
+              <td class="status"><span class="business-state" :class="row.item ? activityTone(row.item, currentSettlements.checking) : 'attention'">{{ row.item ? activityState(row.item, currentSettlements.checking) : '最新进度待核对' }}</span></td>
+            </tr></tbody>
+          </table>
+          <div v-for="change in activityFollowups" :key="change.key" class="owner-item-latest" :class="{ 'voucher-progress-mobile': isVoucher }">
             <div><h4>{{ movementPurpose(change.name) }}{{ !change.before ? ' · 后续新增款项' : '' }}</h4><span class="business-state" :class="change.after ? activityTone(change.after, currentSettlements.checking) : 'attention'">{{ change.after ? activityState(change.after, currentSettlements.checking) : '最新进度待核对' }}</span></div>
             <div v-if="change.after"><span>{{ activityLabels(change.after).remaining }}</span><strong>{{ ownerMoney(change.after.remaining_fen) }}</strong><p>{{ activityLabels(change.after).original }} {{ ownerMoney(change.after.source_amount_fen) }} · {{ activityLabels(change.after).paid }} {{ ownerMoney(change.after.paid_fen) }}</p><p v-if="change.after.other_settled_fen !== '0' || change.after.category_key === 'supplier_advances'">{{ activityLabels(change.after).other }} {{ ownerMoney(change.after.other_settled_fen) }}</p></div>
           </div>
@@ -320,12 +439,14 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       </template>
       </template>
       <template v-if="collection?.page.total_count">
-        <h4>{{ isFunds ? '相关款项处理' : isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
-        <p v-if="isOwnerDetail">含本业务其他款项 · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
-        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}<template v-if="isFunds && item.relation_state === 'unresolved'"> · AI 会计核对中</template></span><strong>{{ item.relation_state === 'unresolved' && !isFunds ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
+        <div class="owner-records-heading">
+          <h4>{{ isFunds ? '相关款项处理' : isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
+          <p v-if="isOwnerDetail">含本业务其他款项 · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
+        </div>
+        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}<template v-if="(isFunds || isVoucher) && item.relation_state === 'unresolved'"> · AI 会计核对中</template></span><strong>{{ item.relation_state === 'unresolved' && !isFunds && !isVoucher ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
         <DashboardPagination automatic :active="panelOpen" :scope="paginationScope()" @pause="pausePages" :compact="isOwnerDetail" :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
       </template>
-      <p v-else-if="isOwnerDetail">{{ isFunds ? '这笔业务暂无相关款项处理记录。' : '这笔业务暂无相关收付记录。' }}</p>
+      <p v-else-if="isOwnerDetail && !isVoucher">{{ isFunds ? '这笔业务暂无相关款项处理记录。' : '这笔业务暂无相关收付记录。' }}</p>
     </section>
   </details>
 </template>
@@ -390,6 +511,7 @@ li span { color: var(--muted); }
 button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .compact-status-details { display: contents; }
 .compact-status-trigger { white-space: nowrap; }
+.voucher-progress > .business-detail-trigger { justify-self: start; }
 .compact-status-details::details-content { display: contents; }
 .compact-status-details:not([open]) > :not(summary) { display: none; }
 .compact-status-panel { grid-column: 1 / -1; cursor: default; }
@@ -406,6 +528,31 @@ button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; b
 .owner-item-latest > div { min-width: 0; display: grid; gap: 4px; }
 .owner-item-latest .business-state { justify-self: start; }
 .owner-item-latest strong { font-size: 18px; }
+.voucher-progress .owner-item-progress { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.voucher-progress .owner-item-balance > strong { font-size: 22px; }
+.voucher-progress .owner-item-amounts { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.voucher-progress .owner-item-latest { padding: 0; border-left: 0; background: transparent; }
+.owner-detail-context, .owner-records-heading { display: contents; }
+.voucher-progress-table { display: none; }
+@media (min-width: 761px) {
+  .voucher-progress .business-detail-panel { gap: 10px; }
+  .voucher-progress .owner-detail-context { display: flex; flex-wrap: wrap; gap: 3px 18px; }
+  .voucher-progress .owner-records-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 12px; }
+  .voucher-progress-mobile { display: none; }
+  .voucher-progress-table { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+  .voucher-progress-name-column { width: 20%; }
+  .voucher-progress-state-column { width: 17%; }
+  .voucher-progress-table th, .voucher-progress-table td { min-width: 0; padding: 7px 6px; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
+  .voucher-progress-table th:first-child { padding-left: 0; }
+  .voucher-progress-table th:last-child, .voucher-progress-table td:last-child { padding-right: 0; }
+  .voucher-progress-table thead th { padding-top: 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 500; }
+  .voucher-progress-table tbody th { font-weight: 650; }
+  .voucher-progress-table tbody th small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .voucher-progress-table .money { text-align: right; font-variant-numeric: tabular-nums; }
+  .voucher-progress-table .remaining { font-weight: 750; }
+  .voucher-progress-table .status { text-align: right; }
+  .voucher-progress-table .business-state { display: inline-block; padding: 3px 6px; font-size: 10px; }
+}
 @media (max-width: 720px) {
   .owner-item-progress { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; }
   .owner-item-amounts { grid-template-columns: minmax(0, 1fr); }

@@ -154,24 +154,25 @@ def settlement_event_view(item):
     }
 
 
-def business_profiles(snapshot, value):
+def business_profiles(snapshot, value, *, fact=None, entity_kinds=None):
     """Locate business objects through the adopted fact's explicit references."""
     from .entity_references import references_from_data
 
     subject_id = value["identity"]["subject_id"]
-    selected = value["frozen_adoption"] or value["current_business_result"]
-    if selected is not None:
-        calculation = snapshot.calculation(selected["calculation_id"])
-        fact = calculation["fact"]
-    else:
-        from .integrity import verify_sources
+    if fact is None:
+        selected = value["frozen_adoption"] or value["current_business_result"]
+        if selected is not None:
+            calculation = snapshot.calculation(selected["calculation_id"])
+            fact = calculation["fact"]
+        else:
+            from .integrity import verify_sources
 
-        fact_id = value["latest_source"]["id"]
-        verify_sources(snapshot.engine, snapshot.connection, fact_ids=(fact_id,))
-        fact = snapshot.fact(fact_id)
+            fact_id = value["latest_source"]["id"]
+            verify_sources(snapshot.engine, snapshot.connection, fact_ids=(fact_id,))
+            fact = snapshot.fact(fact_id)
     references = references_from_data(fact["kind"], fact["data"], registry=snapshot.store.registry)
     ids = sorted({item["entity_id"] for item in references if item["reference_type"] == "entity"})
-    kinds = {
+    kinds = entity_kinds if entity_kinds is not None else {
         row["id"]: row["kind"]
         for row in snapshot.connection.execute(
             "SELECT id,kind FROM entity WHERE id IN(SELECT value FROM json_each(?))",

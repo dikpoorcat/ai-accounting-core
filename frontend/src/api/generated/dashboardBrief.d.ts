@@ -63,6 +63,7 @@ export namespace DashboardBriefContract {
   export type AmountFen1 = string;
   export type BusinessAmountFen = string | null;
   export type BusinessAmountLabel = string;
+  export type HasBusinessProgress = boolean;
   export type AssetId = string;
   export type AssetType = "fixed" | "intangible";
   export type Name = string | null;
@@ -316,6 +317,7 @@ export namespace DashboardBriefContract {
     amount_fen: AmountFen1;
     business_amount_fen: BusinessAmountFen;
     business_amount_label: BusinessAmountLabel;
+    has_business_progress: HasBusinessProgress;
     asset: OwnerVoucherAsset | null;
     asset_members: AssetMembers;
     lines: Lines;

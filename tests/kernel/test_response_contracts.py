@@ -62,9 +62,22 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
         assert not {
             "field_sources", "evidence", "components", "funds", "settlements"
         } & voucher.keys()
+        assert type(voucher["has_business_progress"]) is bool
     assert brief["collections"]["activity"]["page"]["returned_count"] == len(
         brief["collections"]["activity"]["items"]
     )
+
+
+@pytest.mark.parametrize("value", [None, "true", 1])
+def test_brief_voucher_progress_is_required_strict_boolean(samples, value):
+    response = copy.deepcopy(samples["brief"]["response"])
+    voucher = response["data"]["collections"]["vouchers"]["items"][0]
+    voucher["has_business_progress"] = value
+    with pytest.raises(KernelError):
+        validate_response("dashboard_brief", response)
+    del voucher["has_business_progress"]
+    with pytest.raises(KernelError):
+        validate_response("dashboard_brief", response)
 
 
 @pytest.mark.parametrize("field", [

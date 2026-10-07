@@ -12,6 +12,7 @@ const voucher = number => ({
   reverses_version_id: null, date: null, recognition: { period: "2026-03", label: "2026-03 · 按月确认" },
   type: "收款", kind: "collection", state: "已入账", group: "funds", summary: "收到经营款", list_summary: "经营收款",
   amount_fen: "9007199254740993", business_amount_fen: "9007199254740993", business_amount_label: "收款金额",
+  has_business_progress: true,
   asset: null, asset_members: [], lines: [
     { line_number: 1, code: "1002", account: "银行存款", debit_fen: "9007199254740993", credit_fen: "0", party: "", source_label: "", parties: [], party_state: "not_applicable" },
     { line_number: 2, code: "1122", account: "应收账款", debit_fen: "0", credit_fen: "9007199254740993", party: "多位客户", source_label: "经营收款", party_state: "multiple", parties: [{ id: "a", name: "甲客户", amount_fen: "100" }, { id: "b", name: "乙客户", amount_fen: "9007199254740893" }] },
@@ -45,6 +46,34 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
       assert.match(html, /已加载 20 \/ 本月 45 张凭证/);
       assert.equal((html.match(/class="voucher-card/g) ?? []).length, 21);
       assert.doesNotMatch(html, /关联凭据|技术详情|voucher-999|business-999/);
+    });
+    await t.test("full summary and reversal stay in the main row while exact asset sources remain in entries", async () => {
+      const focused = voucher(999), mapped = { asset_id: "mapped-asset", name: "办公设备", code: "A01" }, unmatched = { asset_id: "unmatched-asset", name: "其他设备", code: "A02" };
+      focused.summary = "购入用于日常办公的设备，凭证主行保留完整用途说明。";
+      focused.reverses_version_id = "original"; focused.state = "冲正";
+      focused.asset = mapped; focused.asset_members = [mapped, unmatched];
+      focused.lines[0].asset = mapped; focused.lines[0].source_label = mapped.name;
+      const app = createSSRApp(component, { ...baseProps(), focusedVoucher: focused }); app.use(await router());
+      const html = await renderToString(app);
+      const main = html.match(/class="voucher-row-shell"[\s\S]*?<section[^>]*class="voucher-inline-detail"/)?.[0];
+      const detail = html.match(/<section[^>]*class="voucher-inline-detail"[\s\S]*?<\/section>/)?.[0];
+      assert.ok(main); assert.ok(detail);
+      assert(main.includes(focused.summary)); assert(main.includes("本凭证用于冲销原记录"));
+      assert.match(main, /<\/button>\s*<button[^>]*class="voucher-progress-button"/);
+      assert.doesNotMatch(detail, /凭证摘要|会计分录|本凭证用于冲销|BusinessStatusDetails|业务进展/);
+      assert.match(detail, /class="voucher-line-source"[^>]*>[\s\S]*?asset_id=mapped-asset[^>]*>办公设备<\/a>/);
+      const references = detail.match(/class="voucher-asset-references"[\s\S]*/)?.[0];
+      assert.ok(references); assert(references.includes("asset_id=unmatched-asset")); assert(!references.includes("asset_id=mapped-asset"));
+      assert.match(detail, /借贷合计[\s\S]*?¥90,071,992,547,409.93/);
+    });
+    await t.test("a voucher without business progress renders an inert dash alongside its entry button", async () => {
+      const focused = { ...voucher(999), has_business_progress: false };
+      const app = createSSRApp(component, { ...baseProps(), focusedVoucher: focused }); app.use(await router());
+      const html = await renderToString(app);
+      const main = html.match(/id="selected-voucher"[\s\S]*?<section[^>]*class="voucher-inline-detail"/)?.[0];
+      assert.ok(main); assert.match(main, /class="voucher-progress-empty" aria-label="暂无业务进展"[^>]*>—<\/span>/);
+      assert.doesNotMatch(main, /voucher-progress-button|aria-haspopup/);
+      assert.match(main, /class="voucher-row"[^>]*aria-expanded="true"/);
     });
     await t.test("next page waits for actual rows, retains a failed target, and all mode requests full loading", async () => {
       const events = [];
@@ -188,7 +217,7 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
         const oldWindow = globalThis.window, oldDocument = globalThis.document;
         let measurements = 0, bounds = { top: 700, height: 220 }, anchor = { top: 850, height: 32 };
         globalThis.window = { innerHeight: 900, matchMedia: () => ({ matches: false }) };
-        globalThis.document = { getElementById() { measurements++; return { previousElementSibling: { getBoundingClientRect: () => anchor }, getBoundingClientRect: () => bounds }; } };
+        globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById() { measurements++; return { previousElementSibling: { getBoundingClientRect: () => anchor }, getBoundingClientRect: () => bounds }; } };
         try {
           assert.equal(measurements, 0, "no measurements until a preview opens");
           await state.showPreview(items[0]);

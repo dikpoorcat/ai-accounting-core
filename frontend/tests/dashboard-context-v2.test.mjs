@@ -26,7 +26,7 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   const dashboardContext = Vue.ref(initialContext);
   globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, createBriefOpenItemGrouping, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
-  globalThis.document = { getElementById: () => null };
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
   const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "")
     .replace("let mounted = true", "let mounted = false");
   const prefix = `

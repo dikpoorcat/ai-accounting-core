@@ -20,7 +20,7 @@ async function harness() {
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09" } });
   const context = Vue.ref({ current_company: { company_id: "company-a" }, periods: [{ key: "2026-09" }] });
   globalThis[key] = { Vue, route, context, calls, appendDashboardCollection };
-  globalThis.document = { getElementById: () => null };
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
   const source = readFileSync(new URL("../src/views/EmployeesView.vue", import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const prelude = `const env = globalThis.${key};

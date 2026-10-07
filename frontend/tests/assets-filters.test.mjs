@@ -12,7 +12,7 @@ async function assetView(fetchAssetsDashboard) {
   const context = Vue.ref({ current_company: { company_id: "co" }, periods: [{ key: "2026-03" }], default_period: "2026-03" });
   globalThis[key] = { Vue, route, context, fetchAssetsDashboard, appendDashboardCollection };
   const originalDocument = globalThis.document;
-  globalThis.document = { getElementById: () => null };
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
   const source = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const imports = `
     const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;

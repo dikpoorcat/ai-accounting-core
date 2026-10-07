@@ -2051,6 +2051,78 @@ class BusinessQueries:
             result["complete"] = not unknown and result["status"] != "partially_established"
         return result
 
+    def business_progress(self, connection, period, subject_ids):
+        """Test owner-visible progress for a bounded subject page, without cards.
+
+        Use the ordinary accounting selector and relation resolver: declared
+        sources, frozen sources and the settlement business all retain their
+        exact scope, including conflicting or unresolved relationships.
+        """
+        subjects = set(subject_ids)
+        result = {subject: False for subject in subjects}
+        if not subjects:
+            return result
+        reads = self._reads(connection)
+        historical = self._selected_accounting(
+            connection, reads.related_subjects(subjects), period, include_lines=False
+        )
+        for include_historical in (True, False):
+            if include_historical:
+                selected, scope = historical, subjects
+            else:
+                remaining = {subject for subject, present in result.items() if not present}
+                if not remaining:
+                    break
+                scope, selected, _ = self._current_settlement_selection(
+                    connection, period, subject_ids=remaining
+                )
+            identifiers = {
+                item["calculation_id"]
+                for item in (*selected["through_period"]["voucher_events"],
+                             *selected["through_period"]["state_results"])
+            }
+            reads.prime_calculations(identifiers)
+            resolutions = reads.relations_many(identifiers, resolver=resolve_calculation_relations)
+            for event in (*selected["through_period"]["voucher_events"],
+                          *selected["through_period"]["state_results"]):
+                calc = reads.calculation(event["calculation_id"])
+                resolution = resolutions[calc["id"]]
+                related = {calc["subject_id"], *reads.declared_subjects(calc)} & scope
+                if include_historical:
+                    for obligation in resolution.get("obligations", ()):
+                        subject = (obligation.get("source_business") or {}).get("subject_id")
+                        if (obligation.get("source_calculation_id") == calc["id"]
+                                and subject in scope and obligation.get("key")):
+                            related.add(subject)
+                            result[subject] = True
+                references = reads.declared_sources(calc)
+                for movement in resolution.get("settlements", ()):
+                    index = movement.get("index")
+                    declared = references[index].get("source_id") if (
+                        type(index) is int and 0 <= index < len(references)
+                    ) else None
+                    affected = {
+                        (movement.get("source_business") or {}).get("subject_id"),
+                        (movement.get("settlement_business") or {}).get("subject_id"),
+                        declared,
+                    } & scope
+                    related.update(affected)
+                    # Historical movements alone are not shown by the owner
+                    # summary. An unresolved one does set its checking state;
+                    # current movements are the actual event collection.
+                    if not include_historical or movement.get("state") != "resolved":
+                        for subject in affected:
+                            result[subject] = True
+                if include_historical and resolution.get("issues"):
+                    for subject in related:
+                        result[subject] = True
+        # Current summaries retain only source keys established by the chosen
+        # historical cutoff. Those obligations already set the historical flag;
+        # their changed values and unknown amounts cannot turn a false flag on.
+        # A new current checking state without an old obligation comes from an
+        # unresolved movement, which the exact current collection covers above.
+        return result
+
     def _current_settlement_selection(self, connection, period, *, subject_ids=None):
         """Keep the historical source scope while following later exact relations."""
         reads = self._reads(connection)

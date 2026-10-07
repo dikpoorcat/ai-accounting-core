@@ -6053,6 +6053,10 @@
             "title": "Business Amount Label",
             "type": "string"
           },
+          "has_business_progress": {
+            "title": "Has Business Progress",
+            "type": "boolean"
+          },
           "asset": {
             "anyOf": [
               {
@@ -6094,6 +6098,7 @@
           "amount_fen",
           "business_amount_fen",
           "business_amount_label",
+          "has_business_progress",
           "asset",
           "asset_members",
           "lines"

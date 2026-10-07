@@ -62,6 +62,7 @@
   color: var(--text);
   text-align: left;
 }
+.dashboard-hover-preview.correction { --preview-accent: var(--warning); }
 .dashboard-hover-preview::after { position: absolute; width: 10px; height: 10px; background: var(--surface); content: ""; transform: rotate(45deg); }
 .dashboard-hover-preview[data-side="left"]::after { right: -6px; top: calc(var(--preview-arrow) - 5px); border-top: inherit; border-right: inherit; }
 .dashboard-hover-preview[data-side="right"]::after { left: -6px; top: calc(var(--preview-arrow) - 5px); border-bottom: inherit; border-left: inherit; }

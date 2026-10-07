@@ -1425,7 +1425,7 @@ class _Snapshot:
         def owner_asset(reference):
             return {key: value for key, value in reference.items() if key != "field_sources"}
 
-        return {
+        voucher = {
             "number": str(row["number"]),
             "voucher_version_id": row["id"],
             "subject_id": calc["subject_id"],
@@ -1460,6 +1460,10 @@ class _Snapshot:
                 for line in row["lines"]
             ],
         }
+        voucher["has_business_progress"] = _voucher_profile_progress(
+            voucher, self.owner_progress_profiles[calc["subject_id"]]
+        )
+        return voucher
 
     def voucher(self, row):
         calc = row["basis"]
@@ -1918,8 +1922,17 @@ class Dashboard:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这项精确业务")
                 focused_row = found[0]
             _brief_prime_activity(snap, [*rows, *([focused_row] if focused_row else [])])
+            _brief_prime_voucher_profiles(snap, [*rows, *([focused_row] if focused_row else [])])
             focused = _brief_activity_row(snap, focused_row) if focused_row else None
             focused_voucher = snap.owner_voucher(focused_row) if focused_row else None
+            vouchers = [snap.owner_voucher(row) for row in rows]
+            progress_subjects = {
+                item["subject_id"] for item in [*vouchers, *([focused_voucher] if focused_voucher else [])]
+                if not item["has_business_progress"]
+            }
+            progress = snap.queries.business_progress(snap.connection, snap.period, progress_subjects)
+            for item in [*vouchers, *([focused_voucher] if focused_voucher else [])]:
+                item["has_business_progress"] |= progress.get(item["subject_id"], False)
             # Activity and voucher pages share their exact selected rows. The
             # voucher projection adds saved lines without diagnostic graphs.
             activity = (
@@ -1952,7 +1965,7 @@ class Dashboard:
                 collections["activity"] = {"items": activity, "page": page}
             if section in {None, "activity", "vouchers"}:
                 collections["vouchers"] = {
-                    "items": [snap.owner_voucher(row) for row in rows], "page": page,
+                    "items": vouchers, "page": page,
                 }
             if section in {None, "open_items"}:
                 collection = open_items.pop("collection")
@@ -2401,6 +2414,111 @@ class Dashboard:
                     projection="dashboard_quarterly_report_deferred",
                 )
             return response
+
+
+def _voucher_profile_progress(voucher, context):
+    """Match the progress panel's exact displayed-text and identity exclusions."""
+    if context["deleted"]:
+        return True
+    profiles = context["profiles"]
+    assets = [*([voucher["asset"]] if voucher["asset"] else []),
+              *voucher["asset_members"],
+              *(line["asset"] for line in voucher["lines"] if line.get("asset"))]
+    visible = {voucher[field] for field in (
+        "summary", "list_summary", "type", "business_amount_label"
+    )}
+    visible.update(asset.get("name") or asset.get("code") or "资产卡片" for asset in assets)
+    for line in voucher["lines"]:
+        visible.update((line["party"], line["source_label"]))
+        visible.update(party["name"] for party in line["parties"])
+    business = profiles["business"]["values"]
+    if any(business.get(field) and business[field] not in visible for field in ("purpose", "note")):
+        return True
+    visible_parties = {
+        party["id"] for line in voucher["lines"] for party in line["parties"]
+        if len(line["parties"]) > 1 or line["party"] == party["name"]
+    }
+    visible_assets = {asset["asset_id"] for asset in assets}
+    groups = ("employees", "counterparties", "assets", "fund_accounts")
+    roles = defaultdict(set)
+    for group in groups:
+        for item in profiles.get(group, ()):
+            if item.get("entity_id"):
+                roles[item["entity_id"]].add(group)
+    for group in groups:
+        seen = set()
+        for item in profiles.get(group, ()):
+            ident = item.get("entity_id")
+            if ident and ident in seen:
+                continue
+            seen.add(ident)
+            if not item["values"].get("display_name"):
+                continue
+            if (not ident or len(roles[ident]) > 1 or group == "fund_accounts"
+                    or group == "assets" and ident not in visible_assets
+                    or group in {"employees", "counterparties"} and ident not in visible_parties):
+                return True
+    return False
+
+
+def _brief_prime_voucher_profiles(snap, rows):
+    """Prime the bounded page's adopted business objects in the same snapshot."""
+    from .dashboard_owner import business_profiles
+    from .entity_references import references_from_data
+
+    subjects = {snap.calculation(row["basis_calculation_id"])["subject_id"] for row in rows}
+    snap.owner_progress_profiles = {}
+    if not subjects:
+        return
+    facts = {
+        row["subject_id"]: row["fact_id"] for row in snap.connection.execute(
+            "SELECT subject_id,fact_id FROM fact_current WHERE subject_id IN "
+            "(SELECT value FROM json_each(?))", (canonical(sorted(subjects)),)
+        )
+    }
+    selected = {
+        row["subject_id"]: row["id"]
+        for row in snap.queries._current_accounting_heads(snap.connection, subjects)
+    }
+    closes = snap.reads.authoritative_close_rows(periods=[snap.month])
+    for part in snap.reads.close_adopted_results_many(closes, subjects=subjects):
+        selected.update({item["subject_id"]: item["calculation_id"] for item in part.adopted_results})
+    snap.reads.prime_calculations(set(selected.values()))
+    unselected_facts = {fact for subject, fact in facts.items() if subject not in selected}
+    if unselected_facts:
+        from .integrity import verify_sources
+
+        verify_sources(snap.engine, snap.connection, fact_ids=unselected_facts)
+    selected_facts = {
+        subject: snap.calculation(selected[subject])["fact"] if subject in selected
+        else snap.fact(facts[subject])
+        for subject in subjects if subject in facts
+    }
+    references = [
+        item for fact in selected_facts.values()
+        for item in references_from_data(fact["kind"], fact["data"], registry=snap.store.registry)
+        if item["reference_type"] == "entity"
+    ]
+    ids = {item["entity_id"] for item in references}
+    kinds = {row["id"]: row["kind"] for row in snap.connection.execute(
+        "SELECT id,kind FROM entity WHERE id IN(SELECT value FROM json_each(?))",
+        (canonical(sorted(ids)),),
+    )}
+    for profile_kind, entity_kinds in (
+        ("counterparty", {"person", "organization"}),
+        ("asset", {"asset", "project", "fund_product"}),
+        ("fund_account", {"fund_account"}),
+    ):
+        snap.metadata.prime_profiles(profile_kind, {ident for ident, kind in kinds.items() if kind in entity_kinds})
+    for subject in subjects:
+        snap.owner_progress_profiles[subject] = {
+            "deleted": subject not in facts,
+            "profiles": business_profiles(
+                snap, {"identity": {"subject_id": subject}, "frozen_adoption": None,
+                       "current_business_result": None},
+                fact=selected_facts[subject], entity_kinds=kinds,
+            ) if subject in selected_facts else {},
+        }
 
 
 def _brief_prime_activity(snap, rows):

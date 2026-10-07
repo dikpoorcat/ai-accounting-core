@@ -5,6 +5,12 @@ import type { DashboardBusinessStatusContract, DashboardBusinessStatusResponse }
 export type BusinessStatusData = DashboardBusinessStatusContract.BusinessStatusData;
 export type BusinessStatusResponse = DashboardBusinessStatusResponse;
 
+export interface BusinessStatusCacheEntry {
+  data: BusinessStatusData;
+  snapshotVersion: string;
+  moreError?: string;
+}
+
 export interface BusinessStatusQuery extends DashboardPageQuery {
   settlement_view?: "historical" | "current";
 }

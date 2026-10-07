@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import type { BriefActivityGroup, BriefActivityRow, BriefVoucher } from "../../api/brief";
+import type { BusinessStatusCacheEntry } from "../../api/businessStatus";
 import { fen, formatFen } from "../../utils/money";
 import BusinessStatusDetails from "../BusinessStatusDetails.vue";
 
@@ -18,10 +19,161 @@ const mode = ref<"business" | "voucher">("business");
 const voucherDisplayMode = ref<"paged" | "all">("paged");
 const voucherPage = ref(1), pendingVoucherPage = ref<number | null>(null);
 const selectedVoucher = ref("");
+const voucherProgressCache = new Map<string, BusinessStatusCacheEntry>();
 const manualVoucherView = ref(false);
 const expandedBusinessKey = ref(""), previewBusinessKey = ref(""), previewVoucherId = ref("");
 const previewPosition = ref({ offset: 0, arrowTop: "50%" });
 let previewPositionGeneration = 0;
+const progressVoucher = shallowRef<BriefVoucher | null>(null);
+const progressPanel = ref<HTMLElement | null>(null);
+const progressIsMobile = ref(false), progressPosition = ref({ left: 12, top: 12, side: "left", arrow: 14, ready: false });
+let progressAnchor: HTMLButtonElement | null = null;
+let progressCloseTimer: ReturnType<typeof setTimeout> | undefined;
+let progressObserver: ResizeObserver | undefined;
+let progressGeneration = 0, progressAnchorHovered = false, progressPanelHovered = false, suppressProgressFocus = false;
+let mobileLock: { overflow: string; app: HTMLElement | null; inert: boolean } | null = null;
+function cancelProgressClose() { clearTimeout(progressCloseTimer); progressCloseTimer = undefined; }
+function lockProgressBackground() {
+  if (progressIsMobile.value && !mobileLock) {
+    const app = document.getElementById("app");
+    mobileLock = { overflow: document.body.style.overflow, app, inert: app?.inert ?? false };
+    document.body.style.overflow = "hidden";
+    if (app) app.inert = true;
+  } else if (!progressIsMobile.value && mobileLock) unlockProgressBackground();
+}
+function unlockProgressBackground() {
+  if (!mobileLock) return;
+  document.body.style.overflow = mobileLock.overflow;
+  if (mobileLock.app) mobileLock.app.inert = mobileLock.inert;
+  mobileLock = null;
+}
+function closeProgress(returnFocus = false) {
+  if (!progressVoucher.value && !progressAnchor) return;
+  cancelProgressClose(); progressGeneration += 1;
+  progressObserver?.disconnect(); progressObserver = undefined;
+  if (typeof document !== "undefined") {
+    document.removeEventListener("pointerdown", progressOutside, true);
+    document.removeEventListener("keydown", progressKeyboard, true);
+    document.removeEventListener("focusin", progressFocusChanged);
+    window.removeEventListener("resize", positionProgress);
+    window.removeEventListener("scroll", positionProgress, true);
+    unlockProgressBackground();
+  }
+  const anchor = progressAnchor;
+  progressVoucher.value = null; progressAnchor = null;
+  progressAnchorHovered = false; progressPanelHovered = false;
+  if (returnFocus && anchor?.isConnected) {
+    suppressProgressFocus = true; anchor.focus({ preventScroll: true });
+    void nextTick(() => { suppressProgressFocus = false; });
+  }
+}
+function positionProgress() {
+  if (!progressVoucher.value || !progressPanel.value || !progressAnchor) return;
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  const changed = mobile !== progressIsMobile.value;
+  progressIsMobile.value = mobile; lockProgressBackground();
+  if (mobile) {
+    progressPosition.value.ready = true;
+    if (changed) progressPanel.value.querySelector<HTMLButtonElement>(".voucher-progress-close")?.focus();
+    return;
+  }
+  const anchor = progressAnchor.getBoundingClientRect();
+  const leftWidth = anchor.left - 22;
+  // Keep the preferred left placement at narrower desktop widths as well.
+  progressPanel.value.style.setProperty('--progress-width', `${Math.min(680, window.innerWidth - 24, leftWidth >= 420 ? leftWidth : 680)}px`);
+  const panel = progressPanel.value.getBoundingClientRect();
+  if (anchor.bottom < 0 || anchor.top > window.innerHeight) { closeProgress(); return; }
+  const clamp = (value: number, maximum: number) => Math.max(12, Math.min(value, maximum));
+  let side = "left", left = anchor.left - 10 - panel.width;
+  let top = clamp(anchor.top + anchor.height / 2 - panel.height / 2, window.innerHeight - 12 - panel.height);
+  if (left < 12) {
+    side = "right"; left = anchor.right + 10;
+    if (left + panel.width > window.innerWidth - 12) {
+      side = "below"; left = clamp(anchor.right - panel.width, window.innerWidth - 12 - panel.width);
+      top = anchor.bottom + 10;
+      if (top + panel.height > window.innerHeight - 12 && anchor.top - 10 - panel.height >= 12) {
+        side = "above"; top = anchor.top - 10 - panel.height;
+      }
+      top = clamp(top, window.innerHeight - 12 - panel.height);
+    }
+  }
+  const vertical = side === "left" || side === "right";
+  const arrow = Math.max(14, Math.min(vertical ? anchor.top + anchor.height / 2 - top : anchor.left + anchor.width / 2 - left,
+    (vertical ? panel.height : panel.width) - 14));
+  progressPosition.value = { left, top, side, arrow, ready: true };
+}
+function scheduleProgressClose() {
+  if (!progressVoucher.value || progressIsMobile.value) return;
+  cancelProgressClose();
+  progressCloseTimer = setTimeout(() => {
+    const focused = document.activeElement;
+    if (!progressAnchorHovered && !progressPanelHovered
+      && !progressAnchor?.contains(focused) && !progressPanel.value?.contains(focused)) closeProgress();
+  }, 150);
+}
+function progressAnchorLeave() { progressAnchorHovered = false; scheduleProgressClose(); }
+function progressPanelEnter() { progressPanelHovered = true; cancelProgressClose(); }
+function progressPanelLeave() { progressPanelHovered = false; scheduleProgressClose(); }
+function progressFocusChanged() {
+  if (progressPanel.value?.contains(document.activeElement) || progressAnchor?.contains(document.activeElement)) cancelProgressClose();
+  else scheduleProgressClose();
+}
+function progressOutside(event: PointerEvent) {
+  if (event.target instanceof Node && !progressAnchor?.contains(event.target) && !progressPanel.value?.contains(event.target)) {
+    if (progressIsMobile.value) event.preventDefault();
+    closeProgress(progressIsMobile.value);
+  }
+}
+function progressKeyboard(event: KeyboardEvent) {
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeProgress(true); return; }
+  if (event.key !== "Tab" || !progressPanel.value) return;
+  const controls = [...progressPanel.value.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])")]
+    .filter(element => element.getClientRects().length > 0);
+  const first = controls[0], last = controls.at(-1);
+  if (progressIsMobile.value) {
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  } else if (!event.shiftKey && document.activeElement === progressAnchor) {
+    event.preventDefault(); first?.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault(); progressAnchor?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    const pageControls = [...document.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")]
+      .filter(element => element.getClientRects().length > 0 && !progressPanel.value?.contains(element));
+    const next = pageControls[pageControls.indexOf(progressAnchor!) + 1];
+    if (next) { event.preventDefault(); closeProgress(); next.focus(); }
+  }
+}
+async function openProgress(voucher: BriefVoucher, event: Event, source: "hover" | "focus" | "click") {
+  if (typeof window === "undefined" || !voucher.subject_id || !voucher.has_business_progress || props.refreshing) return;
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  if ((mobile && source !== "click") || (source === "focus" && suppressProgressFocus)) return;
+  cancelProgressClose();
+  if (progressVoucher.value?.voucher_version_id === voucher.voucher_version_id) {
+    if (source === "hover") progressAnchorHovered = true;
+    return;
+  }
+  closeProgress();
+  progressAnchor = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
+  if (!progressAnchor) return;
+  const generation = ++progressGeneration;
+  progressIsMobile.value = mobile; progressAnchorHovered = source === "hover";
+  progressPosition.value.ready = false;
+  progressVoucher.value = voucher;
+  document.addEventListener("pointerdown", progressOutside, true);
+  document.addEventListener("keydown", progressKeyboard, true);
+  document.addEventListener("focusin", progressFocusChanged);
+  window.addEventListener("resize", positionProgress);
+  window.addEventListener("scroll", positionProgress, true);
+  await nextTick();
+  if (generation !== progressGeneration || !progressPanel.value) return;
+  positionProgress();
+  if (!progressPanel.value) return;
+  if (mobile) progressPanel.value.querySelector<HTMLButtonElement>(".voucher-progress-close")?.focus();
+  if (typeof ResizeObserver !== "undefined") {
+    progressObserver = new ResizeObserver(positionProgress); progressObserver.observe(progressPanel.value);
+  }
+}
 const vouchersByVersion = computed(() => props.voucherPreviewIndex ?? new Map([
   ...props.vouchers.map(voucher => [voucher.voucher_version_id, voucher] as const),
   ...(props.focusedVoucher ? [[props.focusedVoucher.voucher_version_id, props.focusedVoucher] as const] : []),
@@ -49,7 +201,7 @@ async function showPreview(item: BriefActivityRow) {
   const top = Math.max(12, Math.min(bounds.top, window.innerHeight - 12 - bounds.height));
   previewPosition.value = { offset: top - bounds.top, arrowTop: `${anchor.top + anchor.height / 2 - top}px` };
 }
-onBeforeUnmount(() => clearPreview());
+onBeforeUnmount(() => { clearPreview(); closeProgress(); });
 function toggleBusiness(item: BriefActivityRow, event: Event) {
   if (!item.subject_id) return;
   const target = event.target;
@@ -81,6 +233,7 @@ function selectVoucherMode() {
   } else if (voucherDisplayMode.value === "all" && props.vouchersHasMore) emit("allVouchers");
 }
 function changeVoucherPage(value: number) {
+  closeProgress();
   const target = Math.max(1, Math.min(value, voucherPageCount.value));
   if (!props.vouchersReady) {
     manualVoucherView.value = true; pendingVoucherPage.value = target;
@@ -122,7 +275,8 @@ function voucherAssets(voucher: BriefVoucher) {
   const assets = new Map<string, NonNullable<BriefVoucher["asset"]>>();
   if (voucher.asset) assets.set(voucher.asset.asset_id, voucher.asset);
   for (const asset of voucher.asset_members) assets.set(asset.asset_id, asset);
-  return [...assets.values()];
+  const lineAssets = new Set(voucher.lines.flatMap(line => line.asset ? [line.asset.asset_id] : []));
+  return [...assets.values()].filter(asset => !lineAssets.has(asset.asset_id));
 }
 function assetLabel(asset: NonNullable<BriefVoucher["asset"]>) {
   return asset.name || asset.code || "资产卡片";
@@ -156,6 +310,8 @@ watch(() => props.vouchers.length, () => {
   }
 });
 watch(() => [route.query.company_id, props.period, props.snapshotVersion], () => {
+  voucherProgressCache.clear();
+  closeProgress();
   mode.value = "business"; voucherDisplayMode.value = "paged";
   voucherPage.value = 1; pendingVoucherPage.value = null; selectedVoucher.value = "";
   manualVoucherView.value = false;
@@ -165,6 +321,12 @@ watch(() => props.voucherPreviewIndex, () => clearPreview());
 watch(mode, (value, previous) => {
   clearPreview();
   if (previous === "voucher" && value === "business") emit("pauseVouchers");
+});
+watch(() => props.active, active => { if (active === false) closeProgress(); });
+watch(() => props.refreshing, refreshing => { if (refreshing) closeProgress(); });
+watch(() => [mode.value, voucherPage.value, voucherDisplayMode.value], () => closeProgress());
+watch(visibleVouchers, vouchers => {
+  if (progressVoucher.value && !vouchers.some(voucher => voucher.voucher_version_id === progressVoucher.value?.voucher_version_id)) closeProgress();
 });
 watch(() => [props.focusedVoucher, props.focusedVoucherSelection] as const, async ([voucher]) => {
   if (!voucher) return;
@@ -225,7 +387,7 @@ watch(() => props.focusedActivity, async item => {
             <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? "待核对" : formatFen(item.amount_fen) }}</b></span>
             <span v-if="item.voucher_version_id" class="event-voucher-link business-list-voucher" @mouseenter="showPreview(item)" @mouseleave="clearPreview(item.key)">
               <button type="button" class="event-voucher-button" :disabled="!vouchersByVersion.has(item.voucher_version_id)" :aria-describedby="previewBusinessKey === item.key && previewVoucher ? 'activity-voucher-preview' : undefined" @focus="showPreview(item)" @blur="clearPreview(item.key)" @click.stop="openBusinessVoucher(item)">{{ vouchersByVersion.has(item.voucher_version_id) ? '凭证 ' + vouchersByVersion.get(item.voucher_version_id)?.number : '凭证未加载' }}</button>
-              <span v-if="previewBusinessKey === item.key && previewVoucher" id="activity-voucher-preview" class="event-voucher-preview" :class="{ correction: !!previewVoucher.reverses_version_id }" :style="{ '--preview-offset': `${previewPosition.offset}px`, '--preview-arrow-top': previewPosition.arrowTop }" role="tooltip">
+              <span v-if="previewBusinessKey === item.key && previewVoucher" id="activity-voucher-preview" class="event-voucher-preview dashboard-hover-preview" data-side="left" :class="{ correction: !!previewVoucher.reverses_version_id }" :style="{ '--preview-offset': `${previewPosition.offset}px`, '--preview-arrow': previewPosition.arrowTop }" role="tooltip">
                 <span class="voucher-preview-heading"><span><small>凭证 {{ previewVoucher.number }} · {{ voucherDate(previewVoucher) }}</small><strong>{{ previewVoucher.list_summary }}</strong></span><span class="voucher-preview-amount"><small>{{ previewVoucher.business_amount_label }}</small><b>{{ formatFen(previewVoucher.business_amount_fen) }}</b></span></span>
                 <span class="voucher-preview-lines"><span v-for="line in previewVoucher.lines" :key="line.line_number"><span>{{ line.account }}</span><strong>{{ fen(line.debit_fen) ? '借 ' + formatFen(line.debit_fen) : '贷 ' + formatFen(line.credit_fen) }}</strong></span></span>
                 <span class="voucher-preview-footer"><span :class="['state', { correction: !!previewVoucher.reverses_version_id }]">{{ previewVoucher.state }}</span><small>点击打开凭证详情</small></span>
@@ -245,29 +407,36 @@ watch(() => props.focusedActivity, async item => {
       <div class="voucher-list" aria-label="凭证清单" data-section-focus tabindex="-1">
         <article v-for="voucher in visibleVouchers" :key="voucher.voucher_version_id" :id="voucher.voucher_version_id === focusedVoucher?.voucher_version_id ? 'selected-voucher' : undefined"
           :class="['voucher-card', { 'is-open': selectedVoucher === voucher.voucher_version_id }]" tabindex="-1">
-          <button type="button" class="voucher-row" :aria-expanded="selectedVoucher === voucher.voucher_version_id" @click="selectVoucher(voucher.voucher_version_id)">
-            <span class="voucher-reference"><strong>凭证 {{ voucher.number }}</strong><small>{{ voucherDate(voucher) }}</small></span>
-            <span class="voucher-copy"><strong>{{ voucher.list_summary }}</strong><small>{{ voucher.type }}</small></span>
-            <span :class="['state', { correction: voucher.state.includes('冲正') }]">{{ voucher.state }}</span>
-            <span class="voucher-row-amount"><small>{{ voucher.business_amount_label }}</small><strong>{{ formatFen(voucher.business_amount_fen) }}</strong></span>
-            <span class="voucher-chevron" aria-hidden="true"></span>
-          </button>
+          <div class="voucher-row-shell">
+            <button type="button" class="voucher-row" :aria-expanded="selectedVoucher === voucher.voucher_version_id" @click="selectVoucher(voucher.voucher_version_id)">
+              <span class="voucher-reference"><strong>凭证 {{ voucher.number }}</strong><small>{{ voucherDate(voucher) }}</small></span>
+              <span class="voucher-copy"><strong>{{ voucher.summary }}</strong><span v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</span></span>
+              <small class="voucher-type">{{ voucher.type }}</small>
+              <span :class="['state', { correction: voucher.state.includes('冲正') }]">{{ voucher.state }}</span>
+              <span class="voucher-row-amount"><small>{{ voucher.business_amount_label }}</small><strong>{{ formatFen(voucher.business_amount_fen) }}</strong></span>
+              <svg class="voucher-chevron business-list-arrow" :class="{ expanded: selectedVoucher === voucher.voucher_version_id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+            </button>
+            <button v-if="voucher.subject_id && voucher.has_business_progress" type="button" class="voucher-progress-button" aria-haspopup="dialog"
+              :aria-label="`凭证 ${voucher.number} 的业务进展`" :aria-expanded="progressVoucher?.voucher_version_id === voucher.voucher_version_id"
+              :aria-controls="progressVoucher?.voucher_version_id === voucher.voucher_version_id ? 'voucher-progress-popover' : undefined"
+              @mouseenter="openProgress(voucher, $event, 'hover')" @mouseleave="progressAnchorLeave"
+              @focus="openProgress(voucher, $event, 'focus')" @blur="scheduleProgressClose" @click="openProgress(voucher, $event, 'click')">业务进展</button>
+            <span v-else class="voucher-progress-empty" aria-label="暂无业务进展">—</span>
+          </div>
           <section v-if="selectedVoucher === voucher.voucher_version_id" class="voucher-inline-detail" :aria-label="`${voucher.number} 凭证明细`">
-            <p v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</p>
-            <p class="voucher-summary">{{ voucher.summary }}</p>
-            <div v-if="voucherAssets(voucher).length" class="voucher-asset-references"><span>对应资产</span><div class="voucher-asset-links"><RouterLink v-for="asset in voucherAssets(voucher)" :key="asset.asset_id" class="voucher-asset-link" :to="assetTarget(asset.asset_id)">{{ assetLabel(asset) }}</RouterLink></div></div>
-            <BusinessStatusDetails :subject-id="voucher.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="业务详情" @changed="$emit('changed')" />
-            <div class="table-wrap"><table>
-              <colgroup><col class="voucher-account-column" /><col class="voucher-party-column" /><col class="voucher-amount-column" /><col class="voucher-amount-column" /></colgroup>
-              <thead><tr><th>科目</th><th>往来对象</th><th class="number">借方</th><th class="number">贷方</th></tr></thead>
+            <div class="table-wrap"><table aria-label="凭证分录">
+              <colgroup><col class="voucher-account-column" /><col class="voucher-party-column" /><col class="voucher-source-column" /><col class="voucher-amount-column" /><col class="voucher-amount-column" /></colgroup>
+              <thead><tr><th>科目</th><th>往来对象</th><th>业务来源</th><th class="number">借方</th><th class="number">贷方</th></tr></thead>
               <tbody><tr v-for="line in voucher.lines" :key="line.line_number">
-                <td data-label="科目"><small>{{ line.code }}</small><strong>{{ line.account }}</strong><RouterLink v-if="line.asset" :to="assetTarget(line.asset.asset_id)">{{ assetLabel(line.asset) }}</RouterLink></td>
-                <td data-label="往来对象"><template v-if="line.parties.length > 1"><span v-for="(party, index) in line.parties" :key="index" class="line-party">{{ party.name }} · {{ formatFen(party.amount_fen) }}</span></template><span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '见凭证业务说明' : '—') }}</span><small v-if="line.source_label">业务来源：{{ line.source_label }}</small></td>
+                <td data-label="科目"><span class="voucher-line-account"><small>{{ line.code }}</small><strong :title="line.account">{{ line.account }}</strong></span></td>
+                <td data-label="往来对象"><template v-if="line.parties.length > 1"><span v-for="(party, index) in line.parties" :key="index" class="line-party">{{ party.name }} · {{ formatFen(party.amount_fen) }}</span></template><span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '见凭证业务说明' : '—') }}</span><small v-if="line.source_label || line.asset" class="voucher-mobile-source">业务来源：<RouterLink v-if="line.asset" class="voucher-asset-link" :to="assetTarget(line.asset.asset_id)">{{ line.source_label || assetLabel(line.asset) }}</RouterLink><template v-else>{{ line.source_label }}</template></small></td>
+                <td class="voucher-line-source" data-label="业务来源"><RouterLink v-if="line.asset" class="voucher-asset-link" :to="assetTarget(line.asset.asset_id)">{{ line.source_label || assetLabel(line.asset) }}</RouterLink><template v-else>{{ line.source_label || '—' }}</template></td>
                 <td class="number" data-label="借方">{{ fen(line.debit_fen) ? formatFen(line.debit_fen) : '—' }}</td>
                 <td class="number" data-label="贷方">{{ fen(line.credit_fen) ? formatFen(line.credit_fen) : '—' }}</td>
               </tr></tbody>
-              <tfoot><tr><th colspan="2">借贷合计</th><td class="number" data-label="借方合计">{{ formatFen(voucherTotal(voucher, 'debit_fen')) }}</td><td class="number" data-label="贷方合计">{{ formatFen(voucherTotal(voucher, 'credit_fen')) }}</td></tr></tfoot>
+              <tfoot><tr><th colspan="3">借贷合计</th><td class="number" data-label="借方合计">{{ formatFen(voucherTotal(voucher, 'debit_fen')) }}</td><td class="number" data-label="贷方合计">{{ formatFen(voucherTotal(voucher, 'credit_fen')) }}</td></tr></tfoot>
             </table></div>
+            <div v-if="voucherAssets(voucher).length" class="voucher-asset-references"><span class="voucher-detail-label">对应资产</span><div class="voucher-asset-links"><RouterLink v-for="asset in voucherAssets(voucher)" :key="asset.asset_id" class="voucher-asset-link" :to="assetTarget(asset.asset_id)">{{ assetLabel(asset) }}</RouterLink></div></div>
           </section>
         </article>
       </div>
@@ -279,6 +448,23 @@ watch(() => props.focusedActivity, async item => {
       <button v-if="vouchersHasMore && !vouchersLoading && !vouchersError && voucherDisplayMode === 'all'" class="voucher-retry" type="button" @click="retryVouchers">继续读取全部凭证</button>
     </div>
   </section>
+  <template v-if="progressVoucher">
+  <Teleport to="body">
+    <div class="voucher-progress-layer" :class="{ mobile: progressIsMobile }">
+      <section id="voucher-progress-popover" ref="progressPanel" class="voucher-progress-popover dashboard-hover-preview" role="dialog"
+        :data-side="progressIsMobile ? 'sheet' : progressPosition.side"
+        aria-labelledby="voucher-progress-title" :aria-modal="progressIsMobile ? true : undefined"
+        :style="{ ...(progressIsMobile ? {} : { left: `${progressPosition.left}px`, top: `${progressPosition.top}px`, '--preview-arrow': `${progressPosition.arrow}px` }), visibility: progressPosition.ready ? 'visible' : 'hidden' }"
+        @mouseenter="progressPanelEnter" @mouseleave="progressPanelLeave">
+        <header class="voucher-progress-heading"><h3 id="voucher-progress-title">业务进展 · 凭证 {{ progressVoucher.number }}</h3><button type="button" class="voucher-progress-close" aria-label="关闭业务进展" @click="closeProgress(true)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg></button></header>
+        <div class="voucher-progress-content">
+          <BusinessStatusDetails :key="progressVoucher.voucher_version_id" :subject-id="progressVoucher.subject_id!" :period="period" :snapshot-version="snapshotVersion"
+            :voucher-context="progressVoucher" :detail-cache="voucherProgressCache" presentation="voucher" :expanded="true" hide-summary @changed="$emit('changed')" />
+        </div>
+      </section>
+    </div>
+  </Teleport>
+  </template>
 </template>
 
 <style scoped>
@@ -308,9 +494,7 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .event-voucher-button { min-height: 32px; padding: 0 9px; border-radius: 8px; font-weight: 750; white-space: nowrap; }
 .event-voucher-button:hover, .event-voucher-button:focus-visible { background: var(--accent-soft); }
 .event-voucher-button:disabled { color: var(--muted); cursor: default; }
-.event-voucher-preview { --preview-accent: var(--accent); position: absolute; top: 50%; right: calc(100% + 10px); z-index: 30; display: grid; width: min(380px, calc(100vw - 48px)); gap: 10px; padding: 13px; border: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); pointer-events: none; text-align: left; transform: translateY(calc(-50% + var(--preview-offset))); }
-.event-voucher-preview.correction { --preview-accent: var(--warning); }
-.event-voucher-preview::after { position: absolute; top: calc(var(--preview-arrow-top) - 5px); right: -6px; width: 10px; height: 10px; border-top: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); border-right: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line)); background: var(--surface); content: ""; transform: rotate(45deg); }
+.event-voucher-preview { position: absolute; top: 50%; right: calc(100% + 10px); z-index: 30; display: grid; width: min(380px, calc(100vw - 48px)); gap: 10px; pointer-events: none; transform: translateY(calc(-50% + var(--preview-offset))); }
 .voucher-preview-heading, .voucher-preview-footer, .voucher-preview-lines > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .voucher-preview-heading > span { display: grid; min-width: 0; gap: 3px; }
 .voucher-preview-heading small, .voucher-preview-footer small { color: var(--muted); font-size: 10px; }
@@ -492,6 +676,7 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 
 .voucher-card {
   overflow: hidden;
+  scroll-margin-top: var(--brief-anchor-offset, 78px);
   background: var(--surface);
 }
 
@@ -499,19 +684,27 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
   border-top: 1px solid var(--line);
 }
 
-.voucher-card.is-open {
-  background: color-mix(in srgb, var(--surface-soft) 42%, var(--surface));
+.voucher-row-shell {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: 132px minmax(0, 1fr) auto 132px 70px 16px;
+  grid-template-rows: auto auto;
+  gap: 3px 14px;
+  align-items: center;
+  padding: 10px 16px;
 }
 
 .voucher-row {
   display: grid;
-  width: 100%;
-  min-height: 62px;
-  grid-template-columns: 132px minmax(180px, 1fr) auto 132px 16px;
-  grid-template-areas: "reference copy state amount chevron";
-  gap: 14px;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  grid-template-areas: "reference copy state amount . chevron" "reference type state amount . chevron";
   align-items: center;
-  padding: 10px 16px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -520,12 +713,12 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
   cursor: pointer;
 }
 
-.voucher-row:hover {
+.voucher-row-shell:hover {
   background: var(--surface-soft);
 }
 
-.voucher-card.is-open > .voucher-row {
-  background: var(--surface-soft);
+.voucher-card.is-open > .voucher-row-shell {
+  background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface));
 }
 
 .voucher-reference,
@@ -545,13 +738,13 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 }
 
 .voucher-reference small,
-.voucher-copy small {
-  overflow: hidden;
+.voucher-type {
   color: var(--muted);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
+
+.voucher-type { grid-area: type; }
 
 .voucher-copy {
   grid-area: copy;
@@ -559,11 +752,18 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 
 .voucher-copy strong {
   min-width: 0;
-  overflow: hidden;
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 650;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
+
+.voucher-progress-button, .voucher-progress-empty { grid-column: 5; grid-row: 1 / -1; z-index: 1; }
+.voucher-progress-button { min-height: 32px; padding: 5px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.voucher-progress-empty { color: var(--muted); font-size: 12px; text-align: center; }
+.voucher-progress-button:hover, .voucher-progress-button[aria-expanded="true"] { background: var(--accent-soft); }
+.voucher-row:focus-visible, .voucher-progress-button:focus-visible, .voucher-progress-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .voucher-row > .state {
   grid-area: state;
@@ -581,28 +781,17 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 }
 
 .voucher-chevron {
-  width: 7px;
-  height: 7px;
   grid-area: chevron;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(45deg) translateY(-2px);
-  transition: transform 140ms ease;
-}
-
-.voucher-card.is-open .voucher-chevron {
-  transform: rotate(225deg) translate(-1px, -1px);
 }
 
 .voucher-inline-detail {
-  --voucher-account-width: 35%;
-  --voucher-party-width: 33%;
-  --voucher-amount-width: 16%;
+  --voucher-account-width: 28%;
+  --voucher-party-width: 22%;
+  --voucher-source-width: 22%;
+  --voucher-amount-width: 14%;
   min-width: 0;
-  margin: 0;
-  padding: 2px 16px 16px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-soft);
+  margin: 10px 16px 18px 162px;
+  padding: 4px 0;
 }
 
 .voucher-account-column {
@@ -613,44 +802,36 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
   width: var(--voucher-party-width);
 }
 
+.voucher-source-column {
+  width: var(--voucher-source-width);
+}
+
 .voucher-amount-column {
   width: var(--voucher-amount-width);
 }
 
 .table-wrap {
-  overflow-x: auto;
-  margin-top: 14px;
+  min-width: 0;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
 }
 
 th,
 td {
-  padding: 10px 9px;
+  padding: 11px 8px;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 th {
-  background: var(--surface-soft);
   color: var(--muted);
   font-size: 11px;
-}
-
-th:first-child {
-  border-radius: 8px 0 0 8px;
-}
-
-th:last-child {
-  border-radius: 0 8px 8px 0;
-}
-
-tbody tr:nth-child(even) {
-  background: color-mix(in srgb, var(--surface-soft) 55%, transparent);
 }
 
 td:first-child small,
@@ -663,15 +844,12 @@ td:first-child small {
   color: var(--muted);
 }
 
-td:nth-child(2) > small {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-}
+.voucher-line-account { display: contents; }
+.voucher-mobile-source { display: none; }
 
 .number {
   text-align: right;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 
@@ -680,35 +858,74 @@ td:nth-child(2) > small {
 .voucher-retry { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .voucher-row-amount { display: grid; min-width: 0; gap: 3px; white-space: normal; overflow-wrap: anywhere; }
 .voucher-row-amount small, .voucher-load-status { color: var(--muted); font-size: 12px; }
-.voucher-copy strong, .voucher-copy small, .voucher-reference small { white-space: normal; overflow-wrap: anywhere; }
-.voucher-summary { margin: 12px 0; font-size: 13px; overflow-wrap: anywhere; }
-.voucher-correction { margin: 12px 0; color: var(--amber); font-size: 12px; }
-.voucher-asset-references { margin: 12px 0; font-size: 12px; color: var(--muted); }
-.voucher-asset-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.voucher-reference small { white-space: normal; overflow-wrap: anywhere; }
+.voucher-detail-label { margin: 0; color: var(--muted); font-size: 11px; font-weight: 600; }
+.voucher-correction { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.voucher-asset-references { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 12px; }
+.voucher-asset-links { display: flex; flex-wrap: wrap; gap: 6px 12px; min-width: 0; }
 .voucher-asset-link { color: var(--accent); overflow-wrap: anywhere; }
 .line-party { display: block; margin-bottom: 4px; overflow-wrap: anywhere; }
-.table-wrap { overflow-x: visible; }
-table { table-layout: fixed; }
-td { overflow-wrap: anywhere; }
-tfoot th, tfoot td { border-top: 1px solid var(--line); }
+tfoot th, tfoot td { font-size: 12px; font-weight: 650; }
+.voucher-progress-layer { position: fixed; inset: 0; z-index: 110; pointer-events: none; }
+.voucher-progress-popover { position: fixed; display: flex; flex-direction: column; width: min(var(--progress-width, 680px), calc(100vw - 24px)); max-height: min(600px, calc(100dvh - 24px)); pointer-events: auto; }
+.voucher-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; }
+.voucher-progress-heading h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.voucher-progress-close { display: grid; flex: none; place-items: center; width: 32px; height: 32px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.voucher-progress-close:hover { background: var(--surface-soft); }
+.voucher-progress-close svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.voucher-progress-content { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent; }
+.voucher-progress-content::-webkit-scrollbar { width: 3px; height: 3px; }
+.voucher-progress-content::-webkit-scrollbar-track { background: transparent; }
+.voucher-progress-content::-webkit-scrollbar-thumb { border-radius: 3px; background: color-mix(in srgb, var(--muted) 38%, transparent); }
+.voucher-progress-content::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 60%, transparent); }
+@supports selector(::-webkit-scrollbar) {
+  .voucher-progress-content { scrollbar-width: auto; scrollbar-color: auto; }
+}
+.voucher-progress-content :deep(.business-detail-panel), .voucher-progress-content :deep(.business-detail-state) { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
 @media (max-width: 1024px) {
   .heading-controls { flex-wrap: wrap; max-width: 100%; }
-  .voucher-row { grid-template-columns: minmax(0, 1fr) auto 14px; grid-template-areas: "reference amount chevron" "copy state chevron"; gap: 6px 10px; padding: 10px 11px; }
+  .voucher-row-shell { grid-template-columns: minmax(0, 1fr) auto 72px 16px; grid-template-rows: auto auto auto; gap: 6px 10px; padding: 10px 11px; }
+  .voucher-row { grid-template-areas: "reference amount amount chevron" "copy copy copy copy" "type state . ."; }
+  .voucher-progress-button, .voucher-progress-empty { grid-column: 3 / -1; grid-row: 3; }
+  .voucher-inline-detail { margin-left: 11px; }
   .voucher-row > .state { justify-self: end; }
   .voucher-row-amount { max-width: 130px; font-size: 13px; }
+}
+@media (min-width: 761px) {
+  .voucher-progress-content { padding-right: 12px; scrollbar-gutter: stable; }
+  table { border-top: 1.5px solid var(--line-strong, var(--line)); border-bottom: 1.5px solid var(--line-strong, var(--line)); }
+  thead { border-bottom: 1px solid var(--line-strong, var(--line)); }
+  th:first-child, td:first-child { padding-left: 0; }
+  .voucher-line-account { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+  .voucher-line-account small { flex: none; margin-bottom: 0; }
+  .voucher-line-account strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (min-width: 761px) and (max-width: 1024px) {
+  .voucher-row { grid-template-areas: "reference amount . chevron" "copy copy copy copy" "type state . ."; }
+  .voucher-progress-button, .voucher-progress-empty { grid-row: 1; }
 }
 @media (max-width: 760px) {
   .event-voucher-preview { display: none; }
   .event-voucher-button { min-height: 44px; }
   .heading-controls { width: 100%; }
   .view-switch button { min-height: 44px; }
-  .voucher-inline-detail { padding: 2px 11px 13px; }
+  .voucher-inline-detail { margin: 8px 11px 14px 22px; padding: 4px 0 4px 12px; border-left: 1px solid var(--line); }
+  .voucher-progress-button, .voucher-progress-close { min-height: 44px; }
+  .voucher-progress-close { width: 44px; }
+  .voucher-progress-layer.mobile { pointer-events: auto; background: rgb(0 0 0 / 25%); }
+  .voucher-progress-popover { left: 12px; right: 12px; bottom: 12px; width: auto; max-height: calc(100dvh - 24px); padding: 12px; }
+  .voucher-progress-popover::after { display: none; }
   table, tbody, tfoot, tr, td { display: block; width: 100%; }
   thead, tfoot th { display: none; }
-  tbody { display: grid; gap: 6px; }
-  tr { padding: 8px 0; border-radius: 8px; background: var(--surface-soft); }
-  td, td:first-child { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; padding: 5px 0; text-align: left; white-space: normal; }
-  td::before { color: var(--muted); font-size: 11px; font-weight: 750; content: attr(data-label); }
+  tbody { display: grid; }
+  tr { padding: 10px 0; }
+  tbody tr + tr { border-top: 1px solid var(--line); }
+  td, td:first-child { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 3px 8px; padding: 4px 0; text-align: left; white-space: normal; }
+  td::before { color: var(--muted); font-size: 11px; font-weight: 500; content: attr(data-label); }
   td > *, td:first-child small, td:first-child strong { grid-column: 2; }
+  td.voucher-line-source { display: none; }
+  .voucher-mobile-source { display: block; margin-top: 4px; color: var(--muted); }
+  tfoot tr { border-top: 1px solid var(--line); }
+  tfoot td { border: 0; }
 }
 </style>
