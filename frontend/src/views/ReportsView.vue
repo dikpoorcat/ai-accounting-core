@@ -951,9 +951,12 @@ onBeforeUnmount(() => {
 .statement-buttons button.active .statement-arrow { color: var(--accent); }
 .report-full { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 10px; }
-.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding-inline: var(--dashboard-list-gutter); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 table { width: 100%; min-width: 0; border-collapse: collapse; background: var(--surface); font-size: 12px; }
 th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
+.table-wrap th:first-child, .table-wrap td:first-child { padding-left: 4px; }
+.table-wrap th:last-child, .table-wrap td:last-child { padding-right: 4px; }
+.table-wrap tbody tr:last-child > td { border-bottom: 0; }
 th { position: sticky; top: 0; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
 th:first-child { width: 54%; }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
@@ -973,6 +976,9 @@ tr.total td { background: var(--surface-soft); font-weight: 750; }
   thead { display: none; }
   tr { padding: 12px; border-bottom: 1px solid var(--line); }
   td { border: 0; padding: 5px 0; overflow-wrap: anywhere; }
+  .table-wrap tr { padding: 12px 4px; }
+  .table-wrap tr:last-child { border-bottom: 0; }
+  .table-wrap td:first-child, .table-wrap td:last-child { padding-inline: 0; }
   td:first-child { font-weight: 750; }
   td[data-label] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
   td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }

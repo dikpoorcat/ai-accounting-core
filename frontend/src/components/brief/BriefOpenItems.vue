@@ -543,7 +543,7 @@ h3 {
 
 .open-detail {
   min-width: 0;
-  padding: 12px 20px;
+  padding: 12px var(--dashboard-list-gutter);
 }
 
 .column-money {
@@ -711,7 +711,7 @@ h3 {
   }
 
   .open-detail {
-    padding: 4px 12px;
+    padding: 4px var(--dashboard-list-gutter);
   }
 
   .open-event-source :deep(.compact-status-panel) {

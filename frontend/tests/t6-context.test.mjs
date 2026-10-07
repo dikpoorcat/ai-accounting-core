@@ -445,11 +445,13 @@ test("T6 a refresh to an empty company keeps no invented month or quarter", asyn
   } finally { h.close(); }
 });
 
-test("sidebar calendar month changes clear page state and align the report quarter", async () => {
+test("sidebar calendar month changes retain employee filters, clear detail targets and align report quarters", async () => {
   const h = await harness({
     company_id: "a",
     period: "2026-01",
     employee_filter: "payroll",
+    employee_id: "old-employee",
+    cursor: "old-cursor",
     voucher: "7",
   });
   try {
@@ -459,10 +461,10 @@ test("sidebar calendar month changes clear page state and align the report quart
     h.route.hash = "#old-detail";
     await h.selectPeriod("2026-04");
     assert.deepEqual(h.pushes.at(-1), {
-      query: { company_id: "a", period: "2026-04", quarter: undefined },
+      query: { company_id: "a", period: "2026-04", quarter: undefined, employee_filter: "payroll" },
       hash: "",
     });
-    assert.deepEqual(h.route.query, { company_id: "a", period: "2026-04" });
+    assert.deepEqual(h.route.query, { company_id: "a", period: "2026-04", employee_filter: "payroll" });
 
     h.route.name = "reports";
     h.navigate({
@@ -485,6 +487,19 @@ test("sidebar calendar month changes clear page state and align the report quart
       quarter: "2025-Q4",
     });
   } finally { h.close(); }
+});
+
+test("the sidebar month picker preserves all employee selections including the default", async () => {
+  for (const selected of [undefined, "all", "in_period", "payroll", "no_payroll", "ended", "unknown"]) {
+    const h = await harness({ company_id: "a", period: "2026-01", employee_filter: selected });
+    try {
+      h.setAuthenticated(true);
+      h.calls.at(-1).resolve(context("a", ["2026-01", "2026-04"])); await flush();
+      await h.selectPeriod("2026-04");
+      assert.equal(h.route.query.period, "2026-04");
+      assert.equal(h.route.query.employee_filter, selected);
+    } finally { h.close(); }
+  }
 });
 
 test("T6 report company switch validates the shared month before choosing the new company default", async t => {

@@ -21,6 +21,7 @@
   --focus: #23679e;
   --radius-panel: 14px;
   --radius-control: 9px;
+  --dashboard-list-gutter: 20px;
   --shadow-soft: 0 8px 28px rgb(25 55 37 / 5%);
   --shadow-overlay: 0 18px 42px rgb(18 45 31 / 16%);
 }
@@ -659,6 +660,20 @@ button {
 .business-list-arrow-space { width: 12px; height: 16px; justify-self: end; }
 .business-list-arrow { fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
 .business-list-arrow.expanded { transform: rotate(90deg); }
+
+.dashboard-business-expansion {
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+
+@media (max-width: 720px) {
+  :root { --dashboard-list-gutter: 12px; }
+  .dashboard-business-expansion { padding: 12px; }
+}
 
 @media (max-width: 1199px) {
   .business-list-columns { display: none; }

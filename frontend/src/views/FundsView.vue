@@ -1758,7 +1758,7 @@ summary {
 
 .fund-business-detail {
   min-width: 0;
-  padding: 12px 20px;
+  padding: 12px var(--dashboard-list-gutter);
 }
 
 .fund-business-detail > .empty {
@@ -1784,7 +1784,6 @@ summary {
   list-style: none;
 }
 
-.book-activity-row.expanded { background: var(--surface-soft); }
 .book-movement-amount.correction { color: var(--muted); }
 .direction.correction { color: var(--muted); background: var(--surface-soft); }
 
@@ -1876,10 +1875,11 @@ summary {
   grid-template-columns: var(--bank-list-columns);
   gap: 14px;
   align-items: center;
-  padding: 10px 16px;
+  padding: 10px 4px;
 }
 
 .bank-activity-columns {
+  margin-inline: var(--dashboard-list-gutter);
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;
@@ -1894,7 +1894,7 @@ summary {
 }
 
 .bank-activity-list {
-  margin: 0;
+  margin: 0 var(--dashboard-list-gutter);
   padding: 0;
   list-style: none;
 }
@@ -1960,6 +1960,7 @@ summary {
 }
 
 .bank-batch-detail {
+  margin-inline: 4px;
   border-top: 1px solid var(--line);
 }
 
@@ -1968,7 +1969,7 @@ summary {
   justify-content: space-between;
   align-items: center;
   gap: 14px;
-  padding: 10px 16px;
+  padding: 10px 0;
 }
 
 .bank-batch-heading-title {
@@ -1984,7 +1985,7 @@ summary {
 }
 
 .bank-batch-scope {
-  margin: 5px 16px 0;
+  margin: 5px 0 0;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.55;
@@ -1994,7 +1995,7 @@ summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
-  margin: 12px 16px 14px;
+  margin: 12px 0 14px;
   padding: 0;
   list-style: none;
 }
@@ -2116,6 +2117,7 @@ summary {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+  padding-inline: var(--dashboard-list-gutter);
 }
 
 table {
@@ -2163,7 +2165,7 @@ table {
 
 th,
 td {
-  padding: 10px 11px;
+  padding: 10px 4px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
@@ -2332,7 +2334,7 @@ tbody tr:last-child td {
   .fund-business-workbench { grid-template-columns: minmax(0, 1fr); align-items: start; align-content: start; }
   .fund-account-index { padding: 10px; border-right: 0; border-bottom: 1px solid var(--line); }
   .fund-account-index > button { min-height: 44px; padding: 9px 12px; }
-  .fund-business-detail { padding: 4px 12px; }
+  .fund-business-detail { padding: 4px var(--dashboard-list-gutter); }
   .book-activity-feed { border: 0; background: transparent; }
   .book-activity-list { display: block; }
 
@@ -2355,7 +2357,7 @@ tbody tr:last-child td {
       "details details";
     gap: 11px 14px;
     align-items: start;
-    padding: 14px;
+    padding: 14px 4px;
   }
   .bank-activity-item + .bank-activity-item { border: 1px solid var(--line); }
   .bank-activity-date { grid-area: date; }
@@ -2376,7 +2378,7 @@ tbody tr:last-child td {
 @media (max-width: 760px) {
   .investment-table, .investment-table tbody, .investment-table tr, .investment-table td { display: block; min-width: 0; width: auto; }
   .investment-table thead, .investment-table colgroup { display: none; }
-  .investment-table tr { padding: 12px; border-bottom: 1px solid var(--line); }
+  .investment-table tr { padding: 12px 4px; border-bottom: 1px solid var(--line); }
   .investment-table td { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(0, 1fr); gap: 10px; padding: 6px 0; border: 0; overflow-wrap: anywhere; }
   .investment-table td::before { color: var(--muted); text-align: left; }
   .investment-cost-table td:nth-child(1)::before { content: "产品"; }
