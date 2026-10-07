@@ -169,6 +169,38 @@ function waitForLater(promise) {
   return promise;
 }
 
+async function recordRefreshAttempt(attempts, metadata, operation, failureTiming) {
+  const attempt = { ...metadata, status: "preparing", phase: "prepare", elapsed_ms: null };
+  attempts.push(attempt);
+  try {
+    const elapsed = await operation(attempt);
+    attempt.status = "complete";
+    attempt.elapsed_ms = elapsed;
+    return elapsed;
+  } catch (error) {
+    const timing = await failureTiming().catch(() => null);
+    attempt.status = timing?.started ? "failed" : "preparation_failed";
+    if (timing?.started && Number.isFinite(timing.elapsed_ms)) attempt.elapsed_ms = timing.elapsed_ms;
+    attempt.error = { type: error?.name || "Error", message: sanitize(error?.message || error) };
+    throw error;
+  }
+}
+
+function verifyLocalRead(url, module, selected, snapshot, requestedSection = null) {
+  assert.equal(url.pathname, `/api/dashboard/${module.action}`, `${module.key}: display change read unrelated data`);
+  const section = url.searchParams.get("section");
+  assert(section && (section === requestedSection
+    || (defaultCollections[module.key]?.includes(section) && url.searchParams.get("cursor"))),
+  `${module.key}: display change reloaded whole page or unrelated collection`);
+  assert.equal(url.searchParams.get("company_id"), selected.id, "local filter: company changed");
+  assert.equal(url.searchParams.get("period"), selected.period, "local filter: month changed");
+  assert(snapshot && url.searchParams.get("expected_version") === snapshot,
+    "local filter: snapshot boundary changed or missing");
+  const limit = url.searchParams.get("limit");
+  assert(limit === null || (/^[1-9][0-9]*$/.test(limit) && Number(limit) <= 20),
+    "local filter: unbounded collection read");
+}
+
 // Pure association/value extraction, also serialized into the final browser
 // evaluate. Resource timing is browser network work, not a source CPU profile.
 function captureRefreshResources(entries, selection, clickStart, renderAt, timeOrigin) {
@@ -334,6 +366,24 @@ function verifyVoucher(voucher) {
     wireFen(asset.amount_fen, "voucher asset amount", true);
   }
 }
+
+function verifyVisibleVoucherRows(rows, voucher) {
+  verifyVoucher(voucher);
+  assert.equal(rows.length, voucher.lines.length, "voucher: visible entry lines missing");
+  let debit = 0n, credit = 0n;
+  for (const [index, row] of rows.entries()) {
+    const expected = voucher.lines[index];
+    assert.equal(row.code, expected.code, "voucher: visible account code differs");
+    assert.equal(row.account, expected.account, "voucher: visible account differs");
+    for (const [side, field] of [["debit", "debit_fen"], ["credit", "credit_fen"]]) {
+      assert.equal(row[side], wireFen(expected[field], field) === 0n ? "—" : formatFen(expected[field]),
+        `voucher: visible ${side} amount differs`);
+    }
+    debit += wireFen(expected.debit_fen, "debit");
+    credit += wireFen(expected.credit_fen, "credit");
+  }
+  assert.equal(debit, credit, "voucher: visible entries do not balance");
+}
 function verifyMainPayload(payload, key, selected, target, { requireVouchers = true } = {}) {
   assert(Object.hasOwn(mainContractNames, key), `${key}: unknown main response contract`);
   assert.equal(payload.schema_version, responseVersions[mainContractNames[key]], `${key}: outdated response contract`);
@@ -389,6 +439,7 @@ async function run(config) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
   const refreshProjections = new Map();
+  const refreshAttempts = [];
   page.setDefaultTimeout(30000);
   await page.addInitScript(({ selectedCompany, selectedPeriod, selectedQuarter }) => {
     performance.setResourceTimingBufferSize(1000);
@@ -470,6 +521,8 @@ async function run(config) {
   });
   const result = {};
   const partialNavigation = {};
+  const layoutChecks = [];
+  let layoutProgress = null;
 
   function address(module) {
     const url = new URL(module.path, config.origin);
@@ -706,27 +759,45 @@ async function run(config) {
     }));
   }
   async function measure(module, resourceSamples, requireProjection = Boolean(resourceSamples)) {
+    return recordRefreshAttempt(refreshAttempts, {
+      page: module.key, kind: resourceSamples ? "sample" : config.foreground_stream ? "foreground" : "warmup",
+      iteration: refreshAttempts.filter(attempt => attempt.page === module.key
+        && attempt.kind === (resourceSamples ? "sample" : config.foreground_stream ? "foreground" : "warmup")).length + 1,
+    }, async attempt => {
     if (requireProjection) assert(refreshProjections.has(module.key),
       `${module.key}: formal refresh requires a validated default DOM projection`);
-    const contextReply = response("context");
-    const mainReply = response(module.action);
+    const contextReply = waitForLater(response("context"));
+    const mainReply = waitForLater(response(module.action));
     const refreshButton = page.locator(".module-header button.refresh");
     await refreshButton.evaluate(observeHotRefresh, { action: module.action, key: module.key, companyId: company.id,
       period: company.period, quarter,
       visible: module.visible.split(", "), root: refreshRoots[module.key],
       projection: refreshProjections.get(module.key)?.dom });
+    attempt.phase = "click";
     await refreshButton.click();
+    attempt.phase = "render";
     await page.waitForFunction(() => window.__stage9RenderedAt !== null);
     const measurement = await page.evaluate(captureRefreshMeasurement, {
       action: module.action, companyId: company.id, period: company.period, quarter,
     });
     if (resourceSamples) resourceSamples.push(measurement.resources);
+    attempt.elapsed_ms = measurement.measured;
+    attempt.phase = "validate";
     for (const pending of [contextReply, mainReply]) {
       await verifyReply(await pending, module);
     }
     await rendered(module);
     assertNoBrowserFailures();
     return measurement.measured;
+    }, () => page.evaluate(() => ({
+      started: Number.isFinite(window.__stage9RefreshStart),
+      elapsed_ms: Number.isFinite(window.__stage9RefreshStart)
+        ? performance.now() - window.__stage9RefreshStart : null,
+    })).then(timing => ({
+      ...timing,
+      started: timing.started || Number.isFinite(refreshAttempts.at(-1)?.elapsed_ms),
+      elapsed_ms: refreshAttempts.at(-1)?.elapsed_ms ?? timing.elapsed_ms,
+    })));
   }
   async function measureCompanySwitch(target) {
     await page.goto(address(modules[0]));
@@ -940,7 +1011,7 @@ async function run(config) {
         row_toggle: true, keyboard: true, mobile: true, requests: requests.length }, navigation: navigationBase };
     }
     if (config.layout_only) {
-      const layouts = [];
+      const layouts = layoutChecks;
       // These interaction checks are outside every default/cold/refresh timing.
       async function localChange(module, action, section = null) {
         const requests = [], replies = [];
@@ -972,17 +1043,15 @@ async function run(config) {
             .some(node => node.getClientRects().length && /正在读取所选|正在读取资金明细|正在读取银行流水|正在读取凭证/.test(node.textContent ?? "")));
           await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           for (const url of requests) {
-            assert.equal(url.pathname, `/api/dashboard/${module.action}`, `${module.key}: display change read unrelated data`);
-            assert(section && url.searchParams.get("section") === section, `${module.key}: display change reloaded whole page`);
-            assert.equal(url.searchParams.get("company_id"), company.id, "local filter: company changed");
-            assert.equal(url.searchParams.get("period"), company.period, "local filter: month changed");
-            assert(url.searchParams.get("expected_version"), "local filter: snapshot boundary missing");
+            verifyLocalRead(url, module, company, refreshProjections.get(module.key)?.snapshot, section);
           }
-          for (const reply of replies) await verifyReply(reply, module);
+          const payloads = [];
+          for (const reply of replies) payloads.push(await verifyReply(reply, module));
           assert.deepEqual(await page.evaluate(() => window.__stage9LocalFailures), [], `${module.key}: local change flashed whole page`);
           assert.equal(await page.locator(".module-header").getAttribute("aria-busy"), "false");
           assert.equal(await page.locator("[role=alert]").count(), 0, `${module.key}: local read failed`);
           assertNoBrowserFailures();
+          return payloads;
         } finally {
           page.off("request", requestListener); page.off("response", replyListener);
           await page.evaluate(() => window.__stage9LocalObserver.disconnect());
@@ -995,13 +1064,30 @@ async function run(config) {
           const textBounds = element => {
             const range = document.createRange();
             range.selectNodeContents(element);
-            return Array.from(range.getClientRects());
+            return Array.from(range.getClientRects()).map(rect => {
+              let left = rect.left, right = rect.right;
+              // Full report sheets intentionally scroll horizontally. Only
+              // the part exposed by their scroll viewport is on the screen.
+              for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+                if (innerWidth > 760 && parent.matches(".template-wrap")
+                  && ["auto", "scroll"].includes(getComputedStyle(parent).overflowX)) {
+                  const box = parent.getBoundingClientRect();
+                  const start = box.left + parent.clientLeft;
+                  left = Math.max(left, start); right = Math.min(right, start + parent.clientWidth);
+                }
+              }
+              return { left, right, top: rect.top, bottom: rect.bottom };
+            }).filter(rect => rect.right > rect.left);
           };
           const currencyOverflow = Array.from(document.querySelectorAll("strong, dd, td, .component-value-trigger, .balance-trigger, .total-help-trigger"))
             .filter(element => visible(element) && /[¥￥]/.test(element.textContent ?? ""))
             .flatMap(element => textBounds(element)
               .filter(rect => rect.left < -1 || rect.right > innerWidth + 1)
               .map(rect => ({ label: element.textContent, left: rect.left, right: rect.right })));
+          const templateViewportOverflow = Array.from(document.querySelectorAll(".template-wrap"))
+            .filter(visible).map(element => element.getBoundingClientRect())
+            .filter(rect => rect.left < -1 || rect.right > innerWidth + 1)
+            .map(rect => ({ left: rect.left, right: rect.right }));
           const heroOverlap = [];
           const hero = document.querySelector(".funds-hero");
           if (hero) {
@@ -1035,7 +1121,8 @@ async function run(config) {
             technical: Array.from(document.querySelectorAll("summary, h2, h3, dt"))
               .filter(visible).map(element => element.textContent || "")
               .filter(text => /技术详情|原始 JSON|来源证明|核算依据|试算平衡/.test(text)),
-            currency_overflow: currencyOverflow, hero_overlap: heroOverlap,
+            currency_overflow: currencyOverflow, template_viewport_overflow: templateViewportOverflow,
+            hero_overlap: heroOverlap,
             mobile_funds_gaps: mobileFundsGaps,
           };
         });
@@ -1044,6 +1131,7 @@ async function run(config) {
           `${module.key}/${scenario}: horizontal overflow at ${layout.viewport}px (${layout.width}px)`);
         assert.deepEqual(layout.technical, [], `${module.key}/${scenario}: technical content remains`);
         assert.deepEqual(layout.currency_overflow, [], `${module.key}/${scenario}: amount overflows the screen`);
+        assert.deepEqual(layout.template_viewport_overflow, [], `${module.key}/${scenario}: template viewport overflows the screen`);
         assert.deepEqual(layout.hero_overlap, [], `${module.key}/${scenario}: hero amount overlaps another section`);
         if (layout.mobile_funds_gaps) {
           assert(layout.mobile_funds_gaps.before_rows <= 100,
@@ -1055,6 +1143,7 @@ async function run(config) {
       for (const width of [320, 375, 768, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         for (const module of modules) {
+          layoutProgress = { page: module.key, viewport: width };
           const expected = [response("context"), response(module.action)];
           await page.goto(address(module));
           let mainPayload;
@@ -1140,32 +1229,41 @@ async function run(config) {
               await localChange(module, () => categories.nth(1).click());
               await localChange(module, () => categories.first().click());
             }
-            await localChange(module, () => page.getByRole("button", { name: "按凭证", exact: true }).click());
-            const vouchers = mainPayload.data.collections.vouchers.items;
+            const voucherReplies = await localChange(module, () => page.getByRole("button", { name: "按凭证", exact: true }).click(), "vouchers");
+            const voucherCollection = voucherReplies.find(payload => payload.data?.collections.vouchers)?.data.collections.vouchers;
+            assert(voucherCollection, "brief: initial voucher display response missing");
+            const vouchers = voucherCollection.items;
             assert.equal(await page.locator(".voucher-card").count(), vouchers.length, "brief: first 20 vouchers incomplete");
             if (vouchers.length) {
               await localChange(module, () => page.locator(".voucher-row").first().click());
               const detail = page.locator(".voucher-inline-detail");
               await detail.waitFor();
-              assert.equal(await detail.locator("tbody tr").count(), vouchers[0].lines.length, "voucher: visible entry lines missing");
-              const totals = await detail.locator("tfoot").textContent();
-              assert(totals.includes(formatFen(vouchers[0].amount_fen)), "voucher: visible debit/credit totals missing");
+              const visibleNumber = (await page.locator(".voucher-card.is-open .voucher-reference strong").textContent()).trim().replace(/^凭证\s+/, "");
+              const selectedVoucher = vouchers.find(voucher => voucher.number === visibleNumber);
+              assert(selectedVoucher, "voucher: visible identity missing from local response");
+              const rows = await detail.locator("tbody tr").evaluateAll(nodes => nodes.map(node => ({
+                code: node.querySelector("td[data-label='科目'] small")?.textContent.trim(),
+                account: node.querySelector("td[data-label='科目'] strong")?.textContent.trim(),
+                debit: node.querySelector("td[data-label='借方']")?.textContent.trim(),
+                credit: node.querySelector("td[data-label='贷方']")?.textContent.trim(),
+              })));
+              verifyVisibleVoucherRows(rows, selectedVoucher);
               await checkOwnerLayout(module, "voucher_detail");
             }
-            if (width === 375 && mainPayload.data.collections.vouchers.page.has_more) {
+            if (width === 375 && voucherCollection.page.has_more) {
               await localChange(module, async () => {
                 await page.getByRole("button", { name: "下一页", exact: true }).click();
                 await page.waitForFunction(() => document.querySelector(".voucher-pagination strong")?.textContent?.trim().startsWith("2 /"));
               }, "vouchers");
               assert.equal(await page.locator(".voucher-card").count(), Math.min(20, mainPayload.data.voucher_count - 20), "voucher: second page incomplete");
               await localChange(module, async () => {
-                await page.getByRole("button", { name: "改为全部显示凭证", exact: true }).click();
+                await page.getByRole("switch", { name: "改为全部显示凭证", exact: true }).click();
                 await page.waitForFunction(total => document.querySelectorAll(".voucher-card").length === total
                   && document.querySelector(".voucher-view")?.getAttribute("aria-busy") === "false", mainPayload.data.voucher_count);
               }, mainPayload.data.voucher_count > 40 ? "vouchers" : null);
               const numbers = await page.locator(".voucher-reference strong").allTextContents();
               assert.equal(new Set(numbers).size, mainPayload.data.voucher_count, "voucher: all mode duplicated or lost vouchers");
-              await localChange(module, () => page.getByRole("button", { name: "改为分页显示凭证", exact: true }).click());
+              await localChange(module, () => page.getByRole("switch", { name: "改为分页显示凭证", exact: true }).click());
             }
             await localChange(module, () => page.getByRole("button", { name: "按业务", exact: true }).click());
           }
@@ -1180,6 +1278,9 @@ async function run(config) {
             }
             const reply = response("business-status");
             if (module.key === "brief") await detail.locator("xpath=ancestor::li[contains(@class,'event-row')]").locator(".event-copy").click();
+            else if (module.key === "funds" && await detail.locator("summary.hidden-summary").count()) {
+              await detail.locator("xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' book-activity-row ')]").click();
+            }
             else await detail.locator("summary").click();
             await verifyReply(await reply, module);
             await detail.locator(".business-detail-panel").waitFor();
@@ -1300,14 +1401,17 @@ async function run(config) {
     return {
       status: Object.keys(result).length > 0 && Object.values(result).every(page => page.samples.length === samples && page.over_500_ms === 0) ? "passed" : "over_target",
       company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
+      refresh_attempts: refreshAttempts,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
     };
   } catch (error) {
     return {
       status: "failed", message: sanitize(error?.message || error),
       company_id: company.id, period: company.period, pages: result,
+      refresh_attempts: refreshAttempts,
       navigation: partialNavigation, warmups, sample_count: samples,
       page_errors: pageErrors, api_failures: apiFailures,
+      layouts: layoutChecks, layout_progress: layoutProgress,
     };
   } finally {
     await context.close();
@@ -1331,4 +1435,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { waitForLater, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
+module.exports = { waitForLater, recordRefreshAttempt, verifyLocalRead, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyVisibleVoucherRows, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };

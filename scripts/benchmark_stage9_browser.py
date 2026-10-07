@@ -774,6 +774,7 @@ def main():
                       "node_stderr_sanitized": diagnostic}
         elif process.returncode and diagnostic:
             result["node_stderr_sanitized"] = diagnostic
+        result["returncode"] = process.returncode
         navigation = result.get("navigation")
         if isinstance(navigation, dict) and isinstance(
             navigation.get("first_render_epoch_ms"), (int, float)
@@ -790,6 +791,15 @@ def main():
             assert qualification_source_files(source)[1] == book["qualification"][
                 "source_manifest_sha256"
             ], "Fixed source changed during timing"
+    except Exception as exc:
+        result.update(
+            status="failed", failed_phase=phase[0],
+            error={"type": type(exc).__name__, "message": sanitized_browser_stderr(
+                str(exc), secrets=(password.get_secret_value(),
+                                   token.get_secret_value() if token is not None else ""),
+            )},
+        )
+        raise
     finally:
         token = store.load_session_token()
         if token is not None:
