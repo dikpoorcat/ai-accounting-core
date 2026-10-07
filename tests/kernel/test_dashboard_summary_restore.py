@@ -48,7 +48,7 @@ def test_financial_position_reuses_all_bank_accounts_and_pagination_omits_summar
     for section in ("activity", "vouchers", "open_items"):
         page = dashboard.brief("2026-09", section=section, limit=1)
         validate_response("dashboard_brief", page)
-        assert {"financial_position", "workforce_cost"}.isdisjoint(page["data"])
+        assert {"financial_position", "workforce_cost", "long_term_assets"}.isdisjoint(page["data"])
         assert page["data"]["position"] == data["position"]
 
 

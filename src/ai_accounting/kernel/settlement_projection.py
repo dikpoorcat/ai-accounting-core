@@ -669,6 +669,47 @@ def settlement_position_rows(connection, period, accounts, *, reads=None):
     ]
 
 
+def settlement_labor_outstanding_net(connection, period, *, reads=None) -> int | None:
+    """Return all historical net personal remuneration through the month end.
+
+    The typed labor calculators alone publish account 224104 obligations. Its
+    sealed source keys include capitalized labor, without tax or social dues.
+    Unattributed movements retain the existing account-position semantics;
+    unresolved movements on a selected obligation make its amount unknown.
+    """
+    from .settlement_freeze import frozen_labor_outstanding_net
+
+    frozen = frozen_labor_outstanding_net(connection, period, reads=reads)
+    if frozen is not None:
+        return frozen["remaining_fen"]
+
+    cutoff, through, _source_keys, scope_parameters = _summary_scope(
+        connection, period, subject_ids=None, current=False, reads=reads
+    )
+    source_keys = (
+        "SELECT obligation_key FROM settlement_change WHERE posting_period<=? "
+        "AND change_kind='source' AND category='payable' AND account='224104' "
+        "AND obligation_key IS NOT NULL GROUP BY obligation_key"
+    )
+    try:
+        row = connection.execute(
+            _summary_relation(source_keys, include_metadata=False)
+            + "SELECT coalesce(sum(remaining),0) remaining,max(remaining IS NULL) unknown,"
+            "max(remaining IS NOT NULL AND typeof(remaining)!='integer') bad_integer "
+            "FROM obligations",
+            [*scope_parameters, through, cutoff, cutoff],
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "integer overflow" not in str(exc):
+            raise
+        raise ValueError("amount must be a signed 64-bit integer number of fen") from exc
+    if row["bad_integer"]:
+        # SQLite subtraction can promote an overflowing integer to REAL even
+        # when later aggregation would appear to return an in-range amount.
+        raise ValueError("amount must be a signed 64-bit integer number of fen")
+    return None if row["unknown"] else checked(row["remaining"])
+
+
 def _obligation_view(row):
     source_amount = None if row["bad_source"] else row["source_amount"]
     paid = None if row["bad_paid"] else row["paid"]

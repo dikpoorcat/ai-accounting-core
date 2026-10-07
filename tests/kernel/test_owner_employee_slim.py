@@ -63,7 +63,7 @@ def test_focused_employee_keeps_month_money_without_history_reads_or_preloading(
     for period, paid, remaining in (("2026-01", 600, 1400), ("2026-02", 50, 1350)):
         response = dashboard.employees(period, employee_id="employee")
         validate_response("dashboard_employees", response)
-        assert response["schema_version"] == 9
+        assert response["schema_version"] == 10
         data = response["data"]
         assert set(data["collections"]) == {"employees", "labor_sources"}
         item = data["collections"]["employees"]["items"][0]

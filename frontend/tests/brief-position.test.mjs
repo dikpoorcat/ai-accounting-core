@@ -48,7 +48,7 @@ test("workforce restores two cards with costs, generic settlement adjustment and
   const unknown = structuredClone(workforce); unknown.employee.employee_social_insurance_fen = null; unknown.capitalized_labor_fen = null;
   const unknownHtml = await render("BriefWorkforceSection", { workforce: unknown, periodLabel: "1月" });
   assert.match(unknownHtml, /个人承担社保医保 暂无法确定/);
-  assert.match(unknownHtml, /资本化劳务 暂无法确定/);
+  assert.match(unknownHtml.replace(/<[^>]*>/g, ""), /资本化劳务 暂无法确定/);
 }));
 
 
@@ -59,17 +59,17 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const { fetchDeferredBrief } = await server.ssrLoadModule("/src/api/brief.ts");
     const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
     const value = structuredClone(samples.brief.response);
-    value.schema_version = 14; value.data.financial_position = position; value.data.workforce_cost = workforce;
+    value.schema_version = 15; value.data.financial_position = position; value.data.workforce_cost = workforce;
     const company = value.read_context.company_id, period = value.selected_period.key;
     globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` } };
     globalThis.fetch = async () => new Response(JSON.stringify(value));
     await fetchDeferredBrief(company, period);
-    for (const field of ["financial_position", "workforce_cost"]) {
+    for (const field of ["financial_position", "workforce_cost", "long_term_assets"]) {
       const missing = structuredClone(value); delete missing.data[field];
       globalThis.fetch = async () => new Response(JSON.stringify(missing));
       await assert.rejects(fetchDeferredBrief(company, period), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
     }
-    const page = structuredClone(value); delete page.data.financial_position; delete page.data.workforce_cost;
+    const page = structuredClone(value); delete page.data.financial_position; delete page.data.workforce_cost; delete page.data.long_term_assets;
     globalThis.fetch = async () => new Response(JSON.stringify(page));
     await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "vouchers" });
     await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" });

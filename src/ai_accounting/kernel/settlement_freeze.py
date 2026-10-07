@@ -1653,6 +1653,25 @@ def frozen_employee_net_summary(
     }
 
 
+def frozen_labor_outstanding_net(connection, period: str, *, reads=None) -> dict | None:
+    """Read historical personal remuneration from authenticated account cohorts.
+
+    None means no frozen scope applies; an applicable scope wraps the nullable
+    amount so unknown remuneration is never mistaken for a fallback request.
+    Account 224104 covers earned and capitalized labor, excluding withheld tax.
+    """
+    scope = _scope(connection, period, current=False, reads=reads)
+    if scope is None:
+        return None
+    remaining, unknown = 0, False
+    for key, group in _included_groups(scope):
+        if key[1] != "payable" or key[2] != "224104":
+            continue
+        remaining = checked(remaining + group[_G_REMAINING_SUM])
+        unknown = unknown or bool(group[_G_UNKNOWN_COUNT])
+    return {"remaining_fen": None if unknown else remaining}
+
+
 def obligation_category(category, account, source_kind) -> str:
     if category == "receivable":
         if account == "1122":

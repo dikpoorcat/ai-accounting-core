@@ -284,6 +284,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 <span class="income-amount">{{ formatFen(data.position.month_revenue_fen) }}</span> · 费用 <span class="cost-amount">{{ formatFen(data.position.month_expense_fen) }}</span></p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
         <div class="kpi-grid">
           <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
+          <button v-if="data.long_term_assets" class="kpi asset" type="button" @click="router.push({ name: 'assets', query: { company_id: route.query.company_id, period: selectedPeriod }, hash: '#assets-overview' })"><span>长期资产净值</span><strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong><small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项</small></button>
           <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ openItemDisplay?.summary.receivable_count }} {{ openItemCountUnit }}</small></button>
           <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ openItemDisplay?.summary.payable_count }} {{ openItemCountUnit }}</small></button>
         </div>
@@ -401,7 +402,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .hero .income-amount { color: var(--brief-green); }
 .hero .cost-amount { color: var(--brief-cost); }
 .hero p { margin: 0; color: var(--brief-muted); font-size: 12px; line-height: 1.6; }
-.kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px; }
 .kpi {
   --kpi-accent: var(--brief-green);
   --kpi-accent-soft: var(--brief-green-soft);

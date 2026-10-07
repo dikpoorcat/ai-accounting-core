@@ -1892,7 +1892,7 @@ class Dashboard:
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 14}
+                return {**self._response(None, None), "schema_version": 15}
             self._check_page_version(snap, cursor, expected_version)
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
@@ -2046,10 +2046,11 @@ class Dashboard:
                     ],
                 }
                 data["workforce_cost"] = _brief_workforce_cost(snap)
+                data["long_term_assets"] = _long_term_assets(snap)
             return {**self._response(snap, seal_collections(
                 snap, "brief", data, {}, sort_profiles={"vouchers": voucher_sort}
             )),
-                    "schema_version": 14}
+                    "schema_version": 15}
 
     def funds(
         self,
@@ -2142,7 +2143,7 @@ class Dashboard:
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 9}
+                return {**self._response(None, None), "schema_version": 10}
             self._check_page_version(snap, cursor, expected_version)
             after = decode_cursor(snap, "employees", section, cursor, filters)
             data = _employees(
@@ -2156,7 +2157,7 @@ class Dashboard:
             if section:
                 data["collections"] = {section: data["collections"][section]}
             return {**self._response(snap, seal_collections(snap, "employees", data, filters)),
-                    "schema_version": 9}
+                    "schema_version": 10}
 
     def assets(
         self,
@@ -4062,7 +4063,16 @@ def _employees(
             }
         )
     labor_items = sorted(labor_items, key=lambda item: (item["period"], item["source_id"]))
+    from .settlement_projection import settlement_labor_outstanding_net
+
+    outstanding_wages = None if unestablished_employees else _nullable_sum(
+        outstanding[ident] for ident in known
+    )
+    outstanding_labor = settlement_labor_outstanding_net(
+        snap.connection, snap.period, reads=snap.reads
+    )
     return {
+        "outstanding_remuneration_fen": _nullable_sum((outstanding_wages, outstanding_labor)),
         "employees": {
             **{
                 key: None if unestablished_employees else sums[key]
@@ -4092,9 +4102,7 @@ def _employees(
                 if net_payments[ident] is not None and direct_payments[ident] is not None else None
                 for ident in known
             ),
-            "outstanding_net_fen": None if unestablished_employees else _nullable_sum(
-                outstanding[ident] for ident in known
-            ),
+            "outstanding_net_fen": outstanding_wages,
         },
         "employee_id": employee_id,
         "employee_filter": employee_filter,
@@ -4216,36 +4224,76 @@ def _project_cost_balances(snap):
     return balances
 
 
+def _active_asset_counts(snap):
+    """Count adopted month-end identities without assembling asset cards."""
+    from .integrity import verify_sources
+
+    kinds = ASSET_KINDS | {"reimbursed_asset_batch", "asset_activation", "asset_disposal"}
+    activation_events = snap.asset_member_events(kinds={"asset_activation"})
+    heads = adopted_head_metadata(snap, kinds, read_line_counts=False)
+    selected = verified_adopted_head_identities(snap, heads, kinds=kinds)
+    # Batch members have no independent publication. Retain the same ordered
+    # replacement/reversal selection as the asset page, before counting in SQL.
+    member_heads = {}
+    for event in activation_events:
+        subject = event["subject_id"]
+        if event["direction"] < 0:
+            if member_heads.get(subject, {}).get("calculation_id") == event["calculation_id"]:
+                member_heads.pop(subject, None)
+        else:
+            member_heads[subject] = event
+    for subject, event in member_heads.items():
+        old = selected.get(subject)
+        if old is None or YearMonth(event["adoption_period"]) >= YearMonth(old["posting_period"]):
+            selected[subject] = {"fact_id": event["fact_id"], "kind": event["kind"]}
+    if not selected:
+        return {}
+    verify_sources(
+        snap.engine, snap.connection, fact_ids={calc["fact_id"] for calc in selected.values()},
+    )
+    return dict(snap.connection.execute(
+        "WITH selected AS ("
+        "SELECT json_extract(value,'$[0]') fact_id,json_extract(value,'$[1]') kind "
+        "FROM json_each(?)), acquisition_rows AS ("
+        "SELECT f.asset_id,f.asset_type,0 opening FROM selected s "
+        "CROSS JOIN fact_asset f ON f.revision_id=s.fact_id WHERE s.kind='asset' UNION ALL "
+        "SELECT f.asset_id,f.asset_type,0 FROM selected s "
+        "CROSS JOIN fact_reimbursed_asset f ON f.revision_id=s.fact_id "
+        "WHERE s.kind='reimbursed_asset' UNION ALL "
+        "SELECT f.asset_id,f.asset_type,1 FROM selected s "
+        "CROSS JOIN fact_opening_asset f ON f.revision_id=s.fact_id "
+        "WHERE s.kind='opening_asset' UNION ALL "
+        "SELECT f.asset_id,f.asset_type,0 FROM selected s "
+        "CROSS JOIN fact_reimbursed_asset_batch_assets f ON f.revision_id=s.fact_id "
+        "WHERE s.kind='reimbursed_asset_batch'), acquisitions AS ("
+        "SELECT asset_id,asset_type,max(opening) opening FROM acquisition_rows "
+        "GROUP BY asset_id,asset_type), lifecycle_rows AS ("
+        "SELECT f.asset_id,1 activated,0 disposed FROM selected s "
+        "CROSS JOIN fact_asset_activation f ON f.revision_id=s.fact_id "
+        "WHERE s.kind='asset_activation' UNION ALL "
+        "SELECT f.asset_id,0,1 FROM selected s CROSS JOIN fact_asset_disposal f "
+        "ON f.revision_id=s.fact_id WHERE s.kind='asset_disposal'), lifecycle AS ("
+        "SELECT asset_id,max(activated) activated,max(disposed) disposed "
+        "FROM lifecycle_rows GROUP BY asset_id) "
+        "SELECT asset_type,count(*) FROM acquisitions a LEFT JOIN lifecycle l "
+        "ON l.asset_id=a.asset_id WHERE (opening=1 OR l.activated=1) "
+        "AND coalesce(l.disposed,0)=0 "
+        "GROUP BY asset_type",
+        (canonical(sorted((calc["fact_id"], calc["kind"]) for calc in selected.values())),),
+    ))
+
+
 def _long_term_assets(snap):
-    """Brief consumes ledger totals and card counts, not card charge histories."""
-    sources = _asset_card_sources(snap)
-    counts = defaultdict(int)
-    for ident, calc in sources["acquisitions"].items():
-        data = sources["scalar"][calc["fact_id"]] | sources["details"].get(ident, {})
-        status = _asset_status(
-            calc["kind"],
-            data["asset_type"],
-            ident in sources["activations"],
-            ident in sources["disposals"],
-        )
-        counts[data["asset_type"], status] += 1
-    projects = _project_cost_balances(snap)
+    """Reuse checked ledger totals, including pending assets and project costs."""
+    counts = _active_asset_counts(snap)
     accounts = snap.accounts
     return {
         "net_fen": sum(
             accounts[account]
             for account in ("1601", "1701", "1604", "189901", "4301", "1602", "1702")
         ),
-        "fixed_net_fen": accounts["1601"] + accounts["1602"],
-        "intangible_net_fen": accounts["1701"] + accounts["1702"],
-        "fixed_active_count": counts["fixed", "active"],
-        "intangible_active_count": counts["intangible", "active"],
-        "pending_count": (
-            counts["fixed", "pending_activation"] + counts["intangible", "pending_activation"]
-        ),
-        "project_cost_fen": sum(
-            projects[f"project-cost:{calc['subject_id']}"] for calc in sources["projects"]
-        ),
+        "fixed_active_count": counts.get("fixed", 0),
+        "intangible_active_count": counts.get("intangible", 0),
     }
 
 

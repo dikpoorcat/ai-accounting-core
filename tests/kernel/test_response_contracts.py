@@ -135,6 +135,21 @@ def test_restored_summary_amounts_use_exact_int64_contract(samples, path):
         assert all(path[-1] in item for item in failure.value.details["paths"])
 
 
+def test_long_term_asset_summary_uses_exact_fen_and_nonnegative_integer_counts(samples):
+    response = copy.deepcopy(samples["brief"]["response"])
+    summary = response["data"]["long_term_assets"]
+    for amount in (0, 2**53 + 1, -(2**63), 2**63 - 1):
+        summary["net_fen"] = amount
+        assert http_response("dashboard_brief", response)["data"]["long_term_assets"]["net_fen"] == str(amount)
+    for field, invalid in (("net_fen", None), ("net_fen", 1.0), ("net_fen", 2**63),
+                           ("fixed_active_count", -1), ("fixed_active_count", True),
+                           ("intangible_active_count", 1.0)):
+        changed = copy.deepcopy(response)
+        changed["data"]["long_term_assets"][field] = invalid
+        with pytest.raises(KernelError):
+            validate_response("dashboard_brief", changed)
+
+
 def test_restored_summary_nested_shape_is_strict(samples):
     for section in ("financial_position", "workforce_cost"):
         value = copy.deepcopy(samples["brief"]["response"])

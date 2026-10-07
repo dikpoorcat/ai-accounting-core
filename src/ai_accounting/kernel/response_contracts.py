@@ -34,7 +34,7 @@ from .response_types import (
     Version7,
     Version9,
     Version10,
-    Version14,
+    Version15,
     WireFen,
 )
 
@@ -1164,13 +1164,9 @@ class WorkforceCost(ResponseObject):
 
 
 class LongTermAssets(ResponseObject):
-    net_fen: WireFen | None
-    fixed_net_fen: WireFen | None
-    intangible_net_fen: WireFen | None
+    net_fen: WireFen
     fixed_active_count: Count
     intangible_active_count: Count
-    pending_count: Count
-    project_cost_fen: WireFen | None
 
 
 class ValidationItem(ResponseObject):
@@ -1292,6 +1288,7 @@ class BriefData(ResponseObject):
     position: BriefPosition
     financial_position: NotRequired[BriefFinancialPosition]
     workforce_cost: NotRequired[BriefWorkforceCost]
+    long_term_assets: NotRequired[LongTermAssets]
     funds_overview: FundsOverview
     open_items: BriefOpenSummary
     risks: list[BriefRisk]
@@ -1300,7 +1297,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version14
+    schema_version: Version15
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1659,10 +1656,11 @@ class EmployeesData(ResponseObject):
     employees: EmployeeSummary
     collections: EmployeeCollections
     workforce_cost: OwnerWorkforceCost
+    outstanding_remuneration_fen: WireFen | None
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version9
+    schema_version: Version10
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

@@ -62,6 +62,171 @@ function routerFor(path) {
   return router.push(`${path}?company_id=${companyId}&period=2026-01&quarter=2026-Q1${path === "/assets" ? "&asset_filter=all" : ""}`).then(() => router);
 }
 
+async function renderEmployeeOverview(server, response, query = {}) {
+  assert(validateDashboardEmployeesResponse(response), JSON.stringify(validateDashboardEmployeesResponse.errors));
+  globalThis.stage7RenderResponses = { ...responses, employees: response };
+  globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
+  const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
+  await useDashboardContext().load(true);
+  const router = await routerFor("/employees");
+  await router.replace({ query: { ...router.currentRoute.value.query, ...query } });
+  const { default: component } = await server.ssrLoadModule("/src/views/EmployeesView.vue");
+  const app = createSSRApp(component); app.use(router);
+  const html = await renderToString(app);
+  const overview = html.match(/<section\b(?=[^>]*id="employees-overview")[^>]*>([\s\S]*?)<\/section>/)?.[1];
+  assert(overview, "the company employee overview is rendered");
+  return { html, overview };
+}
+
+function assertEmployeeOverviewValues(overview, expected) {
+  for (const [key, value] of Object.entries(expected)) {
+    const id = `employees-${key}-value`;
+    const match = overview.match(new RegExp(`<strong\\b(?=[^>]*id="${id}")[^>]*>([\\s\\S]*?)</strong>`));
+    assert(match, `${id} has a rendered value`);
+    assert.equal(match[1].replace(/<[^>]*>/g, "").trim(), value, id);
+  }
+}
+
+const overviewSummary = {
+  ledger_cost_fen: "139456", in_period_count: 3, registered_count: 7,
+  payroll_count: 4, unknown_period_count: 2, gross_salary_fen: "100123", annual_bonus_fen: "20007",
+  employer_social_insurance_fen: "15005", employer_housing_fund_fen: "4321",
+  net_salary_fen: "99991", direct_net_payments_fen: "325678", outstanding_net_fen: "42789",
+};
+const overviewValues = {
+  cost: "¥1,394.56", count: "3人", gross: "¥1,201.30", contributions: "¥193.26",
+  paid: "¥3,256.78", outstanding: "¥427.89",
+};
+function employeeOverviewResponse(summary = {}, remuneration = Object.hasOwn(summary, "outstanding_net_fen") ? summary.outstanding_net_fen : overviewSummary.outstanding_net_fen) {
+  const response = structuredClone(responses.employees);
+  Object.assign(response.data.employees, overviewSummary, summary);
+  response.data.outstanding_remuneration_fen = remuneration;
+  return response;
+}
+
+test("employee overview shows six company values and keeps wage payments distinct from cost and unpaid wages", async () => withServer(async server => {
+  const { overview } = await renderEmployeeOverview(server, employeeOverviewResponse());
+  assertEmployeeOverviewValues(overview, overviewValues);
+  for (const label of ["本月员工薪酬成本", "本月已确认在册人数", "本月应发工资与奖金", "公司承担社保公积金", "公司本月实际发薪", "截至月末未付薪酬"]) assert(overview.includes(label), label);
+  assert.match(overview, /工资 ¥1,001\.23 · 奖金 ¥200\.07/);
+  assert.match(overview, /本月有薪酬记录 4 人/);
+  assert.match(overview, /另有 2 人在册状态未确认/);
+  const notes = [...overview.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)].map(match => match[1].replace(/<[^>]*>/g, "").trim());
+  assert(notes.includes("另有 2 人在册状态未确认"), "uncertain roster count has its own note");
+  assert(notes.includes("本月有薪酬记录 4 人"), "salary-record count has its own note");
+  assert(notes.indexOf("另有 2 人在册状态未确认") < notes.indexOf("本月有薪酬记录 4 人"));
+  assert.match(overview, /本月发薪可包含往月工资；月末未付包含以前月份/);
+  assert.doesNotMatch(overview, /7 人|本月应付净薪|本月另有代付、抵销等/);
+}));
+
+test("employee overview uses the company-wide unpaid salary and labor amount and preserves unknown labor", async () => withServer(async server => {
+  const response = employeeOverviewResponse({}, "842789");
+  const { overview } = await renderEmployeeOverview(server, response);
+  assertEmployeeOverviewValues(overview, { ...overviewValues, outstanding: "¥8,427.89" });
+  assert.match(overview, /月末未付包含以前月份工资及个人劳务/);
+  assert.doesNotMatch(overview, /截至月末未付工资/);
+  assert.equal(response.data.employees.outstanding_net_fen, "42789", "employee salary summary remains salary-only");
+  const unknown = employeeOverviewResponse({ checking: false }, null);
+  const rendered = await renderEmployeeOverview(server, unknown);
+  assertEmployeeOverviewValues(rendered.overview, { ...overviewValues, outstanding: "暂无法确定" });
+  assert.match(rendered.overview, /AI 会计核对中/);
+}));
+
+test("employee overview preserves integer precision in combined salary and company contributions", async () => withServer(async server => {
+  const { overview } = await renderEmployeeOverview(server, employeeOverviewResponse({
+    ledger_cost_fen: "18014398509482010", gross_salary_fen: "9007199254740993", annual_bonus_fen: "17",
+    employer_social_insurance_fen: "9007199254740995", employer_housing_fund_fen: "5",
+    direct_net_payments_fen: "9007199254740987", outstanding_net_fen: "9007199254740991",
+  }));
+  assertEmployeeOverviewValues(overview, {
+    cost: "¥180,143,985,094,820.10", count: "3人", gross: "¥90,071,992,547,410.10",
+    contributions: "¥90,071,992,547,410.00", paid: "¥90,071,992,547,409.87", outstanding: "¥90,071,992,547,409.91",
+  });
+  assert.match(overview, /工资 ¥90,071,992,547,409\.93 · 奖金 ¥0\.17/);
+}));
+
+test("employee overview keeps unknown components unknown and only shows conditional settlement and bonus notes when needed", async () => withServer(async server => {
+  const combinedFields = [
+    ["gross_salary_fen", "gross"], ["annual_bonus_fen", "gross"],
+    ["employer_social_insurance_fen", "contributions"], ["employer_housing_fund_fen", "contributions"],
+    ["direct_net_payments_fen", "paid"], ["outstanding_net_fen", "outstanding"],
+  ];
+  for (const [field, key] of combinedFields) {
+    const { overview } = await renderEmployeeOverview(server, employeeOverviewResponse({ [field]: null, checking: true }));
+    assertEmployeeOverviewValues(overview, { ...overviewValues, [key]: "暂无法确定" });
+    assert.match(overview, /部分薪酬资料由 AI 会计核对中，相关未知金额保留/);
+    if (field === "annual_bonus_fen") assert.match(overview, /工资 ¥1,001\.23 · 奖金 暂无法确定/);
+  }
+  for (const [amount, expected] of [["12345", "¥123.45"], ["-12345", "−¥123.45"], [null, "暂无法确定"]]) {
+    const { overview } = await renderEmployeeOverview(server, employeeOverviewResponse({ other_net_settlements_fen: amount }));
+    assertEmployeeOverviewValues(overview, overviewValues);
+    assert(overview.includes(`本月另有代付、抵销等 ${expected}`));
+  }
+  const withoutBonus = await renderEmployeeOverview(server, employeeOverviewResponse({ annual_bonus_fen: "0", ledger_cost_fen: "119449" }));
+  assertEmployeeOverviewValues(withoutBonus.overview, { ...overviewValues, cost: "¥1,194.49", gross: "¥1,001.23" });
+  assert.doesNotMatch(withoutBonus.overview, /工资 ¥|奖金 ¥|本月另有代付、抵销等/);
+}));
+
+test("employee overview retains zero and contribution-only months and signed correction amounts", async () => withServer(async server => {
+  const zero = structuredClone(responses.employees);
+  const renderedZero = await renderEmployeeOverview(server, zero);
+  assertEmployeeOverviewValues(renderedZero.overview, {
+    cost: "¥0.00", count: "0人", gross: "¥0.00", contributions: "¥0.00", paid: "¥0.00", outstanding: "¥0.00",
+  });
+  assert.doesNotMatch(renderedZero.overview, /工资 ¥|奖金 ¥|本月另有代付、抵销等|在册状态未确认|AI 会计核对中/);
+  const contributionOnly = employeeOverviewResponse({
+    ledger_cost_fen: "16000", in_period_count: 2, payroll_count: 2, unknown_period_count: 0,
+    contributions_only_count: 2, gross_salary_fen: "0", annual_bonus_fen: "0",
+    employer_social_insurance_fen: "15700", employer_housing_fund_fen: "300",
+    net_salary_fen: "0", direct_net_payments_fen: "0", outstanding_net_fen: "0",
+  });
+  const { overview } = await renderEmployeeOverview(server, contributionOnly);
+  assertEmployeeOverviewValues(overview, {
+    cost: "¥160.00", count: "2人", gross: "¥0.00", contributions: "¥160.00", paid: "¥0.00", outstanding: "¥0.00",
+  });
+  assert.match(overview, /本月有薪酬记录 2 人/);
+  assert.doesNotMatch(overview, /工资 ¥|奖金 ¥/);
+  const corrected = await renderEmployeeOverview(server, employeeOverviewResponse({
+    ledger_cost_fen: "-139456", gross_salary_fen: "-100123", annual_bonus_fen: "-20007",
+    employer_social_insurance_fen: "-15005", employer_housing_fund_fen: "-4321",
+    direct_net_payments_fen: "-1234", outstanding_net_fen: "56700",
+  }));
+  assertEmployeeOverviewValues(corrected.overview, {
+    cost: "−¥1,394.56", count: "3人", gross: "−¥1,201.30", contributions: "−¥193.26", paid: "−¥12.34", outstanding: "¥567.00",
+  });
+  assert.match(corrected.overview, /工资 −¥1,001\.23 · 奖金 −¥200\.07/);
+}));
+
+test("employee overview remains company-wide under filters and exact focus while employee and personal labor details stay available", async () => withServer(async server => {
+  for (const query of [{ employee_filter: "payroll" }, { employee_filter: "all", employee_id: "employee" }]) {
+    const response = structuredClone(samples.employees_focused.response);
+    Object.assign(response.data.employees, overviewSummary);
+    response.data.outstanding_remuneration_fen = overviewSummary.outstanding_net_fen;
+    response.data.employee_filter = query.employee_filter;
+    response.data.employee_id = query.employee_id ?? null;
+    response.data.collections.labor_sources = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources);
+    const { html, overview } = await renderEmployeeOverview(server, response, query);
+    assertEmployeeOverviewValues(overview, overviewValues);
+    assert.match(overview, /全公司/);
+    assert.match(overview, /本月有薪酬记录 4 人/);
+    assert.match(html, /已加载 1 人/);
+    assert.match(html, query.employee_id ? /已定位员工/ : /本月有工资记录/);
+    const [employee] = response.data.collections.employees.items;
+    assert(html.includes(employee.name));
+    assert.match(html, /应发工资[\s\S]*¥10,000\.00/);
+    assert.match(html, /本月应付净薪[\s\S]*¥9,074\.00/);
+    assert.match(html, /个人劳务/);
+    for (const labor of response.data.collections.labor_sources.items) {
+      const laborCard = [...html.matchAll(/<details\b[^>]*class="[^"]*employee-card[^"]*"[^>]*>([\s\S]*?)<\/details>/g)]
+        .map(match => match[1]).find(card => card.includes(labor.name));
+      assert(laborCard, "personal labor retains its projected name and payment details");
+      assert.match(laborCard, /应付净额[\s\S]*¥5,000\.00/);
+      assert.match(laborCard, /公司已付[\s\S]*¥0\.00/);
+    }
+    if (query.employee_id) assert.match(html, /<details\b(?=[^>]*id="employee-card-target")(?=[^>]*open)[^>]*>/);
+  }
+}));
+
 test("current generated responses render all five owner dashboard pages", async () => withServer(async server => {
   globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
   const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
@@ -81,6 +246,13 @@ test("current generated responses render all five owner dashboard pages", async 
     assert.match(html, expected, name);
     assert.doesNotMatch(html, /input[^>]+type="password"/, name);
     if (name === "Funds") assert.doesNotMatch(html, /全部账户/);
+    if (name === "Brief") {
+      assert.match(html, /class="kpi asset"/);
+      assert.match(html, /长期资产净值/);
+      assert.match(html, new RegExp(`固定 ${responses.brief.data.long_term_assets.fixed_active_count} 项 · 无形 ${responses.brief.data.long_term_assets.intangible_active_count} 项`));
+      assert.ok(html.indexOf("月末账面资金") < html.indexOf("长期资产净值"));
+      assert.ok(html.indexOf("长期资产净值") < html.indexOf("月末待收"));
+    }
     if (name === "Assets") assert.doesNotMatch(html, /查看整批付款情况|查看收付款事项|展开查看项目付款|查看处置事项|查看终止使用事项/);
   }
 }));

@@ -34,7 +34,7 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 14
+    assert response["schema_version"] == 15
     assert data["voucher_count"] == data["activity_count"] == 23
     vouchers = data["collections"]["vouchers"]["items"]
     assert len(vouchers) == 20

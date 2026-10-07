@@ -47,10 +47,10 @@ const rows = (start, count) => Array.from({ length: count }, (_, index) => ({
   asset: null, asset_members: [], lines: [],
 }));
 const response = (start, count, total = 45) => ({
-  schema_version: 14, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
+  schema_version: 15, snapshot_version: "same-snapshot", read_context: { company_id: "a" },
   selected_period: { key: "2026-02" }, data: {
     month_state: "closed", owner_review_request: null,
-    ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" } } : {}),
+    ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" }, long_term_assets: { net_fen: "12300", fixed_active_count: 2, intangible_active_count: 1 } } : {}),
     position: { month_result_fen: "12345" }, voucher_count: total, focused_voucher: null, focused_activity: null,
     collections: { vouchers: { items: rows(start, count), page: {
       total_count: total, filtered_count: total, returned_count: count,
@@ -77,6 +77,7 @@ test("all vouchers loads the entire month through bounded pages using one snapsh
     assert.equal(h.response.value.data.position.month_result_fen, "12345");
     assert.equal(h.response.value.data.financial_position.assets_fen, "32100");
     assert.equal(h.response.value.data.workforce_cost.total_fen, "77700");
+    assert.deepEqual(h.response.value.data.long_term_assets, { net_fen: "12300", fixed_active_count: 2, intangible_active_count: 1 });
   } finally { h.close(); }
 });
 

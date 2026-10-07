@@ -4582,6 +4582,9 @@
           "workforce_cost": {
             "$ref": "#/$defs/BriefWorkforceCost"
           },
+          "long_term_assets": {
+            "$ref": "#/$defs/LongTermAssets"
+          },
           "funds_overview": {
             "$ref": "#/$defs/FundsOverview"
           },
@@ -5960,6 +5963,34 @@
         "title": "FundsOverview",
         "type": "object"
       },
+      "LongTermAssets": {
+        "additionalProperties": false,
+        "properties": {
+          "net_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Net Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "fixed_active_count": {
+            "minimum": 0,
+            "title": "Fixed Active Count",
+            "type": "integer"
+          },
+          "intangible_active_count": {
+            "minimum": 0,
+            "title": "Intangible Active Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "net_fen",
+          "fixed_active_count",
+          "intangible_active_count"
+        ],
+        "title": "LongTermAssets",
+        "type": "object"
+      },
       "OwnerBriefVoucher": {
         "additionalProperties": false,
         "properties": {
@@ -6558,7 +6589,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 14,
+        "const": 15,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -8771,6 +8802,19 @@
           },
           "workforce_cost": {
             "$ref": "#/$defs/OwnerWorkforceCost"
+          },
+          "outstanding_remuneration_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outstanding Remuneration Fen"
           }
         },
         "required": [
@@ -8778,7 +8822,8 @@
           "employee_filter",
           "employees",
           "collections",
-          "workforce_cost"
+          "workforce_cost",
+          "outstanding_remuneration_fen"
         ],
         "title": "EmployeesData",
         "type": "object"
@@ -9180,7 +9225,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 9,
+        "const": 10,
         "title": "Schema Version",
         "type": "integer"
       },

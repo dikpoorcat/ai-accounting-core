@@ -7,6 +7,7 @@ import {
   fetchEmployeesDashboard,
   type EstablishedEmployeeItem,
   type EmployeesDashboardResponse,
+  type EmployeesSummary,
   type EmployeesQuery,
   type PersonalLaborItem,
 } from "../api/employees";
@@ -66,6 +67,12 @@ function clearPageRequests() {
 }
 
 const employees = computed(() => response.value?.data?.employees ?? null);
+const grossSalaryAndBonus = computed(() => {
+  const summary = employees.value;
+  return !summary || summary.gross_salary_fen === null || summary.annual_bonus_fen === null
+    ? null
+    : fen(summary.gross_salary_fen) + fen(summary.annual_bonus_fen);
+});
 const data = computed(() => response.value?.data ?? null);
 const workforce = computed(() => response.value?.data?.workforce_cost ?? null);
 const personalLaborItems = computed(() => data.value?.collections.labor_sources?.items ?? []);
@@ -279,7 +286,7 @@ function pausePages(section: string, scope: string) {
   if (scope !== paginationScope()) return;
   const key = pageKey(section); pageControllers.get(key)?.abort(); pageControllers.delete(key); pageLoading.value[key] = false;
 }
-function companyContribution(item: EstablishedEmployeeItem) {
+function companyContribution(item: EstablishedEmployeeItem | EmployeesSummary) {
   return item.employer_social_insurance_fen === null || item.employer_housing_fund_fen === null
     ? null
     : fen(item.employer_social_insurance_fen) + fen(item.employer_housing_fund_fen);
@@ -341,17 +348,35 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <div v-else-if="error" class="state-panel" role="alert"><strong>员工数据加载失败</strong><p>{{ error }}</p><button class="control" type="button" @click="refresh">重试</button></div>
       <div v-else-if="response && !response.data" class="state-panel">还没有可查看的员工月份</div>
       <div v-if="employees && response?.selected_period" v-show="!loading && !error" class="employee-result">
-        <section id="employees-overview" class="people-hero" tabindex="-1">
+        <section id="employees-overview" class="people-hero" tabindex="-1" aria-labelledby="employees-cost-label">
           <p class="dashboard-hero-eyebrow">{{ response.selected_period.label }} · 全公司</p>
-          <div class="people-kpi-grid">
-            <article><span>本月员工薪酬成本</span><strong>{{ formatFen(employees.ledger_cost_fen) }}</strong></article>
-            <article class="salary-paid"><span>本月公司实际支付工资</span><strong :class="cashFlowClass(employees.direct_net_payments_fen, 'outflow')">{{ formatFen(employees.direct_net_payments_fen) }}</strong></article>
-            <article class="salary-outstanding"><span>截至月末未付工资</span><strong>{{ formatFen(employees.outstanding_net_fen) }}</strong></article>
+          <div class="people-headline-grid">
+            <div>
+              <span id="employees-cost-label">本月员工薪酬成本</span>
+              <strong id="employees-cost-value" class="dashboard-hero-title">{{ formatFen(employees.ledger_cost_fen) }}</strong>
+            </div>
+            <div>
+              <span>本月已确认在册人数</span>
+              <strong id="employees-count-value" class="dashboard-hero-title">{{ employees.in_period_count }}<small class="people-count-unit">人</small></strong>
+              <p v-if="employees.unknown_period_count" class="dashboard-hero-note">另有 {{ employees.unknown_period_count }} 人在册状态未确认</p>
+              <p class="dashboard-hero-note">本月有薪酬记录 {{ employees.payroll_count }} 人</p>
+            </div>
           </div>
-          <p class="muted">本月应付净薪 {{ formatFen(employees.net_salary_fen) }} · 本月代付、抵销等 {{ formatFen(employees.other_net_settlements_fen) }}</p>
-          <p class="muted">本月付款可包含以前月份工资；月末未付按各月份款项汇总。</p>
-          <p class="muted">已登记 {{ employees.registered_count }} 人 · 已确认在册 {{ employees.in_period_count }} 人 · 本月有工资 {{ employees.payroll_count }} 人<span v-if="employees.unknown_period_count"> · 在册状态未确认 {{ employees.unknown_period_count }} 人</span></p>
-          <p v-if="employees.checking" class="muted" role="status">部分薪酬资料由 AI 会计核对中，相关未知金额保留。</p>
+          <div class="people-kpi-grid">
+            <article>
+              <span>本月应发工资与奖金</span>
+              <strong id="employees-gross-value">{{ formatFen(grossSalaryAndBonus) }}</strong>
+              <small v-if="employees.annual_bonus_fen === null || fen(employees.annual_bonus_fen) !== 0n">工资 {{ formatFen(employees.gross_salary_fen) }} · 奖金 {{ formatFen(employees.annual_bonus_fen) }}</small>
+            </article>
+            <article class="company-contributions"><span>公司承担社保公积金</span><strong id="employees-contributions-value">{{ formatFen(companyContribution(employees)) }}</strong></article>
+            <article class="salary-paid"><span>公司本月实际发薪</span><strong id="employees-paid-value" :class="cashFlowClass(employees.direct_net_payments_fen, 'outflow')">{{ formatFen(employees.direct_net_payments_fen) }}</strong></article>
+            <article class="salary-outstanding"><span>截至月末未付薪酬</span><strong id="employees-outstanding-value">{{ formatFen(data?.outstanding_remuneration_fen) }}</strong></article>
+          </div>
+          <div class="people-overview-notes">
+            <p class="muted">本月发薪可包含往月工资；月末未付包含以前月份工资及个人劳务。</p>
+            <p v-if="employees.other_net_settlements_fen === null || fen(employees.other_net_settlements_fen) !== 0n" class="muted">本月另有代付、抵销等 {{ formatFen(employees.other_net_settlements_fen) }}</p>
+            <p v-if="employees.checking || data?.outstanding_remuneration_fen === null" class="muted" role="status">部分薪酬资料由 AI 会计核对中，相关未知金额保留。</p>
+          </div>
         </section>
         <section class="panel">
           <div class="section-heading">
@@ -452,18 +477,24 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .employees-content { min-width: 0; }
 .people-hero { display: grid; gap: 24px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); }
 .people-hero > .dashboard-hero-eyebrow { margin: 0 0 -12px; }
-.people-hero > p.muted { margin: -16px 0 0; font-size: 12px; }
-.people-kpi-grid, .amount-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
-.people-kpi-grid { gap: 20px 28px; margin-top: 8px; align-items: start; }
+.people-headline-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 40px; }
+.people-headline-grid > div { min-width: 0; }
+.people-headline-grid > div > span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.people-headline-grid strong { color: var(--accent); }
+.people-headline-grid #employees-cost-value { color: var(--cost); }
+.people-headline-grid .people-count-unit { margin-left: 6px; color: inherit; font-size: 18px; font-weight: 400; }
+.people-kpi-grid, .amount-grid { display: grid; }
+.amount-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.people-kpi-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 20px 28px; align-items: start; }
 .people-kpi-grid article, .amount-grid > div { display: grid; min-width: 0; gap: 6px; }
 .people-kpi-grid span { color: var(--muted); font-size: 12px; font-weight: 750; }
-.people-headline-grid #employees-cost-value { color: var(--cost); }
 .people-kpi-grid article { --kpi-accent: var(--cost); }
 .people-kpi-grid .salary-paid { --kpi-accent: var(--danger); }
 .people-kpi-grid .salary-paid .cash-inflow { color: var(--cash-in); }
 .people-kpi-grid .salary-outstanding { --kpi-accent: var(--warning); }
 .people-kpi-grid strong { margin: 4px 0; font-size: clamp(20px,2vw,26px); line-height: 1.15; letter-spacing: -.025em; color: var(--kpi-accent); overflow-wrap: anywhere; }
-.people-kpi-grid article:first-child strong { color: var(--cost); font-size: clamp(28px,3.2vw,42px); }
+.people-overview-notes { display: grid; gap: 4px; }
+.people-overview-notes p { margin: 0; }
 
 .employees-page .cost-amount { color: var(--cost); }
 .employees-page .payable-amount { color: var(--warning); }
@@ -554,8 +585,8 @@ strong, dd { font-variant-numeric: tabular-nums; }
   .employee-list .employee-card, .employee-list .employee-card:last-child { border: 1px solid var(--line); border-radius: var(--radius-control); margin-bottom: 8px; }
   .employee-list .employee-card:last-child { margin-bottom: 0; }
 }
-@media (max-width: 1080px) { .employee-grid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .employees-page { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .people-hero { padding: 19px; border-radius: 17px; } .people-kpi-grid, .amount-grid { grid-template-columns: 1fr; } .section-heading { flex-direction: column; } .employee-card-summary > .section-heading > strong { text-align: left; } .control { width: 100%; } }
+@media (max-width: 1080px) { .employee-grid { grid-template-columns: 1fr; } .people-kpi-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 720px) { .employees-page { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .people-hero { padding: 19px; border-radius: 17px; } .people-headline-grid, .people-kpi-grid, .amount-grid { grid-template-columns: 1fr; } .section-heading { flex-direction: column; } .employee-card-summary > .section-heading > strong { text-align: left; } .control { width: 100%; } }
 @media (max-width: 720px) { .people-toolbar { width: 100%; } .display-switch button { min-height: 44px; } }
 @media (max-width: 720px) { .employee-detail .amount-grid, .employee-list .employee-detail .amount-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 </style>

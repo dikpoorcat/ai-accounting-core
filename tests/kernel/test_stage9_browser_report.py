@@ -525,7 +525,10 @@ for (const [key, names] of Object.entries(sections)) {
   const payload = {...copy(base), schema_version: version('dashboard_' + key),
     data: {collections: Object.fromEntries(names.map(name => [name, collection()]))}};
   if (key === 'brief') Object.assign(payload.data, {month_state: 'open', owner_review_request: null,
-    voucher_count: 0, activity_count: 0, focused_voucher: null});
+    voucher_count: 0, activity_count: 0, focused_voucher: null,
+    financial_position: {assets_fen: '0', liabilities_fen: '0', equity_fen: '0'},
+    workforce_cost: {has_activity: false},
+    long_term_assets: {net_fen: '0', fixed_active_count: 0, intangible_active_count: 0}});
   const url = new URL('http://test/api/dashboard/' + key);
   verifyMainPayload(payload, key, selected, url, {requireVouchers: false});
   const old = copy(payload); old.schema_version--;
@@ -541,6 +544,11 @@ for (const [key, names] of Object.entries(sections)) {
   local.searchParams.set('expected_version', 'other');
   assert.throws(() => verifyMainPayload(payload, key, selected, local), /crossed snapshots/);
   if (key === 'brief') {
+    for (const summary of ['financial_position', 'workforce_cost']) {
+      const absentSummary = copy(payload); delete absentSummary.data[summary];
+      assert.throws(() => verifyMainPayload(absentSummary, key, selected, url,
+        {requireVouchers: false}), /main financial.*workforce summaries missing/);
+    }
     const missingVouchers = copy(payload); delete missingVouchers.data.collections.vouchers;
     assert.throws(() => verifyMainPayload(missingVouchers, key, selected, url,
       {requireVouchers: false}), /vouchers.*missing/);

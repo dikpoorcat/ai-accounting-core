@@ -37,7 +37,7 @@ const mainContractNames = {
 const modules = [
   { key: "brief", path: "/", action: "brief", heading: /经营简报$/, visible: "#overview, #activity, #open-items, #owner-tasks" },
   { key: "funds", path: "/funds", action: "funds", heading: "资金总览", visible: "#funds-overview, #bank-details" },
-  { key: "employees", path: "/employees", action: "employees", heading: "员工与薪酬概览", visible: "#employees-overview, #employee-list-title" },
+  { key: "employees", path: "/employees", action: "employees", heading: "员工与薪酬概览", visible: "#employees-overview, #employee-list-title, #employees-cost-value, #employees-count-value, #employees-gross-value, #employees-contributions-value, #employees-paid-value, #employees-outstanding-value" },
   { key: "assets", path: "/assets", action: "assets", heading: "长期资产概览", visible: "#assets-overview, #asset-list-title" },
   { key: "reports", path: "/reports", action: "quarterly-report", heading: "季度财务报表", visible: "#report-overview, .summary-grid, #report-statements" },
 ];
@@ -56,7 +56,7 @@ function readRefreshProjection(document, rootSelector) {
   const root = document.querySelector(rootSelector);
   if (!root) return null;
   // Each visible child contributes its complete innerText: financial cards and
-  // the conditional workforce section are included in the existing two-frame
+  // the long-term asset card and conditional workforce section are included in the existing two-frame
   // stable-projection endpoint without adding assertions to the timed path.
   const visibleText = Array.from(root.children)
     .filter(node => node.getClientRects().length
@@ -90,11 +90,14 @@ const observeHotRefresh = new Function("button", "selection", `
     const state = content?.getAttribute("data-month-state");
     const required = content?.getAttribute("data-owner-review-required");
     const prompt = document.querySelector("#owner-tasks .owner-review-request");
+    const asset = document.querySelector("#overview .kpi.asset");
     return ["open", "closed", "covered"].includes(state)
       && ["true", "false"].includes(required)
       && (required === "true" ? state === "open" && prompt?.getClientRects().length
       && prompt.querySelector("button")?.getClientRects().length : !prompt)
-      && !document.querySelector(".close-review, #monthly-review, #close-review-title");
+      && !document.querySelector(".close-review, #monthly-review, #close-review-title")
+      && asset?.getClientRects().length && asset.querySelector("strong")?.innerText.trim()
+      && /^固定 [0-9]+ 项 · 无形 [0-9]+ 项$/.test(asset.querySelector("small")?.innerText.trim());
   };
   button.addEventListener("click", () => {
     const started = performance.now();
@@ -130,7 +133,10 @@ const observeHotRefresh = new Function("button", "selection", `
         return url.searchParams.get("period") === selection.period;
       }));
       const mainReady = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
-        && selection.visible.every(selector => document.querySelector(selector)?.getClientRects().length);
+        && selection.visible.every(selector => document.querySelector(selector)?.getClientRects().length)
+        && (selection.key !== "employees" || (selection.visible.slice(2)
+          .every(selector => document.querySelector(selector)?.innerText.trim())
+          && /^[0-9]+ *人$/.test(document.querySelector("#employees-count-value")?.innerText.trim())));
       const annexReady = selection.key !== "brief" || briefReady();
       const projectionReady = !selection.projection || (networkComplete && mainReady && annexReady && sawBusy
         && readProjection(document, selection.root) === selection.projection);
@@ -251,10 +257,28 @@ function wireFen(value, label, nullable = false) {
   assert(typeof value === "string" && /^-?(0|[1-9][0-9]*)$/.test(value), `${label}: invalid integer fen`);
   return BigInt(value);
 }
+function verifyLongTermAssets(summary) {
+  assert(summary && typeof summary === "object", "brief: long-term asset summary missing");
+  wireFen(summary.net_fen, "long-term asset net", true);
+  for (const field of ["fixed_active_count", "intangible_active_count"]) {
+    assert(Number.isSafeInteger(summary[field]) && summary[field] >= 0,
+      `brief: invalid long-term asset ${field}`);
+  }
+}
 function formatFen(value) {
   if (value === null) return "暂无法确定";
   const amount = wireFen(value, "display amount"), absolute = amount < 0n ? -amount : amount;
   return `${amount < 0n ? "−" : ""}¥${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(absolute / 100n)}.${String(absolute % 100n).padStart(2, "0")}`;
+}
+function sumFen(first, second) {
+  const left = wireFen(first, "first amount", true), right = wireFen(second, "second amount", true);
+  return left === null || right === null ? null : (left + right).toString();
+}
+function employeeOutstandingFen(data, schemaVersion) {
+  assert(schemaVersion === 9 || schemaVersion === 10, "employees: unsupported outstanding response version");
+  const value = schemaVersion === 9 ? data.employees.outstanding_net_fen : data.outstanding_remuneration_fen;
+  wireFen(value, "unpaid remuneration", true);
+  return value;
 }
 function verifyCollection(collection, label, { cursor = false } = {}) {
   assert(collection && Array.isArray(collection.items) && collection.page, `${label}: collection missing`);
@@ -338,6 +362,7 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
     const { vouchers, activity } = payload.data.collections;
     if (!section) {
       assert(payload.data.financial_position && payload.data.workforce_cost, "brief: main financial/workforce summaries missing");
+      verifyLongTermAssets(payload.data.long_term_assets);
       assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
       assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
       if (requireVouchers) assert(vouchers.page.total_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
@@ -370,7 +395,7 @@ async function run(config) {
     const specs = {
       "/": { action: "brief", visible: ["#overview", "#activity", "#open-items", "#owner-tasks"] },
       "/funds": { action: "funds", visible: ["#funds-overview", "#bank-details"] },
-      "/employees": { action: "employees", visible: ["#employees-overview", "#employee-list-title"] },
+      "/employees": { action: "employees", visible: ["#employees-overview", "#employee-list-title", "#employees-cost-value", "#employees-count-value", "#employees-gross-value", "#employees-contributions-value", "#employees-paid-value", "#employees-outstanding-value"] },
       "/assets": { action: "assets", visible: ["#assets-overview", "#asset-list-title"] },
       "/reports": { action: "quarterly-report", visible: ["#report-overview", ".summary-grid", "#report-statements"] },
     };
@@ -381,11 +406,14 @@ async function run(config) {
       const state = content?.getAttribute("data-month-state");
       const required = content?.getAttribute("data-owner-review-required");
       const prompt = document.querySelector("#owner-tasks .owner-review-request");
+      const asset = document.querySelector("#overview .kpi.asset");
       return ["open", "closed", "covered"].includes(state)
         && ["true", "false"].includes(required)
         && (required === "true" ? state === "open" && prompt?.getClientRects().length
           && prompt.querySelector("button")?.getClientRects().length : !prompt)
-        && !document.querySelector(".close-review, #monthly-review, #close-review-title");
+        && !document.querySelector(".close-review, #monthly-review, #close-review-title")
+        && asset?.getClientRects().length && asset.querySelector("strong")?.innerText.trim()
+        && /^固定 [0-9]+ 项 · 无形 [0-9]+ 项$/.test(asset.querySelector("small")?.innerText.trim());
     };
     let frames = 0;
     const observe = () => {
@@ -404,7 +432,10 @@ async function run(config) {
       }));
       const ready = document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"
         && spec.visible.every(selector => document.querySelector(selector)?.getClientRects().length)
-        && (spec.action !== "brief" || briefReady());
+        && (spec.action !== "brief" || briefReady())
+        && (spec.action !== "employees" || (spec.visible.slice(2)
+          .every(selector => document.querySelector(selector)?.innerText.trim())
+          && /^[0-9]+ *人$/.test(document.querySelector("#employees-count-value")?.innerText.trim())));
       frames = networkComplete && ready ? frames + 1 : 0;
       if (frames >= 2) {
         window.__stage9NavigationRenderedAt = performance.now();
@@ -516,18 +547,26 @@ async function run(config) {
     const amounts = module.key === "brief" ? [
       ["#overview .hero strong", data.position.month_result_fen],
       ["#overview .kpi.funds strong", data.funds_overview.total_fen],
+      ["#overview .kpi.asset strong", data.long_term_assets.net_fen],
       ["#overview .kpi.receivable strong", data.open_items.receivable_fen],
       ["#overview .kpi.payable strong", data.open_items.payable_fen],
     ] : module.key === "funds" ? [[".funds-total", data.total_fen]]
-      : module.key === "employees" ? [[".people-kpi-grid article:nth-child(1) strong", data.employees.ledger_cost_fen],
-        [".people-kpi-grid article:nth-child(2) strong", data.employees.direct_net_payments_fen],
-        [".people-kpi-grid article:nth-child(3) strong", data.employees.outstanding_net_fen]]
+      : module.key === "employees" ? [["#employees-cost-value", data.employees.ledger_cost_fen],
+        ["#employees-gross-value", sumFen(data.employees.gross_salary_fen, data.employees.annual_bonus_fen)],
+        ["#employees-contributions-value", sumFen(data.employees.employer_social_insurance_fen, data.employees.employer_housing_fund_fen)],
+        ["#employees-paid-value", data.employees.direct_net_payments_fen],
+        ["#employees-outstanding-value", employeeOutstandingFen(data, payload.schema_version)]]
         : module.key === "assets" ? [[".assets-total", data.ledger_net_fen]] : [];
     for (const [selector, amount] of amounts) {
       assert.equal((await page.locator(selector).textContent())?.trim(), formatFen(amount), `${module.key}: full-company amount differs`);
     }
     if (module.key === "brief") {
       await verifyBriefVisible(data);
+      const assets = data.long_term_assets;
+      assert.equal((await page.locator("#overview .kpi.asset small").textContent())?.trim(),
+        `固定 ${assets.fixed_active_count} 项 · 无形 ${assets.intangible_active_count} 项`,
+        "brief: active asset counts differ from full summary");
+      assert.equal(await page.locator("#overview .kpi").count(), 4, "brief: overview cards missing");
       assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按业务", "brief: default view changed");
       const selectedLabel = (await page.locator("#activity nav[aria-label='业务分类'] button[aria-pressed=true] strong").textContent())?.trim();
       const selectedGroup = selectedLabel === "全部" ? null
@@ -548,6 +587,8 @@ async function run(config) {
         assert.equal(item.account_type, selected.type, "funds: another account type leaked into movements");
       }
     } else if (module.key === "employees") {
+      assert.equal((await page.locator("#employees-count-value").textContent())?.replace(/\s/g, ""),
+        `${data.employees.in_period_count}人`, "employees: confirmed in-period headcount differs from full summary");
       assert.equal(await page.locator(".employee-grid").first().locator(".employee-card").count(), data.collections.employees.items.length, "employees: default employee rows incomplete");
       assert.equal(await page.locator("section:has(> #labor-title) .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
     } else if (module.key === "assets") {
@@ -1290,4 +1331,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { waitForLater, verifyBriefState, verifyCollection, verifyVoucher, verifyMainPayload, formatFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
+module.exports = { waitForLater, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };

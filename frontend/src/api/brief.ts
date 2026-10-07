@@ -36,7 +36,7 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
   const voucherNumber = url.searchParams.get("voucher_number");
   return response.read_context.company_id === companyId
     && validDashboardCollections(response.data)
-    && (section !== null || response.data === null || (response.data.financial_position !== undefined && response.data.workforce_cost !== undefined))
+    && (section !== null || response.data === null || (response.data.financial_position !== undefined && response.data.workforce_cost !== undefined && response.data.long_term_assets !== undefined))
     && (period === null || response.selected_period?.key === period)
     && (expectedVersion === null || response.snapshot_version === expectedVersion)
     && (section === null || (response.data !== null && section in response.data.collections))
