@@ -6,10 +6,10 @@ import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 let number = 0;
-async function assetView(fetchAssetsDashboard) {
+async function assetView(fetchAssetsDashboard, query = { asset_filter: "all" }) {
   const key = `assetFilterHarness${++number}`;
-  const route = Vue.reactive({ query: { company_id: "co", period: "2026-03" }, hash: "" });
-  const context = Vue.ref({ current_company: { company_id: "co" }, periods: [{ key: "2026-03" }], default_period: "2026-03" });
+  const route = Vue.reactive({ query: { company_id: "co", period: "2026-03", ...query }, hash: "" });
+  const context = Vue.ref({ current_company: { company_id: "co" }, periods: [{ key: "2026-03" }, { key: "2026-04" }], default_period: "2026-03" });
   globalThis[key] = { Vue, route, context, fetchAssetsDashboard, appendDashboardCollection };
   const originalDocument = globalThis.document;
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
@@ -28,7 +28,7 @@ async function assetView(fetchAssetsDashboard) {
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String;
   `;
-  const exported = "\nexport { response, loading, pageLoading, pageErrors, retryCollection, reloadCollection, loadMore }; export function activate() { mounted = true; selectedPeriod.value = '2026-03'; }";
+  const exported = "\nexport { response, loading, pageLoading, pageErrors, retryCollection, reloadCollection, loadMore, loadAssets, filter, changePeriod, displayMode, listInitialized, changeDisplayMode }; export function activate() { mounted = true; selectedPeriod.value = '2026-03'; }";
   const { outputText } = ts.transpileModule(imports + source + exported, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const scope = Vue.effectScope();
   const view = await scope.run(() => import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`));
@@ -39,6 +39,83 @@ const collection = id => ({ items: [{ asset_id: id, project_id: id }], page: { t
 const response = (filter = "all", snapshot = "v1", id = filter) => ({ selected_period: { key: "2026-03" }, snapshot_version: snapshot, data: { asset_filter: filter, asset_id: null, project_id: null, ledger_net_fen: "123456", registered_count: 30, collections: { assets: collection(id), projects: collection("kept-project") } } });
 
 const flush = async () => { await Vue.nextTick(); await Vue.nextTick(); await Vue.nextTick(); };
+
+test("asset filtering defaults to active, accepts explicit all and ignores invalid URL selections", async () => {
+  for (const [query, expected] of [[{}, "active"], [{ asset_filter: "all" }, "all"], [{ asset_filter: "pending" }, "pending"], [{ asset_filter: "invalid" }, "active"]]) {
+    const calls = [];
+    const view = await assetView(async (_period, _signal, query) => { calls.push(query); return response(expected); }, query);
+    try {
+      assert.equal(view.filter.value, expected);
+      await view.loadAssets("2026-03");
+      assert.equal(calls.at(-1).asset_filter, expected);
+      view.filter.value = "all"; await flush();
+      assert.equal(view.route.query.asset_filter, "all", "all stays explicit in the URL");
+      view.filter.value = "active"; await flush();
+      assert.equal(view.filter.value, "active");
+    } finally { view.cleanup(); }
+  }
+});
+
+test("an exact exited asset bypasses the active default without losing its URL filter", async () => {
+  const calls = [];
+  const view = await assetView(async (_period, _signal, query) => {
+    calls.push(query);
+    const result = response("all", "v1", "exited-asset");
+    result.data.collections.assets.items[0].status = "disposed";
+    return result;
+  }, { asset_id: "exited-asset" });
+  try {
+    await view.loadAssets("2026-03");
+    assert.equal(view.filter.value, "active");
+    assert.equal(calls[0].asset_filter, "all");
+    assert.equal(calls[0].asset_id, "exited-asset");
+    assert.equal(view.response.value.data.collections.assets.items[0].status, "disposed");
+  } finally { view.cleanup(); }
+});
+
+test("asset month navigation retains its selected filter and clears exact targets, cursor and hash", async () => {
+  for (const selected of [undefined, "active", "all", "fixed", "intangible", "pending", "exited"]) {
+    const view = await assetView(async () => response(), { asset_filter: selected, asset_id: "old-asset", project_id: "old-project", cursor: "old-cursor" });
+    try {
+      view.route.hash = "#asset-card-target";
+      view.changePeriod("2026-04"); await flush();
+      assert.equal(view.route.query.period, "2026-04");
+      assert.equal(view.route.query.asset_filter, selected);
+      assert.equal(view.route.query.asset_id, undefined);
+      assert.equal(view.route.query.project_id, undefined);
+      assert.equal(view.route.query.cursor, undefined);
+      assert.equal(view.route.hash, "");
+    } finally { view.cleanup(); }
+  }
+});
+
+test("asset display switching keeps loaded arrays and a running continuation without another request", async () => {
+  const calls = [];
+  const view = await assetView((_period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+  try {
+    view.response.value = response();
+    const assets = view.response.value.data.collections.assets.items;
+    const projects = view.response.value.data.collections.projects.items;
+    assert.equal(view.displayMode.value, "cards");
+    assert.equal(view.listInitialized.value, false);
+    const pending = view.loadMore("assets");
+    view.changeDisplayMode("list"); await flush();
+    assert.equal(view.listInitialized.value, true);
+    view.changeDisplayMode("cards"); await flush();
+    assert.equal(view.listInitialized.value, true, "list details remain mounted after first use");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].signal.aborted, false);
+    assert.equal(view.pageLoading.value.assets, true);
+    assert.equal(view.response.value.data.collections.assets.items, assets);
+    assert.equal(view.response.value.data.collections.projects.items, projects);
+    calls[0].resolve(response("all", "v1", "continued")); await pending;
+    assert.equal(view.response.value.data.collections.assets.items, assets);
+    assert.equal(assets.length, 2);
+    view.changeDisplayMode("list"); await flush();
+    assert.equal(calls.length, 1);
+    assert.equal(view.response.value.data.collections.assets.page.next_cursor, "next");
+  } finally { view.cleanup(); }
+});
 
 test("asset type selection only reloads its snapshot-bound collection and preserves whole-company totals", async () => {
   const calls = [];

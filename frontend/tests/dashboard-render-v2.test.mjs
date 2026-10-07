@@ -37,8 +37,9 @@ async function withServer(run, { displayMode } = {}) {
       const refName = key === "funds" ? "funds" : key === "reports" ? "report" : "response";
       const seeded = key === "funds" ? "globalThis.stage7RenderResponses.funds.data" : `globalThis.stage7RenderResponses.${key}`;
       code = code.replace(new RegExp(`const ${refName} = (?:ref|shallowRef)<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(${seeded})`);
-      if (key === "employees" && displayMode !== undefined) {
+      if (["employees", "assets"].includes(key) && displayMode !== undefined) {
         code = code.replace(/const displayMode = ref<[^;\n]+>\("cards"\)/, `const displayMode = ref("${displayMode}")`);
+        if (key === "assets" && displayMode === "list") code = code.replace("const listInitialized = ref(false)", "const listInitialized = ref(true)");
       }
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")').replaceAll("{ immediate: true }", "{ immediate: false }");
@@ -58,7 +59,7 @@ function routerFor(path) {
     { path: "/assets", name: "assets", component: {} },
     { path: "/reports", name: "reports", component: {} },
   ] });
-  return router.push(`${path}?company_id=${companyId}&period=2026-01&quarter=2026-Q1`).then(() => router);
+  return router.push(`${path}?company_id=${companyId}&period=2026-01&quarter=2026-Q1${path === "/assets" ? "&asset_filter=all" : ""}`).then(() => router);
 }
 
 test("current generated responses render all five owner dashboard pages", async () => withServer(async server => {
@@ -127,6 +128,141 @@ test("nonempty asset and project cards show asset values without business drilld
   assert.match(html, /¥2,500\.00/);
   assert.doesNotMatch(html, /查看整批付款情况|查看收付款事项|展开查看项目付款|查看处置事项|查看终止使用事项/);
 }));
+
+function assetListResponse() {
+  const response = structuredClone(responses.assets);
+  const active = {
+    asset_id: "asset-active", asset_type: "fixed", code: "ZC001", name: "合成设备完整名称",
+    category: "equipment", category_label: "设备", status: "active", status_label: "使用中",
+    acquisition_date: "2025-12-15", posting_period: "2025-12", recognition_label: "2025-12-15",
+    settlement_scope: "本验收批次结算", payment_summary: { obligation_count: 1, checking: false,
+      amount_fen: "161800", paid_fen: "10000", other_settled_fen: "20000", remaining_fen: "131800" },
+    cost_fen: "900719925474099345", accumulated_charge_fen: "123456", month_charge_fen: "23456", book_value_fen: "900719925473975889",
+    month_acquired: false, month_activated: true, month_exited: false, in_service_date: "2026-01-01", disposal: null,
+  };
+  const pending = { ...active, asset_id: "asset-pending", name: "待启用设备", status: "pending_activation", status_label: "待启用", in_service_date: "2026-02-01", month_activated: false,
+    settlement_scope: "成本来源结算（不分摊为本资产付款）", payment_summary: { obligation_count: 1, checking: true, amount_fen: null, paid_fen: null, other_settled_fen: null, remaining_fen: null } };
+  const disposed = { ...active, asset_id: "asset-disposed", name: "已出售设备", status: "disposed", status_label: "已处置", book_value_fen: "0", month_exited: true, settlement_scope: "本资产结算",
+    disposal: { date: "2026-01-20", book_value_fen: "151800", kind: "sale", gross_proceeds_fen: "200000", gain_fen: "48200", loss_fen: "0", party: "合成买方" } };
+  const { in_service_date: _date, disposal: _disposal, ...common } = active;
+  const retired = { ...common, asset_id: "asset-retired", asset_type: "intangible", name: "已退役软件", status: "retired", status_label: "已退役", book_value_fen: "0", month_exited: true,
+    available_for_use_date: "2026-01-01", retirement: { date: "2026-01-21", book_value_fen: "141800" } };
+  const unknown = { asset_id: "asset-unknown", asset_type: "fixed", name: "资料待确认设备", selection_status: "unestablished", cost_fen: null, accumulated_charge_fen: null, month_charge_fen: null, book_value_fen: null };
+  response.data.collections.assets = { items: [active, pending, disposed, retired, unknown], page: { total_count: 5, filtered_count: 5, returned_count: 5, has_more: false, next_cursor: null } };
+  return response;
+}
+
+async function renderAssets(server, response) {
+  assert(validateDashboardAssetsResponse(response), JSON.stringify(validateDashboardAssetsResponse.errors));
+  globalThis.stage7RenderResponses = { ...responses, assets: response };
+  globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
+  const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
+  await useDashboardContext().load(true);
+  const router = await routerFor("/assets");
+  const { default: component } = await server.ssrLoadModule("/src/views/AssetsView.vue");
+  const app = createSSRApp(component); app.use(router);
+  return renderToString(app);
+}
+
+test("asset list rows retain precise amounts, distinct usage states and unknown amounts", async () => withServer(async server => {
+  const response = assetListResponse();
+  const html = await renderAssets(server, response);
+  const rows = [...html.matchAll(/<summary\b[^>]*class="[^"]*\basset-list-summary\b[^"]*"[^>]*>([\s\S]*?)<\/summary>/g)].map(match => match[1]);
+  const unknownArticle = [...html.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/g)].map(match => match[1]).find(row => row.includes("资料待确认设备"));
+  const unknownList = unknownArticle?.slice(unknownArticle.indexOf('class="asset-list-summary'));
+  assert(unknownList, "an unknown asset remains visible as a list row without fabricated detail");
+  rows.push(unknownList);
+  assert.equal(rows.length, 5);
+  const active = rows.find(row => row.includes("合成设备完整名称"));
+  for (const amount of ["¥9,007,199,254,740,993.45", "¥1,234.56", "¥234.56", "¥9,007,199,254,739,758.89", "¥1,318.00"]) assert(active.includes(amount), amount);
+  assert.match(active, /asset-list-chevron/);
+  const header = html.match(/<div\b[^>]*class="asset-list-header"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert(header, "the asset list has a shared header");
+  assert.deepEqual([...header.matchAll(/<span\b[^>]*>([\s\S]*?)<\/span>/g)].map(match => match[1]),
+    ["资产", "状态", "取得成本", "累计折旧／摊销", "本月折旧／摊销", "所选月末价值", "相关付款", ""]);
+  assert.deepEqual([...active.matchAll(/data-label="([^"]+)"/g)].map(match => match[1]),
+    ["状态", "取得成本", "累计折旧", "本月折旧", "所选月末价值", "相关付款"]);
+  const unknown = rows.find(row => row.includes("资料待确认设备"));
+  assert.match(unknown, /暂无法确定/);
+  assert.doesNotMatch(unknown, /¥0\.00/);
+  const pending = rows.find(row => row.includes("待启用设备"));
+  assert.match(pending, /项目来源款项/);
+  assert.match(pending, /暂无法确定/);
+  assert.match(pending, /AI 会计核对中/);
+  assert.match(rows.find(row => row.includes("已出售设备")), /本项付款/);
+  for (const [name, label, tone] of [["合成设备完整名称", "使用中", "active"], ["待启用设备", "待启用", "pending_activation"], ["已出售设备", "已处置", "disposed"], ["已退役软件", "已退役", "retired"], ["资料待确认设备", "资料待确认", "needs-attention"]]) {
+    const row = rows.find(row => row.includes(name));
+    const dot = row.match(/<span\b(?=[^>]*role="img")(?=[^>]*aria-label="[^"]+")[^>]*>/)?.[0];
+    assert(dot, `${name} has an accessible usage status dot`);
+    assert(dot.includes(`aria-label="${label}"`), `${name} status label`);
+    assert(dot.includes(tone), `${name} status tone`);
+  }
+  for (const [key, label, amount] of [["cost", "取得成本", "¥9,007,199,254,740,993.45"], ["accumulated", "累计折旧", "¥1,234.56"], ["month", "本月折旧", "¥234.56"], ["book", "所选月末价值", "¥9,007,199,254,739,758.89"]]) {
+    const cell = active.match(new RegExp(`<strong\\b(?=[^>]*data-label="${label}")(?=[^>]*aria-labelledby="asset-column-${key}")[^>]*>([\\s\\S]*?)</strong>`));
+    assert(cell, `${key} is aligned with an accessible amount column`);
+    assert.equal(cell[1].trim(), amount);
+    assert.match(html, new RegExp(`id="asset-column-${key}"`));
+  }
+}, { displayMode: "list" }));
+
+test("asset card and list modes share a single title toolbar while list details add dates, payments and exits", async () => {
+  for (const displayMode of [undefined, "cards", "list"]) await withServer(async server => {
+    const html = await renderAssets(server, assetListResponse());
+    assert.equal([...html.matchAll(/aria-label="资产展示方式"/g)].length, 1);
+    const titleIndex = html.indexOf('id="asset-list-title"');
+    const headingStart = [...html.slice(0, titleIndex).matchAll(/<div\b[^>]*class="[^"]*\bsection-heading\b[^"]*"[^>]*>/g)].at(-1)?.index;
+    assert.notEqual(headingStart, undefined, "asset title has a section heading");
+    let depth = 0, headingEnd = headingStart;
+    for (const tag of html.slice(headingStart).matchAll(/<\/?div\b[^>]*>/g)) {
+      depth += tag[0].startsWith("</") ? -1 : 1;
+      if (!depth) { headingEnd += tag.index + tag[0].length; break; }
+    }
+    const heading = html.slice(headingStart, headingEnd);
+    assert.match(heading, /aria-label="资产展示方式"/, "the single display switch belongs to the asset title area");
+    assert.match(heading, new RegExp(`<button\\b[^>]*aria-pressed="${displayMode === "list" ? "false" : "true"}"[^>]*>卡片</button>`));
+    assert.match(heading, new RegExp(`<button\\b[^>]*aria-pressed="${displayMode === "list" ? "true" : "false"}"[^>]*>列表</button>`));
+    const details = [...html.matchAll(/<details\b[^>]*>([\s\S]*?)<\/details>/g)].map(match => match[1]).filter(detail => /asset-list-summary/.test(detail));
+    assert.equal(details.length, displayMode === "list" ? 4 : 0);
+    if (displayMode !== "list") {
+      assert.match(html, /取得成本|累计折旧/);
+      assert.match(html, /整批付款/);
+      assert.match(html, /2025-12-15/);
+      return;
+    }
+    const active = details.find(detail => detail.includes("合成设备完整名称"));
+    const supplemental = active.replace(/<summary\b[^>]*>[\s\S]*?<\/summary>/, "");
+    assert.match(supplemental, /2025-12-15/);
+    assert.match(supplemental, /2026-01-01/);
+    assert.match(active, /整批付款/);
+    assert.match(supplemental, /¥100\.00/);
+    assert.match(supplemental, /¥200\.00/);
+    assert.doesNotMatch(supplemental, /取得成本|累计折旧|本月折旧|所选月末还值/);
+    const disposalHtml = details.find(detail => detail.includes("已出售设备"));
+    assert.match(disposalHtml, /<h3[^>]*>出售补充<\/h3>/, "sale remains distinguishable under the generic disposed status");
+    const disposal = disposalHtml.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    assert.match(disposal, /收款金额 ¥2,000\.00/);
+    assert.match(disposal, /处置收益 ¥482\.00/);
+    assert.match(disposal, /处置时账面价值 ¥1,518\.00/, "exit-time value remains distinct from the zero month-end value");
+    const retired = details.find(detail => detail.includes("已退役软件")).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    assert.match(retired, /退出时账面价值 ¥1,418\.00/);
+    const pending = details.find(detail => detail.includes("待启用设备"));
+    const pendingBody = pending.replace(/<summary\b[^>]*>[\s\S]*?<\/summary>/, "");
+    assert.match(pendingBody, /暂无法确定/);
+    assert.doesNotMatch(pendingBody, /¥0\.00/);
+    const scrappedResponse = assetListResponse();
+    const scrapped = scrappedResponse.data.collections.assets.items.find(item => item.asset_id === "asset-disposed");
+    scrapped.name = "已报废设备";
+    Object.assign(scrapped.disposal, { kind: "retirement", gross_proceeds_fen: "0", gain_fen: "0", loss_fen: "151800", party: "" });
+    const scrappedHtml = await renderAssets(server, scrappedResponse);
+    const scrappedDetail = [...scrappedHtml.matchAll(/<details\b[^>]*>([\s\S]*?)<\/details>/g)].map(match => match[1]).find(detail => detail.includes(scrapped.name));
+    assert.match(scrappedDetail, /<h3[^>]*>报废补充<\/h3>/, "scrap remains distinguishable under the same generic disposed status");
+    assert.doesNotMatch(scrappedDetail, /出售补充/);
+    const scrappedText = scrappedDetail.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    assert.match(scrappedText, /处置时账面价值 ¥1,518\.00/);
+    assert.match(scrappedText, /收款金额 ¥0\.00/);
+    assert.match(scrappedText, /处置损失 ¥1,518\.00/);
+  }, { displayMode });
+});
 
 test("incomplete business classification labels confirmed amounts without making a boss task", async () => withServer(async server => {
   globalThis.fetch = async () => new Response(JSON.stringify(responses.context));

@@ -44,12 +44,14 @@ const selectedPeriod = ref("");
 const response = ref<AssetsDashboardResponse | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const displayMode = ref<"cards" | "list">("cards");
+const listInitialized = ref(false);
 const focusedAssetId = computed(() => typeof route.query.asset_id === "string" ? route.query.asset_id : "");
 const focusedProjectId = computed(() => typeof route.query.project_id === "string" ? route.query.project_id : "");
 const filter = computed<AssetFilter>({
-  get: () => filters.find(item => item.value === route.query.asset_filter)?.value ?? "all",
+  get: () => filters.find(item => item.value === route.query.asset_filter)?.value ?? "active",
   set: value => { void router.push({
-    query: { ...route.query, asset_filter: value === "all" ? undefined : value, asset_id: undefined },
+    query: { ...route.query, asset_filter: value === "active" ? undefined : value, asset_id: undefined },
     hash: "",
   }); },
 });
@@ -75,10 +77,16 @@ const allItems = computed<AssetItem[]>(() => {
   return data.value.collections.assets?.items ?? [];
 });
 const filteredItems = computed(() => allItems.value);
+const assetListColumns = [
+  { key: "cost", label: "取得成本", amount: (item: EstablishedAssetItem) => item.cost_fen },
+  { key: "accumulated", label: "累计折旧／摊销", amount: (item: EstablishedAssetItem) => item.accumulated_charge_fen },
+  { key: "month", label: "本月折旧／摊销", amount: (item: EstablishedAssetItem) => item.month_charge_fen },
+  { key: "book", label: "所选月末价值", amount: (item: EstablishedAssetItem) => item.book_value_fen },
+] as const;
 const filterLabel = computed(
   () => focusedAssetId.value
-    ? "已定位资产卡片"
-    : filters.find((item) => item.value === filter.value)?.label ?? "全部资产卡片",
+    ? "已定位资产"
+    : filters.find((item) => item.value === filter.value)?.label ?? "当前在用",
 );
 const attentionItems = computed(() => {
   const assets = data.value;
@@ -94,10 +102,14 @@ const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
   { id: "assets-overview", label: "概览" },
   ...(attentionItems.value.length ? [{ id: "assets-checks", label: "关注事项" }] : []),
   { id: "asset-movements-title", label: "本月变动" },
-  { id: "asset-list-title", label: "资产卡片" },
+  { id: "asset-list-title", label: "资产明细" },
   { id: "asset-projects-title", label: "项目投入" },
 ] : []);
 const { activeSection, focusSection, focusSelectedPanel, positionSection } = useDashboardSections(sectionLinks, "assets-overview");
+function changeDisplayMode(value: "cards" | "list") {
+  if (value === "list") listInitialized.value = true;
+  displayMode.value = value;
+}
 
 function routePeriod(): string | null {
   const value = route.query.period;
@@ -179,7 +191,7 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
 
 function changePeriod(value: string) {
   if (!value || value === routePeriod()) return;
-  void router.push({ query: { company_id: route.query.company_id, period: value } });
+  void router.push({ query: { company_id: route.query.company_id, period: value, asset_filter: route.query.asset_filter }, hash: "" });
 }
 
 function refresh() { return refreshCurrent(true); }
@@ -417,6 +429,24 @@ function chargeLabel(item: EstablishedAssetItem, current = false) {
   return current ? "本月摊销" : "累计摊销";
 }
 
+function assetListColumnLabel(item: EstablishedAssetItem, key: (typeof assetListColumns)[number]["key"]) {
+  if (key === "accumulated") return chargeLabel(item);
+  if (key === "month") return chargeLabel(item, true);
+  return key === "cost" ? "取得成本" : "所选月末价值";
+}
+
+function assetUseDateLabel(item: EstablishedAssetItem) {
+  const date = isFixedAsset(item) ? item.in_service_date : item.available_for_use_date;
+  return date ? dateLabel(date) : item.status === "pending_activation" ? "尚未启用" : "启用时间待补充";
+}
+
+function assetRemainingAlreadyShown(item: EstablishedAssetItem) {
+  const summary = item.payment_summary;
+  return summary.obligation_count > 0
+    && [summary.amount_fen, summary.paid_fen, summary.other_settled_fen, summary.remaining_fen].every(value => value !== null)
+    && (fen(summary.remaining_fen) !== 0n || !summary.checking);
+}
+
 function chargeProgress(item: EstablishedAssetItem) {
   if (item.cost_fen === null || item.accumulated_charge_fen === null) return null;
   const cost = fen(item.cost_fen);
@@ -615,20 +645,29 @@ onBeforeUnmount(() => {
                   {{ item.label }}
                 </option>
               </select>
+              <div class="display-switch" role="group" aria-label="资产展示方式">
+                <button type="button" :aria-pressed="displayMode === 'cards'" @click="changeDisplayMode('cards')">卡片</button>
+                <button type="button" :aria-pressed="displayMode === 'list'" @click="changeDisplayMode('list')">列表</button>
+              </div>
             </div>
           </div>
 
           <p v-if="data.unestablished_count">另有 {{ data.unestablished_count }} 项资产资料尚未确认，暂不计入资产数量和金额。</p>
           <p v-if="pageLoading.assets && !collectionMatchesSelection('assets')" class="note" role="status">正在读取所选资产…</p>
-          <div v-if="collectionMatchesSelection('assets') && filteredItems.length" class="asset-grid">
+          <div v-if="collectionMatchesSelection('assets') && filteredItems.length" class="asset-results" :class="{ 'list-results': displayMode === 'list' }">
+          <div class="asset-grid" :class="{ 'asset-list': displayMode === 'list' }">
+            <div v-if="displayMode === 'list'" class="asset-list-header">
+              <span>资产</span><span>状态</span><span v-for="column in assetListColumns" :id="`asset-column-${column.key}`" :key="column.key">{{ column.label }}</span><span>相关付款</span><span aria-hidden="true"></span>
+            </div>
             <template v-for="item in filteredItems" :key="item.asset_id">
             <article
-              v-if="isUnestablishedAsset(item)"
               :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card asset-unestablished dashboard-record-card" data-section-focus
+              class="asset-card dashboard-record-card" data-section-focus
+              :class="isUnestablishedAsset(item) ? 'asset-unestablished' : item.status"
               tabindex="-1"
             >
-              <div class="asset-card-summary">
+              <template v-if="isUnestablishedAsset(item)">
+              <div v-show="displayMode === 'cards'" class="asset-card-summary">
                 <div class="asset-card-topline">
                   <span class="asset-classification">{{ unresolvedAssetTypeLabel(item) }}</span>
                 </div>
@@ -644,14 +683,16 @@ onBeforeUnmount(() => {
                 </div>
                 <p class="asset-unestablished-note">该项资料尚未确认，暂不计入资产数量和金额；由 AI 会计核对。</p>
               </div>
-            </article>
-            <article v-else
-              :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card dashboard-record-card" data-section-focus
-              :class="item.status"
-              tabindex="-1"
-            >
-              <div class="asset-card-summary">
+              <div v-show="displayMode === 'list'" class="asset-list-summary asset-list-unestablished">
+                <div class="asset-list-identity"><span class="asset-list-status needs-attention" role="img" aria-label="资料待确认" title="资料待确认"></span><div class="asset-list-name"><h3>{{ assetDisplayName(item) }}</h3><p>{{ unresolvedAssetTypeLabel(item) }}</p></div></div>
+                <div class="asset-list-state" data-label="状态"><span>资料待确认</span></div>
+                <strong v-for="column in assetListColumns" :key="column.key" :data-label="column.label" :aria-labelledby="`asset-column-${column.key}`" :class="{ 'asset-list-book': column.key === 'book' }">暂无法确定</strong>
+                <div class="asset-list-payment" data-label="相关付款"><span>AI 会计核对中</span></div>
+                <span aria-hidden="true"></span>
+              </div>
+              </template>
+              <template v-else>
+              <div v-show="displayMode === 'cards'" class="asset-card-summary">
                 <div class="asset-card-topline">
                   <span class="asset-classification">
                     {{ assetTypeLabel(item) }}<template v-if="assetCategoryLabel(item)"> · {{ assetCategoryLabel(item) }}</template> · {{ item.code }}
@@ -691,8 +732,52 @@ onBeforeUnmount(() => {
                 <p v-if="isFixedAsset(item) && item.disposal" class="note">{{ item.disposal.kind === 'sale' ? '出售' : '报废' }} {{ item.disposal.date }} · 收款金额 {{ formatFen(item.disposal.gross_proceeds_fen) }}<template v-if="item.disposal.party"> · {{ item.disposal.party }}</template> · 处置收益 {{ formatFen(item.disposal.gain_fen) }} · 处置损失 {{ formatFen(item.disposal.loss_fen) }}</p>
                 <p v-else-if="!isFixedAsset(item) && item.retirement" class="note">终止使用 {{ item.retirement.date }} · 退出时账面价值 {{ formatFen(item.retirement.book_value_fen) }}</p>
               </div>
+              <details v-if="listInitialized" v-show="displayMode === 'list'" class="asset-list-details">
+                <summary class="asset-list-summary">
+                  <div class="asset-list-identity"><span class="asset-list-status" :class="item.status" role="img" :aria-label="item.status_label" :title="item.status_label"></span><div class="asset-list-name"><h3 :class="{ 'needs-attention': assetNameNeedsAttention(item) }">{{ assetDisplayName(item) }}</h3><p>{{ assetTypeLabel(item) }}<template v-if="assetCategoryLabel(item)"> · {{ assetCategoryLabel(item) }}</template> · {{ item.code }}</p></div></div>
+                  <div class="asset-list-state" data-label="状态"><span>{{ item.status_label }}</span><small v-if="monthEventLabel(item)">{{ monthEventLabel(item) }}</small></div>
+                  <strong v-for="column in assetListColumns" :key="column.key" :class="{ 'asset-list-book': column.key === 'book' }" :data-label="assetListColumnLabel(item, column.key)" :aria-labelledby="`asset-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
+                  <div class="asset-list-payment" :class="assetPaymentSummary(item).tone" data-label="相关付款"><small>{{ assetPaymentSummary(item).label }}</small><span>{{ assetPaymentSummary(item).value }}</span><small v-if="item.payment_summary.checking && assetPaymentSummary(item).value !== 'AI 会计核对中'">AI 会计核对中</small></div>
+                  <svg class="asset-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+                </summary>
+                <div class="asset-list-detail dashboard-business-expansion">
+                  <dl class="asset-detail-grid">
+                    <div><dt>取得时间</dt><dd>{{ item.acquisition_date ? dateLabel(item.acquisition_date) : item.recognition_label }}</dd></div>
+                    <div><dt>{{ isFixedAsset(item) ? '投入使用时间' : '可供使用时间' }}</dt><dd>{{ assetUseDateLabel(item) }}</dd></div>
+                    <div><dt>价值变化进度</dt><dd>{{ chargeProgressText(item) }}</dd></div>
+                  </dl>
+                  <section v-if="item.payment_summary.obligation_count" class="asset-payment-detail">
+                    <h3>付款补充</h3>
+                    <p v-if="item.settlement_scope === '本验收批次结算'" class="note">以下为整批款项金额，未分摊为本资产付款。</p>
+                    <p v-else-if="item.settlement_scope === '成本来源结算（不分摊为本资产付款）'" class="note">以下为项目来源款项金额，未分摊为本资产付款。</p>
+                    <dl class="asset-detail-grid">
+                      <div><dt>相关应付</dt><dd>{{ formatFen(item.payment_summary.amount_fen) }}</dd></div>
+                      <div><dt>公司已付</dt><dd>{{ formatFen(item.payment_summary.paid_fen) }}</dd></div>
+                      <div><dt>抵销等</dt><dd>{{ formatFen(item.payment_summary.other_settled_fen) }}</dd></div>
+                      <div v-if="!assetRemainingAlreadyShown(item)"><dt>月末待付</dt><dd>{{ formatFen(item.payment_summary.remaining_fen) }}</dd></div>
+                    </dl>
+                  </section>
+                  <section v-if="isFixedAsset(item) && item.disposal" class="asset-exit-detail">
+                    <h3>{{ item.disposal.kind === 'sale' ? '出售补充' : '报废补充' }}</h3>
+                    <dl class="asset-detail-grid">
+                      <div><dt>处置日期</dt><dd>{{ dateLabel(item.disposal.date) }}</dd></div>
+                      <div v-if="item.disposal.party"><dt>交易对象</dt><dd>{{ item.disposal.party }}</dd></div>
+                      <div><dt>处置时账面价值</dt><dd>{{ formatFen(item.disposal.book_value_fen) }}</dd></div>
+                      <div><dt>收款金额</dt><dd>{{ formatFen(item.disposal.gross_proceeds_fen) }}</dd></div>
+                      <div><dt>处置收益</dt><dd>{{ formatFen(item.disposal.gain_fen) }}</dd></div>
+                      <div><dt>处置损失</dt><dd>{{ formatFen(item.disposal.loss_fen) }}</dd></div>
+                    </dl>
+                  </section>
+                  <section v-else-if="!isFixedAsset(item) && item.retirement" class="asset-exit-detail">
+                    <h3>退役补充</h3>
+                    <dl class="asset-detail-grid"><div><dt>退出日期</dt><dd>{{ dateLabel(item.retirement.date) }}</dd></div><div><dt>退出时账面价值</dt><dd>{{ formatFen(item.retirement.book_value_fen) }}</dd></div></dl>
+                  </section>
+                </div>
+              </details>
+              </template>
             </article>
             </template>
+          </div>
           </div>
           <div v-else-if="!pageLoading.assets && !pageErrors.assets" class="empty-filter">{{ filter === 'all' ? '本月没有资产，项目投入另列。' : '当前筛选条件下没有资产。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
           <DashboardPagination automatic :active="!loading && ['asset-list-title', 'asset-movements-title'].includes(activeSection)" :scope="paginationScope()" @pause="pausePages('assets', $event)" :page="collectionMatchesSelection('assets') ? data.collections.assets?.page : undefined" :loaded="collectionMatchesSelection('assets') ? filteredItems.length : 0" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="retryCollection('assets')" />
@@ -788,17 +873,77 @@ onBeforeUnmount(() => {
 .movement-grid article { padding: 14px; }
 .movement-grid strong { display: block; margin: 5px 0 3px; font-size: 20px; }
 #asset-movements-title, #asset-list-title, #asset-projects-title { outline: none; }
-.asset-toolbar { display: flex; align-items: center; flex: none; justify-content: flex-end; gap: 14px; margin: 0; }
+.asset-toolbar { display: flex; align-items: center; flex: none; justify-content: flex-end; flex-wrap: wrap; gap: 10px; max-width: 100%; margin: 0; }
 /* 与小字同组的标题行：下对齐，并与下方卡片保持 16px 间距。 */
 .section-heading:has(.list-caption) { align-items: flex-end; margin-bottom: 16px; }
 .asset-toolbar p { margin: 0; color: var(--muted); }
+.display-switch { display: grid; flex: 0 0 auto; grid-template-columns: repeat(2,1fr); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
+.display-switch button { min-height: 34px; padding: 0 13px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.display-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); }
+.display-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.asset-results { min-width: 0; max-width: 100%; }
+.asset-results.list-results { container: asset-list / inline-size; overflow: hidden; padding-inline: var(--dashboard-list-gutter); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.asset-grid.asset-list { --asset-list-columns: minmax(0,1.8fr) minmax(0,.8fr) repeat(4,minmax(0,1fr)) minmax(0,1.4fr) 16px; grid-template-columns: minmax(0,1fr); gap: 0; }
+.asset-list-header, .asset-list-summary { display: grid; min-width: 0; grid-template-columns: var(--asset-list-columns); align-items: center; gap: 10px; }
+.asset-list-header { padding: 10px 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.asset-list-header > span { min-width: 0; overflow-wrap: anywhere; }
+.asset-list-header > span:nth-child(n+3):nth-child(-n+7) { text-align: right; }
+.asset-list .asset-card { border-width: 0 0 1px; border-style: solid; border-color: var(--line); border-radius: 0; opacity: 1; background: var(--surface); }
+.asset-list .asset-card:hover, .asset-list .asset-card:focus-within { border-color: var(--line); }
+.asset-list .asset-card:last-child { border-bottom: 0; }
+.asset-list-summary { min-height: 62px; padding: 10px 4px; font-size: 13px; line-height: 1.5; list-style: none; transition: background 140ms ease; }
+summary.asset-list-summary { cursor: pointer; }
+.asset-list-summary::-webkit-details-marker { display: none; }
+summary.asset-list-summary:hover, summary.asset-list-summary:focus-visible { background: var(--surface-soft); }
+summary.asset-list-summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.asset-list-summary > strong { min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.5; text-align: right; font-variant-numeric: tabular-nums; }
+.asset-list-summary > .asset-list-book { font-size: 14px; font-weight: 700; }
+.asset-list-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.asset-list-status { display: inline-flex; flex: 0 0 auto; }
+.asset-list-status::before { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); content: ""; }
+.asset-list-status.active::before { background: var(--accent); }
+.asset-list-status.pending_activation::before { background: var(--info); }
+.asset-list-status.needs-attention::before { background: var(--warning); }
+.asset-list-name { display: grid; min-width: 0; gap: 2px; }
+.asset-list-name h3 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.5; }
+.asset-list-name h3.needs-attention { color: var(--warning); }
+.asset-list-name p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.asset-list-state, .asset-list-payment { display: grid; min-width: 0; gap: 2px; }
+.asset-list-state small, .asset-list-payment small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.asset-list-payment { text-align: right; }
+.asset-list-payment.settled > span { color: var(--accent); }
+.asset-list-payment.attention > span { color: var(--warning); }
+.asset-list-unestablished > strong { color: var(--muted); }
+.asset-list-chevron { width: 12px; height: 16px; justify-self: end; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+.asset-list-details[open] > summary .asset-list-chevron { transform: rotate(90deg); }
+.asset-list-detail { margin-inline: 4px; margin-bottom: 16px; }
+.asset-list-detail h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.asset-list-detail .note { margin: 0 0 12px; font-size: 12px; }
+.asset-detail-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px 16px; margin: 0; }
+.asset-detail-grid > div { display: grid; min-width: 0; align-content: start; gap: 3px; }
+.asset-detail-grid dt { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.asset-detail-grid dd { margin: 0; font-size: 13px; font-weight: 500; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.asset-payment-detail, .asset-exit-detail { margin-top: 18px; }
+.asset-list-summary span, .asset-list-summary strong, .asset-list-summary h3, .asset-list-summary p, .asset-list-summary small, .asset-detail-grid dd { overflow-wrap: anywhere; }
+@container asset-list (max-width: 1020px) {
+  .asset-grid.asset-list { padding-block: 8px; }
+  .asset-list-header { display: none; }
+  .asset-list-summary { grid-template-columns: repeat(2,minmax(0,1fr)); position: relative; padding-block: 14px; }
+  .asset-list-identity { grid-column: 1 / -1; padding-right: 24px; }
+  .asset-list-summary > strong, .asset-list-state, .asset-list-payment { align-self: start; text-align: left; }
+  .asset-list-summary > strong::before, .asset-list-state::before, .asset-list-payment::before { display: block; content: attr(data-label); margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .asset-list-chevron { position: absolute; top: 14px; right: 4px; }
+  .asset-list .asset-card, .asset-list .asset-card:last-child { border: 1px solid var(--line); border-radius: var(--radius-control); margin-bottom: 8px; }
+  .asset-list .asset-card:last-child { margin-bottom: 0; }
+}
+@media (max-width: 720px) { .display-switch button { min-height: 44px; } .asset-detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 /* 与资金、员工页标题下那行小字同一套：13px / --muted / 行高 1.5。 */
 .list-caption { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .list-caption strong { font-weight: inherit; }
 .control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
 .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
-.asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }
-.asset-card.disposed, .asset-card.retired { opacity: .82; }
+.asset-grid:not(.asset-list) .asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }
+.asset-grid:not(.asset-list) .asset-card.disposed, .asset-grid:not(.asset-list) .asset-card.retired { opacity: .82; }
 .asset-card-summary { min-height: 228px; padding: 17px 18px 18px; }
 .asset-card-topline { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
 .asset-classification { min-width: 0; color: var(--muted); font-size: 11px; font-weight: 720; }
@@ -832,7 +977,7 @@ onBeforeUnmount(() => {
 .empty-filter { padding: 24px; border-radius: var(--radius-control); background: var(--surface-soft); color: var(--muted); text-align: center; }
 .note { color: var(--muted); font-size: 13px; }
 @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-grid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .project-summary, .owner-value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head { align-items: flex-start; flex-direction: column; } .asset-card-summary { min-height: 0; } .control { width: 100%; min-height: 44px; } .book-value, .project-value { min-width: 0; justify-items: start; text-align: left; white-space: normal; } .owner-value-grid > div + div { border-top: 1px solid var(--line); border-left: 0; } .section-heading { flex-wrap: wrap; gap: 10px; } }
+@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .project-summary, .owner-value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head { align-items: flex-start; flex-direction: column; } .asset-toolbar { width: 100%; } .asset-card-summary { min-height: 0; } .control { width: 100%; min-height: 44px; } .book-value, .project-value { min-width: 0; justify-items: start; text-align: left; white-space: normal; } .owner-value-grid > div + div { border-top: 1px solid var(--line); border-left: 0; } .section-heading { flex-wrap: wrap; gap: 10px; } }
 
 .assets-hero > .dashboard-hero-eyebrow { grid-column: 1 / -1; margin: 0 0 -12px; }
 

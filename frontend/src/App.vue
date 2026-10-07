@@ -236,6 +236,7 @@ async function selectPeriod(periodKey: string) {
       period: periodKey,
       quarter,
       ...(route.name === "employees" ? { employee_filter: route.query.employee_filter } : {}),
+      ...(route.name === "assets" ? { asset_filter: route.query.asset_filter } : {}),
     },
     hash: "",
   });

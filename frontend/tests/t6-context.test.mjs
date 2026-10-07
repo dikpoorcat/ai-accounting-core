@@ -502,6 +502,22 @@ test("the sidebar month picker preserves all employee selections including the d
   }
 });
 
+test("the sidebar month picker preserves asset filters and clears asset and project navigation state", async () => {
+  for (const selected of [undefined, "active", "all", "fixed", "intangible", "pending", "exited"]) {
+    const h = await harness({ company_id: "a", period: "2026-01", asset_filter: selected,
+      asset_id: "old-asset", project_id: "old-project", cursor: "old-cursor", voucher: "7" }, "assets");
+    try {
+      h.setAuthenticated(true);
+      h.calls.at(-1).resolve(context("a", ["2026-01", "2026-04"])); await flush();
+      h.route.hash = "#asset-card-target";
+      await h.selectPeriod("2026-04");
+      assert.deepEqual(h.route.query, { company_id: "a", period: "2026-04", ...(selected === undefined ? {} : { asset_filter: selected }) });
+      assert.equal(h.route.hash, "");
+      assert.equal(h.calls.length, 1, "the same-company calendar selection reuses context");
+    } finally { h.close(); }
+  }
+});
+
 test("T6 report company switch validates the shared month before choosing the new company default", async t => {
   for (const [label, periods, expected] of [
     ["missing month uses new default despite old quarter still existing", ["2026-06", "2026-03"], "2026-06"],
