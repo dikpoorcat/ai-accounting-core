@@ -1,5 +1,6 @@
 // Actual Stage 7 build + loopback-only synthetic service.
 const assert = require("node:assert/strict");
+const { selectDashboardOption, readDashboardValue } = require("./helpers/dashboard-select.cjs");
 const { mkdirSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 
@@ -83,7 +84,7 @@ async function run(config) {
     const [http] = await responses;
     const payload = await http.json();
     await ready(module);
-    assert.equal(await page.getByLabel("切换公司", { exact: true }).inputValue(), company.id);
+    assert.equal(await readDashboardValue(page, "切换公司"), company.id);
     assert.equal(payload.read_context?.company_id ?? payload.company_id, company.id);
     assert.equal(await page.locator('input[type="password"]').count(), 0, "Dashboard must not collect the owner password");
     return payload;
@@ -164,7 +165,7 @@ async function run(config) {
     const contextSwitch = dashboardResponse("context", unprepared.id);
     const briefSwitch = dashboardResponse("brief", unprepared.id);
     const reviewSwitch = reviewResponse(unprepared.id);
-    await page.getByLabel("切换公司", { exact: true }).selectOption(unprepared.id);
+    await selectDashboardOption(page, "切换公司", unprepared.id);
     await Promise.all([contextSwitch, briefSwitch, reviewSwitch]);
     await page.getByText("尚未生成关账预览", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("company_id"), unprepared.id);
@@ -176,14 +177,14 @@ async function run(config) {
     const preparedContext = dashboardResponse("context", prepared.id);
     const preparedBrief = dashboardResponse("brief", prepared.id);
     const preparedReview = reviewResponse(prepared.id);
-    await page.getByLabel("切换公司", { exact: true }).selectOption(prepared.id);
+    await selectDashboardOption(page, "切换公司", prepared.id);
     await Promise.all([preparedContext, preparedBrief, preparedReview]);
     await page.getByText("关账预览已准备，可按同一版本核对", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("period"), prepared.period);
     checks.push("Company and month URL selection remain correlated after switching back");
 
     const emptyContext = dashboardResponse("context", empty.id);
-    await page.getByLabel("切换公司", { exact: true }).selectOption(empty.id);
+    await selectDashboardOption(page, "切换公司", empty.id);
     await emptyContext;
     await page.getByText("还没有可查看的月份", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("company_id"), empty.id);

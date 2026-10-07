@@ -13,6 +13,7 @@ import {
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
+import DashboardSelect from "../components/DashboardSelect.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
@@ -20,6 +21,23 @@ import { cashFlowClass, fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
+
+const employeeFilterGroups: {
+  label: string;
+  options: { value: EmployeeFilter; label: string; description: string }[];
+}[] = [
+  { label: "", options: [{ value: "all", label: "全部员工", description: "查看所有已登记人员" }] },
+  { label: "在册状态", options: [
+    { value: "in_period", label: "已确认在册", description: "所选月份在职，按员工档案判断" },
+    { value: "ended", label: "已确认不在册", description: "离职月份早于所选月份" },
+    { value: "unknown", label: "在册状态未确认", description: "人员资料缺失或有冲突，需核对" },
+  ] },
+  { label: "工资记录", options: [
+    { value: "payroll", label: "本月有工资", description: "所选月份有工资核算记录" },
+    { value: "no_payroll", label: "本月暂无工资", description: "本月在册，尚无工资核算记录" },
+  ] },
+];
+const employeeFilterOptions = employeeFilterGroups.flatMap(group => group.options);
 
 const route = useRoute();
 const router = useRouter();
@@ -29,7 +47,7 @@ const loading = ref(false);
 const error = ref("");
 const displayMode = ref<"cards" | "list">("cards");
 const filter = computed<EmployeeFilter>({
-  get: () => ["all", "in_period", "payroll", "no_payroll", "ended", "unknown"].includes(String(route.query.employee_filter)) ? route.query.employee_filter as EmployeeFilter : "in_period",
+  get: () => employeeFilterOptions.find(option => option.value === route.query.employee_filter)?.value ?? "in_period",
   set: value => { void router.push({ query: { ...route.query, employee_filter: value === "in_period" ? undefined : value, employee_id: undefined } }); },
 });
 const focusedEmployeeId = computed(() => typeof route.query.employee_id === "string" ? route.query.employee_id : "");
@@ -60,6 +78,10 @@ const sectionLinks = computed(() => {
   ];
 });
 const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "employees-overview");
+const filterMenuScope = computed(() => JSON.stringify([
+  route.query.company_id, route.query.period, focusedEmployeeId.value,
+  activeSection.value, loading.value, response.value?.snapshot_version,
+]));
 const periodOptions = computed(() => context.value?.periods ?? []);
 const selectedPeriodKey = computed(
   () => response.value?.selected_period?.key ?? routePeriod() ?? "",
@@ -95,6 +117,11 @@ const filterLabel = computed(
       unknown: "在册状态未确认",
     })[filter.value],
 );
+
+function selectEmployeeFilter(value: string) {
+  const option = employeeFilterOptions.find(item => item.value === value);
+  if (option) filter.value = option.value;
+}
 
 function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
@@ -330,7 +357,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <div class="section-heading">
             <div><h2 id="employee-list-title" tabindex="-1">员工明细</h2><p class="muted">{{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p></div>
             <div class="people-toolbar">
-              <select v-model="filter" class="control" aria-label="筛选员工"><option value="all">全部员工</option><option value="in_period">已确认在册</option><option value="payroll">本月有工资</option><option value="no_payroll">本月暂无工资</option><option value="ended">已确认不在册</option><option value="unknown">在册状态未确认</option></select>
+              <DashboardSelect id="employee-filter-menu" label="筛选员工" :model-value="filter"
+                :groups="employeeFilterGroups" :scope="filterMenuScope" @change="selectEmployeeFilter" />
               <div class="display-switch" role="group" aria-label="员工与劳务展示方式">
                 <button type="button" :aria-pressed="displayMode === 'cards'" @click="displayMode = 'cards'">卡片</button>
                 <button type="button" :aria-pressed="displayMode === 'list'" @click="displayMode = 'list'">列表</button>

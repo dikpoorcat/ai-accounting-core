@@ -80,7 +80,7 @@ async page => {
   if ((await page.locator("body").innerText()).includes("NaN")) throw new Error("month precision produced fake day");
   await page.getByRole("button", { name: "加载更多业务与凭证" }).click();
   await page.getByRole("button", { name: /演示甲公司月度费用2/ }).waitFor();
-  await page.getByLabel("切换公司").selectOption("company-b");
+  await page.getByRole("combobox", { name: "切换公司", exact: true }).selectOption("company-b");
   await page.getByRole("button", { name: "按凭证", exact: true }).click();
   await page.getByRole("button", { name: /演示乙公司月度费用1/ }).waitFor();
   if ((await page.locator("body").innerText()).includes("演示甲公司月度费用")) throw new Error("previous company data retained");

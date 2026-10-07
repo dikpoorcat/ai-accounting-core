@@ -296,9 +296,18 @@ button {
   background: var(--surface-soft);
 }
 
+.company-switcher:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
+}
+
 .company-switcher:has(select:focus-visible) {
-  outline: 3px solid var(--focus);
-  outline-offset: 3px;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.company-switcher:focus-within::after {
+  border-color: var(--accent);
 }
 
 .company-switcher-name {

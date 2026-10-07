@@ -1,5 +1,6 @@
 // Dashboard scenarios use fixtures; isolated runs also stub local authentication.
 const assert = require("node:assert/strict");
+const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -260,12 +261,12 @@ async function run(config) {
     holdVouchers = true; const started = new Promise(resolve => { heldStarted = resolve; }); await page.getByRole("button", { name: "按凭证", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".voucher-view")?.getAttribute("aria-busy") === "true");
     await Promise.race([started, new Promise((_, reject) => setTimeout(() => reject(new Error("late fixture request was not held")), 12000))]);
-    await page.getByRole("combobox", { name: "切换公司", exact: true }).selectOption(companyIds[1]); await idle(); releaseHeld(); releaseHeld = null; await frames();
+    await selectDashboardOption(page, "切换公司", companyIds[1]); await idle(); releaseHeld(); releaseHeld = null; await frames();
     assert.equal(await page.locator(".voucher-view").count(), 0, "stale ordered page switched new scope into voucher mode");
     await nav("本月发生").click(); const beforeNewScope = voucherRequests().length; await page.getByRole("button", { name: "按凭证", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20); assert.equal(voucherRequests().length, beforeNewScope + 1, "new company incorrectly reused stale ordered page");
     phase = "month switch resets independent voucher initialization";
-    await page.getByRole("combobox", { name: "查看月份", exact: true }).selectOption(periods[1]); await idle();
+    await selectDashboardOption(page, "查看月份", periods[1]); await idle();
     assert.equal(await page.locator(".voucher-view").count(), 0, "month switch kept stale voucher mode");
     await nav("本月发生").click(); const beforeMonth = voucherRequests().length; await page.getByRole("button", { name: "按凭证", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20); assert.equal(voucherRequests().length, beforeMonth + 1, "month switch reused old ordered page");

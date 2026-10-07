@@ -1,5 +1,6 @@
 // T5: actual candidate assets and loopback API; no response fixtures or business writes.
 const assert = require("node:assert/strict");
+const { selectDashboardOption, readDashboardValue } = require("./helpers/dashboard-select.cjs");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
@@ -33,7 +34,7 @@ async function run(config) {
       await page.getByRole("heading", { name: /所选月末账面结果/ }).first().waitFor();
       await page.getByText("当前后续事项", { exact: true }).first().waitFor();
       assert.equal(data.schema_version, action === "quarterly-report" ? 2 : 3);
-      assert.equal(await page.getByLabel("切换公司").inputValue(), company);
+      assert.equal(await readDashboardValue(page, "切换公司"), company);
       return data;
     }
     const ticket = new URL(config.ticket_url);
@@ -63,16 +64,16 @@ async function run(config) {
     const employees = await dashboard("/employees", "employees", "员工与薪酬概览");
     assert(employees.data.employees.items.length > 0);
     await page.getByText(first.employee_name, { exact: true }).first().waitFor();
-    await page.getByLabel("员工查看月份", { exact: true }).selectOption("2026-10");
+    await selectDashboardOption(page, "员工查看月份", "2026-10");
     await page.waitForURL(target => target.searchParams.get("period") === "2026-10");
-    await page.getByLabel("员工查看月份", { exact: true }).selectOption("2026-09");
+    await selectDashboardOption(page, "员工查看月份", "2026-09");
     await page.waitForURL(target => target.searchParams.get("period") === "2026-09");
     await page.getByText(first.employee_name, { exact: true }).first().waitFor();
     const changedCompany = page.waitForResponse(response => {
       const target = new URL(response.url());
       return target.pathname === "/api/dashboard/employees" && target.searchParams.get("company_id") === second.id;
     });
-    await page.getByLabel("切换公司").selectOption(second.id);
+    await selectDashboardOption(page, "切换公司", second.id);
     assert.equal((await (await changedCompany).json()).schema_version, 2);
     await page.getByText(second.employee_name, { exact: true }).first().waitFor();
     assert.equal(await page.getByText(first.employee_name, { exact: true }).count(), 0);

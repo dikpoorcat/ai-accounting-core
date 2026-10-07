@@ -1,5 +1,6 @@
 // Current ordinary build + actual loopback API; synthetic data, no response fixtures.
 const assert = require("node:assert/strict");
+const { selectDashboardOption, readDashboardValue } = require("./helpers/dashboard-select.cjs");
 const { readFileSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { join } = require("node:path");
@@ -84,7 +85,7 @@ async function run(config) {
     await page.goto(url(item.path, company, period, extra));
     const response = await (await pending).json();
     await ready(item);
-    assert.equal(await page.getByLabel("切换公司", { exact: true }).inputValue(), company);
+    assert.equal(await readDashboardValue(page, "切换公司"), company);
     assert.equal(response.schema_version, item.key === "reports" ? 2 : 3);
     return response;
   }
@@ -138,14 +139,14 @@ async function run(config) {
       const firstReport = await (await initialReport).json();
       assert.equal(firstReport.period.year, 2026);
       assert.equal(firstReport.period.quarter, 1);
-      assert.equal(await page.getByLabel("切换公司", { exact: true }).inputValue(), first.id);
-      assert.equal(await page.getByLabel("季度报表期间", { exact: true }).inputValue(), "2026-Q1");
+      assert.equal(await readDashboardValue(page, "切换公司"), first.id);
+      assert.equal(await readDashboardValue(page, "季度报表期间"), "2026-Q1");
       assert.equal(new URL(page.url()).searchParams.get("period"), "2026-01");
       await screenshot("report-company-a-q1.png");
 
       const targetContext = api("context", target => target.searchParams.get("company_id") === second.id);
       const targetReport = api("quarterly-report", target => target.searchParams.get("company_id") === second.id && target.searchParams.get("quarter") === "2");
-      await page.getByLabel("切换公司", { exact: true }).selectOption(second.id);
+      await selectDashboardOption(page, "切换公司", second.id);
       const [companyContext, companyReport] = await Promise.all([
         targetContext.then(response => response.json()),
         targetReport.then(response => response.json()),
@@ -160,9 +161,9 @@ async function run(config) {
       assert.equal(selectedUrl.searchParams.get("period"), companyContext.default_period);
       assert.equal(selectedUrl.searchParams.get("quarter"), companyContext.default_quarter);
       assert.equal(companyContext.current_company.name, second.name);
-      assert.equal(await page.getByLabel("切换公司", { exact: true }).inputValue(), second.id);
-      assert.equal((await page.getByLabel("切换公司", { exact: true }).locator("option:checked").textContent()).trim(), companyContext.current_company.name);
-      assert.equal(await page.getByLabel("季度报表期间", { exact: true }).inputValue(), "2026-Q2");
+      assert.equal(await readDashboardValue(page, "切换公司"), second.id);
+      assert.equal((await page.locator(".company-switcher-name").textContent()).trim(), companyContext.current_company.name);
+      assert.equal(await readDashboardValue(page, "季度报表期间"), "2026-Q2");
       assert.equal(companyReport.period.year, 2026);
       assert.equal(companyReport.period.quarter, 2);
       assert.equal(companyReport.period.quarter_end, "2026-06-30");
@@ -331,22 +332,22 @@ async function run(config) {
     for (const item of pages) {
       await dashboard(item);
       const changed = api(item.action, target => target.searchParams.get("company_id") === second.id);
-      await page.getByLabel("切换公司", { exact: true }).selectOption(second.id);
+      await selectDashboardOption(page, "切换公司", second.id);
       await changed; await ready(item);
       assert.equal(new URL(page.url()).searchParams.get("company_id"), second.id);
       if (item.key === "employees") assert.equal(await page.getByText(first.employee_name, { exact: true }).count(), 0);
       if (item.key === "assets") assert.equal(await page.getByText(first.asset_name, { exact: true }).count(), 0);
       const returned = api(item.action, target => target.searchParams.get("company_id") === first.id);
-      await page.getByLabel("切换公司", { exact: true }).selectOption(first.id);
+      await selectDashboardOption(page, "切换公司", first.id);
       await returned; await ready(item);
-      const periodControl = page.locator(".module-header select").filter({ has: page.locator('option[value="2026-10"], option[value="2026-Q4"]') });
+      const periodLabel = await page.locator(".module-header .select-trigger").getAttribute("aria-label");
       const next = item.key === "reports" ? "2026-Q4" : "2026-10";
       const previous = item.key === "reports" ? "2026-Q3" : "2026-09";
       const nextRead = api(item.action);
-      await periodControl.selectOption(next); await nextRead; await ready(item);
+      await selectDashboardOption(page, periodLabel, next); await nextRead; await ready(item);
       assert.equal(new URL(page.url()).searchParams.get("period"), "2026-10");
       const previousRead = api(item.action);
-      await periodControl.selectOption(previous); await previousRead; await ready(item);
+      await selectDashboardOption(page, periodLabel, previous); await previousRead; await ready(item);
       assert.equal(new URL(page.url()).searchParams.get("period"), "2026-09");
     }
     checks.push("five pages company A-B-A and September-October-September (report quarter backfill)");
@@ -429,7 +430,7 @@ async function run(config) {
     if (targetStatement) {
       filterRequests = 0;
       page.on("request", observeFilterRequest);
-      await page.getByLabel("筛选银行流水账户", { exact: true }).selectOption(targetStatement.account_id);
+      await selectDashboardOption(page, "筛选银行流水账户", targetStatement.account_id);
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.equal(filterRequests, 0);
       assert.equal(new URL(page.url()).searchParams.get("statement_account_id"), null);

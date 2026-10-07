@@ -1,5 +1,6 @@
 // Existing company reads only; all scenario responses and screenshots are browser fixtures.
 const assert = require("node:assert/strict");
+const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -290,13 +291,13 @@ async function run(config) {
     await page.locator(".fund-account-index > button").nth(1).click();
     await page.waitForFunction(() => document.querySelectorAll(".book-activity-row").length === 1); await frames();
     assert.equal(await rows().first().getAttribute("aria-expanded"), "false");
-    await open(0); await page.getByRole("combobox", { name: "资金查看月份", exact: true }).selectOption(nextPeriod); await idle();
+    await open(0); await selectDashboardOption(page, "资金查看月份", nextPeriod); await idle();
     assert.equal(await rows().locator(".business-detail-panel:visible").count(), 0);
     await nav("资金明细").click(); await open(0);
-    await page.getByRole("combobox", { name: "切换公司", exact: true }).selectOption(otherCompany); await idle();
+    await selectDashboardOption(page, "切换公司", otherCompany); await idle();
     assert.equal(await rows().locator(".business-detail-panel:visible").count(), 0);
-    await page.getByRole("combobox", { name: "切换公司", exact: true }).selectOption(config.company_id); await idle();
-    await page.getByRole("combobox", { name: "资金查看月份", exact: true }).selectOption(config.period); await idle();
+    await selectDashboardOption(page, "切换公司", config.company_id); await idle();
+    await selectDashboardOption(page, "资金查看月份", config.period); await idle();
     await page.locator(".fund-account-index > button").first().click(); await frames();
     await nav("资金明细").click();
 

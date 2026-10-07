@@ -18,6 +18,7 @@ import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
+import DashboardSelect from "../components/DashboardSelect.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
@@ -115,7 +116,8 @@ const selectedMovementAccountLabel = computed(
   () => movementAccountEntries.value.find((entry) => entry.value === selectedAccount.value)?.label ?? "资金账户",
 );
 const bankAccountOptions = computed(() => {
-  const options = bankAccounts.value.map(account => ({ value: account.account_id, label: fundAccountDisplayLabel(account.name, account.code) }));
+  const options = [{ value: "", label: "全部银行账户" },
+    ...bankAccounts.value.map(account => ({ value: account.account_id, label: fundAccountDisplayLabel(account.name, account.code) }))];
   if (selectedBankAccount.value && !options.some(option => option.value === selectedBankAccount.value)) options.push({ value: selectedBankAccount.value, label: fundAccountLabel(queryText("company_id"), selectedPeriod.value, "bank", selectedBankAccount.value) ?? "所选银行账户（名称尚未加载）" });
   return options;
 });
@@ -1131,18 +1133,18 @@ onBeforeUnmount(() => {
               </p>
             </div>
             <div class="heading-controls">
-              <label v-if="selectedDetailView === 'bank'" class="account-filter">
-                <select
-                  v-model="selectedBankAccount"
-                  class="control"
-                  aria-label="筛选银行流水账户"
-                >
-                  <option value="">全部银行账户</option>
-                  <option v-for="option in bankAccountOptions" :key="option.value" :value="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-              </label>
+              <DashboardSelect
+                v-if="selectedDetailView === 'bank'"
+                id="bank-account-select-menu"
+                class="account-filter"
+                label="筛选银行流水账户"
+                icon="bank"
+                :menu-width="320"
+                :model-value="selectedBankAccount"
+                :options="bankAccountOptions"
+                :scope="JSON.stringify([route.query.company_id, selectedPeriod, snapshotVersion, selectedDetailView, activeSection, loading])"
+                @change="selectedBankAccount = $event"
+              />
               <button v-if="selectedDetailView === 'bank' && pageStates.accounts.error" class="control" @click="loadMore('accounts')">重试加载账户</button>
               <span v-if="selectedDetailView === 'bank' && pageStates.accounts.error" role="alert">{{ pageStates.accounts.error }}</span>
               <div class="view-switch" role="tablist" aria-label="选择资金明细口径">
@@ -1565,7 +1567,7 @@ summary {
 }
 
 .account-filter {
-  display: block;
+  --select-width: 240px;
 }
 
 .fund-detail-panels {
@@ -2126,9 +2128,6 @@ table {
   font-size: 12px;
 }
 
-.account-selector { display: grid; min-width: 0; gap: 6px; }
-.account-selector select { max-width: 100%; }
-
 .investment-table {
   table-layout: auto;
 }
@@ -2208,7 +2207,6 @@ tbody tr:last-child td {
 
 @media (max-width: 760px) {
   .account-grid { grid-template-columns: 1fr; }
-  .account-selector { width: 100%; }
   .page-content {
     width: min(calc(100% - 24px), 1320px);
     padding: 16px 0 24px;

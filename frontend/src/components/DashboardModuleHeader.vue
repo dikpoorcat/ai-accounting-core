@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { useDashboardContext } from "../composables/useDashboardContext";
+import DashboardSelect from "./DashboardSelect.vue";
 
 interface Option {
   key: string;
@@ -28,11 +29,12 @@ const emit = defineEmits<{
 }>();
 const route = useRoute();
 const displayedSelection = computed(() => props.selected || (props.options.find(item => item.key === (route.name === "reports" ? route.query.quarter : route.query.period))?.key ?? ""));
+const selectOptions = computed(() => props.options.map(option => ({ value: option.key, label: option.label })));
 const { setSelectionNotice } = useDashboardContext();
 
-function handleChange(event: Event) {
+function handleChange(value: string) {
   setSelectionNotice("");
-  emit("change", (event.target as HTMLSelectElement).value);
+  emit("change", value);
 }
 </script>
 
@@ -45,17 +47,18 @@ function handleChange(event: Event) {
       <slot name="navigation" />
     </div>
     <div class="toolbar">
-      <select
-        class="control"
-        :value="displayedSelection"
-        :aria-label="selectLabel"
+      <DashboardSelect
+        id="period-select-menu"
+        class="period-select"
+        icon="calendar"
+        :menu-width="240"
+        :model-value="displayedSelection"
+        :options="selectOptions"
+        :label="selectLabel"
         :disabled="options.length === 0"
+        :scope="JSON.stringify([route.query.company_id, route.query.period, route.query.quarter, loading])"
         @change="handleChange"
-      >
-        <option v-for="option in options" :key="option.key" :value="option.key">
-          {{ option.label }}
-        </option>
-      </select>
+      />
       <span
         v-if="displayedSelection"
         :class="['period-status', selectedStatus === 'closed' || selectedStatus === 'covered' ? 'closed' : 'open']"
@@ -101,7 +104,7 @@ h1 {
 
 .control,
 .period-status {
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: var(--radius-control, 9px);
   background: var(--surface);
@@ -114,9 +117,8 @@ h1 {
   font-size: 13px;
 }
 
-select.control {
-  cursor: pointer;
-}
+.period-select { --select-width: max-content; }
+.period-select :deep(.select-label) { display: block; overflow: visible; white-space: nowrap; -webkit-line-clamp: unset; }
 
 .refresh {
   min-width: 76px;
@@ -198,8 +200,8 @@ select.control {
     flex-wrap: wrap;
   }
 
-  .toolbar select {
-    flex: 1;
+  .toolbar .period-select {
+    flex: 0 0 auto;
   }
 }
 
@@ -213,7 +215,7 @@ select.control {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
-  .toolbar > select {
+  .toolbar > .period-select {
     min-width: 0;
   }
 
@@ -227,7 +229,7 @@ select.control {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .toolbar > select {
+  .toolbar > .period-select {
     grid-column: 1 / -1;
   }
 
@@ -286,8 +288,8 @@ select.control {
 @media (max-width: 720px) {
   .module-header.with-navigation { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 2px; }
   .with-navigation h1 { font-size: 24px; }
-  .with-navigation .toolbar { display: flex; grid-row: 2; grid-column: 1; gap: 6px; }
-  .with-navigation .toolbar select { min-width: 0; width: 0; flex: 1; }
+  .with-navigation .toolbar { display: flex; grid-row: 2; grid-column: 1; flex-wrap: wrap; gap: 6px; }
+  .with-navigation .toolbar .period-select { min-width: 0; width: max-content; flex: 0 0 auto; }
   .with-navigation .module-navigation { grid-row: 3; grid-column: 1; }
   .with-navigation :deep(.section-nav) { gap: 14px; }
   .with-navigation .period-status { flex: none; padding: 3px 7px; font-size: 11px; }

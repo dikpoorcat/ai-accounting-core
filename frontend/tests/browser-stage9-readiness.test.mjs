@@ -16,11 +16,11 @@ function fixture() {
     querySelectorAll: () => [] };
   let busy = "false";
   const header = { getAttribute: () => busy };
-  const company = node("合成公司"), period = { value: "2026-09" }, status = node("已关账");
+  const company = node("合成公司"), period = { value: "2026-09", getAttribute() { return this.value; } }, status = node("已关账");
   const document = { defaultView: { getComputedStyle: () => ({ visibility: "visible" }) },
     querySelector: selector => ({ ".asset-result": root, "#assets-overview": summary,
       ".module-header": header, ".company-switcher-name": company,
-      ".module-header select": period, ".module-header .period-status": status })[selector] ?? null };
+      ".module-header .select-trigger": period, ".module-header .period-status": status })[selector] ?? null };
   return { document, root, rows, company, period, status, setBusy: value => { busy = value; } };
 }
 

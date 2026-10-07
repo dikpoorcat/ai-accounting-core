@@ -1,5 +1,6 @@
 // Browser-only synthetic continuations; the authenticated accounting service is read-only.
 const assert = require("node:assert/strict");
+const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -163,7 +164,7 @@ async function run(config) {
         const url = new URL(response.url());
         return url.pathname === `/api/dashboard/${name}` && url.searchParams.get("section") === section && !url.searchParams.has("cursor");
       });
-      await page.getByRole("combobox", { name: control, exact: true }).selectOption(value);
+      await selectDashboardOption(page, control, value);
       await firstFiltered;
       await page.waitForFunction(selector => document.querySelectorAll(selector).length === 45, selector);
       assert.deepEqual(requests.filter(r => r.section === section).map(r => r.offset), [0, 20, 40], "new filter failed to start its own automatic cursor sequence");

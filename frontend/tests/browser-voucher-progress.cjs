@@ -1,5 +1,6 @@
 // Browser-only synthetic responses; no accounting writes or service changes.
 const assert = require("node:assert/strict");
+const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -335,7 +336,7 @@ async function run(config) {
     assert.equal(detailRequests().length, beforeLate + 2, "changed scope incorrectly reused old detail cache");
     phase = "month change starts a fresh progress scope";
     const beforeMonth = detailRequests().length;
-    await page.getByRole("combobox", { name: "查看月份", exact: true }).selectOption(later); await idle();
+    await selectDashboardOption(page, "查看月份", later); await idle();
     assert.equal(await page.locator("#voucher-progress-popover .business-detail-panel").count(), 0);
     await page.locator(".section-nav").getByRole("button", { name: "本月发生", exact: true }).click();
     await page.getByRole("button", { name: "按凭证", exact: true }).click(); await openCard(); await trigger().click();

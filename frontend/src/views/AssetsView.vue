@@ -14,19 +14,25 @@ import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
+import DashboardSelect from "../components/DashboardSelect.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 const filters = [
-  { value: "all", label: "全部资产" },
-  { value: "active", label: "当前在用" },
-  { value: "fixed", label: "固定资产" },
-  { value: "intangible", label: "无形资产" },
-  { value: "pending", label: "待启用资产" },
-  { value: "exited", label: "已退出" },
+  { value: "all", label: "全部资产", description: "查看所选月份的全部资产" },
+  { value: "active", label: "当前在用", description: "所选月末已启用且尚未退出" },
+  { value: "fixed", label: "固定资产", description: "查看各使用状态的固定资产" },
+  { value: "intangible", label: "无形资产", description: "查看各使用状态的无形资产" },
+  { value: "pending", label: "待启用资产", description: "所选月末尚未启用" },
+  { value: "exited", label: "已退出", description: "截至所选月末已出售、报废或退役" },
 ] as const;
+const filterGroups = [
+  { label: "", options: filters.filter(item => item.value === "all") },
+  { label: "使用状态", options: filters.filter(item => ["active", "pending", "exited"].includes(item.value)) },
+  { label: "资产类型", options: filters.filter(item => ["fixed", "intangible"].includes(item.value)) },
+];
 
 type AssetFilter = (typeof filters)[number]["value"];
 
@@ -106,6 +112,16 @@ const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
   { id: "asset-projects-title", label: "项目投入" },
 ] : []);
 const { activeSection, focusSection, focusSelectedPanel, positionSection } = useDashboardSections(sectionLinks, "assets-overview");
+const filterMenuScope = computed(() => JSON.stringify([
+  route.query.company_id, route.query.period, focusedAssetId.value, focusedProjectId.value,
+  activeSection.value, loading.value, response.value?.snapshot_version,
+]));
+
+function selectAssetFilter(value: string) {
+  const option = filters.find(item => item.value === value);
+  if (option) filter.value = option.value;
+}
+
 function changeDisplayMode(value: "cards" | "list") {
   if (value === "list") listInitialized.value = true;
   displayMode.value = value;
@@ -640,11 +656,8 @@ onBeforeUnmount(() => {
             </div>
             <div class="asset-toolbar">
               <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">当前筛选只显示资料已确认的资产；待确认项目会另行提示。</p>
-              <select v-model="filter" class="control" aria-label="筛选资产">
-                <option v-for="item in filters" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
+              <DashboardSelect id="asset-filter-menu" label="筛选资产" :model-value="filter"
+                :groups="filterGroups" :scope="filterMenuScope" @change="selectAssetFilter" />
               <div class="display-switch" role="group" aria-label="资产展示方式">
                 <button type="button" :aria-pressed="displayMode === 'cards'" @click="changeDisplayMode('cards')">卡片</button>
                 <button type="button" :aria-pressed="displayMode === 'list'" @click="changeDisplayMode('list')">列表</button>

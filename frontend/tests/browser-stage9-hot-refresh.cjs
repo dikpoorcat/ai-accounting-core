@@ -73,11 +73,11 @@ function readRefreshProjection(document, rootSelector) {
   }
   return JSON.stringify({
     company: document.querySelector(".company-switcher-name")?.innerText,
-    period: document.querySelector(".module-header select")?.value,
+    period: document.querySelector(".module-header .select-trigger")?.getAttribute("data-value"),
     status: document.querySelector(".module-header .period-status")?.innerText,
     content: visibleText,
-    controls: Array.from(root.querySelectorAll("select, [aria-current], [aria-pressed], [aria-selected], details"))
-      .map(node => [node.tagName, node.value ?? null, node.open ?? null,
+    controls: Array.from(root.querySelectorAll(".select-trigger, [aria-current], [aria-pressed], [aria-selected], details"))
+      .map(node => [node.tagName, node.getAttribute("data-value") ?? node.value ?? null, node.open ?? null,
         node.getAttribute("aria-current"), node.getAttribute("aria-pressed"), node.getAttribute("aria-selected")]),
   });
 }
@@ -348,6 +348,7 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
 }
 
 async function run(config) {
+  const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
   assert(config?.origin && config?.ticket_url && config?.playwright_module);
   assert(Array.isArray(config.companies) && config.companies.length >= 1);
   const company = config.companies.find(item => item.state === "prepared")
@@ -703,8 +704,7 @@ async function run(config) {
     const failureStart = apiFailures.length;
     page.on("response", capture);
     try {
-    const selector = page.getByLabel("切换公司", { exact: true });
-    await selector.evaluate((element, selection) => {
+    await page.evaluate(selection => {
       const briefReady = () => {
         const content = document.querySelector(".brief-content");
         const state = content?.getAttribute("data-month-state");
@@ -716,7 +716,11 @@ async function run(config) {
           && prompt.querySelector("button")?.getClientRects().length : !prompt)
           && !document.querySelector(".close-review, #monthly-review, #close-review-title");
       };
-      element.addEventListener("change", () => {
+      const start = event => {
+        const select = event.target;
+        if (!(select instanceof HTMLSelectElement) || select.value !== selection.companyId
+          || select.getAttribute("aria-label") !== "切换公司") return;
+        document.removeEventListener("change", start, true);
         performance.setResourceTimingBufferSize(1000);
         performance.clearResourceTimings();
         const started = performance.now();
@@ -745,9 +749,10 @@ async function run(config) {
           else if (performance.now() - started < 30000) requestAnimationFrame(observe);
         };
         requestAnimationFrame(observe);
-      }, { once: true, capture: true });
+      };
+      document.addEventListener("change", start, { capture: true });
     }, { companyId: target.id, companyName: target.name });
-    await selector.selectOption(target.id);
+    await selectDashboardOption(page, "切换公司", target.id);
     const selectedContext = await verifyReply(await contextReply, modules[0], target);
     const expectedPeriod = selectedContext.periods.some(item => item.key === company.period)
       ? company.period : selectedContext.default_period;
@@ -1047,12 +1052,12 @@ async function run(config) {
               }
               await checkOwnerLayout(module, "current_payroll");
             }
-            await localChange(module, () => page.getByLabel("筛选员工", { exact: true }).selectOption("payroll"), "employees");
-            await localChange(module, () => page.getByLabel("筛选员工", { exact: true }).selectOption("all"), "employees");
+            await localChange(module, () => selectDashboardOption(page, "筛选员工", "payroll"), "employees");
+            await localChange(module, () => selectDashboardOption(page, "筛选员工", "all"), "employees");
           }
           if (module.key === "assets") {
-            await localChange(module, () => page.getByLabel("筛选资产", { exact: true }).selectOption("fixed"), "assets");
-            await localChange(module, () => page.getByLabel("筛选资产", { exact: true }).selectOption("all"), "assets");
+            await localChange(module, () => selectDashboardOption(page, "筛选资产", "fixed"), "assets");
+            await localChange(module, () => selectDashboardOption(page, "筛选资产", "all"), "assets");
           }
           if (module.key === "funds") {
             await localChange(module, () => page.locator("#fund-detail-tab-bank").click());
