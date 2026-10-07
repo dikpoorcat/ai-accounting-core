@@ -22,7 +22,9 @@ test("owner history preserves business uncertainty and batch amounts without sou
       const key = match[1].toLowerCase(), refName = key === "funds" ? "funds" : key === "reports" ? "report" : "response";
       code = code.replace(new RegExp(`const ${refName} = (?:ref|shallowRef)<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(globalThis.historicalUi.${key}${key === "funds" ? ".data" : ""})`);
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
-        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")').replaceAll("{ immediate: true }", "{ immediate: false }");
+        .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")')
+        .replace('const expandedBatchId = ref("")', 'const expandedBatchId = ref(globalThis.historicalUi.funds.data.collections.statements.items[0]?.id || "")')
+        .replaceAll("{ immediate: true }", "{ immediate: false }");
       return code;
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
@@ -58,7 +60,7 @@ test("owner history preserves business uncertainty and batch amounts without sou
       data.collections.statements.page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
       const html = visible(await render("Funds", "&funds_view=bank"));
       assert.equal((html.match(/class="bank-activity-item"/g) ?? []).length, 2);
-      assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 4);
+      assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 2);
       assert.doesNotMatch(html, /20260710042541917000001/);
       assert.doesNotMatch(html, /20260710042542175500001/);
       assert.match(html, /−¥39,066\.17/);

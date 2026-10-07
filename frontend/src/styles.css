@@ -52,6 +52,22 @@
   box-sizing: border-box;
 }
 
+.dashboard-hover-preview {
+  --preview-accent: var(--accent);
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--preview-accent) 20%, var(--line));
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text);
+  text-align: left;
+}
+.dashboard-hover-preview::after { position: absolute; width: 10px; height: 10px; background: var(--surface); content: ""; transform: rotate(45deg); }
+.dashboard-hover-preview[data-side="left"]::after { right: -6px; top: calc(var(--preview-arrow) - 5px); border-top: inherit; border-right: inherit; }
+.dashboard-hover-preview[data-side="right"]::after { left: -6px; top: calc(var(--preview-arrow) - 5px); border-bottom: inherit; border-left: inherit; }
+.dashboard-hover-preview[data-side="below"]::after { top: -6px; left: calc(var(--preview-arrow) - 5px); border-top: inherit; border-left: inherit; }
+.dashboard-hover-preview[data-side="above"]::after { bottom: -6px; left: calc(var(--preview-arrow) - 5px); border-bottom: inherit; border-right: inherit; }
+
 html {
   scroll-behavior: smooth;
   /* Loading and loaded pages differ a lot in height; reserving the scrollbar gutter

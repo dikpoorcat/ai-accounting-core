@@ -22,6 +22,7 @@ import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
+import type { DashboardFundsContract } from "../api/generated/dashboardFunds";
 
 const route = useRoute();
 const router = useRouter();
@@ -50,6 +51,16 @@ const selectedAccount = ref(routeAccount());
 const selectedBankAccount = ref(queryText("statement_account_id"));
 const selectedDetailView = ref<"book" | "bank">(queryText("funds_view") === "bank" ? "bank" : "book");
 const expandedMovementId = ref("");
+type BankStatementRow = DashboardFundsContract.BankStatementRow;
+const expandedBatchId = ref(""), previewBatchId = ref("");
+const batchPreviewPanel = ref<HTMLElement | null>(null);
+const batchPreviewList = ref<HTMLElement | null>(null);
+const batchPreviewPosition = ref({ left: 0, top: 0, side: "left", arrow: 0, ready: false });
+let batchPreviewAnchor: HTMLElement | null = null;
+let expandedBatchAnchor: HTMLElement | null = null;
+let batchPreviewGeneration = 0;
+let batchCloseTimer: ReturnType<typeof setTimeout> | undefined;
+let batchTriggerHovered = false, batchPanelHovered = false, restoringBatchFocus = false;
 const funds = ref<FundsData | null>(null);
 const snapshotVersion = ref("");
 const selectedPeriodLabel = ref("");
@@ -109,6 +120,7 @@ const bankAccountOptions = computed(() => {
   return options;
 });
 const visibleBankRows = bankRows;
+const previewBatchRow = computed(() => visibleBankRows.value.find(item => item.id === previewBatchId.value));
 const selectedBankAccountLabel = computed(
   () => bankAccountOptions.value.find((option) => option.value === selectedBankAccount.value)?.label ?? "全部银行账户",
 );
@@ -197,6 +209,7 @@ function isPageCurrent(kind: PageKind, generation: number, selection: string) {
 }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
 function invalidateRequests(keepContent = false) {
+  resetBatchDetails();
   requestGeneration += 1;
   activeRequest?.abort(); cancelPages();
   activeRequest = null;
@@ -218,6 +231,143 @@ function handleMovementKey(item: FundMovement, event: KeyboardEvent) {
   if (event.target !== event.currentTarget || !item.subject_id || !["Enter", " "].includes(event.key)) return;
   event.preventDefault();
   toggleMovement(item);
+}
+
+function cancelBatchClose() {
+  if (batchCloseTimer !== undefined) clearTimeout(batchCloseTimer);
+  batchCloseTimer = undefined;
+}
+
+function batchDetailsTitle(item: BankStatementRow) {
+  return item.direction === "inflow" ? "整批收款明细" : "整批付款明细";
+}
+
+function batchScopeNote(item: BankStatementRow) {
+  return item.direction === "inflow"
+    ? "以下逐项金额属于整个收款批次。现有银行资料没有逐项对应到本条流水，不能据此把某笔收款归到本条。"
+    : "以下逐项金额属于整个付款批次。现有银行资料没有逐项对应到本条流水，不能据此把某位收款人归到本条。";
+}
+
+function clearBatchPreview(restoreFocus = false) {
+  const anchor = batchPreviewAnchor;
+  cancelBatchClose();
+  batchPreviewGeneration += 1;
+  previewBatchId.value = "";
+  batchPreviewPosition.value = { left: 0, top: 0, side: "left", arrow: 0, ready: false };
+  batchPreviewAnchor = null;
+  batchTriggerHovered = false; batchPanelHovered = false;
+  if (restoreFocus && anchor?.isConnected) {
+    restoringBatchFocus = true;
+    try { anchor.focus({ preventScroll: true }); }
+    finally { restoringBatchFocus = false; }
+  }
+}
+
+function resetBatchDetails() {
+  clearBatchPreview();
+  expandedBatchId.value = "";
+  expandedBatchAnchor = null;
+}
+
+async function showBatchPreview(item: BankStatementRow, target: EventTarget | null, source: "pointer" | "focus" = "focus") {
+  if (restoringBatchFocus || loading.value || !item.batch_payment?.items.length || expandedBatchId.value === item.id
+    || typeof window === "undefined" || !window.matchMedia("(min-width: 761px) and (hover: hover) and (pointer: fine)").matches
+    || !(target instanceof HTMLElement)) return;
+  cancelBatchClose();
+  if (batchPreviewAnchor !== target) { batchTriggerHovered = false; batchPanelHovered = false; }
+  if (source === "pointer") batchTriggerHovered = true;
+  batchPreviewAnchor = target;
+  const generation = ++batchPreviewGeneration;
+  previewBatchId.value = item.id;
+  batchPreviewPosition.value.ready = false;
+  await nextTick();
+  const panel = batchPreviewPanel.value;
+  if (generation !== batchPreviewGeneration || previewBatchId.value !== item.id || !panel || !target.isConnected) return;
+  const anchor = target.getBoundingClientRect(), bounds = panel.getBoundingClientRect();
+  const margin = 12, gap = 10;
+  const clamp = (value: number, maximum: number) => Math.max(margin, Math.min(value, maximum));
+  let side = "left", left = anchor.left - gap - bounds.width;
+  let top = clamp(anchor.top + anchor.height / 2 - bounds.height / 2, window.innerHeight - margin - bounds.height);
+  if (left < margin) {
+    side = "right"; left = anchor.right + gap;
+    if (left + bounds.width > window.innerWidth - margin) {
+      side = "below";
+      left = clamp(anchor.right - bounds.width, window.innerWidth - margin - bounds.width);
+      top = anchor.bottom + gap;
+      if (top + bounds.height > window.innerHeight - margin && anchor.top - gap - bounds.height >= margin) {
+        side = "above"; top = anchor.top - gap - bounds.height;
+      }
+      top = clamp(top, window.innerHeight - margin - bounds.height);
+    }
+  }
+  const vertical = side === "left" || side === "right";
+  const arrow = Math.max(14, Math.min(vertical ? anchor.top + anchor.height / 2 - top : anchor.left + anchor.width / 2 - left,
+    (vertical ? bounds.height : bounds.width) - 14));
+  batchPreviewPosition.value = { left, top, side, arrow, ready: true };
+}
+
+function keepBatchPreview() {
+  batchPanelHovered = true;
+  cancelBatchClose();
+}
+
+function scheduleBatchClose() {
+  if (!previewBatchId.value) return;
+  cancelBatchClose();
+  const generation = batchPreviewGeneration;
+  batchCloseTimer = setTimeout(() => {
+    batchCloseTimer = undefined;
+    if (generation !== batchPreviewGeneration || batchTriggerHovered || batchPanelHovered) return;
+    const focus = document.activeElement;
+    if (focus === batchPreviewAnchor || (focus && batchPreviewPanel.value?.contains(focus))) return;
+    clearBatchPreview();
+  }, 150);
+}
+function leaveBatchTrigger() { batchTriggerHovered = false; scheduleBatchClose(); }
+function leaveBatchPreview() { batchPanelHovered = false; scheduleBatchClose(); }
+
+function toggleBatchDetails(item: BankStatementRow, target?: EventTarget | null) {
+  if (loading.value || !item.batch_payment?.items.length) return;
+  const anchor = target instanceof HTMLElement ? target : batchPreviewAnchor;
+  const restoreFocus = Boolean(batchPreviewPanel.value?.contains(document.activeElement));
+  expandedBatchId.value = expandedBatchId.value === item.id ? "" : item.id;
+  expandedBatchAnchor = expandedBatchId.value ? anchor : null;
+  clearBatchPreview(restoreFocus);
+}
+
+function handleBatchTriggerKey(event: KeyboardEvent) {
+  if (event.key === "Tab" && !event.shiftKey && previewBatchId.value && batchPreviewList.value) {
+    event.preventDefault(); batchPreviewList.value.focus();
+  }
+}
+function handleBatchPreviewKey(event: KeyboardEvent) {
+  if (event.key !== "Tab" || !batchPreviewAnchor) return;
+  if (event.shiftKey && event.target === batchPreviewList.value) {
+    event.preventDefault(); batchPreviewAnchor.focus({ preventScroll: true });
+  } else if (!event.shiftKey && event.target instanceof HTMLButtonElement) {
+    // Teleport places the panel after the page; continue from the original trigger.
+    const elements = [...document.querySelectorAll<HTMLElement>("button:not(:disabled),a[href],input,select,textarea,[tabindex='0']")]
+      .filter(element => element.getClientRects().length && !element.closest("[inert]") && !batchPreviewPanel.value?.contains(element));
+    const next = elements[elements.indexOf(batchPreviewAnchor) + 1];
+    if (next) { event.preventDefault(); clearBatchPreview(); next.focus({ preventScroll: true }); }
+  }
+}
+function handleBatchEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  if (previewBatchId.value) { event.preventDefault(); clearBatchPreview(true); }
+  else if (expandedBatchId.value && event.target instanceof HTMLElement && event.target.closest(".bank-activity-item")) {
+    event.preventDefault();
+    const anchor = expandedBatchAnchor;
+    resetBatchDetails();
+    restoringBatchFocus = true;
+    try { anchor?.focus({ preventScroll: true }); }
+    finally { restoringBatchFocus = false; }
+  }
+}
+function handleBatchViewportChange(event: Event) {
+  if (!previewBatchId.value) return;
+  if (event.type === "scroll" && event.target instanceof Node && batchPreviewPanel.value?.contains(event.target)) return;
+  clearBatchPreview();
 }
 
 function bankOwnerNote() {
@@ -255,6 +405,7 @@ async function revealBankDetails() {
 }
 
 async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
+  resetBatchDetails();
   const generation = ++requestGeneration;
   cancelPages();
   activeRequest?.abort();
@@ -600,6 +751,18 @@ watch(
   () => { expandedMovementId.value = ""; },
   { flush: "sync" },
 );
+watch(
+  () => [route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, selectedBankAccount.value,
+    snapshotVersion.value, selectedDetailView.value, activeSection.value],
+  resetBatchDetails,
+  { flush: "sync" },
+);
+watch(visibleBankRows, rows => {
+  if (previewBatchId.value && !rows.some(item => item.id === previewBatchId.value)) clearBatchPreview();
+  if (expandedBatchId.value && !rows.some(item => item.id === expandedBatchId.value)) {
+    expandedBatchId.value = ""; expandedBatchAnchor = null;
+  }
+}, { flush: "sync" });
 
 watch(
   () => [route.query.company_id, route.query.period],
@@ -699,6 +862,9 @@ watch(
 );
 
 onMounted(async () => {
+  window.addEventListener("scroll", handleBatchViewportChange, true);
+  window.addEventListener("resize", handleBatchViewportChange);
+  document.addEventListener("keydown", handleBatchEscape);
   const generation = requestGeneration, selection = selectionKey();
   try {
     await loadContext();
@@ -710,6 +876,10 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  resetBatchDetails();
+  window.removeEventListener("scroll", handleBatchViewportChange, true);
+  window.removeEventListener("resize", handleBatchViewportChange);
+  document.removeEventListener("keydown", handleBatchEscape);
   mounted = false;
   invalidateRequests();
 });
@@ -1079,10 +1249,11 @@ onBeforeUnmount(() => {
             :tabindex="selectedDetailView === 'bank' ? 0 : -1"
           >
             <div v-if="visibleBankRows.length" class="bank-activity-feed" :data-section-focus="selectedDetailView === 'bank' ? '' : undefined" role="region" aria-label="银行流水明细" tabindex="0">
+              <div class="bank-activity-columns" aria-hidden="true"><span>日期</span><span>银行账户</span><span>用途／对方</span><span>明细</span><span>收支金额</span></div>
               <ol class="bank-activity-list">
                 <li v-for="item in visibleBankRows" :key="item.id" class="bank-activity-item">
-                  <details class="bank-activity-record">
-                    <summary class="bank-activity-summary">
+                  <div class="bank-activity-record">
+                    <div class="bank-activity-summary">
                       <time class="bank-activity-date" :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
                       <span class="bank-activity-account">
                         <strong>{{ fundAccountDisplayName(item.account_name, item.account_code) }}</strong>
@@ -1092,53 +1263,41 @@ onBeforeUnmount(() => {
                         <strong>{{ item.memo || item.party || "用途未提供" }}</strong>
                         <small>{{ item.memo ? item.party || "对方名称未提供" : "摘要未提供，仅保留对方名称" }}</small>
                       </span>
+                      <span class="bank-activity-details">
+                        <button v-if="item.batch_payment?.items.length" type="button" class="bank-batch-trigger"
+                            :disabled="loading || pageStates.bank.loading"
+                            :aria-label="`${batchDetailsTitle(item)}，${item.batch_payment.items.length}项`"
+                            :aria-expanded="expandedBatchId === item.id || previewBatchId === item.id"
+                            :aria-controls="expandedBatchId === item.id ? `bank-batch-inline-${item.id}` : previewBatchId === item.id ? 'bank-batch-preview' : undefined"
+                            @mouseenter="showBatchPreview(item, $event.currentTarget, 'pointer')" @mouseleave="leaveBatchTrigger"
+                            @focus="showBatchPreview(item, $event.currentTarget)" @blur="scheduleBatchClose"
+                            @keydown="handleBatchTriggerKey" @click.stop="toggleBatchDetails(item, $event.currentTarget)">
+                            {{ item.batch_payment.items.length }}项
+                        </button>
+                        <span v-else class="bank-details-empty" aria-label="无明细">—</span>
+                      </span>
                       <span class="bank-activity-amount" :class="item.direction">
                         <small class="bank-amount-direction">{{ bankDirectionLabel(item.direction) }}</small>
                         <strong>{{ movementAmount(item.direction, item.amount_fen) }}</strong>
                       </span>
-                      <span class="bank-record-chevron" aria-hidden="true"></span>
-                    </summary>
-                    <div class="bank-record-detail">
-                      <dl class="bank-record-fields">
-                        <div>
-                          <dt>交易日期</dt>
-                          <dd>{{ formatDate(item.date) }}</dd>
-                        </div>
-                        <div>
-                          <dt>银行账户</dt>
-                          <dd>{{ fundAccountDisplayName(item.account_name, item.account_code) }}</dd>
-                        </div>
-                        <div>
-                          <dt>交易用途</dt>
-                          <dd>{{ item.memo || "用途未提供" }}</dd>
-                        </div>
-                        <div>
-                          <dt>对方名称</dt>
-                          <dd>{{ item.party || "对方名称未提供" }}</dd>
-                        </div>
-                        <div>
-                          <dt>收支金额</dt>
-                          <dd class="bank-record-amount" :class="item.direction">{{ movementAmount(item.direction, item.amount_fen) }}</dd>
-                        </div>
-                      </dl>
-                      <section v-if="item.batch_payment" class="bank-batch-detail" aria-label="整批付款逐项明细">
-                        <p class="bank-batch-heading">
-                          <span class="bank-batch-heading-title">整批付款明细 · {{ item.batch_payment.items.length }} 项</span>
-                          <span class="bank-batch-heading-meta">{{ item.batch_payment.bank_row_count }} 笔银行流水 · 批次合计 {{ formatFen(item.batch_payment.total_fen) }}</span>
-                        </p>
-                        <p v-if="item.batch_payment.bank_row_count > 1" class="bank-batch-scope">
-                          以下逐项金额属于整个付款批次。现有银行资料没有逐项对应到本条流水，不能据此把某位收款人归到本条。
-                        </p>
-                        <ul class="bank-batch-items">
-                          <li v-for="(allocation, index) in item.batch_payment.items" :key="`${item.id}-batch-${index}`">
-                            <span class="bank-batch-index" aria-hidden="true">{{ index + 1 }}</span>
-                            <strong>{{ allocation.party }}</strong>
-                            <b>{{ formatFen(allocation.amount_fen) }}</b>
-                          </li>
-                        </ul>
-                      </section>
                     </div>
-                  </details>
+                    <section v-if="expandedBatchId === item.id && item.batch_payment" :id="`bank-batch-inline-${item.id}`" class="bank-batch-detail" :aria-label="batchDetailsTitle(item)">
+                      <header class="bank-batch-heading">
+                        <span class="bank-batch-heading-title">{{ batchDetailsTitle(item) }} · {{ item.batch_payment.items.length }} 项</span>
+                        <span class="bank-batch-heading-meta">{{ item.batch_payment.bank_row_count }} 笔银行流水 · 批次合计 {{ formatFen(item.batch_payment.total_fen) }}</span>
+                      </header>
+                      <p v-if="item.batch_payment.bank_row_count > 1" class="bank-batch-scope">
+                        {{ batchScopeNote(item) }}
+                      </p>
+                      <ul class="bank-batch-items">
+                        <li v-for="(allocation, index) in item.batch_payment.items" :key="`${item.id}-batch-${index}`">
+                          <span class="bank-batch-index" aria-hidden="true">{{ index + 1 }}</span>
+                          <strong>{{ allocation.party }}</strong>
+                          <b>{{ formatFen(allocation.amount_fen) }}</b>
+                        </li>
+                      </ul>
+                    </section>
+                  </div>
                 </li>
               </ol>
             </div>
@@ -1153,6 +1312,26 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </div>
+  <Teleport to="body">
+    <section v-if="previewBatchRow?.batch_payment" id="bank-batch-preview" ref="batchPreviewPanel" class="bank-batch-preview dashboard-hover-preview"
+      :data-side="batchPreviewPosition.side" :style="{ left: `${batchPreviewPosition.left}px`, top: `${batchPreviewPosition.top}px`, '--preview-arrow': `${batchPreviewPosition.arrow}px`, visibility: batchPreviewPosition.ready ? 'visible' : 'hidden' }"
+      role="region" :aria-label="`${batchDetailsTitle(previewBatchRow)}预览`" @mouseenter="keepBatchPreview" @mouseleave="leaveBatchPreview"
+      @focusin="cancelBatchClose" @focusout="scheduleBatchClose" @keydown="handleBatchPreviewKey">
+      <header class="bank-batch-preview-heading">
+        <span><small>{{ previewBatchRow.batch_payment.bank_row_count }} 笔银行流水</small><strong>{{ batchDetailsTitle(previewBatchRow) }} · {{ previewBatchRow.batch_payment.items.length }} 项</strong></span>
+        <span class="bank-batch-preview-total"><small>批次合计</small><b>{{ formatFen(previewBatchRow.batch_payment.total_fen) }}</b></span>
+      </header>
+      <div ref="batchPreviewList" class="bank-batch-preview-items" tabindex="0" role="region" aria-label="整批收付款逐项清单">
+        <p v-if="previewBatchRow.batch_payment.bank_row_count > 1" class="bank-batch-preview-scope">
+          {{ batchScopeNote(previewBatchRow) }}
+        </p>
+        <ol class="bank-batch-preview-list">
+          <li v-for="(allocation, index) in previewBatchRow.batch_payment.items" :key="index"><span>{{ allocation.party }}</span><strong>{{ formatFen(allocation.amount_fen) }}</strong></li>
+        </ol>
+      </div>
+      <footer class="bank-batch-preview-footer"><button type="button" @click="toggleBatchDetails(previewBatchRow)">查看完整明细</button></footer>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -1679,7 +1858,7 @@ summary {
 
 
 .bank-activity-feed {
-  --bank-list-columns: 92px minmax(126px, 0.85fr) minmax(230px, 1.7fr) minmax(150px, auto);
+  --bank-list-columns: 76px minmax(0, 0.85fr) minmax(0, 1.7fr) 92px minmax(128px, 0.45fr);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1691,18 +1870,27 @@ summary {
   outline: none;
 }
 
+.bank-activity-columns,
 .bank-activity-summary {
-  position: relative;
   display: grid;
   grid-template-columns: var(--bank-list-columns);
   gap: 14px;
   align-items: center;
+  padding: 10px 16px;
+}
+
+.bank-activity-columns {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.bank-activity-columns > :nth-child(4) { padding-right: 8px; text-align: right; }
+.bank-activity-columns > :last-child { text-align: right; }
+
+.bank-activity-summary {
   min-height: 62px;
-  padding: 10px 44px 10px 16px;
-  list-style: none;
   color: var(--text);
-  cursor: pointer;
-  transition: background-color 140ms ease;
 }
 
 .bank-activity-list {
@@ -1719,37 +1907,8 @@ summary {
   border-top: 1px solid var(--line);
 }
 
-.bank-activity-item.attention > .bank-activity-record {
-  box-shadow: inset 3px 0 var(--warning);
-}
-
 .bank-activity-record {
   background: var(--surface);
-}
-
-.bank-activity-summary::-webkit-details-marker {
-  display: none;
-}
-
-.bank-activity-summary:hover,
-.bank-activity-summary:focus-visible,
-.bank-activity-record[open] > .bank-activity-summary {
-  background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface));
-}
-
-.bank-activity-item.attention .bank-activity-summary {
-  background: color-mix(in srgb, var(--warning-soft) 24%, var(--surface));
-}
-
-.bank-activity-item.attention .bank-activity-summary:hover,
-.bank-activity-item.attention .bank-activity-summary:focus-visible,
-.bank-activity-item.attention .bank-activity-record[open] > .bank-activity-summary {
-  background: color-mix(in srgb, var(--warning-soft) 48%, var(--surface));
-}
-
-.bank-activity-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .bank-activity-date {
@@ -1773,9 +1932,8 @@ summary {
 
 .bank-activity-account strong,
 .bank-activity-account small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .bank-activity-account strong {
@@ -1788,112 +1946,29 @@ summary {
 }
 
 .bank-activity-main > strong {
-  overflow: hidden;
   font-size: 13.5px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bank-activity-main > small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-
-
-
-
-
-
-
-
-
-
-.bank-record-chevron {
-  position: absolute;
-  top: calc(50% - 5px);
-  right: 18px;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(45deg);
-  transition: transform 140ms ease;
-}
-
-.bank-activity-record[open] .bank-record-chevron {
-  transform: rotate(225deg) translate(-1px, -1px);
-}
-
-.bank-record-detail {
-  padding: 12px 16px 14px 34px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-soft);
-}
-
-/* 展开详情按字段列表排列，不再使用卡片分区。 */
-.bank-record-fields {
-  margin: 0;
-}
-
-.bank-record-fields > div {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 12px;
-  align-items: baseline;
-  padding: 7px 0;
-}
-
-.bank-record-fields > div + div {
-  border-top: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.bank-record-fields dt {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.bank-record-fields dd {
-  margin: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
   line-height: 1.5;
 }
 
-.bank-record-amount {
-  font-weight: 720;
-  font-variant-numeric: tabular-nums;
-}
-
-.bank-record-amount.inflow {
-  color: var(--accent);
-}
-
-.bank-record-amount.outflow {
-  color: var(--warning);
-}
-
-.bank-record-reference {
-  font-variant-numeric: tabular-nums;
-  word-break: break-all;
+.bank-activity-main > small {
+  color: var(--muted);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .bank-batch-detail {
-  margin-top: 12px;
-  padding: 10px 0 0;
   border-top: 1px solid var(--line);
 }
 
 .bank-batch-heading {
   display: flex;
-  align-items: baseline;
   justify-content: space-between;
+  align-items: center;
   gap: 14px;
-  margin: 0;
+  padding: 10px 16px;
 }
 
 .bank-batch-heading-title {
@@ -1909,7 +1984,7 @@ summary {
 }
 
 .bank-batch-scope {
-  margin: 5px 0 0;
+  margin: 5px 16px 0;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.55;
@@ -1919,7 +1994,7 @@ summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
-  margin: 12px 0 0;
+  margin: 12px 16px 14px;
   padding: 0;
   list-style: none;
 }
@@ -1976,10 +2051,38 @@ summary {
 }
 
 .bank-activity-amount strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-size: 15.5px;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
+
+.bank-activity-details { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+.bank-details-empty { padding-right: 8px; color: var(--muted); font-size: 12px; }
+.bank-batch-trigger { flex: none; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--accent); font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
+.bank-batch-trigger:hover, .bank-batch-trigger:focus-visible, .bank-batch-trigger[aria-expanded="true"] { background: var(--accent-soft); }
+.bank-batch-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bank-batch-trigger:disabled { color: var(--muted); cursor: default; }
+.bank-batch-preview { position: fixed; z-index: 100; display: flex; flex-direction: column; width: min(380px, calc(100vw - 24px)); max-height: min(420px, calc(100dvh - 24px)); gap: 10px; }
+.bank-batch-preview-heading { display: flex; flex: none; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.bank-batch-preview-heading > span { display: grid; min-width: 0; gap: 3px; }
+.bank-batch-preview-heading small { color: var(--muted); font-size: 10px; }
+.bank-batch-preview-heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.bank-batch-preview-total { text-align: right; }
+.bank-batch-preview-total b { font-size: 14px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.bank-batch-preview-items { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 9px; border-radius: 8px; background: var(--surface-soft); }
+.bank-batch-preview-items:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bank-batch-preview-scope { margin: 0 0 9px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.bank-batch-preview-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.bank-batch-preview-list li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; font-size: 11px; }
+.bank-batch-preview-list li > span { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.bank-batch-preview-list li > strong { flex: none; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.bank-batch-preview-footer { display: flex; flex: none; justify-content: flex-end; }
+.bank-batch-preview-footer button { padding: 3px 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 10px; cursor: pointer; }
+.bank-batch-preview-footer button:hover { color: var(--accent); }
+.bank-batch-preview-footer button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .bank-activity-amount.inflow .bank-amount-direction {
   color: color-mix(in srgb, var(--accent) 78%, var(--muted));
@@ -2248,10 +2351,11 @@ tbody tr:last-child td {
     grid-template-areas:
       "date amount"
       "account account"
-      "main main";
+      "main main"
+      "details details";
     gap: 11px 14px;
     align-items: start;
-    padding: 14px 36px 14px 14px;
+    padding: 14px;
   }
   .bank-activity-item + .bank-activity-item { border: 1px solid var(--line); }
   .bank-activity-date { grid-area: date; }
@@ -2259,7 +2363,9 @@ tbody tr:last-child td {
   .bank-activity-main { grid-area: main; }
 
   .bank-activity-amount { grid-area: amount; }
-  .bank-record-fields > div { grid-template-columns: minmax(84px, 0.32fr) minmax(0, 1fr); }
+  .bank-activity-columns { display: none; }
+  .bank-activity-details { grid-area: details; justify-self: end; width: 92px; }
+  .bank-batch-trigger { min-height: 44px; }
   .bank-batch-heading { display: grid; gap: 4px; }
   .bank-batch-heading-meta { text-align: left; }
   .bank-batch-items { grid-template-columns: 1fr; }

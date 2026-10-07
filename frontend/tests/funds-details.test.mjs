@@ -172,20 +172,23 @@ test("fund related payments keep exact pagination scope, cancel collapse continu
 async function rowHarness() {
   const key = `fundsRowsHarness${++sequence}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09" }, hash: "" });
-  globalThis[key] = { Vue, route, appendDashboardCollection };
+  const mounted = [], cleanup = [];
+  globalThis[key] = { Vue, route, appendDashboardCollection, mounted, cleanup };
   const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const money = readFileSync(new URL("../src/utils/money.ts", import.meta.url), "utf8").replace(/export /g, "");
   const prefix = `const environment = globalThis.${key}; const { computed, nextTick, ref, watch } = environment.Vue;
-    const { appendDashboardCollection } = environment; const onMounted = () => {}, onBeforeUnmount = () => {};
+    const { appendDashboardCollection } = environment;
+    const onMounted = callback => environment.mounted.push(callback);
+    const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route, useRouter = () => ({ replace: async () => {}, push: async () => {} });
     const useDashboardContext = () => ({ context: ref(null), loading: ref(false), error: ref(''), load: async () => {}, refresh: async () => {} });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const fetchFundsDashboard = async () => { throw new Error('unexpected fetch'); };
     const dashboardErrorMessage = String, isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fundAccountDisplayLabel = String, fundAccountDisplayName = String, fundAccountLabel = () => null, rememberFundAccounts = () => {};`;
-  const { outputText } = ts.transpileModule(prefix + money + source + "\nexport { toggleMovement, handleMovementKey, expandedMovementId, selectedPeriod, selectedAccount, selectedDetailView, snapshotVersion, movementAmount, funds };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
+  const { outputText } = ts.transpileModule(prefix + money + source + "\nexport { toggleMovement, handleMovementKey, expandedMovementId, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, snapshotVersion, activeSection, movementAmount, funds, expandedBatchId, previewBatchId, previewBatchRow, batchPreviewPanel, batchPreviewList, batchPreviewPosition, showBatchPreview, toggleBatchDetails, clearBatchPreview, resetBatchDetails, leaveBatchTrigger, leaveBatchPreview, keepBatchPreview, handleBatchTriggerKey, handleBatchPreviewKey, handleBatchEscape, handleBatchViewportChange, invalidateRequests, loadFunds };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const instance = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-  return { ...instance, route };
+  return { ...instance, route, mount: async () => { for (const callback of mounted) await callback(); }, unmount: () => { cleanup.forEach(callback => callback()); delete globalThis[key]; } };
 }
 
 test("movement rows toggle by stable occurrence id, support row keyboard input and keep exact cash amount", async () => {
@@ -217,4 +220,219 @@ test("movement rows toggle by stable occurrence id, support row keyboard input a
     assert.match(source, /presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary/);
     assert.match(source, /item\.correction \? formatFen\(item\.signed_amount_fen\) : movementAmount\(item\.direction, item\.amount_fen\)/);
   } finally { globalThis.Element = previousElement; }
+});
+
+const batchRow = (id, batch = true) => ({
+  id,
+  batch_payment: batch ? { items: [{ party: "张某", amount_fen: "10000" }], bank_row_count: 2, total_fen: "20000" } : null,
+});
+
+function batchDOM() {
+  const original = { window: globalThis.window, document: globalThis.document, Node: globalThis.Node, HTMLElement: globalThis.HTMLElement, HTMLButtonElement: globalThis.HTMLButtonElement };
+  const listeners = new Map();
+  let finePointer = true;
+  class NodeStub {
+    constructor() { this.isConnected = true; }
+  }
+  class HTMLElementStub extends NodeStub {
+    constructor(rect = { left: 300, right: 400, top: 100, bottom: 130, width: 100, height: 30 }) {
+      super(); this.rect = rect; this.focusCount = 0; this.onFocus = null;
+    }
+    getBoundingClientRect() { return this.rect; }
+    getClientRects() { return [this.rect]; }
+    focus() { this.focusCount += 1; document.activeElement = this; this.onFocus?.(); }
+    contains(node) { return node === this || node?.parent === this; }
+    closest() { return null; }
+  }
+  class HTMLButtonElementStub extends HTMLElementStub {}
+  const listen = (type, callback) => { const callbacks = listeners.get(type) ?? new Set(); callbacks.add(callback); listeners.set(type, callbacks); };
+  const unlisten = (type, callback) => listeners.get(type)?.delete(callback);
+  globalThis.Node = NodeStub;
+  globalThis.HTMLElement = HTMLElementStub;
+  globalThis.HTMLButtonElement = HTMLButtonElementStub;
+  globalThis.window = { innerWidth: 1000, innerHeight: 700, matchMedia: query => ({ matches: finePointer && query.includes("min-width: 761px") && query.includes("hover: hover") && query.includes("pointer: fine") }), addEventListener: listen, removeEventListener: unlisten };
+  globalThis.document = { activeElement: null, addEventListener: listen, removeEventListener: unlisten };
+  return {
+    NodeStub, HTMLElementStub, HTMLButtonElementStub, listeners,
+    setFinePointer(value) { finePointer = value; },
+    restore() { for (const [name, value] of Object.entries(original)) { if (value === undefined) delete globalThis[name]; else globalThis[name] = value; } },
+  };
+}
+
+function setBatchRows(view, rows) {
+  view.funds.value = { collections: { statements: { items: rows } } };
+}
+
+test("bank batches open only for populated rows and remain independent by statement id", async () => {
+  const dom = batchDOM(), view = await rowHarness();
+  try {
+    const first = batchRow("statement-a"), second = batchRow("statement-b"), ordinary = batchRow("ordinary", false);
+    setBatchRows(view, [first, second, ordinary]);
+    const anchor = new dom.HTMLElementStub();
+    view.toggleBatchDetails(ordinary, anchor);
+    view.toggleBatchDetails({ id: "empty", batch_payment: { items: [] } }, anchor);
+    assert.equal(view.expandedBatchId.value, "");
+    view.toggleBatchDetails(first, anchor);
+    assert.equal(view.expandedBatchId.value, first.id);
+    await view.showBatchPreview(first, anchor, "pointer");
+    assert.equal(view.previewBatchId.value, "", "the expanded row does not duplicate itself as a hover preview");
+    view.toggleBatchDetails(second, anchor);
+    assert.equal(view.expandedBatchId.value, second.id, "a second statement in the same batch owns its own expansion");
+    view.toggleBatchDetails(second, anchor);
+    assert.equal(view.expandedBatchId.value, "");
+    view.toggleBatchDetails(first, anchor);
+    assert.equal(view.expandedBatchId.value, first.id);
+    setBatchRows(view, [second, ordinary]);
+    assert.equal(view.expandedBatchId.value, "", "replacement rows remove an expansion whose statement disappeared");
+  } finally { view.unmount(); dom.restore(); }
+});
+
+test("batch preview uses current loaded row, fine pointer eligibility and newest positioning", async () => {
+  const dom = batchDOM(), view = await rowHarness();
+  try {
+    const first = batchRow("statement-a"), second = batchRow("statement-b");
+    setBatchRows(view, [first, second]);
+    const anchorA = new dom.HTMLElementStub(), anchorB = new dom.HTMLElementStub({ left: 750, right: 850, top: 220, bottom: 250, width: 100, height: 30 });
+    const panel = new dom.HTMLElementStub({ left: 0, right: 180, top: 0, bottom: 100, width: 180, height: 100 });
+    view.batchPreviewPanel.value = panel;
+    dom.setFinePointer(false);
+    await view.showBatchPreview(first, anchorA, "pointer");
+    assert.equal(view.previewBatchId.value, "");
+    dom.setFinePointer(true);
+    await view.showBatchPreview(batchRow("ordinary", false), anchorA, "pointer");
+    await view.showBatchPreview(first, {}, "pointer");
+    assert.equal(view.previewBatchId.value, "");
+    const stale = view.showBatchPreview(first, anchorA, "pointer");
+    const latest = view.showBatchPreview(second, anchorB, "pointer");
+    await Promise.all([stale, latest]);
+    assert.equal(view.previewBatchId.value, second.id);
+    assert.equal(view.previewBatchRow.value?.id, second.id);
+    assert.equal(view.batchPreviewPosition.value.ready, true);
+    assert.equal(view.batchPreviewPosition.value.side, "left");
+    assert.equal(view.batchPreviewPosition.value.left, 560);
+    setBatchRows(view, [first]);
+    assert.equal(view.previewBatchId.value, "", "an unloaded statement cannot leave an orphan preview");
+    assert.equal(view.previewBatchRow.value, undefined);
+    const disconnected = view.showBatchPreview(first, anchorA, "pointer");
+    anchorA.isConnected = false;
+    await disconnected;
+    assert.equal(view.batchPreviewPosition.value.ready, false, "detached triggers cannot position a late preview");
+  } finally { view.unmount(); dom.restore(); }
+});
+
+test("batch scope changes, refresh invalidation and viewport movement clear both states", async () => {
+  const dom = batchDOM();
+  try {
+    const row = batchRow("statement-a"), other = batchRow("statement-b"), anchor = new dom.HTMLElementStub();
+    for (const change of [
+      view => { view.route.query.company_id = "company-b"; },
+      view => { view.route.query.period = "2026-10"; },
+      view => { view.selectedPeriod.value = "2026-10"; },
+      view => { view.selectedAccount.value = "bank:other"; },
+      view => { view.selectedBankAccount.value = "other"; },
+      view => { view.snapshotVersion.value = "v2"; },
+      view => { view.selectedDetailView.value = "bank"; },
+      view => { view.activeSection.value = "bank-details"; },
+    ]) {
+      const view = await rowHarness();
+      try {
+        setBatchRows(view, [row, other]);
+        view.toggleBatchDetails(row, anchor);
+        await view.showBatchPreview(other, anchor);
+        assert.equal(view.expandedBatchId.value, row.id);
+        assert.equal(view.previewBatchId.value, other.id);
+        change(view);
+        assert.equal(view.expandedBatchId.value, "");
+        assert.equal(view.previewBatchId.value, "");
+      } finally { view.unmount(); }
+    }
+    const view = await rowHarness();
+    try {
+      setBatchRows(view, [row]);
+      const closedPosition = view.batchPreviewPosition.value;
+      view.handleBatchViewportChange({ type: "scroll", target: new dom.NodeStub() });
+      view.handleBatchViewportChange({ type: "resize", target: window });
+      assert.equal(view.batchPreviewPosition.value, closedPosition, "viewport events without a preview do not write reactive position");
+      await view.showBatchPreview(row, anchor);
+      const panel = new dom.HTMLElementStub(); view.batchPreviewPanel.value = panel;
+      view.handleBatchViewportChange({ type: "scroll", target: view.batchPreviewPanel.value });
+      assert.equal(view.previewBatchId.value, row.id, "scrolling inside the preview keeps it open");
+      view.handleBatchViewportChange({ type: "scroll", target: new dom.NodeStub() });
+      assert.equal(view.previewBatchId.value, "");
+      await view.showBatchPreview(row, anchor);
+      view.handleBatchViewportChange({ type: "resize", target: window });
+      assert.equal(view.previewBatchId.value, "");
+      view.toggleBatchDetails(row, anchor);
+      view.invalidateRequests();
+      assert.equal(view.expandedBatchId.value, "");
+      setBatchRows(view, [row, other]);
+      view.toggleBatchDetails(row, anchor);
+      await view.showBatchPreview(other, anchor);
+      await view.loadFunds("2026-09");
+      assert.equal(view.expandedBatchId.value, "");
+      assert.equal(view.previewBatchId.value, "");
+    } finally { view.unmount(); }
+  } finally { dom.restore(); }
+});
+
+test("batch keyboard Tab visits preview then resumes after the original trigger", async () => {
+  const dom = batchDOM(), view = await rowHarness();
+  try {
+    const row = batchRow("statement-a"), anchor = new dom.HTMLButtonElementStub(), next = new dom.HTMLButtonElementStub();
+    const list = new dom.HTMLElementStub(), footer = new dom.HTMLButtonElementStub();
+    setBatchRows(view, [row]);
+    view.batchPreviewList.value = list;
+    await view.showBatchPreview(row, anchor, "focus");
+    let prevented = 0;
+    const tab = target => ({ key: "Tab", shiftKey: false, target, preventDefault: () => { prevented += 1; } });
+    view.handleBatchTriggerKey(tab(anchor));
+    assert.equal(list.focusCount, 1);
+    globalThis.document.querySelectorAll = () => [anchor, next];
+    view.handleBatchPreviewKey(tab(footer));
+    assert.equal(next.focusCount, 1);
+    assert.equal(view.previewBatchId.value, "");
+    assert.equal(prevented, 2);
+  } finally { view.unmount(); dom.restore(); }
+});
+
+test("batch leave grace, Escape focus restoration and unmount cancel delayed closing", async () => {
+  const dom = batchDOM(), view = await rowHarness();
+  let unmounted = false;
+  try {
+    const row = batchRow("statement-a"), anchor = new dom.HTMLElementStub(), panel = new dom.HTMLElementStub();
+    await view.mount();
+    assert.equal(dom.listeners.get("scroll")?.size, 1);
+    assert.equal(dom.listeners.get("resize")?.size, 1);
+    assert.equal(dom.listeners.get("keydown")?.size, 1);
+    setBatchRows(view, [row]); view.batchPreviewPanel.value = panel;
+    anchor.onFocus = () => { void view.showBatchPreview(row, anchor, "focus"); };
+    await view.showBatchPreview(row, anchor, "pointer");
+    view.leaveBatchTrigger(); view.keepBatchPreview();
+    await new Promise(resolve => setTimeout(resolve, 170));
+    assert.equal(view.previewBatchId.value, row.id, "entering the panel cancels the trigger leave timeout");
+    view.leaveBatchPreview();
+    await new Promise(resolve => setTimeout(resolve, 170));
+    assert.equal(view.previewBatchId.value, "", "leaving both surfaces closes after the grace period");
+    await view.showBatchPreview(row, anchor, "focus");
+    let prevented = 0;
+    view.handleBatchEscape({ key: "Escape", target: panel, preventDefault: () => { prevented += 1; } });
+    await tick();
+    assert.equal(prevented, 1);
+    assert.equal(anchor.focusCount, 1);
+    assert.equal(view.previewBatchId.value, "", "focus restoration must not reopen the dismissed preview");
+    await view.showBatchPreview(row, anchor, "pointer");
+    view.leaveBatchTrigger();
+    const originalClearTimeout = globalThis.clearTimeout;
+    let clearedTimeouts = 0;
+    globalThis.clearTimeout = timer => { clearedTimeouts += 1; originalClearTimeout(timer); };
+    try { view.unmount(); }
+    finally { globalThis.clearTimeout = originalClearTimeout; }
+    unmounted = true;
+    assert.ok(clearedTimeouts > 0, "unmount cancels a pending close timeout");
+    assert.equal(dom.listeners.get("scroll")?.size, 0);
+    assert.equal(dom.listeners.get("resize")?.size, 0);
+    assert.equal(dom.listeners.get("keydown")?.size, 0);
+    await new Promise(resolve => setTimeout(resolve, 170));
+    assert.equal(view.previewBatchId.value, "", "unmount clears the preview and its pending close");
+  } finally { if (!unmounted) view.unmount(); dom.restore(); }
 });
