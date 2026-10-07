@@ -75,18 +75,24 @@ function invalidateRequests(keepContent = false) {
   requestGeneration += 1; controller?.abort(); controller = null;
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
-  voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
-  vouchersReady.value = false;
+  voucherPreviewIndex.value = shallowReactive(new Map());
+  if (!keepContent) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   if (!keepContent) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
   showMonthlyReview.value = false; loading.value = keepContent;
 }
 async function loadData(period: string | null, contextGate?: Promise<void>) {
   const generation = ++requestGeneration, selection = selectionKey(), companyId = route.query.company_id;
+  const retainedVouchers = contextGate && response.value ? {
+    companyId: response.value.read_context.company_id, period: selectedPeriod.value,
+    snapshotVersion: response.value.snapshot_version,
+    collection: vouchersReady.value ? response.value.data?.collections.vouchers : null,
+    focusedVoucher: response.value.data?.focused_voucher,
+  } : null;
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
-  voucherPreviewIndex.value = shallowReactive(new Map()); focusedVoucherSelection.value = 0;
-  vouchersReady.value = false;
+  voucherPreviewIndex.value = shallowReactive(new Map());
+  if (!contextGate) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   const request = new AbortController(); controller = request;
   loading.value = true;
   if (!contextGate) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
@@ -104,14 +110,27 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
       if (open_items) open_items.items = shallowReactive(open_items.items);
       if (vouchers) vouchers.items = shallowReactive(vouchers.items);
     }
-    response.value = result;
     indexVouchers(result);
+    const sameVoucherScope = !!(retainedVouchers && result.data
+      && retainedVouchers.companyId === result.read_context.company_id
+      && retainedVouchers.period === result.selected_period?.key
+      && retainedVouchers.snapshotVersion === result.snapshot_version);
+    if (sameVoucherScope && result.data && retainedVouchers) {
+      if (retainedVouchers.collection) result.data.collections.vouchers = retainedVouchers.collection;
+      const focused = retainedVouchers.focusedVoucher;
+      if (focused && (!result.data.focused_voucher || result.data.focused_voucher.voucher_version_id === focused.voucher_version_id)) {
+        result.data.focused_voucher = focused;
+      }
+      indexVouchers(result);
+    }
+    vouchersReady.value = sameVoucherScope && !!retainedVouchers?.collection;
+    response.value = result;
     if (!result.data) request.abort();
     if (target) focusSection("activity");
   } catch (caught) {
     request.abort();
     if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
-    response.value = null; error.value = dashboardErrorMessage(caught);
+    response.value = null; vouchersReady.value = false; error.value = dashboardErrorMessage(caught);
   } finally { if (isCurrent(generation, selection) && controller === request) loading.value = false; }
 }
 async function initializeVouchers() {
@@ -225,7 +244,7 @@ async function refreshCurrent(keepContent: boolean) {
       await refreshContext();
       if (isCurrent(generation, selection)) await loadData(queryPeriod());
     }
-  } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; loading.value = false; error.value = dashboardErrorMessage(caught); } }
+  } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; vouchersReady.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); } }
 }
 async function initialize() {
   initialized = true;
@@ -278,7 +297,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefFinancialOverview v-if="data.financial_position" id="financial-overview" class="section-anchor selectable-section" :funds="data.funds_overview" :position="data.financial_position" />
       </section>
       <section id="activity" class="section-anchor selectable-section" tabindex="-1">
-        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :vouchers-ready="vouchersReady" :active="activeSection === 'activity'" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="vouchersReady && data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @initialize-vouchers="initializeVouchers" @pause-vouchers="pausePages('vouchers', paginationScope())" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
+        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :vouchers-ready="vouchersReady" :refreshing="loading" :active="activeSection === 'activity'" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="vouchersReady && data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @initialize-vouchers="initializeVouchers" @pause-vouchers="pausePages('vouchers', paginationScope())" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
           <template #pagination><DashboardPagination automatic :active="!loading && activeSection === 'activity'" :scope="paginationScope()" @pause="pausePages('activity', $event)" compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
         </BriefActivityWorkbench>
       </section>

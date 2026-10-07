@@ -1,4 +1,4 @@
-// Authentication only touches the running service; all dashboard scenarios use generated fixtures.
+// Dashboard scenarios use fixtures; isolated runs also stub local authentication.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -31,6 +31,9 @@ async function run(config) {
     const activities = [0, 1].map(index => ({ ...clone(base), key: `unified-activity-${index}`, subject_id: `unified-business-${index}`, voucher_version_id: `unified-voucher-${index}`, date: `${period}-${index ? "02" : "28"}`, recognition: { precision: "day", period, date: `${period}-${index ? "02" : "28"}`, label: `${period}-${index ? "02" : "28"}` }, party: "演示业务对象名称较长用于自然换行检查", description: `演示事项${index + 1}与明确业务用途`, amount_fen: "9007199254740993", state: index ? "更正原业务" : "已入账" }));
     const vouchers = Array.from({ length: 30 }, (_, index) => ({ ...clone(baseVoucher), voucher_version_id: `unified-voucher-${index}`, subject_id: `unified-business-${index}`, number: String(index + 1), recognition: recognition(period), date: null, list_summary: `独立凭证事项${index + 1}`, summary: `独立凭证完整说明${index + 1}` }));
     data.activity_count = 2; data.voucher_count = 30; data.focused_activity = null; data.focused_voucher = null;
+    const voucherNumber = url.searchParams.get("voucher_number");
+    const voucherVersion = url.searchParams.get("voucher_version_id");
+    if (voucherNumber || voucherVersion) data.focused_voucher = vouchers.find(voucher => voucherNumber ? voucher.number === voucherNumber : voucher.voucher_version_id === voucherVersion) || null;
     data.activity_groups = [{ ...data.activity_groups.find(group => group.key === base.group), event_count: 2 }];
     data.collections.activity = { items: activities, page: pageInfo(activities) };
     // The default paired slice cannot stand in for the independent ordered voucher page.
@@ -121,6 +124,16 @@ async function run(config) {
     await page.setViewportSize({ width: 1440, height: 1000 }); await frames();
   }
   try {
+    if (config.synthetic_authentication) await page.route("**/api/**", route => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === "/api/browser-session") return route.fulfill({ json: { status: "ok" } });
+      if (pathname === "/api/security-request") return route.fulfill({ json: {
+        schema_version: 1, catalog_instance_id: "unified-synthetic-catalog",
+        provisioned: true, login_name: "演示负责人", active: true, authenticated: true,
+      } });
+      fixtureErrors.push(`unhandled isolated API: ${pathname}`);
+      return route.fulfill({ status: 503, json: { message: "隔离测试未配置此接口" } });
+    });
     await page.route("**/api/dashboard/context?*", safe(route => {
       const url = new URL(route.request().url()), response = clone(fixtures.company_with_period.response);
       response.companies = companyIds.map((company_id, index) => ({ ...response.companies[0], company_id, name: `演示公司${index + 1}`, taxpayer_id: null }));
@@ -152,12 +165,85 @@ async function run(config) {
     await activity.locator(".event-voucher-button").click(); await page.locator("#selected-voucher").waitFor(); await frames();
     assert.equal(allBrief(), beforePreview, "exact paired selection requested brief"); assert.equal(voucherRequests().length, 0, "exact selection initialized ordered list");
     assert.equal(await page.locator(".voucher-card").count(), 1, "uninitialized exact selection should show only focused card");
+    phase = "same-snapshot refresh preserves local precise focus";
+    await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+    assert.equal(await page.locator("#selected-voucher").count(), 1);
+    assert.equal(await page.locator(".voucher-card").count(), 1, "precise refresh lost the selected card");
+    assert.equal(voucherRequests().length, 0, "precise refresh initialized the monthly collection");
     phase = "manual independent voucher first page and retry cache";
     await page.getByRole("button", { name: "按业务", exact: true }).click(); await page.getByRole("button", { name: "按凭证", exact: true }).click();
     await page.locator(".voucher-view").getByRole("button", { name: "重新读取", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20); await frames();
     assert.equal(voucherRequests().length, 2); for (const url of voucherRequests()) assert.equal(url.searchParams.has("cursor"), false, "first ordered page must not reuse paired cursor");
     const cached = voucherRequests().length; await page.getByRole("button", { name: "按业务", exact: true }).click(); await page.getByRole("button", { name: "按凭证", exact: true }).click(); await frames(); assert.equal(voucherRequests().length, cached);
+    phase = "cancelled pending voucher page resumes on module return";
+    holdVouchers = true;
+    const pendingStarted = new Promise(resolve => { heldStarted = resolve; });
+    const beforePending = voucherRequests().length;
+    await page.locator(".voucher-pagination").getByRole("button", { name: "下一页", exact: true }).click();
+    await Promise.race([pendingStarted, new Promise((_, reject) => setTimeout(() => reject(new Error("pending page was not held")), 12000))]);
+    await nav("概览").click(); await nav("本月发生").click();
+    await page.waitForFunction(() => document.querySelector(".voucher-pagination strong")?.textContent.trim() === "2 / 2");
+    assert.equal(voucherRequests().length, beforePending + 2, "return must resume the cancelled page once");
+    releaseHeld(); releaseHeld = null; await frames();
+    assert.equal(await page.locator(".voucher-card").count(), 10, "late cancelled page changed the current page");
+    phase = "same-snapshot refresh retains paged and complete vouchers";
+    const refreshes = [];
+    for (const width of [1440, 375]) {
+      await page.setViewportSize({ width, height: 1000 }); await frames();
+      const before = voucherRequests().length;
+      await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+      assert.equal(await page.locator(".voucher-pagination strong").textContent(), "2 / 2");
+      assert.equal(await page.locator(".voucher-card").count(), 10);
+      assert.equal(voucherRequests().length, before, "same-snapshot refresh reread an independent collection");
+      await page.getByRole("switch", { name: "改为全部显示凭证", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 30);
+      await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+      assert.equal(await page.getByRole("switch", { name: "改为分页显示凭证", exact: true }).getAttribute("aria-checked"), "true");
+      assert.equal(await page.locator(".voucher-card").count(), 30);
+      assert.equal(voucherRequests().length, before, "complete list was reread during refresh");
+      refreshes.push({ width, page_retained: 2, all_retained: 30, voucher_requests: 0 });
+      await page.getByRole("switch", { name: "改为分页显示凭证", exact: true }).click();
+      await page.locator(".voucher-pagination").getByRole("button", { name: "下一页", exact: true }).click();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 }); await frames();
+    phase = "changed snapshot discards independent collection";
+    const beforeChanged = voucherRequests().length; snapshot = "unified-v2";
+    await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+    assert.equal(await page.locator(".voucher-view").count(), 0, "changed snapshot retained old voucher mode");
+    assert.equal(voucherRequests().length, beforeChanged, "changed snapshot initialized vouchers without selection");
+    phase = "refresh during initialization rejects old response and restores manual mode";
+    holdVouchers = true;
+    const initializingStarted = new Promise(resolve => { heldStarted = resolve; });
+    await page.getByRole("button", { name: "按凭证", exact: true }).click();
+    await Promise.race([initializingStarted, new Promise((_, reject) => setTimeout(() => reject(new Error("initialization was not held")), 12000))]);
+    const beforeInitializingRefresh = voucherRequests().length;
+    await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+    await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20);
+    assert.equal(voucherRequests().length, beforeInitializingRefresh + 1, "manual initialization must resume after refresh");
+    assert.equal(voucherRequests().at(-1).searchParams.has("cursor"), false);
+    releaseHeld(); releaseHeld = null; await frames();
+    assert.equal(await page.locator(".voucher-card").count(), 20);
+    phase = "direct voucher target retains manual paging and complete mode on refresh";
+    await page.goto(`${config.origin}/?company_id=${encodeURIComponent(config.company_id)}&period=${config.period}&voucher=1`); await idle();
+    await page.locator("#selected-voucher").waitFor();
+    assert.equal(await page.locator(".voucher-card").count(), 1);
+    await page.getByRole("button", { name: "按业务", exact: true }).click();
+    await page.getByRole("button", { name: "按凭证", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20);
+    await page.locator(".voucher-pagination").getByRole("button", { name: "下一页", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".voucher-pagination strong")?.textContent === "2 / 2");
+    const beforeDirectRefresh = voucherRequests().length;
+    await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+    assert.equal(await page.locator(".voucher-pagination strong").textContent(), "2 / 2");
+    assert.equal(await page.locator(".voucher-card").count(), 10);
+    assert.equal(voucherRequests().length, beforeDirectRefresh, "direct target reset manual pagination during refresh");
+    await page.getByRole("switch", { name: "改为全部显示凭证", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 30);
+    await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await idle();
+    assert.equal(await page.getByRole("switch", { name: "改为分页显示凭证", exact: true }).getAttribute("aria-checked"), "true");
+    assert.equal(await page.locator(".voucher-card").count(), 30);
+    assert.equal(voucherRequests().length, beforeDirectRefresh, "direct target reread a complete collection during refresh");
     phase = "open items layout and keyboard";
     await nav("待收待付").click(); const open = page.locator(".open-event-row").first();
     const detailsBefore = requests.filter(url => url.pathname.endsWith("business-status")).length;
@@ -184,7 +270,7 @@ async function run(config) {
     await nav("本月发生").click(); const beforeMonth = voucherRequests().length; await page.getByRole("button", { name: "按凭证", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".voucher-card").length === 20); assert.equal(voucherRequests().length, beforeMonth + 1, "month switch reused old ordered page");
     assert.equal(fixtureErrors.length, 0, fixtureErrors.join("; ")); assert.equal(errors.length, 0);
-    return { status: "passed", synthetic_layouts: layouts, keyboard_and_arrows: true, internal_detail_isolation: true, paired_preview_requests: 0, local_exact_selection_requests: 0, ordered_first_page_limit: 20, ordered_first_page_cursor: null, ordered_initial_retry: true, ordered_cached_switch_requests: 0, scope_late_response_rejected: true, month_initialization_reset: true, browser_errors: 0 };
+    return { status: "passed", synthetic_layouts: layouts, keyboard_and_arrows: true, internal_detail_isolation: true, paired_preview_requests: 0, local_exact_selection_requests: 0, precise_refresh_retained: true, ordered_first_page_limit: 20, ordered_first_page_cursor: null, ordered_initial_retry: true, ordered_cached_switch_requests: 0, pending_page_return_resumes: true, same_snapshot_refresh: refreshes, direct_target_manual_mode_retained: true, changed_snapshot_discards: true, initialization_refresh_resumes: true, scope_late_response_rejected: true, month_initialization_reset: true, browser_errors: 0 };
   } catch (error) { throw new Error(`${phase}: ${fixtureErrors.length ? fixtureErrors.join("; ") : String(error.message).replace(/https?:\/\/[^\s"']+/g, "[URL]").split(config.company_id).join("[company]")}`); }
   finally { releaseHeld?.(); await browser.close(); }
 }

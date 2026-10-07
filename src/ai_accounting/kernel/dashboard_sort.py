@@ -8,6 +8,7 @@ states before any business content is returned.
 from __future__ import annotations
 
 from .contracts import KernelError
+from .domains.money import SETTLEMENT_PAYMENT_KINDS
 from .schema import sequence_model, table_name
 from .types import YearMonth, canonical
 
@@ -84,27 +85,33 @@ def business_sort_metadata(snapshot, identifiers, *, funds=False):
             parties[ident].discard(value.get("counterparty_id"))
         parties[ident].update(row["recipient_id"] for row in value["recipients"] if row.get("recipient_id"))
         parties[ident].discard("payroll-group")
-    # A balance refers to one exact obligation key. Follow dependency identities
-    # only to that key; do not hydrate ancestors or unrelated source bodies.
-    encoded = canonical(sorted(headers))
-    for row in snapshot.connection.execute(
-        "WITH RECURSIVE roots(id) AS (SELECT value FROM json_each(?)), "
+    # Actual single-payment recipients already determine the displayed objects.
+    # Other candidates need ancestry only when they refer to a balance key.
+    relation_ids = [
+        ident for ident, header in headers.items()
+        if not (
+            header["kind"] in SETTLEMENT_PAYMENT_KINDS
+            and scalars[header["fact_id"]].get("counterparty_id")
+            and scalars[header["fact_id"]].get("payment_method") != "bank_batch"
+        )
+    ]
+    relation_rows = snapshot.connection.execute(
+        "WITH RECURSIVE keys AS MATERIALIZED ("
+        "SELECT ids.value root,json_extract(b.value,'$.key') obligation_key "
+        "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value,"
+        "json_each(c.outcome,'$.balances') b), "
+        "roots(id) AS (SELECT DISTINCT root FROM keys), "
         "ancestry(root,id) AS (SELECT id,id FROM roots UNION SELECT a.root,d.upstream_id "
-        "FROM ancestry a JOIN dependency_calculation d ON d.calculation_id=a.id), "
-        "keys AS (SELECT r.id root,json_extract(b.value,'$.key') obligation_key "
-        "FROM roots r JOIN calculation c ON c.id=r.id,json_each(c.outcome,'$.balances') b) "
+        "FROM ancestry a JOIN dependency_calculation d ON d.calculation_id=a.id) "
         "SELECT DISTINCT a.root,c.subject_id,c.kind,json_extract(o.value,'$.name') component,"
         "json_extract(o.value,'$.counterparty_id') party FROM ancestry a "
         "JOIN calculation c ON c.id=a.id,json_each(c.outcome,'$.values.obligations') o "
         "JOIN keys k ON k.root=a.root AND k.obligation_key=json_extract(o.value,'$.key') "
-        "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL", (encoded,),
-    ):
+        "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL",
+        (canonical(sorted(relation_ids)),),
+    ) if relation_ids else ()
+    for row in relation_rows:
         value = scalars[headers[row["root"]]["fact_id"]]
-        if headers[row["root"]]["kind"] in {"payment", "cash_payment", "platform_payment", "payroll_reserve_payment"}:
-            # Payment relations use the recorded actual recipient, rather than
-            # adding the original creditor as another displayed object.
-            if value.get("counterparty_id") and value.get("payment_method") != "bank_batch":
-                continue
         recipient = next((item.get("recipient_id") for item in value["recipients"]
                           if item.get("source_id") == row["subject_id"]
                           and item.get("source_kind") == row["kind"]

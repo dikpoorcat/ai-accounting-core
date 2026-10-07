@@ -1,5 +1,7 @@
 """Future duplicate dependencies are read proofs, never early business adoption."""
 
+import builtins
+
 import pytest
 from stage9_book import MixedBook
 from test_material_watch_future_links import _classify_expense, _expense, _link
@@ -154,6 +156,116 @@ def test_duplicate_dependency_retains_transitive_competing_sources_and_all_alloc
     assert len(checked["source_versions"]) == len(checked["allocation_versions"]) == 4
     assert len(checked["resolution_versions"]) == 5
     assert {item["source_id"] for item in checked["coverage"]} == {"mixed"}
+
+
+@pytest.mark.parametrize("source_count", (8, 16, 32))
+def test_shared_business_dependencies_expand_with_linear_source_work(
+    tmp_path, monkeypatch, source_count
+):
+    company = Company(tmp_path)
+    future = company.expense("future-business", source_count * 100, "2026-07")
+    source_ids = {f"future-source-{index}" for index in range(source_count)}
+    for source_id in sorted(source_ids):
+        source, _ = company.source(
+            f"item,amount,period\n{source_id},1.00,2026-07\n".encode(),
+            subject=source_id,
+            period="2026-07",
+        )
+        company.resolve(
+            source,
+            "CSV!B2",
+            [future | {"amount_fen": 100}],
+            subject="resolution-" + source_id,
+            period="2026-07",
+            recognition_period="2026-07",
+        )
+    mixed, _ = company.source(b"item,amount,period\ncopy,1.00,2026-07\n", subject="january-copy")
+    company.resolve(
+        mixed,
+        "CSV!B2",
+        subject="january-copy-resolution",
+        treatment="duplicate",
+        recognition_period="2026-07",
+        duplicate_source_id="future-source-0",
+        duplicate_location="CSV!B2",
+        reason="Synthetic future original copy.",
+    )
+    work = {"source_visits": 0, "competitor_visits": 0, "parsed": []}
+    current_facts = materials._CompletenessReads.current_facts
+    inspect_bytes = materials.inspect_bytes
+
+    class CountedSources(tuple):
+        def __iter__(self):
+            for item in super().__iter__():
+                work["source_visits"] += 1
+                yield item
+
+    def counted_current_facts(reads, kind):
+        items = current_facts(reads, kind)
+        return CountedSources(items) if kind == materials.MaterialSource.kind else items
+
+    def counted_sorted(values, *args, **kwargs):
+        if isinstance(values, set) and values == source_ids:
+            work["competitor_visits"] += len(values)
+        return builtins.sorted(values, *args, **kwargs)
+
+    def counted_inspect(raw, specification):
+        work["parsed"].append(raw)
+        return inspect_bytes(raw, specification)
+
+    monkeypatch.setattr(materials._CompletenessReads, "current_facts", counted_current_facts)
+    monkeypatch.setattr(materials, "sorted", counted_sorted, raising=False)
+    monkeypatch.setattr(materials, "inspect_bytes", counted_inspect)
+    for summary_only in (False, True):
+        work.update(source_visits=0, competitor_visits=0, parsed=[])
+        with company.engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            checked = (
+                materials.read_completeness_summary
+                if summary_only
+                else materials.check_completeness
+            )(connection, YearMonth("2026-01").ordinal, company.engine.store.registry)
+        if summary_only:
+            assert checked.issues == ()
+        else:
+            assert checked["status"] == checked["file_status"] == "complete"
+            assert {item["source_id"] for item in checked["file_summaries"]} == source_ids | {
+                "january-copy"
+            }
+            assert len(checked["source_versions"]) == source_count + 1
+            assert len(checked["allocation_versions"]) == source_count + 1
+            assert len(checked["resolution_versions"]) == source_count + 1
+            assert checked["coverage"] == []
+        # Every dependency still gets a complete original read, without repeated
+        # competitor expansion or another full source pass for each dependency.
+        assert len(work["parsed"]) == len(set(work["parsed"])) == source_count + 1
+        assert work["competitor_visits"] == source_count
+        assert work["source_visits"] <= 2 * (source_count + 1)
+
+
+def test_duplicate_dependency_missing_source_keeps_diagnostic(tmp_path):
+    company = Company(tmp_path)
+    source, _ = company.source(b"item,amount,period\ncopy,1.00,2026-01\n")
+    company.resolve(
+        source,
+        "CSV!B2",
+        treatment="duplicate",
+        duplicate_source_id="missing-original",
+        duplicate_location="CSV!B2",
+        reason="Synthetic unavailable original.",
+    )
+    checked = company.materials.check("2026-01")
+    assert checked["status"] == "needs_information"
+    missing = [issue for issue in checked["issues"] if issue["code"] == "material_source_missing"]
+    assert len(missing) == 1
+    assert missing[0]["source_id"] == "missing-original"
+    assert missing[0]["responsibility"] == "unassigned"
+    assert "material_duplicate_amount" in {issue["code"] for issue in checked["issues"]}
+    with company.engine.store.connection(read_only=True) as connection:
+        summary = materials.read_completeness_summary(
+            connection, YearMonth("2026-01").ordinal, company.engine.store.registry
+        )
+    assert list(summary.issues) == checked["issues"]
 
 
 @pytest.mark.parametrize("grouped", (False, True))

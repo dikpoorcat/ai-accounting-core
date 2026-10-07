@@ -111,6 +111,7 @@ def test_statement_page_and_summary_do_not_decode_complete_parent(bank_book, mon
         # Statement rows are not posted company money. Their growing match
         # summary remains in the funds detail above, outside the owner brief.
         assert summary == {
+            "bank_calculation": {"opening_fen": 0, "inflow_fen": 1000, "outflow_fen": 0},
             "total_fen": 1000,
             "bank_fen": 1000,
             "cash_fen": 0,

@@ -80,13 +80,15 @@ def test_amount_equivalence_and_real_retired_bank_work(
     banking.statement(save, publish, entries)
     narrow_work, narrow = measure_work(engine, lambda: summary(engine))
     old_work, old = measure_work(engine, lambda: legacy_summary(engine))
-    assert narrow == old == {
+    assert narrow == {
+        "bank_calculation": {"opening_fen": 0, "inflow_fen": 1000, "outflow_fen": 0},
         "total_fen": 1000, "bank_fen": 1000, "cash_fen": 0,
         "payment_platform_fen": 0, "inflow_fen": 1000, "outflow_fen": 0,
         "net_change_fen": 1000, "internal_transfer_fen": 0,
     }
+    assert old == {key: narrow[key] for key in AMOUNTS}
     detailed = Dashboard(engine).funds(MONTH)["data"]
-    assert narrow == {key: detailed[key] for key in AMOUNTS}
+    assert {key: narrow[key] for key in AMOUNTS} == {key: detailed[key] for key in AMOUNTS}
     assert detailed["bank_account_count"] == 2  # Independent zero-account source remains.
     assert detailed["bank_statement"]["transaction_count"] == len(entries)
     assert len(detailed["collections"]["statements"]["items"]) == min(20, len(entries))
@@ -120,12 +122,13 @@ def test_all_money_channels_and_internal_transfer_keep_business_amounts(platform
     publish("cash-capital", "platform-capital", "transfer")
     actual = summary(engine)
     assert actual == {
+        "bank_calculation": {"opening_fen": 0, "inflow_fen": 1000, "outflow_fen": 100},
         "total_fen": 1700, "bank_fen": 900, "cash_fen": 200,
         "payment_platform_fen": 600, "inflow_fen": 1700, "outflow_fen": 0,
         "net_change_fen": 1700, "internal_transfer_fen": 100,
     }
     detailed = Dashboard(engine).funds(MONTH)["data"]
-    assert actual == {key: detailed[key] for key in AMOUNTS}
+    assert {key: actual[key] for key in AMOUNTS} == {key: detailed[key] for key in AMOUNTS}
     assert detailed["collections"]["movements"]["page"]["total_count"] == 5
 
 
@@ -214,7 +217,10 @@ def test_amount_only_avoids_historical_bank_identity_work_and_keeps_full_account
         "total_fen": 1000, "bank_fen": 1000, "cash_fen": 0, "payment_platform_fen": 0,
         "inflow_fen": 0, "outflow_fen": 0, "net_change_fen": 0, "internal_transfer_fen": 0,
     }
-    assert summary(engine, period) == narrow
+    assert summary(engine, period) == {
+        **narrow,
+        "bank_calculation": {"opening_fen": 1000, "inflow_fen": 0, "outflow_fen": 0},
+    }
     full = Dashboard(engine).funds(period)["data"]
     assert full["bank_account_count"] == 2
     assert full["bank_statement"]["missing_account_count"] == 2
@@ -270,7 +276,11 @@ def test_identity_correction_keeps_full_scope_and_exact_amounts(bank_book):
         assert len(read.states) == 2
     actual = summary(engine)
     assert actual["bank_fen"] == actual["total_fen"] == actual["inflow_fen"] == 1000
-    assert actual == {key: Dashboard(engine).funds(MONTH)["data"][key] for key in AMOUNTS}
+    assert actual["bank_calculation"] == {
+        "opening_fen": 0, "inflow_fen": 1000, "outflow_fen": 0,
+    }
+    detailed = Dashboard(engine).funds(MONTH)["data"]
+    assert {key: actual[key] for key in AMOUNTS} == {key: detailed[key] for key in AMOUNTS}
 
 
 def test_amount_scope_retains_open_replacement_review_and_withdrawal(bank_book, monkeypatch):
@@ -292,13 +302,21 @@ def test_amount_scope_retains_open_replacement_review_and_withdrawal(bank_book, 
         assert publish("cash-money")["results"][0]["impact"] == "review_no_impact"
     actual = summary(engine)
     assert actual["cash_fen"] == actual["inflow_fen"] == 70
-    assert actual == {key: Dashboard(engine).funds(MONTH)["data"][key] for key in AMOUNTS}
+    assert actual["bank_calculation"] == {
+        "opening_fen": 0, "inflow_fen": 0, "outflow_fen": 0,
+    }
+    detailed = Dashboard(engine).funds(MONTH)["data"]
+    assert {key: actual[key] for key in AMOUNTS} == {key: detailed[key] for key in AMOUNTS}
     preview = engine.preview_delete("cash-money", recording_error_evidence=proof)
     engine.delete("cash-money", preview_digest=preview["digest"], epochs=preview["epochs"],
                   recording_error_evidence=proof, request_id="withdraw-cash")
     actual = summary(engine)
-    assert all(value == 0 for value in actual.values())
-    assert actual == {key: Dashboard(engine).funds(MONTH)["data"][key] for key in AMOUNTS}
+    assert actual == {
+        **{key: 0 for key in AMOUNTS},
+        "bank_calculation": {"opening_fen": 0, "inflow_fen": 0, "outflow_fen": 0},
+    }
+    detailed = Dashboard(engine).funds(MONTH)["data"]
+    assert {key: actual[key] for key in AMOUNTS} == {key: detailed[key] for key in AMOUNTS}
 
 
 def test_uncertain_opening_retains_none_after_actual_source_verification(
@@ -329,12 +347,15 @@ def test_uncertain_opening_retains_none_after_actual_source_verification(
 
     monkeypatch.setattr(BusinessQueries, "_selected_accounting", uncertain)
     actual = summary(engine, "2026-01")
-    assert set(actual) == AMOUNTS
+    assert set(actual) == AMOUNTS | {"bank_calculation"}
     assert actual["total_fen"] is actual["cash_fen"] is None
     assert actual["bank_fen"] == actual["payment_platform_fen"] == 0
+    assert actual["bank_calculation"] == {
+        "opening_fen": 0, "inflow_fen": 0, "outflow_fen": 0,
+    }
     with Dashboard(engine)._snapshot("2026-01") as snap:
         full = funds(snap, sections=set())
-    assert actual == {key: full[key] for key in AMOUNTS}
+    assert {key: actual[key] for key in AMOUNTS} == {key: full[key] for key in AMOUNTS}
     with monkeypatch.context() as patch:
         patch.setattr(FundsRead, "_verified_money_summary", lambda self: None)
         with Dashboard(engine)._snapshot("2026-01") as snap:

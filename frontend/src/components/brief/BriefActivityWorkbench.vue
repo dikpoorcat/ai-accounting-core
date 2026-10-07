@@ -10,8 +10,8 @@ const props = withDefaults(defineProps<{
   focusedActivity?: BriefActivityRow | null; period: string; snapshotVersion?: string | null;
   vouchers: BriefVoucher[]; voucherCount: number; focusedVoucher?: BriefVoucher | null;
   voucherPreviewIndex?: ReadonlyMap<string, BriefVoucher>; focusedVoucherSelection?: number;
-  vouchersLoading?: boolean; vouchersError?: string; vouchersHasMore?: boolean; vouchersReady?: boolean; active?: boolean;
-}>(), { vouchersReady: true, active: true });
+  vouchersLoading?: boolean; vouchersError?: string; vouchersHasMore?: boolean; vouchersReady?: boolean; active?: boolean; refreshing?: boolean;
+}>(), { vouchersReady: true, active: true, refreshing: false });
 const emit = defineEmits<{ changed: []; moreVouchers: []; allVouchers: []; initializeVouchers: []; pauseVouchers: []; requestVoucher: [voucherVersionId: string] }>();
 const route = useRoute();
 const mode = ref<"business" | "voucher">("business");
@@ -140,15 +140,15 @@ function activityDate(item: BriefActivityRow) {
   return parts.length === 3 ? `${Number(parts[1])} 月 ${Number(parts[2])} 日` : item.date;
 }
 watch(() => props.vouchersReady, ready => {
-  if (!ready || mode.value !== "voucher" || !manualVoucherView.value) return;
-  if (voucherDisplayMode.value === "all" && props.vouchersHasMore) emit("allVouchers");
-  else if (pendingVoucherPage.value !== null) changeVoucherPage(pendingVoucherPage.value);
-});
-watch(() => props.active, active => {
-  if (!active || mode.value !== "voucher" || !manualVoucherView.value) return;
+  if (ready) resumeVouchers();
+}, { flush: "post" });
+function resumeVouchers() {
+  if (props.active === false || props.refreshing || mode.value !== "voucher" || !manualVoucherView.value) return;
   if (!props.vouchersReady) emit("initializeVouchers");
   else if (voucherDisplayMode.value === "all" && props.vouchersHasMore) emit("allVouchers");
-});
+  else if (pendingVoucherPage.value !== null) changeVoucherPage(pendingVoucherPage.value);
+}
+watch(() => [props.active, props.refreshing], resumeVouchers, { flush: "post" });
 watch(() => props.vouchers.length, () => {
   const target = pendingVoucherPage.value;
   if (target !== null && props.vouchers.length >= Math.min(target * VOUCHER_PAGE_SIZE, props.voucherCount)) {

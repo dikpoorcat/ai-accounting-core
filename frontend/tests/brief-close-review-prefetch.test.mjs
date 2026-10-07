@@ -9,6 +9,7 @@ import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs
 
 const source = readFileSync(new URL("../src/components/CloseReviewPanel.vue", import.meta.url), "utf8");
 const script = parse(source).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "");
+const briefContract = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8")).deferred_brief.response;
 let sequence = 0;
 
 async function panelHarness() {
@@ -136,7 +137,11 @@ async function briefHarness() {
   const brief = scope.run(() => module.instantiate());
   return { ...brief, calls, route, close() { unmount.forEach(callback => callback()); scope.stop(); } };
 }
-const briefResult = (monthState, request = null) => ({ selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request, collections: {} } });
+const briefResult = (monthState, request = null) => ({
+  schema_version: briefContract.schema_version, snapshot_version: briefContract.snapshot_version,
+  read_context: { ...briefContract.read_context, company_id: "a" },
+  selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request, collections: {} },
+});
 
 test("only an open month with a valid review locator shows a confirmation task", async () => {
   const h = await briefHarness();

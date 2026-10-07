@@ -60,7 +60,11 @@ function result(name, marker) {
       investments: {}, bank_statement: {},
     } };
   }
-  return { marker, selected_period: { key: "2026-01" }, data: { workforce_cost: { has_activity: false }, vouchers: [], activity_groups: [], voucher_page: { has_more: false }, collections: {} } };
+  const briefContract = contractSamples.deferred_brief.response;
+  return { marker, ...(name === "Brief" ? {
+    schema_version: briefContract.schema_version, snapshot_version: briefContract.snapshot_version,
+    read_context: { ...briefContract.read_context, company_id: "company-a" },
+  } : {}), selected_period: { key: "2026-01" }, data: { workforce_cost: { has_activity: false }, vouchers: [], activity_groups: [], voucher_page: { has_more: false }, collections: {} } };
 }
 function period(name, month) { return name === "Reports" ? `2026-Q${month}` : `2026-0${month}`; }
 

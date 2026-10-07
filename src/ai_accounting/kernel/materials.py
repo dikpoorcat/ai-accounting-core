@@ -2209,12 +2209,8 @@ def check_completeness_many(
             continue
         loaded.add(source_id)
         if source_id not in by_id:
-            matches = tuple(
-                item
-                for item in reads.current_facts(MaterialSource.kind)
-                if item.subject_id == source_id
-            )
-            if not matches:
+            source = all_sources.get(source_id)
+            if source is None:
                 raw_issues.append(
                     _issue(
                         "material_source_missing",
@@ -2224,7 +2220,7 @@ def check_completeness_many(
                     )
                 )
                 continue
-            by_id[source_id] = matches[0]
+            by_id[source_id] = source
         version = by_id[source_id]
         fact = version.fact
         if frozen is not None and source_id in frozen.source_ids:
@@ -2250,7 +2246,8 @@ def check_completeness_many(
         group_versions.update((item.id, item) for item in source_groups(source_id))
         for item in (*resolutions_by_source.get(source_id, ()), *source_groups(source_id)):
             for link in item.fact.links:
-                for competitor_source_id in sorted(sources_by_business.get(link.subject_id, ())):
+                # The complete set is fixed for this check; expand each business once.
+                for competitor_source_id in sorted(sources_by_business.pop(link.subject_id, ())):
                     enqueue(competitor_source_id)
         row = connection.execute(
             "SELECT content FROM evidence WHERE digest=?", (bytes.fromhex(fact.evidence_digest),)

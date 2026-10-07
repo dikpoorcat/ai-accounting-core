@@ -190,6 +190,61 @@ def test_multiple_formal_objects_have_the_same_complete_names_in_sort_and_rows(b
         assert metadata["identities"] == ("party-a", "party-b")
 
 
+def test_sort_objects_match_typed_individual_batch_and_advanced_debt(bank_book):
+    engine, save, publish, _ = bank_book
+    for party in ("party-a", "party-b", "party-c"):
+        save("expense", "expense-" + party, {
+            "period": "2026-09", "counterparty_id": party, "amount_fen": 1000,
+            "expense_class": "administration", "creditor_kind": "supplier",
+        })
+        profile(engine, "counterparty", party, display_name=party)
+    publish("expense-party-a", "expense-party-b", "expense-party-c")
+    save("payment", "individual", {
+        "period": "2026-09", "actual_date": "2026-09-01", "direction": "outflow",
+        "bank_account_id": "bank-a", "counterparty_id": "party-a", "amount_fen": 100,
+        "allocations": [{"source_kind": "expense", "source_id": "expense-party-a",
+                         "obligation": "primary", "amount_fen": 100}],
+    })
+    publish("individual")
+    save("payment", "batch", {
+        "period": "2026-09", "actual_date": "2026-09-02", "direction": "outflow",
+        "bank_account_id": "bank-a", "counterparty_id": None,
+        "payment_method": "bank_batch", "amount_fen": 100,
+        "allocations": [{"source_kind": "expense", "source_id": "expense-" + party,
+                         "obligation": "primary", "amount_fen": 50, "recipient_id": party}
+                        for party in ("party-a", "party-b")],
+    })
+    publish("batch")
+    save("employee_advance", "advanced", {
+        "period": "2026-09", "payer_id": "owner", "payer_kind": "owner",
+        "payment_on_behalf_confirmed": True, "actual_creditor_payment_date": "2026-09-03",
+        "sources": [{"source_kind": "expense", "source_id": "expense-party-c",
+                     "obligation": "primary", "amount_fen": 50}],
+    })
+    profile(engine, "counterparty", "owner", display_name="owner")
+    publish("advanced")
+    dashboard = Dashboard(engine)
+    activity = dashboard.brief("2026-09")["data"]["collections"]["activity"]["items"]
+    displayed = {row["subject_id"]: row for row in activity}
+    assert displayed["individual"]["party"] == "party-a"
+    assert displayed["batch"]["party"] == "party-a、party-b"
+    assert displayed["advanced"]["party"] == "owner、party-c"
+    with dashboard._snapshot("2026-09") as snapshot:
+        rows = list(snapshot.month_journal.verified_rows() or snapshot.connection.execute(
+            *snapshot.month_journal.sql()
+        ))
+        metadata = business_sort_metadata(snapshot, {row["basis_calculation_id"] for row in rows})
+        for row in rows:
+            selected = snapshot.calculation(row["basis_calculation_id"])
+            assert metadata[selected["id"]]["party"] == displayed[selected["subject_id"]]["party"]
+    movements = dashboard.funds("2026-09")["data"]["collections"]["movements"]["items"]
+    assert [(row["subject_id"], row["date"], row["party"], row["amount_fen"])
+            for row in movements] == [
+        ("individual", "2026-09-01", "party-a", 100),
+        ("batch", "2026-09-02", "party-a、party-b", 100),
+    ]
+
+
 @pytest.mark.parametrize("payload", [[], None, "text", {"key": 1, "scope": "old"}])
 def test_old_or_malformed_cursor_is_structured_rejection(payload):
     snapshot = SimpleNamespace(store=SimpleNamespace(company_id="c", database_id="d"),
