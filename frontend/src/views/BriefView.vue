@@ -281,7 +281,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <section id="overview" class="section-anchor" tabindex="-1" aria-label="经营概览">
         <div class="brief-hero">
         <p class="scope">{{ response?.selected_period?.label }}期末 · 全公司</p>
-        <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
+        <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 <span class="income-amount">{{ formatFen(data.position.month_revenue_fen) }}</span> · 费用 <span class="cost-amount">{{ formatFen(data.position.month_expense_fen) }}</span></p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
         <div class="kpi-grid">
           <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
           <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ openItemDisplay?.summary.receivable_count }} {{ openItemCountUnit }}</small></button>
@@ -342,10 +342,14 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   --brief-line-strong: var(--line-strong);
   --brief-green: var(--accent);
   --brief-green-soft: var(--accent-soft);
+  --brief-cash-in: var(--cash-in);
+  --brief-cash-in-soft: var(--cash-in-soft);
   --brief-blue: var(--info);
   --brief-blue-soft: var(--info-soft);
-  --brief-gold: var(--gold);
-  --brief-gold-soft: var(--gold-soft);
+  --brief-asset: var(--asset);
+  --brief-asset-soft: var(--asset-soft);
+  --brief-cost: var(--cost);
+  --brief-cost-soft: var(--cost-soft);
   --brief-amber: var(--warning);
   --brief-amber-soft: var(--warning-soft);
   --brief-red: var(--danger);
@@ -394,6 +398,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .hero > span { color: var(--brief-muted); font-size: 12px; font-weight: 750; }
 .hero > strong { font-size: clamp(31px, 4vw, 42px); color: var(--brief-green); line-height: 1.15; letter-spacing: -0.04em; overflow-wrap: anywhere; }
 .hero > strong.loss { color: var(--brief-red); }
+.hero .income-amount { color: var(--brief-green); }
+.hero .cost-amount { color: var(--brief-cost); }
 .hero p { margin: 0; color: var(--brief-muted); font-size: 12px; line-height: 1.6; }
 .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px; }
 .kpi {
@@ -417,6 +423,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   transition: background-color 160ms ease, border-color 160ms ease;
 }
 .kpi:first-child { border-left: 0; }
+.kpi.asset { --kpi-accent: var(--brief-asset); --kpi-accent-soft: var(--brief-asset-soft); }
 .kpi.receivable { --kpi-accent: var(--brief-blue); --kpi-accent-soft: var(--brief-blue-soft); }
 .kpi.payable { --kpi-accent: var(--brief-amber); --kpi-accent-soft: var(--brief-amber-soft); }
 .kpi::before { position: absolute; top: 2px; bottom: 2px; left: 0; width: 3px; border-radius: 999px; background: var(--kpi-accent); opacity: 0; transform: scaleY(0.4); transition: opacity 160ms ease, transform 160ms ease; content: ""; }

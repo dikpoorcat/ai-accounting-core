@@ -16,7 +16,7 @@ import DashboardPagination from "../components/DashboardPagination.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { fen, formatFen } from "../utils/money";
+import { cashFlowClass, fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
@@ -318,8 +318,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <p class="dashboard-hero-eyebrow">{{ response.selected_period.label }} · 全公司</p>
           <div class="people-kpi-grid">
             <article><span>本月员工薪酬成本</span><strong>{{ formatFen(employees.ledger_cost_fen) }}</strong></article>
-            <article><span>本月公司实际支付工资</span><strong>{{ formatFen(employees.direct_net_payments_fen) }}</strong></article>
-            <article><span>截至月末未付工资</span><strong>{{ formatFen(employees.outstanding_net_fen) }}</strong></article>
+            <article class="salary-paid"><span>本月公司实际支付工资</span><strong :class="cashFlowClass(employees.direct_net_payments_fen, 'outflow')">{{ formatFen(employees.direct_net_payments_fen) }}</strong></article>
+            <article class="salary-outstanding"><span>截至月末未付工资</span><strong>{{ formatFen(employees.outstanding_net_fen) }}</strong></article>
           </div>
           <p class="muted">本月应付净薪 {{ formatFen(employees.net_salary_fen) }} · 本月代付、抵销等 {{ formatFen(employees.other_net_settlements_fen) }}</p>
           <p class="muted">本月付款可包含以前月份工资；月末未付按各月份款项汇总。</p>
@@ -351,13 +351,13 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                 <summary class="employee-card-summary dashboard-record-card-summary">
                   <div v-if="displayMode === 'list'" class="employee-list-summary">
                     <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ item.period_state_label }}</p></div></div>
-                    <strong v-for="column in employeeListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net' }" :data-label="column.label" :aria-labelledby="`employee-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
+                    <strong v-for="column in employeeListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': ['gross', 'bonus', 'employer-social', 'employer-housing'].includes(column.key) }" :data-label="column.label" :aria-labelledby="`employee-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
                     <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                   </div>
                   <template v-else>
-                    <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><span>{{ item.name }}</span></h3><strong>{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
+                    <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><span>{{ item.name }}</span></h3><strong class="cost-amount">{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
                     <p class="muted">{{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
-                    <div class="amount-grid"><div><span>本月应付净薪</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong>{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong>{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
+                    <div class="amount-grid"><div><span>本月应付净薪</span><strong class="payable-amount">{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong :class="cashFlowClass(item.direct_net_payments_fen, 'outflow')">{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong class="payable-amount">{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
                     <p class="muted">{{ item.has_payroll_activity ? item.payroll_periods.join('、') + ' 工资' : '本月暂无工资记录' }} · 展开查看本月薪酬</p>
                   </template>
                 </summary>
@@ -366,10 +366,10 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                   <p v-if="displayMode === 'list'" class="employee-detail-meta muted"><span v-if="item.employment_start_date">入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date">离职 {{ precisionLabel(item.employment_end_date) }}</span><span>{{ item.has_payroll_activity ? '工资所属月份 ' + item.payroll_periods.join('、') : '本月暂无工资记录' }}</span></p>
                   <dl class="amount-grid">
                     <template v-if="displayMode === 'list'">
-                      <div><dt>本月公司成本</dt><dd>{{ formatFen(item.company_cost_fen) }}</dd></div><div><dt>本月实际支付</dt><dd>{{ formatFen(item.direct_net_payments_fen) }}</dd></div><div><dt>月末未付</dt><dd>{{ formatFen(item.outstanding_net_fen) }}</dd></div>
+                      <div><dt>本月公司成本</dt><dd class="cost-amount">{{ formatFen(item.company_cost_fen) }}</dd></div><div><dt>本月实际支付</dt><dd :class="cashFlowClass(item.direct_net_payments_fen, 'outflow')">{{ formatFen(item.direct_net_payments_fen) }}</dd></div><div><dt>月末未付</dt><dd class="payable-amount">{{ formatFen(item.outstanding_net_fen) }}</dd></div>
                     </template>
                     <template v-else>
-                      <div><dt>应发工资</dt><dd>{{ formatFen(item.gross_salary_fen) }}</dd></div><div v-if="item.annual_bonus_fen === null || fen(item.annual_bonus_fen)"><dt>全年一次性奖金</dt><dd>{{ formatFen(item.annual_bonus_fen) }}</dd></div><div><dt>公司社保公积金</dt><dd>{{ formatFen(companyContribution(item)) }}</dd></div><div><dt>已扣个税</dt><dd>{{ formatFen(item.individual_income_tax_fen) }}</dd></div>
+                      <div><dt>应发工资</dt><dd class="cost-amount">{{ formatFen(item.gross_salary_fen) }}</dd></div><div v-if="item.annual_bonus_fen === null || fen(item.annual_bonus_fen)"><dt>全年一次性奖金</dt><dd class="cost-amount">{{ formatFen(item.annual_bonus_fen) }}</dd></div><div><dt>公司社保公积金</dt><dd class="cost-amount">{{ formatFen(companyContribution(item)) }}</dd></div><div><dt>已扣个税</dt><dd>{{ formatFen(item.individual_income_tax_fen) }}</dd></div>
                     </template>
                     <div><dt>个人社保</dt><dd>{{ formatFen(item.employee_social_insurance_fen) }}</dd></div><div><dt>个人公积金</dt><dd>{{ formatFen(item.employee_housing_fund_fen) }}</dd></div><div><dt>本月代付、抵销等</dt><dd>{{ formatFen(item.other_net_settlements_fen) }}</dd></div>
                   </dl>
@@ -393,18 +393,18 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="displayMode === 'list'" class="employee-list-summary">
                   <div class="employee-list-identity"><span class="employee-status labor" role="img" aria-label="个人劳务" title="个人劳务"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p></div></div>
-                  <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(labor)) }}</strong>
+                  <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': column.key === 'gross' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(labor)) }}</strong>
                   <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                 </div>
                 <template v-else>
-                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" aria-label="个人劳务" title="个人劳务"></span><span>{{ labor.name }}</span></h3><strong>{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong>{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
+                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" aria-label="个人劳务" title="个人劳务"></span><span>{{ labor.name }}</span></h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
                 </template>
               </summary>
               <div class="employee-detail" :class="{ 'dashboard-business-expansion': displayMode === 'list' }">
                 <p v-if="labor.checking" class="muted">AI 会计核对中</p>
                 <section v-for="obligation in labor.obligations" :key="obligation.key" class="labor-payment-detail">
                   <h3>{{ obligationLabel(obligation.name) }}<span v-if="!laborAmountAlreadyShown(labor, obligation)"> · {{ formatFen(obligation.amount_fen) }}</span></h3>
-                  <dl class="amount-grid"><div><dt>公司已付</dt><dd>{{ formatFen(obligation.paid_fen) }}</dd></div><div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div><div><dt>月末未付</dt><dd>{{ formatFen(obligation.remaining_fen) }}</dd></div></dl>
+                  <dl class="amount-grid"><div><dt>公司已付</dt><dd :class="cashFlowClass(obligation.paid_fen, 'outflow')">{{ formatFen(obligation.paid_fen) }}</dd></div><div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div><div><dt>月末未付</dt><dd class="payable-amount">{{ formatFen(obligation.remaining_fen) }}</dd></div></dl>
                 </section>
                 <BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" presentation="labor" :labor-context="labor" summary-label="查看收付款事项" @changed="refreshChanged" />
               </div>
@@ -429,8 +429,18 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .people-kpi-grid { gap: 20px 28px; margin-top: 8px; align-items: start; }
 .people-kpi-grid article, .amount-grid > div { display: grid; min-width: 0; gap: 6px; }
 .people-kpi-grid span { color: var(--muted); font-size: 12px; font-weight: 750; }
-.people-kpi-grid strong { margin: 4px 0; font-size: clamp(20px,2vw,26px); line-height: 1.15; letter-spacing: -.025em; color: var(--text); }
-.people-kpi-grid article:first-child strong { color: var(--accent); font-size: clamp(28px,3.2vw,42px); }
+.people-headline-grid #employees-cost-value { color: var(--cost); }
+.people-kpi-grid article { --kpi-accent: var(--cost); }
+.people-kpi-grid .salary-paid { --kpi-accent: var(--danger); }
+.people-kpi-grid .salary-paid .cash-inflow { color: var(--cash-in); }
+.people-kpi-grid .salary-outstanding { --kpi-accent: var(--warning); }
+.people-kpi-grid strong { margin: 4px 0; font-size: clamp(20px,2vw,26px); line-height: 1.15; letter-spacing: -.025em; color: var(--kpi-accent); overflow-wrap: anywhere; }
+.people-kpi-grid article:first-child strong { color: var(--cost); font-size: clamp(28px,3.2vw,42px); }
+
+.employees-page .cost-amount { color: var(--cost); }
+.employees-page .payable-amount { color: var(--warning); }
+.employees-page .cash-inflow { color: var(--cash-in); }
+.employees-page .cash-outflow { color: var(--danger); }
 .muted, .amount-grid span, dt, small { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .panel { min-width: 0; margin-top: 40px; }
 .panel > h2, .section-heading h2 { font-size: 20px; }

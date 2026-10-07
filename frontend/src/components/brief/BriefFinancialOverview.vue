@@ -118,7 +118,7 @@ function remainingOtherAssets() {
               <h3>本月公司收付款</h3>
             </div>
             <div class="cash-actions">
-              <span class="state-chip">
+              <span :class="['state-chip', { decrease: fen(funds.net_change_fen) < 0n }]">
                 {{ funds.net_change_fen === null ? "资金变动尚不能确认" : fen(funds.net_change_fen) > 0n ? "资金增加" : fen(funds.net_change_fen) < 0n ? "资金减少" : "资金无净变动" }}
               </span>
               <RouterLink class="bank-details-link" :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看流水明细</RouterLink>
@@ -182,12 +182,12 @@ function remainingOtherAssets() {
                       <strong>{{ formatFen(equityTotal) }}</strong>
                     </span>
                     <span class="equation-operator">=</span>
-                    <span class="equation-term">
+                    <span class="equation-term equity-term">
                       <span>资本及公积</span>
                       <strong>{{ formatFen(position.capital_fen) }}</strong>
                     </span>
                     <span class="equation-operator">{{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }}</span>
-                    <span :class="['equation-term', fen(position.cumulative_result_fen) < 0n ? 'liability-term' : 'asset-term']">
+                    <span :class="['equation-term', position.cumulative_result_fen === null ? '' : fen(position.cumulative_result_fen) < 0n ? 'loss-term' : 'profit-term']">
                       <span>{{ position.cumulative_result_fen === null ? "累计盈亏" : fen(position.cumulative_result_fen) < 0n ? "未弥补亏损" : "未分配利润" }}</span>
                       <strong>{{ formatPositiveFen(position.cumulative_result_fen) }}</strong>
                     </span>
@@ -208,7 +208,7 @@ function remainingOtherAssets() {
             <div
               v-for="([label, key], index) in components"
               :key="key"
-              :class="['component-row', { subdued: position[key] !== null && !fen(position[key]) }]"
+              :class="['component-row', { 'fund-component': key === 'bank_fen', subdued: position[key] !== null && !fen(position[key]) }]"
             >
               <span>{{ label }}</span>
               <div v-if="positionBarWidth(position[key]) !== null" class="track">
@@ -256,7 +256,7 @@ function remainingOtherAssets() {
                 >
                   <strong class="balance-tooltip-title">银行存款</strong>
                   <span v-if="hasBankCalculation()" class="component-calculation">
-                    <span class="equation-term">
+                    <span class="equation-term fund-term">
                       <span>期初余额</span>
                       <strong>{{ formatFen(position.bank_calculation?.opening_fen) }}</strong>
                     </span>
@@ -272,7 +272,7 @@ function remainingOtherAssets() {
                     </span>
                     <span class="calculation-total">
                       <span class="equation-operator">=</span>
-                      <span class="equation-term asset-term">
+                      <span class="equation-term fund-term">
                         <span>期末余额</span>
                         <strong>{{ formatFen(position.bank_fen) }}</strong>
                       </span>
@@ -280,7 +280,7 @@ function remainingOtherAssets() {
                   </span>
                   <span v-else class="equation-unavailable">
                     期初及本月收支构成暂不能完整建立，当前期末余额为
-                    <strong>{{ formatFen(position.bank_fen) }}</strong>。
+                    <strong class="fund-amount">{{ formatFen(position.bank_fen) }}</strong>。
                   </span>
                 </span>
                 <span
@@ -291,12 +291,12 @@ function remainingOtherAssets() {
                 >
                   <strong class="balance-tooltip-title">固定资产净值</strong>
                   <span v-if="hasAssetBreakdown(position.fixed_asset_cost_fen, position.accumulated_depreciation_fen, position.fixed_asset_net_fen)" class="component-calculation">
-                    <span class="equation-term">
+                    <span class="equation-term cost-term">
                       <span>原值</span>
                       <strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong>
                     </span>
                     <span class="equation-operator">−</span>
-                    <span class="equation-term liability-term">
+                    <span class="equation-term charge-term">
                       <span>累计折旧</span>
                       <strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong>
                     </span>
@@ -318,12 +318,12 @@ function remainingOtherAssets() {
                 >
                   <strong class="balance-tooltip-title">无形资产净值</strong>
                   <span v-if="hasAssetBreakdown(position.intangible_asset_cost_fen, position.accumulated_amortization_fen, position.intangible_asset_net_fen)" class="component-calculation">
-                    <span class="equation-term">
+                    <span class="equation-term cost-term">
                       <span>原值</span>
                       <strong>{{ formatFen(position.intangible_asset_cost_fen) }}</strong>
                     </span>
                     <span class="equation-operator">−</span>
-                    <span class="equation-term liability-term">
+                    <span class="equation-term charge-term">
                       <span>累计摊销</span>
                       <strong>{{ formatFen(position.accumulated_amortization_fen) }}</strong>
                     </span>
@@ -345,12 +345,12 @@ function remainingOtherAssets() {
                 >
                   <strong class="balance-tooltip-title">其他资产</strong>
                   <span v-if="hasOtherAssetsCalculation()" class="component-calculation">
-                    <span class="equation-term asset-term">
+                    <span class="equation-term fund-term">
                       <span>库存现金</span>
                       <strong>{{ formatFen(funds.cash_fen) }}</strong>
                     </span>
                     <span class="equation-operator">+</span>
-                    <span class="equation-term asset-term">
+                    <span class="equation-term fund-term">
                       <span>支付平台</span>
                       <strong>{{ formatFen(funds.payment_platform_fen) }}</strong>
                     </span>
@@ -417,8 +417,8 @@ function remainingOtherAssets() {
   padding: 0;
 }
 
-.financial-section .cash-inflow { color: var(--brief-green); }
-.financial-section .cash-outflow { color: var(--brief-amber); }
+.financial-section .cash-inflow { color: var(--brief-cash-in); }
+.financial-section .cash-outflow { color: var(--brief-red); }
 
 .section-heading,
 .overview-card header {
@@ -471,6 +471,16 @@ h3 {
 }
 
 .equation-status.error {
+  background: var(--brief-red-soft);
+  color: var(--brief-red);
+}
+
+.state-chip {
+  background: var(--brief-cash-in-soft);
+  color: var(--brief-cash-in);
+}
+
+.state-chip.decrease {
   background: var(--brief-red-soft);
   color: var(--brief-red);
 }
@@ -587,6 +597,7 @@ h3 {
 
 .summary-rows dd {
   margin: 0;
+  color: var(--brief-green);
   font-size: 13px;
   font-weight: 800;
 }
@@ -645,42 +656,34 @@ h3 {
   left: var(--position-axis);
   min-width: 1px;
   border-radius: 0 999px 999px 0;
+  background: var(--brief-asset);
+}
+
+.track > span[data-index="0"] {
   background: var(--brief-green);
-}
-
-.track > span[data-index="1"] {
-  background: var(--brief-gold);
-}
-
-.track > span[data-index="2"] {
-  background: var(--brief-blue);
-}
-
-.track > span[data-index="3"] {
-  background: var(--brief-muted);
 }
 
 .liability-track > span {
   right: calc(100% - var(--position-axis));
   left: auto;
   border-radius: 999px 0 0 999px;
-  background: var(--brief-red);
+  background: var(--brief-amber);
 }
 
 .liability-row > span,
 .liability-row > strong {
-  color: var(--brief-red);
+  color: var(--brief-amber);
 }
 
 .liability-value .component-value-trigger,
 .liability-value > strong {
-  color: var(--brief-red);
+  color: var(--brief-amber);
 }
 
 .liability-value .component-value-trigger:hover,
 .liability-value .component-value-trigger:focus-visible {
-  background: color-mix(in srgb, var(--brief-red) 8%, transparent);
-  color: var(--brief-red);
+  background: color-mix(in srgb, var(--brief-amber) 8%, transparent);
+  color: var(--brief-amber);
 }
 
 .balance-insight {
@@ -695,7 +698,7 @@ h3 {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--brief-text);
+  color: var(--brief-asset);
   font: inherit;
   font-size: 14px;
   font-weight: 800;
@@ -705,8 +708,8 @@ h3 {
 
 .balance-trigger:hover,
 .balance-trigger:focus-visible {
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
+  background: var(--brief-asset-soft);
+  color: var(--brief-asset);
   outline: none;
 }
 
@@ -762,7 +765,7 @@ h3 {
 
 .component-value > strong,
 .component-value-trigger {
-  color: var(--brief-text);
+  color: var(--brief-asset);
   font: inherit;
   font-weight: 700;
   white-space: nowrap;
@@ -779,9 +782,20 @@ h3 {
 
 .component-value-trigger:hover,
 .component-value-trigger:focus-visible {
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
+  background: var(--brief-asset-soft);
+  color: var(--brief-asset);
   outline: none;
+}
+
+.fund-component .component-value > strong,
+.fund-component .component-value-trigger,
+.fund-amount {
+  color: var(--brief-green);
+}
+
+.fund-component .component-value-trigger:hover,
+.fund-component .component-value-trigger:focus-visible {
+  background: var(--brief-green-soft);
 }
 
 .component-tooltip {
@@ -894,11 +908,28 @@ h3 {
 }
 
 .asset-term {
+  background: color-mix(in srgb, var(--brief-asset-soft) 65%, var(--brief-surface));
+  color: var(--brief-asset);
+}
+
+.liability-term {
+  background: color-mix(in srgb, var(--brief-amber-soft) 65%, var(--brief-surface));
+  color: var(--brief-amber);
+}
+
+.fund-term,
+.profit-term {
   background: color-mix(in srgb, var(--brief-green-soft) 65%, var(--brief-surface));
   color: var(--brief-green);
 }
 
-.liability-term {
+.cost-term {
+  background: color-mix(in srgb, var(--brief-cost-soft) 65%, var(--brief-surface));
+  color: var(--brief-cost);
+}
+
+.loss-term,
+.charge-term {
   background: color-mix(in srgb, var(--brief-red-soft) 65%, var(--brief-surface));
   color: var(--brief-red);
 }

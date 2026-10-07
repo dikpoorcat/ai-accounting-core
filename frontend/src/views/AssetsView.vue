@@ -16,7 +16,7 @@ import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { fen, formatFen } from "../utils/money";
+import { cashFlowClass, fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
 const filters = [
@@ -556,14 +556,14 @@ onBeforeUnmount(() => {
             </p>
           </div>
         <section class="kpi-grid" aria-label="资产核心指标">
-          <article class="kpi">
+          <article class="kpi cost">
             <span>资产及项目账面成本</span>
             <strong>{{ formatFen(data.ledger_cost_fen) }}</strong>
             <small>
               扣除累计折旧摊销前的金额
             </small>
           </article>
-          <article class="kpi">
+          <article class="kpi accumulated">
             <span>累计折旧与摊销</span>
             <strong>{{ formatFen(data.ledger_accumulated_fen) }}</strong>
             <small>
@@ -571,7 +571,7 @@ onBeforeUnmount(() => {
               {{ formatFen(data.accumulated_amortization_fen) }}
             </small>
           </article>
-          <article class="kpi">
+          <article class="kpi charge">
             <span>本月折旧与摊销</span>
             <strong>{{ formatFen(data.month_charge_fen) }}</strong>
             <small>
@@ -716,12 +716,12 @@ onBeforeUnmount(() => {
                 <div class="owner-value-grid">
                   <div>
                     <span>取得成本</span>
-                    <strong>{{ formatFen(item.cost_fen) }}</strong>
+                    <strong class="cost-amount">{{ formatFen(item.cost_fen) }}</strong>
                   </div>
                   <div>
                     <span>{{ chargeLabel(item) }}</span>
-                    <strong>{{ formatFen(item.accumulated_charge_fen) }}</strong>
-                    <small>本月{{ chargeVerb(item) }} {{ formatFen(item.month_charge_fen) }}</small>
+                    <strong class="charge-amount">{{ formatFen(item.accumulated_charge_fen) }}</strong>
+                    <small>本月{{ chargeVerb(item) }} <span class="charge-amount">{{ formatFen(item.month_charge_fen) }}</span></small>
                   </div>
                   <div class="payment-state" :class="assetPaymentSummary(item).tone">
                     <span>{{ assetPaymentSummary(item).label }}</span>
@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
                 <summary class="asset-list-summary">
                   <div class="asset-list-identity"><span class="asset-list-status" :class="item.status" role="img" :aria-label="item.status_label" :title="item.status_label"></span><div class="asset-list-name"><h3 :class="{ 'needs-attention': assetNameNeedsAttention(item) }">{{ assetDisplayName(item) }}</h3><p>{{ assetTypeLabel(item) }}<template v-if="assetCategoryLabel(item)"> · {{ assetCategoryLabel(item) }}</template> · {{ item.code }}</p></div></div>
                   <div class="asset-list-state" data-label="状态"><span>{{ item.status_label }}</span><small v-if="monthEventLabel(item)">{{ monthEventLabel(item) }}</small></div>
-                  <strong v-for="column in assetListColumns" :key="column.key" :class="{ 'asset-list-book': column.key === 'book' }" :data-label="assetListColumnLabel(item, column.key)" :aria-labelledby="`asset-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
+                  <strong v-for="column in assetListColumns" :key="column.key" :class="{ 'asset-list-book': column.key === 'book', 'cost-amount': column.key === 'cost', 'charge-amount': column.key === 'accumulated' || column.key === 'month' }" :data-label="assetListColumnLabel(item, column.key)" :aria-labelledby="`asset-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
                   <div class="asset-list-payment" :class="assetPaymentSummary(item).tone" data-label="相关付款"><small>{{ assetPaymentSummary(item).label }}</small><span>{{ assetPaymentSummary(item).value }}</span><small v-if="item.payment_summary.checking && assetPaymentSummary(item).value !== 'AI 会计核对中'">AI 会计核对中</small></div>
                   <svg class="asset-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                 </summary>
@@ -751,10 +751,10 @@ onBeforeUnmount(() => {
                     <p v-if="item.settlement_scope === '本验收批次结算'" class="note">以下为整批款项金额，未分摊为本资产付款。</p>
                     <p v-else-if="item.settlement_scope === '成本来源结算（不分摊为本资产付款）'" class="note">以下为项目来源款项金额，未分摊为本资产付款。</p>
                     <dl class="asset-detail-grid">
-                      <div><dt>相关应付</dt><dd>{{ formatFen(item.payment_summary.amount_fen) }}</dd></div>
-                      <div><dt>公司已付</dt><dd>{{ formatFen(item.payment_summary.paid_fen) }}</dd></div>
+                      <div><dt>相关应付</dt><dd class="payable-amount">{{ formatFen(item.payment_summary.amount_fen) }}</dd></div>
+                      <div><dt>公司已付</dt><dd :class="cashFlowClass(item.payment_summary.paid_fen, 'outflow')">{{ formatFen(item.payment_summary.paid_fen) }}</dd></div>
                       <div><dt>抵销等</dt><dd>{{ formatFen(item.payment_summary.other_settled_fen) }}</dd></div>
-                      <div v-if="!assetRemainingAlreadyShown(item)"><dt>月末待付</dt><dd>{{ formatFen(item.payment_summary.remaining_fen) }}</dd></div>
+                      <div v-if="!assetRemainingAlreadyShown(item)"><dt>月末待付</dt><dd class="payable-amount">{{ formatFen(item.payment_summary.remaining_fen) }}</dd></div>
                     </dl>
                   </section>
                   <section v-if="isFixedAsset(item) && item.disposal" class="asset-exit-detail">
@@ -762,15 +762,15 @@ onBeforeUnmount(() => {
                     <dl class="asset-detail-grid">
                       <div><dt>处置日期</dt><dd>{{ dateLabel(item.disposal.date) }}</dd></div>
                       <div v-if="item.disposal.party"><dt>交易对象</dt><dd>{{ item.disposal.party }}</dd></div>
-                      <div><dt>处置时账面价值</dt><dd>{{ formatFen(item.disposal.book_value_fen) }}</dd></div>
-                      <div><dt>收款金额</dt><dd>{{ formatFen(item.disposal.gross_proceeds_fen) }}</dd></div>
-                      <div><dt>处置收益</dt><dd>{{ formatFen(item.disposal.gain_fen) }}</dd></div>
-                      <div><dt>处置损失</dt><dd>{{ formatFen(item.disposal.loss_fen) }}</dd></div>
+                      <div><dt>处置时账面价值</dt><dd class="asset-amount">{{ formatFen(item.disposal.book_value_fen) }}</dd></div>
+                      <div><dt>收款金额</dt><dd :class="cashFlowClass(item.disposal.gross_proceeds_fen, 'inflow')">{{ formatFen(item.disposal.gross_proceeds_fen) }}</dd></div>
+                      <div><dt>处置收益</dt><dd class="gain-amount">{{ formatFen(item.disposal.gain_fen) }}</dd></div>
+                      <div><dt>处置损失</dt><dd class="loss-amount">{{ formatFen(item.disposal.loss_fen) }}</dd></div>
                     </dl>
                   </section>
                   <section v-else-if="!isFixedAsset(item) && item.retirement" class="asset-exit-detail">
                     <h3>退役补充</h3>
-                    <dl class="asset-detail-grid"><div><dt>退出日期</dt><dd>{{ dateLabel(item.retirement.date) }}</dd></div><div><dt>退出时账面价值</dt><dd>{{ formatFen(item.retirement.book_value_fen) }}</dd></div></dl>
+                    <dl class="asset-detail-grid"><div><dt>退出日期</dt><dd>{{ dateLabel(item.retirement.date) }}</dd></div><div><dt>退出时账面价值</dt><dd class="asset-amount">{{ formatFen(item.retirement.book_value_fen) }}</dd></div></dl>
                   </section>
                 </div>
               </details>
@@ -784,12 +784,12 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="panel">
-          <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
+          <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong class="cost-amount">{{ formatFen(data.project_cost_fen) }}</strong></div>
           <p v-if="pageLoading.projects && !collectionMatchesSelection('projects')" class="note" role="status">正在读取所选项目…</p>
           <p v-else-if="collectionMatchesSelection('projects') && !projects.length && !pageErrors.projects" class="note">本月没有可展示的项目投入。</p>
           <article v-for="project in collectionMatchesSelection('projects') ? projects : []" :key="project.source_id" :id="focusedProjectId === project.project_id ? 'project-card-target' : undefined" tabindex="-1" class="asset-card dashboard-record-card project-card" data-section-focus>
             <div class="project-summary">
-              <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>已投入成本 {{ formatFen(project.cost_fen) }}</small></span>
+              <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>已投入成本 <span class="cost-amount">{{ formatFen(project.cost_fen) }}</span></small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
             </div>
           </article>
@@ -811,7 +811,7 @@ onBeforeUnmount(() => {
 .project-copy > span, .project-value > span { color: var(--muted); font-size: 12px; }
 .project-copy > small { color: var(--muted); font-size: 11px; }
 .project-value { justify-items: end; font-variant-numeric: tabular-nums; }
-.project-value strong { color: var(--gold); font-size: 18px; }
+.project-value strong { color: var(--cost); font-size: 18px; }
 .source-issue { color: var(--warning); }
 .assets-total, .kpi strong, .book-value strong, .owner-value-grid strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .assets-page { min-height: 100%; }
@@ -824,7 +824,7 @@ onBeforeUnmount(() => {
 .assets-hero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; min-height: 198px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
 .assets-hero > div > span { color: var(--muted); font-size: 12px; font-weight: 750; }
 .assets-hero > div { grid-column: 1 / -1; min-width: 0; }
-.assets-total { color: var(--gold); }
+.assets-total { color: var(--asset); }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px;
   overflow: visible;
 
@@ -836,7 +836,8 @@ onBeforeUnmount(() => {
 
   grid-column: 1 / -1;
 }
-.kpi { position: relative; display: grid; min-width: 0; min-height: 0; align-content: start; gap: 6px; overflow: hidden; padding: 0; border: 0; border-radius: 0; background: transparent;
+.kpi {
+  --kpi-accent: var(--asset); position: relative; display: grid; min-width: 0; min-height: 0; align-content: start; gap: 6px; overflow: hidden; padding: 0; border: 0; border-radius: 0; background: transparent;
   border-left: 0;
 
   grid-template-rows: auto auto 1fr;
@@ -844,7 +845,9 @@ onBeforeUnmount(() => {
 .kpi span, .kpi small, .movement-grid span, .movement-grid small { color: var(--muted); }
 .kpi span, .movement-grid span { display: block; font-size: 12px; font-weight: 750; }
 .kpi small, .movement-grid small { font-size: 11px; }
-.kpi strong { display: block; margin: 4px 0; color: var(--text); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -.025em;
+.kpi.cost { --kpi-accent: var(--cost); }
+.kpi.accumulated, .kpi.charge { --kpi-accent: var(--danger); }
+.kpi strong { display: block; margin: 4px 0; color: var(--kpi-accent); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -.025em;
   font-variant-numeric: tabular-nums;
 
   overflow-wrap: anywhere;
@@ -897,7 +900,7 @@ summary.asset-list-summary { cursor: pointer; }
 summary.asset-list-summary:hover, summary.asset-list-summary:focus-visible { background: var(--surface-soft); }
 summary.asset-list-summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .asset-list-summary > strong { min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.5; text-align: right; font-variant-numeric: tabular-nums; }
-.asset-list-summary > .asset-list-book { font-size: 14px; font-weight: 700; }
+.asset-list-summary > .asset-list-book { color: var(--asset); font-size: 14px; font-weight: 700; }
 .asset-list-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .asset-list-status { display: inline-flex; flex: 0 0 auto; }
 .asset-list-status::before { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); content: ""; }
@@ -913,7 +916,7 @@ summary.asset-list-summary:focus-visible { outline: 2px solid var(--focus); outl
 .asset-list-payment { text-align: right; }
 .asset-list-payment.settled > span { color: var(--accent); }
 .asset-list-payment.attention > span { color: var(--warning); }
-.asset-list-unestablished > strong { color: var(--muted); }
+.asset-list-unestablished.asset-list-summary > strong { color: var(--muted); }
 .asset-list-chevron { width: 12px; height: 16px; justify-self: end; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
 .asset-list-details[open] > summary .asset-list-chevron { transform: rotate(90deg); }
 .asset-list-detail { margin-inline: 4px; margin-bottom: 16px; }
@@ -957,11 +960,11 @@ summary.asset-list-summary:focus-visible { outline: 2px solid var(--focus); outl
 .asset-status.pending_activation { background: var(--info-soft); color: var(--info); }
 .asset-status.disposed, .asset-status.retired { background: var(--surface-soft); color: var(--muted); }
 .asset-status.needs-attention { background: var(--warning-soft); color: var(--warning); }
-.asset-event { background: color-mix(in srgb, var(--gold) 12%, var(--surface)); color: var(--gold); }
+.asset-event { background: color-mix(in srgb, var(--asset) 12%, var(--surface)); color: var(--asset); }
 .asset-timeline { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .book-value { display: grid; min-width: 140px; justify-items: end; gap: 2px; text-align: right; white-space: nowrap; }
 .book-value span, .book-value small { color: var(--muted); font-size: 11px; }
-.book-value strong { color: var(--text); font-size: 22px; line-height: 1.2; }
+.book-value strong { color: var(--asset); font-size: 22px; line-height: 1.2; }
 .book-value small { color: var(--accent); font-weight: 720; }
 .book-value.unknown strong { color: var(--warning); font-size: 17px; }
 .owner-value-grid { display: grid; grid-template-columns: .85fr .9fr 1.35fr; margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 11px; background: var(--surface-soft); }
@@ -969,6 +972,12 @@ summary.asset-list-summary:focus-visible { outline: 2px solid var(--focus); outl
 .owner-value-grid > div + div { border-left: 1px solid var(--line); }
 .owner-value-grid span, .owner-value-grid small { color: var(--muted); font-size: 10.5px; line-height: 1.35; }
 .owner-value-grid strong { color: var(--text); font-size: 14px; line-height: 1.35; }
+.assets-page .cost-amount { color: var(--cost); }
+.assets-page .asset-amount { color: var(--asset); }
+.assets-page .payable-amount { color: var(--warning); }
+.assets-page .cash-inflow { color: var(--cash-in); }
+.assets-page .gain-amount { color: var(--accent); }
+.assets-page .cash-outflow, .assets-page .loss-amount, .assets-page .charge-amount { color: var(--danger); }
 .owner-value-grid .payment-state.settled strong { color: var(--accent); }
 .owner-value-grid .payment-state.attention strong { color: var(--warning); }
 .asset-unestablished { border-color: color-mix(in srgb, var(--warning) 46%, var(--line)); }

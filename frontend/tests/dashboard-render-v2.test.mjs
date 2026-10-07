@@ -124,7 +124,7 @@ test("nonempty asset and project cards show asset values without business drilld
   for (const name of ["空调", "已出售设备", "已退役软件", "新办公室装修"]) assert(html.includes(name));
   assert.match(html, /取得成本|累计折旧/);
   assert.match(html, /月末待付 ¥1,518\.00/);
-  assert.match(html, /已投入成本 ¥3,000\.00/);
+  assert.match(html.replace(/<[^>]*>/g, ""), /已投入成本 ¥3,000\.00/);
   assert.match(html, /¥2,500\.00/);
   assert.doesNotMatch(html, /查看整批付款情况|查看收付款事项|展开查看项目付款|查看处置事项|查看终止使用事项/);
 }));

@@ -968,7 +968,7 @@ onBeforeUnmount(() => {
           <dl class="flow-summary">
             <div><dt>本月实际收款</dt><dd :class="cashFlowClass(funds.inflow_fen, 'inflow')">{{ formatFen(funds.inflow_fen) }}</dd></div>
             <div><dt>本月实际付款</dt><dd :class="cashFlowClass(funds.outflow_fen, 'outflow')">{{ formatFen(funds.outflow_fen) }}</dd></div>
-            <div><dt>月初账面资金</dt><dd>{{ formatFen(funds.opening_fen) }}</dd></div>
+            <div class="opening-funds"><dt>月初账面资金</dt><dd>{{ formatFen(funds.opening_fen) }}</dd></div>
             <div><dt>本月资金增减</dt><dd :class="{ gain: fen(funds.net_change_fen) > 0n, loss: fen(funds.net_change_fen) < 0n }">{{ formatSigned(funds.net_change_fen) }}</dd></div>
           </dl>
           <p class="flow-note">实际收付款不含公司账户间互转</p>
@@ -1444,8 +1444,8 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-.gain, .funds-page .cash-inflow { color: var(--accent); }
-.funds-page .cash-outflow { color: var(--warning); }
+.gain, .funds-page .cash-inflow { color: var(--cash-in); }
+.funds-page .cash-outflow { color: var(--danger); }
 
 .investment-details {
   margin-top: 14px;
@@ -1788,11 +1788,11 @@ summary {
 .direction.correction { color: var(--muted); background: var(--surface-soft); }
 
 .book-movement-amount.inflow {
-  color: var(--accent);
+  color: var(--cash-in);
 }
 
 .book-movement-amount.outflow {
-  color: var(--warning);
+  color: var(--danger);
 }
 
 
@@ -2086,19 +2086,19 @@ summary {
 .bank-batch-preview-footer button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .bank-activity-amount.inflow .bank-amount-direction {
-  color: color-mix(in srgb, var(--accent) 78%, var(--muted));
+  color: color-mix(in srgb, var(--cash-in) 78%, var(--muted));
 }
 
 .bank-activity-amount.outflow .bank-amount-direction {
-  color: color-mix(in srgb, var(--warning) 82%, var(--muted));
+  color: color-mix(in srgb, var(--danger) 82%, var(--muted));
 }
 
 .bank-activity-amount.inflow strong {
-  color: var(--accent);
+  color: var(--cash-in);
 }
 
 .bank-activity-amount.outflow strong {
-  color: var(--warning);
+  color: var(--danger);
 }
 
 .control {
@@ -2160,8 +2160,8 @@ table {
   white-space: nowrap;
 }
 
-.direction.inflow { color: var(--accent); background: var(--accent-soft); }
-.direction.outflow { color: var(--warning); background: var(--warning-soft); }
+.direction.inflow { color: var(--cash-in); background: var(--cash-in-soft); }
+.direction.outflow { color: var(--danger); background: var(--danger-soft); }
 
 th,
 td {
@@ -2267,6 +2267,7 @@ tbody tr:last-child td {
 .flow-summary div { display: grid; min-width: 0; align-content: start; gap: 6px; }
 .flow-summary dt { color: var(--muted); font-size: 12px; font-weight: 750; }
 .flow-summary dd { margin: 4px 0; font-size: clamp(20px, 2vw, 26px); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; overflow-wrap: anywhere; }
+.flow-summary .opening-funds dd { color: var(--accent); }
 .flow-note { margin: 12px 0 0; font-size: 11px; color: var(--muted); }
 .account-grid { align-items: start; gap: 14px; }
 .account-card { overflow: hidden; padding: 0; border-radius: var(--radius-panel); background: var(--surface); }
@@ -2284,9 +2285,10 @@ tbody tr:last-child td {
 .account-owner-state.neutral { background: var(--surface-soft); color: var(--muted); }
 .account-balance { display: grid; min-width: 160px; justify-items: end; gap: 2px; text-align: right; white-space: nowrap; }
 .account-balance span, .account-balance small { color: var(--muted); font-size: 11px; }
-.account-balance strong { display: block; margin: 0; font-size: 22px; line-height: 1.2; }
+.account-balance strong { display: block; margin: 0; color: var(--accent); font-size: 22px; line-height: 1.2; }
+.account-balance strong.loss { color: var(--danger); }
 .account-balance small { color: var(--muted); font-weight: 720; }
-.account-balance small.gain { color: var(--accent); }
+.account-balance small.gain { color: var(--cash-in); }
 .account-balance small.loss { color: var(--danger); }
 .account-balance.unknown strong { color: var(--warning); font-size: 17px; }
 .account-owner-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 11px; background: var(--surface-soft); }

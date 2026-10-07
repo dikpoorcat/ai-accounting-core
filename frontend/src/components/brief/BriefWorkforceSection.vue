@@ -130,7 +130,7 @@ function laborCostNote() {
         </p>
       </article>
     </div>
-    <p v-if="workforce.capitalized_labor_fen === null || fen(workforce.capitalized_labor_fen)" class="payment-note">本月另有资本化劳务 {{ formatFen(workforce.capitalized_labor_fen) }}，计入项目或资产成本，不计入上述用工费用；可在员工与资产页面查看成本和付款情况。</p>
+    <p v-if="workforce.capitalized_labor_fen === null || fen(workforce.capitalized_labor_fen)" class="payment-note">本月另有资本化劳务 <span class="cost-amount">{{ formatFen(workforce.capitalized_labor_fen) }}</span>，计入项目或资产成本，不计入上述用工费用；可在员工与资产页面查看成本和付款情况。</p>
   </section>
 </template>
 
@@ -202,7 +202,7 @@ h3 {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--brief-text);
+  color: var(--brief-cost);
   font: inherit;
   font-size: 23px;
   font-weight: 700;
@@ -246,6 +246,7 @@ h3 {
 }
 
 .subtotal strong {
+  color: var(--brief-cost);
   font-size: 18px;
 }
 
@@ -289,6 +290,7 @@ h3 {
 }
 
 .cost strong {
+  color: var(--brief-cost);
   font-size: 19px;
   font-variant-numeric: tabular-nums;
 }
@@ -317,6 +319,7 @@ h3 {
 
 .reconciliation dd {
   margin: 0;
+  color: var(--brief-cost);
   font-size: 13px;
   font-weight: 800;
 }
@@ -331,6 +334,10 @@ h3 {
   color: var(--brief-muted);
   font-size: 12px;
   line-height: 1.65;
+}
+
+.cost-amount {
+  color: var(--brief-cost);
 }
 
 .note {

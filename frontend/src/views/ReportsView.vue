@@ -17,13 +17,14 @@ import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
-import { formatFen } from "../utils/money";
+import { cashFlowClass, fen, formatFen } from "../utils/money";
 
 interface SummaryCard {
   source: string;
   label: string;
   value: string;
   note: string;
+  tone: string;
 }
 
 interface StatementTemplateMeta {
@@ -145,18 +146,21 @@ const summaryCards = computed<SummaryCard[]>(() => {
       source: "资产负债表",
       label: "资产合计",
       value: formatFen(summary.assets_total_fen),
+      tone: summary.assets_total_fen === null ? "" : "asset",
       note: `负债合计 ${formatFen(summary.liabilities_total_fen)}`,
     },
     {
       source: "利润表",
       label: "本季度净利润",
       value: formatFen(summary.current_net_profit_fen),
+      tone: summary.current_net_profit_fen === null ? "" : fen(summary.current_net_profit_fen) < 0n ? "loss" : "gain",
       note: `本年累计 ${formatFen(summary.year_to_date_net_profit_fen)}`,
     },
     {
       source: "现金流量表",
       label: "本季度现金净增加额",
       value: formatFen(summary.current_cash_change_fen),
+      tone: cashFlowClass(summary.current_cash_change_fen, "inflow"),
       note: `期末现金 ${formatFen(summary.ending_cash_fen)}`,
     },
   ];
@@ -639,7 +643,7 @@ onBeforeUnmount(() => {
         <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
           <article v-for="item in summaryCards" :key="item.source">
             <span>{{ item.source }} · {{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
+            <strong :class="item.tone">{{ item.value }}</strong>
             <small>{{ item.note }}</small>
           </article>
         </section>
@@ -930,6 +934,11 @@ onBeforeUnmount(() => {
 
   overflow-wrap: anywhere;
 }
+.summary-grid .asset { color: var(--asset); }
+.summary-grid .gain { color: var(--accent); }
+.summary-grid .cash-inflow { color: var(--cash-in); }
+.summary-grid .loss { color: var(--danger); }
+.summary-grid .cash-outflow { color: var(--danger); }
 .draft-note { margin: 0; padding: 10px 13px; border-radius: var(--radius-control); background: var(--warning-soft); color: var(--warning); font-size: 12px; }
 .report-review { min-width: 0; padding: 0; border: 0; border-radius: var(--radius-panel); background: transparent;
   margin-top: 28px;
