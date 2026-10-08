@@ -15,7 +15,9 @@ def main():
     parser = argparse.ArgumentParser(description="本地 SQLite 确定性会计内核")
     parser.add_argument("--root", type=Path)
     commands = parser.add_subparsers(dest="mode", required=True)
-    call = commands.add_parser("call", help="执行类型化业务命令")
+    call = commands.add_parser(
+        "call", help="执行类型化业务命令或事项工作稿命令；先call schema发现合同"
+    )
     call.add_argument("command")
     call.add_argument("--input", type=Path)
     commands.add_parser("mcp", help="通过本地服务提供 stdio MCP")

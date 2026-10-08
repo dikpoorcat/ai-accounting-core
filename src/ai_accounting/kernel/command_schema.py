@@ -36,6 +36,7 @@ from .schema_discovery import SchemaQuery
 from .tax_import import TaxImport
 from .types import EvidenceDigest, canonical
 from .work_context import WorkContext
+from .work_drafts import WorkDraftStore
 from .workflow import Workflow
 
 CONFIG = ConfigDict(extra="forbid", strict=True)
@@ -155,6 +156,10 @@ def command_models(registry):
         "update_period_commentary": Display.update_period_commentary,
         "find_facts": Discovery.find_facts,
         "work_context": WorkContext.query,
+        "list_work_drafts": WorkDraftStore.list,
+        "read_work_draft": WorkDraftStore.read,
+        "save_work_draft": WorkDraftStore.save,
+        "delete_work_draft": WorkDraftStore.delete,
         "payroll_reuse_basis": PayrollPreparation.reuse_basis,
         "prepare_payroll": PayrollPreparation.prepare,
         "confirm_payroll_preparation": PayrollPreparation.confirm,
@@ -293,7 +298,12 @@ def validate_command(models, command, payload, *, registry=None):
         raise KernelError("invalid_command", "命令必须是 JSON 对象")
     try:
         value = models[command].validate_json(canonical(payload), strict=True)
-        return value.model_dump(mode="json")
+        result = value.model_dump(mode="json")
+        if command == "save_work_draft":
+            # The model checks the document structure, but a candidate is not
+            # yet a complete business input. Never fill omitted draft fields.
+            result["draft"] = payload["draft"]
+        return result
     except ValidationError as exc:
         errors = exc.errors(include_input=False, include_url=False, include_context=False)
         missing = [

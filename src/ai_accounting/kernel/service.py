@@ -47,7 +47,7 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
 )
 
 OPERATING_PROTOCOL = {
-    "version": 4,
+    "version": 5,
     "schema_discovery": (
         "finance_local_schema无参读取overview概要。按当前事项用view=selected明确选择"
         "fact_kinds、commands和response_types取得所需详细合同；通用登记命令同时选择事实类型。"
@@ -111,6 +111,37 @@ OPERATING_PROTOCOL = {
             "答复含新增业务事实时才使用对应类型化入口。清单确认不替代工资发布前确认或关账密码批准。"
         ),
     },
+    "work_drafts": {
+        "scope": (
+            "未提交工作稿按明确company_id、period、work_area保存，一份覆盖当前清单事项。"
+            "范围尚未明确时list_work_drafts只列当前公司的月份和事项，选择后read_work_draft；"
+            "不自动选最新稿，不用工作月份代替资料实际所属期。"
+        ),
+        "content": (
+            "保存通用及专用入口的原始候选输入、来源与原位置、剩余问题、已收到的回答及接续位置。"
+            "输入可缺字段，保存只检查格式和入口；不补默认值，读取候选仍为未验证，提交走现有完整合同。"
+            "已登记事实、完整解析和原件继续从内核及解析缓存读取；工作稿不是正式事实、采用、批准或完成依据。"
+            "不保存密码、恢复码、会话令牌或关账批准令牌。"
+        ),
+        "checkpoints": (
+            "收到新资料或负责人回答、完成一批核对、准备追问或正式提交时save_work_draft。"
+            "初建明确传expected_revision=null，更新携带read取得的同版revision；冲突先重读合并，不能覆盖别人的改动。"
+            "只在保存成功后说明已保存；结果未确认时重读版本。只能恢复成功保存的内容，不能恢复未发送的思考。"
+        ),
+        "submission": (
+            "正式写入前在pending_requests保存目标命令、完整原载荷和原request_id；"
+            "未判明的请求记录不能随候选编辑丢失。恢复先查原request_result，unknown不认定失败。"
+            "需要重放时保留原载荷和原键，不能自动换键重做；专用入口仍用原指定入口。"
+            "重新核对当前来源、事实与预览条件，旧预览不是持续有效的批准；成功后保存正式结果引用。"
+            "目录操作、安全批准、关账和后台任务按各自现有恢复流程处理，不套用工作稿恢复。"
+        ),
+        "retention": (
+            "独立私有文件只留最新版，每份完整UTF-8封装最多8MiB，不设过期、总配额或自动淘汰。"
+            "事项完成或放弃后保留到明确delete_work_draft，删除携带当前revision。"
+            "损坏、身份不符或格式不支持保留并报错，不自动重建、覆盖或删除。"
+            "程序更新不淘汰工作稿；同资料根身份下可跨服务重启恢复，当前公司备份ZIP不包含工作稿。"
+        ),
+    },
     "recovery": {
         "errors": (
             "依status、code、fact_issues及resolution处理，不解析中文message猜下一步。"
@@ -129,6 +160,8 @@ OPERATING_PROTOCOL = {
         ),
         "resume": (
             "中断后重新读取schema、公司上下文、workflow、请求回执和相关任务。"
+            "明确当前事项后read_work_draft并用work_context核对实时状态，复用已保存候选、回答和来源；"
+            "范围未知时只列工作稿供选择，不能从最新文件猜当前月份或完成状态。"
             "从真实业务状态和可核查的确认来源恢复清单；已处理但找不到适用确认时如实显示待确认，不猜已确认。"
             "后项已有结果如实保留，当前回到最早未完成或待确认项，不因后项有结果或待确认就跳过前项，不自行撤回已入账结果。"
             "同目录服务重连保留原请求；目录身份变化不得自动重放。"
@@ -544,20 +577,31 @@ class LocalService:
                 self.security.validate_authority(authority)
                 return self._dispatch(command, payload, authority=authority)
         result = self._dispatch(command, payload, authority=authority)
-        if command == "work_context":
-            try:
-                result = WORK_CONTEXT_ADAPTER.validate_python(result)
-            except ValidationError:
+        try:
+            if command == "work_context":
+                try:
+                    result = WORK_CONTEXT_ADAPTER.validate_python(result)
+                except ValidationError:
+                    raise KernelError(
+                        "response_contract_mismatch", "读取结果不符合接口合同"
+                    ) from None
+            else:
+                result = validate_response(command, result)
+            if response_format == "http_json":
+                return RESPONSE_ADAPTERS[command].dump_json(result)
+            if response_format == "http":
+                return RESPONSE_ADAPTERS[command].dump_python(result, mode="json")
+            return result
+        except Exception:
+            if command in {"save_work_draft", "delete_work_draft"}:
+                # The file operation already succeeded. A response failure
+                # cannot be reported as a rejected, safely repeatable write.
                 raise KernelError(
-                    "response_contract_mismatch", "读取结果不符合接口合同"
+                    "work_draft_result_unconfirmed",
+                    "工作稿已变更但响应结果未确认，请重读版本",
+                    action="read_work_draft",
                 ) from None
-        else:
-            result = validate_response(command, result)
-        if response_format == "http_json":
-            return RESPONSE_ADAPTERS[command].dump_json(result)
-        if response_format == "http":
-            return RESPONSE_ADAPTERS[command].dump_python(result, mode="json")
-        return result
+            raise
 
     @contextmanager
     def _commit_authority(self, authority):
@@ -739,6 +783,31 @@ class LocalService:
             return getattr(self.catalog, command)(**payload)
         data = dict(payload)
         company_id = data.pop("company_id")
+        if command in {
+            "list_work_drafts", "read_work_draft", "save_work_draft", "delete_work_draft"
+        }:
+            from .work_drafts import WorkDraftStore
+
+            # Bind every request to the current catalog record and actual
+            # database identity. Draft IO never changes business audit/epochs.
+            store = self.catalog.bind(company_id)
+            drafts = WorkDraftStore(
+                self.catalog.root,
+                authority.catalog_instance_id,
+                store.company_id,
+                store.database_id,
+                registry=self.registry,
+                commands=self.command_models,
+                request_result=Engine(store).request_result,
+            )
+            action = getattr(drafts, {
+                "list_work_drafts": "list", "read_work_draft": "read",
+                "save_work_draft": "save", "delete_work_draft": "delete",
+            }[command])
+            if command in {"save_work_draft", "delete_work_draft"}:
+                with self._commit_authority(authority):
+                    return action(**data)
+            return action(**data)
         engine = self.engine(company_id, dashboard_read=command in _HTTP_DASHBOARD_COMMANDS)
         engine.commit_guard = lambda: self._commit_authority(authority)
         engine.audit_actor = {

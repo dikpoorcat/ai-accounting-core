@@ -18,6 +18,23 @@ from .contracts import KernelError
 from .diagnostics import error_response
 from .security.primitives import IdentityError
 
+_WORK_DRAFT_HTTP_STATUS = {
+    "work_draft_revision_conflict": 409,
+    "work_draft_busy": 409,
+    "work_draft_cursor_stale": 409,
+    "work_draft_result_unconfirmed": 409,
+    "work_draft_request_conflict": 409,
+    "work_draft_pending_request_required": 409,
+    "work_draft_corrupt": 500,
+    "work_draft_identity_mismatch": 500,
+    "work_draft_format_unsupported": 500,
+    "work_draft_unavailable": 500,
+    "work_draft_save_failed": 500,
+    "work_draft_delete_failed": 500,
+    "work_draft_too_large": 413,
+    "work_draft_absent": 404,
+}
+
 
 def wire_money(value, key="", parent=""):
     if (
@@ -123,6 +140,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "content_integrity_failed": 500,
                     "projection_integrity_failed": 500,
                     "read_index_integrity_failed": 500,
+                    **_WORK_DRAFT_HTTP_STATUS,
                 }.get(result.get("code"), 400)
             )
             self.json_reply(status, result)
@@ -312,15 +330,13 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             except Exception as exc:
                 error = error_response(exc)
                 self.json_reply(
-                    500
-                    if error.get("code")
-                    in {
-                        "response_contract_mismatch",
-                        "content_integrity_failed",
-                        "projection_integrity_failed",
-                        "read_index_integrity_failed",
-                    }
-                    else 400,
+                    {
+                        "response_contract_mismatch": 500,
+                        "content_integrity_failed": 500,
+                        "projection_integrity_failed": 500,
+                        "read_index_integrity_failed": 500,
+                        **_WORK_DRAFT_HTTP_STATUS,
+                    }.get(error.get("code"), 400),
                     error,
                 )
 

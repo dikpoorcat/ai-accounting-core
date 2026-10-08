@@ -1,0 +1,1943 @@
+{
+  "completion_date": "2026-10-09",
+  "synthetic_only": true,
+  "verification": {
+    "date": "2026-10-08",
+    "baseline_commit": "ece2a8d",
+    "final_regression": {
+      "passed": 305,
+      "skipped": 2,
+      "failed": 0,
+      "elapsed_seconds": 152.76,
+      "skips": [
+        "synthetic symlink unavailable in generic permissions fixture",
+        "POSIX mode contract on Windows"
+      ],
+      "test_modules": [
+        "test_work_drafts",
+        "test_work_draft_service",
+        "test_work_draft_response_contracts",
+        "test_schema_discovery",
+        "test_reading_service",
+        "test_response_contracts",
+        "test_request_recovery",
+        "test_daemon_static_runtime",
+        "test_permissions",
+        "test_inspection_cache",
+        "test_local_service",
+        "test_runtime_backup"
+      ]
+    },
+    "ruff": "passed",
+    "scope": "synthetic temporary roots only; no existing service restart or real accounting writes",
+    "database_schema_changed": false,
+    "dashboard_changed": false,
+    "agents_conventions_changed": false,
+    "git_committed_or_pushed": false
+  },
+  "scripted_comparison": {
+    "synthetic_only": true,
+    "baseline_reference": "ece2a8d",
+    "scripted_comparison_not_ai_dialogue": true,
+    "reports": {
+      "baseline-timing": {
+        "synthetic_only": true,
+        "scripted_comparison_not_ai_dialogue": true,
+        "source_dir": "D:\\GitHub\\ai-accounting-core\\.tmp\\work-draft-20261008\\final-comparison\\baseline-source\\src",
+        "build_id": "local-kernel-2:76a1fbc650829b42534fee36b2371f2f4c6b49cfe331f7661d95fbfa2ad7150c",
+        "drafts_available": false,
+        "instrumented": false,
+        "timing_instrumentation_separated": true,
+        "transport": "production MCP -> ServiceClient -> HTTP -> LocalService",
+        "file_metric": "Python .json/.tmp open events in .work-drafts, classified by read/write open flags; not byte counts or logical saves; excludes locks and directory opens",
+        "tokens": null,
+        "checks": {
+          "new_service_process_same_catalog": true,
+          "candidate_and_answer_restored": false,
+          "missing_after_restart": [
+            "unsaved_owner_answer",
+            "candidate_request_ids"
+          ],
+          "scripted_owner_requestion_required": 1
+        },
+        "phases": {
+          "discovery": {
+            "tool_calls": 1,
+            "response_bytes": 38867,
+            "elapsed_ms_total": 67.90609999734443,
+            "elapsed_ms_median": 67.90609999734443,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "initial_read": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": 360.9327000012854,
+            "elapsed_ms_median": 180.4663500006427,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "restart_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": 885.8697999967262,
+            "elapsed_ms_median": 442.9348999983631,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          }
+        },
+        "samples": [
+          {
+            "phase": "discovery",
+            "command": "schema",
+            "tool_calls": 1,
+            "response_bytes": 38867,
+            "elapsed_ms": 67.90609999734443,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "initial_read",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": 164.91140000289306,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "initial_read",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": 196.02129999839235,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": 738.3733999886317,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": 147.4964000080945,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          }
+        ]
+      },
+      "current-timing": {
+        "synthetic_only": true,
+        "scripted_comparison_not_ai_dialogue": true,
+        "source_dir": "D:\\GitHub\\ai-accounting-core\\.tmp\\work-draft-20261008\\final-comparison\\current-source",
+        "build_id": "local-kernel-2:4e06fff7f0aa7bc642c391f98db0aa52e8147bbf937ba29de616cbd26ef54152",
+        "drafts_available": true,
+        "instrumented": false,
+        "timing_instrumentation_separated": true,
+        "transport": "production MCP -> ServiceClient -> HTTP -> LocalService",
+        "file_metric": "Python .json/.tmp open events in .work-drafts, classified by read/write open flags; not byte counts or logical saves; excludes locks and directory opens",
+        "tokens": null,
+        "checks": {
+          "new_service_process_same_catalog": true,
+          "candidate_and_answer_restored": true,
+          "scripted_owner_requestion_required": 0,
+          "committed_request_recovered_without_duplicate": true,
+          "recovered_work_draft_did_not_publish": true
+        },
+        "phases": {
+          "checkpoint": {
+            "tool_calls": 2,
+            "response_bytes": 460,
+            "elapsed_ms_total": 268.22579999861773,
+            "elapsed_ms_median": 134.11289999930887,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "discovery": {
+            "tool_calls": 1,
+            "response_bytes": 41400,
+            "elapsed_ms_total": 61.97229999816045,
+            "elapsed_ms_median": 61.97229999816045,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "formal_registration": {
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms_total": 253.40529999812134,
+            "elapsed_ms_median": 253.40529999812134,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "formal_request_checkpoint": {
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms_total": 136.8137000099523,
+            "elapsed_ms_median": 136.8137000099523,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "hot_read": {
+            "tool_calls": 3,
+            "response_bytes": 5952,
+            "elapsed_ms_total": 402.47820000513457,
+            "elapsed_ms_median": 116.58659999375232,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "initial_read": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": 291.7401000013342,
+            "elapsed_ms_median": 145.8700500006671,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "lost_response_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 3154,
+            "elapsed_ms_total": 990.784599998733,
+            "elapsed_ms_median": 495.3922999993665,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "original_key_replay": {
+            "tool_calls": 2,
+            "response_bytes": 881,
+            "elapsed_ms_total": 279.4797000096878,
+            "elapsed_ms_median": 139.7398500048439,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          "restart_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 9559,
+            "elapsed_ms_total": 853.583999996772,
+            "elapsed_ms_median": 426.791999998386,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          }
+        },
+        "samples": [
+          {
+            "phase": "discovery",
+            "command": "schema",
+            "tool_calls": 1,
+            "response_bytes": 41400,
+            "elapsed_ms": 61.97229999816045,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "initial_read",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": 143.50310000008903,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "initial_read",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": 148.23700000124518,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": 130.63839999085758,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": 137.58740000776015,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": 703.5803999897325,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": 100.72190000209957,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": 116.58659999375232,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": 185.16970000928268,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": 150.0036000070395,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "formal_request_checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": 136.8137000099523,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "formal_registration",
+            "command": "save_fact",
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms": 253.40529999812134,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "lost_response_recovery",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 2756,
+            "elapsed_ms": 854.1322000091895,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "lost_response_recovery",
+            "command": "request_result",
+            "tool_calls": 1,
+            "response_bytes": 398,
+            "elapsed_ms": 136.65239998954348,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "original_key_replay",
+            "command": "save_fact",
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms": 149.12420000473503,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          },
+          {
+            "phase": "original_key_replay",
+            "command": "find_facts",
+            "tool_calls": 1,
+            "response_bytes": 684,
+            "elapsed_ms": 130.35550000495277,
+            "sql_statements": null,
+            "inspect_bytes_calls": null,
+            "draft_file_reads": null,
+            "draft_file_writes": null
+          }
+        ]
+      },
+      "baseline-workload": {
+        "synthetic_only": true,
+        "scripted_comparison_not_ai_dialogue": true,
+        "source_dir": "D:\\GitHub\\ai-accounting-core\\.tmp\\work-draft-20261008\\final-comparison\\baseline-source\\src",
+        "build_id": "local-kernel-2:76a1fbc650829b42534fee36b2371f2f4c6b49cfe331f7661d95fbfa2ad7150c",
+        "drafts_available": false,
+        "instrumented": true,
+        "timing_instrumentation_separated": true,
+        "transport": "production MCP -> ServiceClient -> HTTP -> LocalService",
+        "file_metric": "Python .json/.tmp open events in .work-drafts, classified by read/write open flags; not byte counts or logical saves; excludes locks and directory opens",
+        "tokens": null,
+        "checks": {
+          "new_service_process_same_catalog": true,
+          "candidate_and_answer_restored": false,
+          "missing_after_restart": [
+            "unsaved_owner_answer",
+            "candidate_request_ids"
+          ],
+          "scripted_owner_requestion_required": 1
+        },
+        "phases": {
+          "discovery": {
+            "tool_calls": 1,
+            "response_bytes": 38867,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "initial_read": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 220,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "restart_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 220,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          }
+        },
+        "samples": [
+          {
+            "phase": "discovery",
+            "command": "schema",
+            "tool_calls": 1,
+            "response_bytes": 38867,
+            "elapsed_ms": null,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "initial_read",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": null,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "initial_read",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": null,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": null,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": null,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          }
+        ]
+      },
+      "current-workload": {
+        "synthetic_only": true,
+        "scripted_comparison_not_ai_dialogue": true,
+        "source_dir": "D:\\GitHub\\ai-accounting-core\\.tmp\\work-draft-20261008\\final-comparison\\current-source",
+        "build_id": "local-kernel-2:4e06fff7f0aa7bc642c391f98db0aa52e8147bbf937ba29de616cbd26ef54152",
+        "drafts_available": true,
+        "instrumented": true,
+        "timing_instrumentation_separated": true,
+        "transport": "production MCP -> ServiceClient -> HTTP -> LocalService",
+        "file_metric": "Python .json/.tmp open events in .work-drafts, classified by read/write open flags; not byte counts or logical saves; excludes locks and directory opens",
+        "tokens": null,
+        "checks": {
+          "new_service_process_same_catalog": true,
+          "candidate_and_answer_restored": true,
+          "scripted_owner_requestion_required": 0,
+          "committed_request_recovered_without_duplicate": true,
+          "recovered_work_draft_did_not_publish": true
+        },
+        "phases": {
+          "checkpoint": {
+            "tool_calls": 2,
+            "response_bytes": 460,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 202,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 4
+          },
+          "discovery": {
+            "tool_calls": 1,
+            "response_bytes": 41400,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "formal_registration": {
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 122,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "formal_request_checkpoint": {
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 2
+          },
+          "hot_read": {
+            "tool_calls": 3,
+            "response_bytes": 5952,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 213,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 3,
+            "draft_file_writes": 0
+          },
+          "initial_read": {
+            "tool_calls": 2,
+            "response_bytes": 8522,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 220,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "lost_response_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 3154,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 168,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          "original_key_replay": {
+            "tool_calls": 2,
+            "response_bytes": 881,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 225,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          "restart_recovery": {
+            "tool_calls": 2,
+            "response_bytes": 9559,
+            "elapsed_ms_total": null,
+            "elapsed_ms_median": null,
+            "sql_statements": 197,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          }
+        },
+        "samples": [
+          {
+            "phase": "discovery",
+            "command": "schema",
+            "tool_calls": 1,
+            "response_bytes": 41400,
+            "elapsed_ms": null,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "initial_read",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": null,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "initial_read",
+            "command": "inspect_material",
+            "tool_calls": 1,
+            "response_bytes": 947,
+            "elapsed_ms": null,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": null,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 2
+          },
+          {
+            "phase": "checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": null,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 2
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": null,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": null,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": null,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "hot_read",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 1984,
+            "elapsed_ms": null,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "restart_recovery",
+            "command": "work_context",
+            "tool_calls": 1,
+            "response_bytes": 7575,
+            "elapsed_ms": null,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "formal_request_checkpoint",
+            "command": "save_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 230,
+            "elapsed_ms": null,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 2
+          },
+          {
+            "phase": "formal_registration",
+            "command": "save_fact",
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms": null,
+            "sql_statements": 122,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "lost_response_recovery",
+            "command": "read_work_draft",
+            "tool_calls": 1,
+            "response_bytes": 2756,
+            "elapsed_ms": null,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "lost_response_recovery",
+            "command": "request_result",
+            "tool_calls": 1,
+            "response_bytes": 398,
+            "elapsed_ms": null,
+            "sql_statements": 97,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "original_key_replay",
+            "command": "save_fact",
+            "tool_calls": 1,
+            "response_bytes": 197,
+            "elapsed_ms": null,
+            "sql_statements": 122,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "original_key_replay",
+            "command": "find_facts",
+            "tool_calls": 1,
+            "response_bytes": 684,
+            "elapsed_ms": null,
+            "sql_statements": 103,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          }
+        ]
+      }
+    },
+    "note": "Checkpoint cost, restart reads and formal verification are reported separately."
+  },
+  "ai_dialogue": {
+    "model_and_reasoning": "Each independent agent inherited the same parent model and reasoning settings; no overrides.",
+    "runs_per_version": 1,
+    "restart_clears_conversation_context": true,
+    "artifact_access": "Fresh agents could read only company/source metadata plus actual MCP responses, not prior evaluator notes or answers.",
+    "tool_elapsed_time": "Instrumented diagnostics only, not complete dialogue time or a speed comparison; initial dialogue overlapped the final regression.",
+    "tokens": null,
+    "sql_semantics": "Executed SQL statements, not scanned rows or virtual machine instructions.",
+    "file_metrics": "JSON/temp open events classified by open flags, excluding lock and directory opens; not bytes or logical saves.",
+    "recovery_outcomes": {
+      "baseline": {
+        "saved_checkpoint_restored": false,
+        "saved_candidates_restored": 0,
+        "candidates_reconstructed_from_source": 2,
+        "owner_answer_restored": false,
+        "repeated_candidate_fact_questions": 1,
+        "additional_month_coverage_questions": 0
+      },
+      "current": {
+        "saved_checkpoint_restored": true,
+        "saved_candidates_restored": 2,
+        "candidates_reconstructed_from_source": 0,
+        "owner_answer_restored": true,
+        "repeated_candidate_fact_questions": 0,
+        "additional_month_coverage_questions": 1
+      }
+    },
+    "versions": {
+      "baseline": {
+        "before_restart": {
+          "tool_calls": 11,
+          "response_bytes": 115355,
+          "sql_statements": 750,
+          "inspect_bytes_calls": 2,
+          "draft_file_reads": 0,
+          "draft_file_writes": 0,
+          "elapsed_ms_diagnostic_total": 1151.584700026433,
+          "elapsed_ms_diagnostic_median": 124.50320000061765,
+          "commands": {
+            "companies": 1,
+            "company_context": 1,
+            "find_entities": 1,
+            "find_facts": 1,
+            "inspect_material": 1,
+            "prepare_fact_registration": 2,
+            "schema": 3,
+            "work_context": 1
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 1,
+            "prepare_fact_registration": 1,
+            "schema": 0,
+            "work_context": 0
+          }
+        },
+        "fresh_conversation_recovery": {
+          "tool_calls": 15,
+          "response_bytes": 243718,
+          "sql_statements": 1021,
+          "inspect_bytes_calls": 2,
+          "draft_file_reads": 0,
+          "draft_file_writes": 0,
+          "elapsed_ms_diagnostic_total": 2567.9793000017526,
+          "elapsed_ms_diagnostic_median": 130.97529999504331,
+          "commands": {
+            "companies": 1,
+            "company_context": 1,
+            "find_entities": 1,
+            "find_facts": 2,
+            "inspect_material": 1,
+            "prepare_fact_registration": 2,
+            "schema": 5,
+            "work_context": 1,
+            "workflow": 1
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 0,
+            "prepare_fact_registration": 1,
+            "schema": 0,
+            "work_context": 0,
+            "workflow": 1
+          }
+        },
+        "total": {
+          "tool_calls": 26,
+          "response_bytes": 359073,
+          "sql_statements": 1771,
+          "inspect_bytes_calls": 4,
+          "draft_file_reads": 0,
+          "draft_file_writes": 0,
+          "elapsed_ms_diagnostic_total": 3719.5640000281855,
+          "elapsed_ms_diagnostic_median": 125.46345000009751,
+          "commands": {
+            "companies": 2,
+            "company_context": 2,
+            "find_entities": 2,
+            "find_facts": 3,
+            "inspect_material": 2,
+            "prepare_fact_registration": 4,
+            "schema": 8,
+            "work_context": 2,
+            "workflow": 1
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 1,
+            "prepare_fact_registration": 2,
+            "schema": 0,
+            "work_context": 0,
+            "workflow": 1
+          }
+        },
+        "resume_evidence": {
+          "report_kind": "isolated_resume_evaluation",
+          "is_business_cache": false,
+          "environment": "dialogue-baseline",
+          "company_id": "8664929b75984085a60a3f7b4ad93cbe",
+          "company_name": "合成工作稿甲公司",
+          "database_id": "7753553ceba4499683bd3b7ef2723ee0",
+          "period": "2026-02",
+          "work_area": "transactions",
+          "recovery": {
+            "persistent_draft_recovered": false,
+            "last_successful_checkpoint_recovered": false,
+            "second_creditor_answer_recovered": false,
+            "reason": "实际MCP overview的命令清单没有持久工作稿恢复入口；work_context未返回工作稿或历史回答。当前公开信息只能重建原件候选，不能恢复上次保存接续点或猜测第二笔债权人回答。",
+            "protocol_version": 4,
+            "work_context_schema_version": 1
+          },
+          "source_checks": {
+            "companies_bound_via_mcp": true,
+            "company_context_read": true,
+            "workflow_read": true,
+            "work_context_read": true,
+            "work_context_has_more": false,
+            "original_inspected_via_mcp": true,
+            "original_name": "合成办公服务.csv",
+            "source_id": "draft-source",
+            "source_fact_id": "1d7fe5f67d3a4822a940b8d6b98981d6",
+            "source_revision": 1,
+            "evidence_digest": "f7c541721386039db032f39c393865be60428e6e8a70815b7fcb56e3bbbc4b2b",
+            "inspection_status": "ready",
+            "received_period": "2026-03",
+            "recognition_period": "2026-02",
+            "period_allocation_verified": true,
+            "existing_expense_history_count": 0,
+            "existing_counterparty_fact_history_count": 0,
+            "existing_counterparty_id": "entity_baffd5cbd9464b20af88231e6fe4f156",
+            "existing_counterparty_match": "exact",
+            "accounting_fact_count": 0,
+            "accounting_calculation_count": 0,
+            "pending_count": 0,
+            "related_jobs": []
+          },
+          "recoverable_candidates": [
+            {
+              "name": "办公服务1",
+              "location": "CSV!B2",
+              "kind": "expense",
+              "period": "2026-02",
+              "amount_fen": 10101,
+              "counterparty_name": "合成办公服务商",
+              "counterparty_id": "entity_baffd5cbd9464b20af88231e6fe4f156",
+              "expense_class": "administration",
+              "creditor_kind": "supplier",
+              "basis": "实际MCP inspect_material读取的原行及find_entities的精确匹配",
+              "read_only_candidate_check_status": "clear",
+              "business_status": "未登记、未发布"
+            },
+            {
+              "name": "办公服务2",
+              "location": "CSV!B3",
+              "kind": "expense",
+              "period": "2026-02",
+              "amount_fen": 20202,
+              "counterparty_name": "合成办公服务商",
+              "counterparty_id": "entity_baffd5cbd9464b20af88231e6fe4f156",
+              "expense_class": "administration",
+              "creditor_kind": null,
+              "basis": "实际MCP inspect_material读取的原行及find_entities的精确匹配；不从同名往来方或第一笔类型推定第二笔债权人类别",
+              "read_only_candidate_check_status": "needs_information",
+              "business_status": "未登记、未发布"
+            }
+          ],
+          "reusable_answers": [
+            "两笔核算所属期均为2026-02；2026-03只是接收月",
+            "两笔金额分别为10101分和20202分",
+            "两笔费用类别均为管理费用administration",
+            "往来方均为合成办公服务商，已有可复用组织对象",
+            "第一笔债权人类别为供应商supplier"
+          ],
+          "remaining_fact_issues": [
+            {
+              "candidate": "办公服务2",
+              "location": "CSV!B3",
+              "field": "creditor_kind",
+              "semantics": "accounting",
+              "allowed_values": [
+                "supplier",
+                "employee",
+                "individual"
+              ],
+              "reusable_source_check": "work_context全页无续页，find_facts按expense及已有往来方查询history均为空，原行未记载第二笔债权人类别，未发现适用的历史回答",
+              "question": "甲公司2026年2月第2笔办公服务202.02元的债权人类别是什么：供应商、员工还是个人？"
+            }
+          ],
+          "follow_up_questions": [
+            "甲公司2026年2月第2笔办公服务202.02元的债权人类别是什么：供应商、员工还是个人？"
+          ],
+          "no_repeated_questions": [
+            "金额",
+            "核算所属期",
+            "费用类别",
+            "往来方身份",
+            "第一笔债权人类别",
+            "实际发生日（expense合同允许月份精度）"
+          ],
+          "actions": {
+            "formal_registration": false,
+            "publication": false,
+            "company_note_write": false,
+            "evidence_write": false,
+            "work_draft_write": false,
+            "true_environment_mcp_used": false,
+            "forbidden_artifacts_read": false,
+            "read_only_candidate_checks": 2,
+            "report_file_written": true
+          },
+          "simulated_owner_report": "未发现可通过当前MCP恢复的持久工作稿，不能还原上次接续点或第二笔的历史回答。已有来源可恢复两笔办公服务候选：101.01元和202.02元，均属于2026年2月管理费用，往来方为合成办公服务商；第一笔债权人为供应商。仍只缺第二笔202.02元的债权人类别：供应商、员工还是个人？本次未登记、发布或写入公司说明与证据。"
+        },
+        "build_id": "local-kernel-2:76a1fbc650829b42534fee36b2371f2f4c6b49cfe331f7661d95fbfa2ad7150c",
+        "tool_samples": [
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 38867,
+            "elapsed_ms": 51.83360000955872,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 40305,
+            "elapsed_ms": 66.49240000115242,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "companies",
+            "status": null,
+            "response_bytes": 587,
+            "elapsed_ms": 71.59230000979733,
+            "sql_statements": 49,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "work_context",
+            "status": null,
+            "response_bytes": 7575,
+            "elapsed_ms": 153.9028999977745,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "company_context",
+            "status": null,
+            "response_bytes": 3334,
+            "elapsed_ms": 125.22940000053495,
+            "sql_statements": 107,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "inspect_material",
+            "status": "ready",
+            "response_bytes": 947,
+            "elapsed_ms": 137.6079000037862,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 21624,
+            "elapsed_ms": 45.270599992363714,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "find_entities",
+            "status": null,
+            "response_bytes": 838,
+            "elapsed_ms": 125.69749999966007,
+            "sql_statements": 98,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "find_facts",
+            "status": null,
+            "response_bytes": 132,
+            "elapsed_ms": 127.96630000229925,
+            "sql_statements": 103,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "prepare_fact_registration",
+            "status": "needs_information",
+            "response_bytes": 206,
+            "elapsed_ms": 121.48860000888817,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "prepare_fact_registration",
+            "status": "clear",
+            "response_bytes": 940,
+            "elapsed_ms": 124.50320000061765,
+            "sql_statements": 102,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 38867,
+            "elapsed_ms": 690.144499996677,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 38867,
+            "elapsed_ms": 64.33039999683388,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 62099,
+            "elapsed_ms": 93.52860000217333,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 62099,
+            "elapsed_ms": 79.06310001271777,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "companies",
+            "status": null,
+            "response_bytes": 587,
+            "elapsed_ms": 106.15639999741688,
+            "sql_statements": 49,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "company_context",
+            "status": null,
+            "response_bytes": 3334,
+            "elapsed_ms": 127.45810000342317,
+            "sql_statements": 107,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "workflow",
+            "status": null,
+            "response_bytes": 5457,
+            "elapsed_ms": 287.63450001133606,
+            "sql_statements": 172,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "work_context",
+            "status": null,
+            "response_bytes": 7575,
+            "elapsed_ms": 166.03730000497308,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "find_entities",
+            "status": null,
+            "response_bytes": 838,
+            "elapsed_ms": 119.5910999958869,
+            "sql_statements": 98,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "inspect_material",
+            "status": "ready",
+            "response_bytes": 947,
+            "elapsed_ms": 144.18089999526273,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "find_facts",
+            "status": null,
+            "response_bytes": 132,
+            "elapsed_ms": 159.5861999958288,
+            "sql_statements": 99,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 21624,
+            "elapsed_ms": 59.48450000141747,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "find_facts",
+            "status": null,
+            "response_bytes": 132,
+            "elapsed_ms": 190.2445000014268,
+            "sql_statements": 103,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "prepare_fact_registration",
+            "status": "clear",
+            "response_bytes": 947,
+            "elapsed_ms": 130.97529999504331,
+            "sql_statements": 102,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "prepare_fact_registration",
+            "status": "needs_information",
+            "response_bytes": 213,
+            "elapsed_ms": 149.56389999133535,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          }
+        ]
+      },
+      "current": {
+        "before_restart": {
+          "tool_calls": 17,
+          "response_bytes": 177284,
+          "sql_statements": 1225,
+          "inspect_bytes_calls": 1,
+          "draft_file_reads": 3,
+          "draft_file_writes": 4,
+          "elapsed_ms_diagnostic_total": 1918.2902999746148,
+          "elapsed_ms_diagnostic_median": 123.5469999955967,
+          "commands": {
+            "companies": 1,
+            "company_context": 2,
+            "find_entities": 1,
+            "find_facts": 1,
+            "inspect_material": 1,
+            "read_work_draft": 3,
+            "save_work_draft": 2,
+            "schema": 4,
+            "work_context": 2
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 1,
+            "read_work_draft": 0,
+            "save_work_draft": 0,
+            "schema": 0,
+            "work_context": 0
+          }
+        },
+        "fresh_conversation_recovery": {
+          "tool_calls": 14,
+          "response_bytes": 269924,
+          "sql_statements": 820,
+          "inspect_bytes_calls": 1,
+          "draft_file_reads": 1,
+          "draft_file_writes": 0,
+          "elapsed_ms_diagnostic_total": 2303.7130999873625,
+          "elapsed_ms_diagnostic_median": 116.85550000402145,
+          "commands": {
+            "companies": 1,
+            "company_context": 1,
+            "find_entities": 1,
+            "find_facts": 1,
+            "inspect_material": 1,
+            "read_work_draft": 1,
+            "schema": 6,
+            "work_context": 1,
+            "workflow": 1
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 0,
+            "read_work_draft": 0,
+            "schema": 0,
+            "work_context": 0,
+            "workflow": 1
+          }
+        },
+        "total": {
+          "tool_calls": 31,
+          "response_bytes": 447208,
+          "sql_statements": 2045,
+          "inspect_bytes_calls": 2,
+          "draft_file_reads": 4,
+          "draft_file_writes": 4,
+          "elapsed_ms_diagnostic_total": 4222.003399961977,
+          "elapsed_ms_diagnostic_median": 123.5469999955967,
+          "commands": {
+            "companies": 2,
+            "company_context": 3,
+            "find_entities": 2,
+            "find_facts": 2,
+            "inspect_material": 2,
+            "read_work_draft": 4,
+            "save_work_draft": 2,
+            "schema": 10,
+            "work_context": 3,
+            "workflow": 1
+          },
+          "parse_calls_by_command": {
+            "companies": 0,
+            "company_context": 0,
+            "find_entities": 0,
+            "find_facts": 0,
+            "inspect_material": 1,
+            "read_work_draft": 0,
+            "save_work_draft": 0,
+            "schema": 0,
+            "work_context": 0,
+            "workflow": 1
+          }
+        },
+        "resume_evidence": {
+          "evaluation": "fresh_session_resume_current",
+          "company_id": "33124129df0c4ebbba184e5bbec559a2",
+          "company_name": "合成工作稿甲公司",
+          "period": "2026-02",
+          "work_area": "transactions",
+          "operating_protocol_version": 5,
+          "work_draft_available": true,
+          "work_draft_restored": true,
+          "work_draft_revision": "d1243429-4c31-43fa-8269-6a4eb36916b0",
+          "recovered_second_creditor_answer": true,
+          "second_creditor_answer": "甲公司2026年2月第2笔办公服务的债权人类别也是供应商。现在先停下，不正式登记或发布。",
+          "answer_source": "本次实际read_work_draft响应的draft.questions[0].answer",
+          "second_creditor_kind": "supplier",
+          "answer_scope": "仅甲公司2026-02第2笔办公服务20202分；未扩展到其他月份、事项或公司",
+          "recovered_candidates": [
+            {
+              "id": "office-service-1",
+              "subject_id": "office-service-2026-02-1",
+              "command": "save_fact",
+              "kind": "expense",
+              "amount_fen": 10101,
+              "period": "2026-02",
+              "counterparty_name": "合成办公服务商",
+              "counterparty_id": "entity_9d1f14d0eef0437fa42f7b6d7faa9947",
+              "expense_class": "administration",
+              "creditor_kind": "supplier",
+              "creditor_basis": "当前inspect_material原件CSV!B2",
+              "location": "CSV!B2",
+              "request_id_restored": "dialogue-current-office-service-1",
+              "status": "仅恢复未提交候选"
+            },
+            {
+              "id": "office-service-2",
+              "subject_id": "office-service-2026-02-2",
+              "command": "save_fact",
+              "kind": "expense",
+              "amount_fen": 20202,
+              "period": "2026-02",
+              "counterparty_name": "合成办公服务商",
+              "counterparty_id": "entity_9d1f14d0eef0437fa42f7b6d7faa9947",
+              "expense_class": "administration",
+              "creditor_kind": "supplier",
+              "creditor_basis": "成功保存工作稿中的老板原话；原件该字段为空，未借用第1笔类别",
+              "location": "CSV!B3",
+              "request_id_restored": "dialogue-current-office-service-2",
+              "status": "仅恢复未提交候选"
+            }
+          ],
+          "current_source_verification": {
+            "source_id": "draft-source",
+            "source_fact_id": "c5f26a73b53b45d3b31dbdbe01af741b",
+            "source_fact_revision": 1,
+            "source_fact_current": true,
+            "evidence_name": "合成办公服务.csv",
+            "evidence_digest": "f7c541721386039db032f39c393865be60428e6e8a70815b7fcb56e3bbbc4b2b",
+            "received_period": "2026-03",
+            "recognition_period": "2026-02",
+            "allocation_fact_id": "fb1d5f5db753413faeb487376464e392",
+            "allocation_revision": 1,
+            "allocation_current": true,
+            "allocation_scope": "CSV!B2:B3，original_period",
+            "inspect_material_status": "ready",
+            "inspected_item_count": 2,
+            "hidden_items": false,
+            "inspection_issue_count": 0,
+            "inspection_next_cursor": null,
+            "counterparty_match": "唯一exact组织对象，当前find_entities核对一致",
+            "current_expense_fact_count_for_counterparty_in_period": 0,
+            "find_facts_next_cursor": null,
+            "work_context_has_more": false
+          },
+          "restored_pending_request_count": 0,
+          "request_result_lookup_needed": false,
+          "candidate_accounting_required_fields_checked_against_current_schema": [
+            "period",
+            "counterparty_id",
+            "amount_fen",
+            "expense_class",
+            "creditor_kind"
+          ],
+          "remaining_candidate_fact_questions": [],
+          "monthly_ordinary_business_coverage_confirmed": false,
+          "remaining_monthly_scope_facts": [
+            "本月普通业务资料的完整覆盖范围；workflow未见对应资料清单或完整范围确认"
+          ],
+          "followup_questions": [
+            "若要完成甲公司2026年2月整月普通业务，请确认这两笔办公服务是否已覆盖本月全部普通业务；若还有其他普通业务，请补相应资料。"
+          ],
+          "not_reasked": [
+            "第二笔债权人类别",
+            "两笔金额",
+            "核算所属月",
+            "管理费用类别",
+            "已有往来方身份"
+          ],
+          "status_limitations": [
+            "工作稿为未提交候选，不代替正式事实或发布结果",
+            "本次未执行正式登记校验",
+            "workflow两行尚未正式处置，不将该状态转成重复的业务事实追问",
+            "未从资料接收月推断核算月份",
+            "未把公司说明当作第2笔债权人类别的替代依据"
+          ],
+          "operations_performed": [
+            "finance_local_schema overview及selected",
+            "companies",
+            "company_context",
+            "read_work_draft",
+            "work_context",
+            "workflow",
+            "inspect_material",
+            "find_entities",
+            "find_facts"
+          ],
+          "formal_registration_or_publication_performed": false,
+          "company_note_write_performed": false,
+          "evidence_write_performed": false,
+          "work_draft_write_performed": false,
+          "real_finance_mcp_called": false,
+          "prohibited_evaluation_artifacts_read": false,
+          "final_message": "已从成功保存的工作稿恢复甲公司2026年2月两笔办公服务候选：101.01元、202.02元，均为管理费用；第二笔债权人类别已由老板明确为供应商，不再询问。已通过当前内核核对原件两行、2026-02归期及唯一往来方身份，两笔仍未登记或发布。两笔本身暂无需补充的核算事实；若要完成整月普通业务，仍需确认这两笔是否已覆盖本月全部普通业务，若还有其他业务请补资料。本次未写公司说明或证据。"
+        },
+        "build_id": "local-kernel-2:4e06fff7f0aa7bc642c391f98db0aa52e8147bbf937ba29de616cbd26ef54152",
+        "tool_samples": [
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 41400,
+            "elapsed_ms": 53.56020000181161,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 46506,
+            "elapsed_ms": 76.88209999469109,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "companies",
+            "status": null,
+            "response_bytes": 585,
+            "elapsed_ms": 88.57519998855423,
+            "sql_statements": 49,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "company_context",
+            "status": null,
+            "response_bytes": 3334,
+            "elapsed_ms": 129.67370000842493,
+            "sql_statements": 107,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "work_context",
+            "status": null,
+            "response_bytes": 7575,
+            "elapsed_ms": 138.89210000343155,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "read_work_draft",
+            "status": "absent",
+            "response_bytes": 224,
+            "elapsed_ms": 111.77259999385569,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "inspect_material",
+            "status": "ready",
+            "response_bytes": 947,
+            "elapsed_ms": 155.21669998997822,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 32982,
+            "elapsed_ms": 65.5280000064522,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "find_entities",
+            "status": null,
+            "response_bytes": 838,
+            "elapsed_ms": 123.5469999955967,
+            "sql_statements": 98,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 22662,
+            "elapsed_ms": 49.05770000186749,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "find_facts",
+            "status": null,
+            "response_bytes": 132,
+            "elapsed_ms": 142.45859999209642,
+            "sql_statements": 103,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "save_work_draft",
+            "status": "saved",
+            "response_bytes": 230,
+            "elapsed_ms": 139.78460000362247,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 2
+          },
+          {
+            "phase": "before_restart",
+            "command": "company_context",
+            "status": null,
+            "response_bytes": 3334,
+            "elapsed_ms": 131.05840000207536,
+            "sql_statements": 107,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "read_work_draft",
+            "status": "present",
+            "response_bytes": 4254,
+            "elapsed_ms": 97.20180000294931,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "work_context",
+            "status": null,
+            "response_bytes": 7575,
+            "elapsed_ms": 166.3747999991756,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "before_restart",
+            "command": "save_work_draft",
+            "status": "saved",
+            "response_bytes": 230,
+            "elapsed_ms": 129.05959998897742,
+            "sql_statements": 101,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 2
+          },
+          {
+            "phase": "before_restart",
+            "command": "read_work_draft",
+            "status": "present",
+            "response_bytes": 4476,
+            "elapsed_ms": 119.64720000105444,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 41400,
+            "elapsed_ms": 720.6476999999722,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 42848,
+            "elapsed_ms": 68.17899999441579,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 42848,
+            "elapsed_ms": 61.96799999452196,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 42848,
+            "elapsed_ms": 72.04970000020694,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 42848,
+            "elapsed_ms": 62.26240000978578,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "companies",
+            "status": null,
+            "response_bytes": 585,
+            "elapsed_ms": 76.51080000505317,
+            "sql_statements": 49,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "company_context",
+            "status": null,
+            "response_bytes": 3334,
+            "elapsed_ms": 142.30329998827074,
+            "sql_statements": 107,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "read_work_draft",
+            "status": "present",
+            "response_bytes": 4476,
+            "elapsed_ms": 109.33030000887811,
+            "sql_statements": 71,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 1,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "workflow",
+            "status": null,
+            "response_bytes": 5457,
+            "elapsed_ms": 318.8703999912832,
+            "sql_statements": 172,
+            "inspect_bytes_calls": 1,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "work_context",
+            "status": null,
+            "response_bytes": 7575,
+            "elapsed_ms": 157.71840000525117,
+            "sql_statements": 126,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "schema",
+            "status": null,
+            "response_bytes": 33788,
+            "elapsed_ms": 54.860100004589185,
+            "sql_statements": 0,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "find_facts",
+            "status": null,
+            "response_bytes": 132,
+            "elapsed_ms": 124.38069999916479,
+            "sql_statements": 103,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "inspect_material",
+            "status": "ready",
+            "response_bytes": 947,
+            "elapsed_ms": 195.33239999145735,
+            "sql_statements": 94,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          },
+          {
+            "phase": "fresh_conversation_recovery",
+            "command": "find_entities",
+            "status": null,
+            "response_bytes": 838,
+            "elapsed_ms": 139.2998999945121,
+            "sql_statements": 98,
+            "inspect_bytes_calls": 0,
+            "draft_file_reads": 0,
+            "draft_file_writes": 0
+          }
+        ]
+      }
+    }
+  }
+}

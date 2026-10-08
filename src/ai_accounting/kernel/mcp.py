@@ -61,6 +61,11 @@ def serve(root: Path):
         Automatically recalculated open dependencies keep their existing posting month;
         an explicit root that conflicts with the requested month is rejected.
         Missing accounting facts are returned as structured needs_information.
+        list/read/save/delete_work_draft resume unsubmitted work by explicit
+        company, period and work_area. Save with expected_revision=null only
+        when no draft exists; updates/deletion require its current revision.
+        A saved draft is not a fact, publication or approval. Recover uncertain
+        business writes through request_result using the original request_id.
         """
         try:
             result = service.dispatch(command, payload)

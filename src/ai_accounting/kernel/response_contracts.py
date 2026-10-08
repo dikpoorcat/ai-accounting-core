@@ -13,8 +13,11 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    JsonValue,
+    PlainSerializer,
     TypeAdapter,
     ValidationError,
+    WrapValidator,
 )
 from typing_extensions import TypedDict
 
@@ -30,13 +33,13 @@ from .response_types import (
     Version3,
     Version4,
     Version5,
-    Version6,
     Version7,
     Version9,
     Version10,
     Version15,
     WireFen,
 )
+from .work_draft_contract import WorkDraft
 
 Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")]
 Day = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")]
@@ -2646,6 +2649,80 @@ class WorkflowResponse(ResponseObject):
     fact_issues: list[ReadinessIssue]
 
 
+DraftRevision = Annotated[str, Field(min_length=1)]
+
+
+def _raw_work_draft(value, handler):
+    validated = handler(value)
+    # Structure validation uses the one input model, while native responses
+    # retain the JSON document and every deliberately omitted section.
+    if isinstance(value, dict):
+        return value
+    return validated.model_dump(mode="json", exclude_unset=True)
+
+
+DraftBody = Annotated[
+    WorkDraft,
+    WrapValidator(_raw_work_draft),
+    PlainSerializer(lambda value: value, return_type=dict[str, JsonValue]),
+]
+
+
+class WorkDraftScope(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    period: Month
+    work_area: WorkArea
+
+
+class WorkDraftWarning(ResponseObject):
+    code: Literal[
+        "draft_command_unavailable", "draft_fact_kind_unavailable",
+        "draft_registration_route_changed",
+    ]
+    command: str
+    kind: NotRequired[str]
+
+
+class WorkDraftPresentResponse(WorkDraftScope):
+    status: Literal["present"]
+    revision: DraftRevision
+    draft: DraftBody
+    warnings: list[WorkDraftWarning]
+
+
+class WorkDraftAbsentResponse(WorkDraftScope):
+    status: Literal["absent"]
+    revision: None
+    draft: None
+    warnings: list[WorkDraftWarning]
+
+
+class WorkDraftSavedResponse(WorkDraftScope):
+    status: Literal["saved"]
+    revision: DraftRevision
+
+
+class WorkDraftDeletedResponse(WorkDraftScope):
+    status: Literal["deleted"]
+    revision: DraftRevision
+
+
+class WorkDraftListItem(ResponseObject):
+    period: Month
+    work_area: WorkArea
+
+
+class WorkDraftListResponse(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    items: list[WorkDraftListItem]
+    limit: Annotated[int, Field(ge=1, le=500)]
+    next_cursor: str | None
+
+
 RESPONSE_ADAPTERS = {
     "workflow": TypeAdapter(WorkflowResponse),
     "period_readiness": TypeAdapter(PeriodReadinessResponse),
@@ -2661,6 +2738,10 @@ RESPONSE_ADAPTERS = {
     "browser_security_status": TypeAdapter(BrowserSecurityStatusResponse),
     "report_export_receipt": TypeAdapter(ReportExportReceipt),
     "dashboard_close_review": DASHBOARD_CLOSE_REVIEW_ADAPTER,
+    "list_work_drafts": TypeAdapter(WorkDraftListResponse),
+    "read_work_draft": TypeAdapter(WorkDraftPresentResponse | WorkDraftAbsentResponse),
+    "save_work_draft": TypeAdapter(WorkDraftSavedResponse),
+    "delete_work_draft": TypeAdapter(WorkDraftDeletedResponse),
 }
 
 for _adapter in RESPONSE_ADAPTERS.values():
