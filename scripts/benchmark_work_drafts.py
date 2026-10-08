@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import copy
 import json
 import shutil
@@ -69,6 +70,7 @@ async def worker(directory, source, *, instrument, repeats):
                 key: metric[key]
                 for key in (
                     "sql_statements",
+                    "sql_connections",
                     "inspect_bytes_calls",
                     "draft_file_reads",
                     "draft_file_writes",
@@ -86,9 +88,35 @@ async def worker(directory, source, *, instrument, repeats):
         seed = json.loads((directory / "seed.json").read_text(encoding="utf-8"))
         schema = await invoke(client, "discovery", "schema", {}, tool="finance_local_schema")
         modern = "save_work_draft" in schema["commands"]
+        selected = None
+        for _ in range(repeats):
+            selected = await invoke(
+                client,
+                "selected_contract",
+                "schema",
+                {
+                    "view": "selected",
+                    "commands": ["work_context"] + (["save_work_draft"] if modern else []),
+                    "response_types": ["work_context"],
+                },
+                tool="finance_local_schema",
+            )
+            assert selected["view"] == "selected"
+        combined = "include_work_draft" in selected["command_schemas"]["work_context"]["properties"]
         scope = seed["work_context_payload"]
-        await invoke(client, "initial_read", "work_context", scope)
-        await invoke(client, "initial_read", "inspect_material", seed["inspect_payload"])
+        if modern and not combined:
+            await invoke(client, "initial_read", "read_work_draft", scope)
+        await invoke(
+            client,
+            "initial_read",
+            "work_context",
+            {**scope, **({"include_work_draft": True} if combined else {})},
+        )
+        await invoke(client, "cold_inspection", "inspect_material", seed["inspect_payload"])
+        for _ in range(repeats):
+            await invoke(client, "hot_inspection", "inspect_material", seed["inspect_payload"])
+            page = await invoke(client, "hot_context", "work_context", scope)
+            assert "work_draft" not in page
         draft = {
             "candidates": seed["candidates"],
             "questions": [{"id": "creditor-2", "question": "第2笔债权人类别？"}],
@@ -124,7 +152,17 @@ async def worker(directory, source, *, instrument, repeats):
             and first_instance["catalog_id"] == second_instance["catalog_id"]
         )
         if modern:
-            restored = await invoke(client, "restart_recovery", "read_work_draft", scope)
+            if combined:
+                context = await invoke(
+                    client,
+                    "restart_recovery",
+                    "work_context",
+                    {**scope, "include_work_draft": True},
+                )
+                restored = context["work_draft"]
+            else:
+                restored = await invoke(client, "restart_recovery", "read_work_draft", scope)
+                await invoke(client, "restart_recovery", "work_context", scope)
             checks["candidate_and_answer_restored"] = restored["draft"] == draft
             assert restored["revision"] == revision
             recovered = restored["draft"]
@@ -134,14 +172,21 @@ async def worker(directory, source, *, instrument, repeats):
             recovered = None
             checks["candidate_and_answer_restored"] = False
             checks["missing_after_restart"] = ["unsaved_owner_answer", "candidate_request_ids"]
-        await invoke(client, "restart_recovery", "work_context", scope)
+        if not modern:
+            await invoke(client, "restart_recovery", "work_context", scope)
+        await invoke(client, "restart_inspection", "inspect_material", seed["inspect_payload"])
         if not modern:
             await invoke(client, "restart_recovery", "inspect_material", seed["inspect_payload"])
         checks["scripted_owner_requestion_required"] = 0 if recovered else 1
         if modern:
             original = recovered["candidates"][0]["payload"]
             recovered["pending_requests"] = [
-                {"command": "save_fact", "payload": original, "request_id": original["request_id"]}
+                {
+                    "command": "save_fact",
+                    "payload": candidate["payload"],
+                    "request_id": candidate["payload"]["request_id"],
+                }
+                for candidate in recovered["candidates"]
             ]
             saved = await invoke(
                 client,
@@ -151,6 +196,65 @@ async def worker(directory, source, *, instrument, repeats):
             )
             revision = saved["revision"]
             receipt = await invoke(client, "formal_registration", "save_fact", original)
+            await invoke(
+                client, "formal_registration", "save_fact", recovered["candidates"][1]["payload"]
+            )
+
+        # A separate synthetic company provides a larger unresolved worklist.
+        company = seed["companies"][1]["id"]
+        raw = (
+            "名称,金额,核算所属期\n" + "".join(f"合成服务{i},1.00,2026-02\n" for i in range(250))
+        ).encode("utf-8-sig")
+        proof = await invoke(
+            client,
+            "workflow_fixture",
+            "evidence",
+            {
+                "company_id": company,
+                "content_base64": base64.b64encode(raw).decode(),
+                "media_type": "text/csv",
+                "name": "250行合成服务.csv",
+                "request_id": "large-proof",
+            },
+        )
+        await invoke(
+            client,
+            "workflow_fixture",
+            "receive_material",
+            {
+                "company_id": company,
+                "subject_id": "large-source",
+                "data": {
+                    "period": "2026-02",
+                    "category": "transactions",
+                    "purpose": "business",
+                    "evidence_digest": proof["digest"],
+                    "specification": {
+                        "format": "csv",
+                        "columns": [
+                            {"column": "A", "role": "context", "label": "名称"},
+                            {"column": "B", "role": "amount", "label": "金额"},
+                            {"column": "C", "role": "recognition_period", "label": "核算所属期"},
+                        ],
+                    },
+                },
+                "evidence": [proof["digest"]],
+                "expected_revision": 0,
+                "request_id": "large-source",
+            },
+        )
+        for _ in range(repeats):
+            listing = await invoke(
+                client,
+                "workflow_250_rows",
+                "workflow",
+                {
+                    "company_id": company,
+                    "period": "2026-02",
+                    "as_of": "2026-03-31",
+                },
+            )
+        checks["workflow_schema_version"] = listing["schema_version"]
 
     if modern:
         async with session(directory, source, instrument, resume=True) as client:
@@ -177,9 +281,24 @@ async def worker(directory, source, *, instrument, repeats):
                     "period_to": "2026-02",
                 },
             )
-            assert len(facts["items"]) == 1
+            assert len(facts["items"]) == 2
             checks["committed_request_recovered_without_duplicate"] = True
             checks["recovered_work_draft_did_not_publish"] = facts["items"][0]["pending"]
+            recovered = restored["draft"]
+            recovered["result_refs"] = [
+                {"request_id": item["request_id"]} for item in recovered.pop("pending_requests")
+            ]
+            await invoke(
+                client,
+                "multiple_receipt_checkpoint",
+                "save_work_draft",
+                {
+                    **scope,
+                    "expected_revision": revision,
+                    "draft": recovered,
+                },
+            )
+            checks["multiple_receipts_preserved_and_resolved"] = True
 
     grouped = {}
     for phase in sorted({row["phase"] for row in samples}):
@@ -194,6 +313,7 @@ async def worker(directory, source, *, instrument, repeats):
                 key: sum(row[key] for row in rows) if instrument else None
                 for key in (
                     "sql_statements",
+                    "sql_connections",
                     "inspect_bytes_calls",
                     "draft_file_reads",
                     "draft_file_writes",
@@ -206,6 +326,7 @@ async def worker(directory, source, *, instrument, repeats):
         "source_dir": str(source),
         "build_id": first_instance["build_id"],
         "drafts_available": modern,
+        "combined_recovery_available": combined,
         "instrumented": instrument,
         "timing_instrumentation_separated": True,
         "transport": "production MCP -> ServiceClient -> HTTP -> LocalService",

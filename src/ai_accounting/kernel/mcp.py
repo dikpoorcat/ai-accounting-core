@@ -29,6 +29,10 @@ def serve(root: Path):
     ) -> dict:
         """Read the overview first; explicitly select needed contracts or request full.
 
+        Reuse contracts within the same conversation and build_id. Selected
+        responses omit the full operating protocol. Check view/selection; if an
+        older MCP connection drops selectors, call command="schema" with the
+        same payload through finance_local_command instead of repeating overview.
         The selected view requires fact_kinds for save_fact/amend_fact/save_facts.
         Dedicated facts include their required registration command automatically.
         """
@@ -66,6 +70,10 @@ def serve(root: Path):
         when no draft exists; updates/deletion require its current revision.
         A saved draft is not a fact, publication or approval. Recover uncertain
         business writes through request_result using the original request_id.
+        Start/resume with work_context(include_work_draft=true) to read the draft
+        and current kernel state together; omit it for subsequent pages. File
+        and database reads are verified separately. Workflow v2 issue refs index
+        its top-level issues only within that response, preserving each scope.
         """
         try:
             result = service.dispatch(command, payload)

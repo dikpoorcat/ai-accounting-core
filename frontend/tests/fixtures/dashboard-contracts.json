@@ -15,7 +15,7 @@
   "empty_workflow": {
     "command": "workflow",
     "response": {
-      "schema_version": 1,
+      "schema_version": 2,
       "company_id": "990e430da574412a978a1a774e0f1e14",
       "database_id": "a43995334c964d389be169fb906a58f8",
       "as_of": "2026-02-25",
@@ -31,16 +31,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -50,16 +50,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -69,16 +69,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -88,16 +88,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -107,16 +107,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -126,16 +126,16 @@
               "status": "unestablished",
               "inventory": null,
               "source_count": 0,
-              "issues": []
+              "issue_refs": []
             },
             "accounting": {
               "status": "unestablished",
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           }
         ],
@@ -149,7 +149,8 @@
           "tax_import_mapping": null
         }
       },
-      "fact_issues": []
+      "issues": [],
+      "fact_issue_refs": []
     }
   },
   "empty_readiness": {
@@ -498,7 +499,7 @@
   "open_workflow": {
     "command": "workflow",
     "response": {
-      "schema_version": 1,
+      "schema_version": 2,
       "company_id": "990e430da574412a978a1a774e0f1e14",
       "database_id": "a43995334c964d389be169fb906a58f8",
       "as_of": "2026-02-25",
@@ -514,11 +515,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.bank",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                0
               ]
             },
             "accounting": {
@@ -526,9 +524,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -538,11 +536,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.payroll",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                1
               ]
             },
             "accounting": {
@@ -550,9 +545,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -562,11 +557,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.transactions",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                2
               ]
             },
             "accounting": {
@@ -574,9 +566,9 @@
               "fact_count": 3,
               "calculation_count": 3,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": [
               {
                 "subject_id": "contract-expense",
@@ -614,11 +606,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.tax",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                3
               ]
             },
             "accounting": {
@@ -626,9 +615,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -638,11 +627,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.assets",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                4
               ]
             },
             "accounting": {
@@ -650,9 +636,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -662,11 +648,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.financing",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                5
               ]
             },
             "accounting": {
@@ -674,39 +657,21 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           }
         ],
         "close": {
           "status": "needs_information",
-          "issues": [
-            {
-              "field": "materials.transactions",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.payroll",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.bank",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.tax",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.assets",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.financing",
-              "message": "需要资料覆盖或无业务确认"
-            }
+          "issue_refs": [
+            2,
+            1,
+            0,
+            3,
+            4,
+            5
           ],
           "closure": {
             "state": "open"
@@ -718,7 +683,7 @@
             "status": "established",
             "cutoff_period": "2026-01",
             "current_cutoff_period": "2026-01",
-            "issues": [],
+            "issue_refs": [],
             "obligation_count": 1,
             "followup_count": 0,
             "complete": true,
@@ -737,13 +702,13 @@
             "blocking_scope": "tax_import_file",
             "mapping_fact_ids": [],
             "calculation_ids": [],
-            "issues": []
+            "issue_refs": []
           }
         }
       },
-      "fact_issues": [
+      "issues": [
         {
-          "field": "materials.transactions",
+          "field": "materials.bank",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -751,7 +716,7 @@
           "message": "需要资料覆盖或无业务确认"
         },
         {
-          "field": "materials.bank",
+          "field": "materials.transactions",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -766,6 +731,14 @@
           "field": "materials.financing",
           "message": "需要资料覆盖或无业务确认"
         }
+      ],
+      "fact_issue_refs": [
+        2,
+        1,
+        0,
+        3,
+        4,
+        5
       ]
     }
   },
@@ -8879,7 +8852,7 @@
   "actual_tax_unreviewed": {
     "command": "workflow",
     "response": {
-      "schema_version": 1,
+      "schema_version": 2,
       "company_id": "company",
       "database_id": "database",
       "as_of": "2026-02-25",
@@ -8895,11 +8868,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.bank",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                0
               ]
             },
             "accounting": {
@@ -8907,9 +8877,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -8919,11 +8889,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.payroll",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                1
               ]
             },
             "accounting": {
@@ -8931,9 +8898,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -8943,11 +8910,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.transactions",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                2
               ]
             },
             "accounting": {
@@ -8955,9 +8919,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -8967,11 +8931,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.tax",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                3
               ]
             },
             "accounting": {
@@ -8979,9 +8940,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -8991,11 +8952,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.assets",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                4
               ]
             },
             "accounting": {
@@ -9003,9 +8961,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9015,11 +8973,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.financing",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                5
               ]
             },
             "accounting": {
@@ -9027,39 +8982,21 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           }
         ],
         "close": {
           "status": "needs_information",
-          "issues": [
-            {
-              "field": "materials.transactions",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.payroll",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.bank",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.tax",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.assets",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.financing",
-              "message": "需要资料覆盖或无业务确认"
-            }
+          "issue_refs": [
+            2,
+            1,
+            0,
+            3,
+            4,
+            5
           ],
           "closure": {
             "state": "open"
@@ -9078,7 +9015,7 @@
               "actual_completion_status": "completed",
               "basis_review_status": "not_reviewed",
               "basis_review_calculation_id": null,
-              "basis_issues": [],
+              "basis_issue_refs": [],
               "recorded_completions": [
                 {
                   "subject_id": "completion",
@@ -9102,7 +9039,7 @@
             "status": "not_established",
             "cutoff_period": "2026-01",
             "current_cutoff_period": "2026-01",
-            "issues": [],
+            "issue_refs": [],
             "obligation_count": 0,
             "followup_count": 0,
             "complete": true,
@@ -9121,13 +9058,13 @@
             "blocking_scope": "tax_import_file",
             "mapping_fact_ids": [],
             "calculation_ids": [],
-            "issues": []
+            "issue_refs": []
           }
         }
       },
-      "fact_issues": [
+      "issues": [
         {
-          "field": "materials.transactions",
+          "field": "materials.bank",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -9135,7 +9072,7 @@
           "message": "需要资料覆盖或无业务确认"
         },
         {
-          "field": "materials.bank",
+          "field": "materials.transactions",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -9150,6 +9087,14 @@
           "field": "materials.financing",
           "message": "需要资料覆盖或无业务确认"
         }
+      ],
+      "fact_issue_refs": [
+        2,
+        1,
+        0,
+        3,
+        4,
+        5
       ]
     }
   },
@@ -9633,7 +9578,7 @@
   "actual_tax_reviewed": {
     "command": "workflow",
     "response": {
-      "schema_version": 1,
+      "schema_version": 2,
       "company_id": "company",
       "database_id": "database",
       "as_of": "2026-02-25",
@@ -9649,11 +9594,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.bank",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                0
               ]
             },
             "accounting": {
@@ -9661,9 +9603,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9673,11 +9615,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.payroll",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                1
               ]
             },
             "accounting": {
@@ -9685,9 +9624,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9697,11 +9636,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.transactions",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                2
               ]
             },
             "accounting": {
@@ -9709,9 +9645,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9721,11 +9657,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.tax",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                3
               ]
             },
             "accounting": {
@@ -9733,9 +9666,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9745,11 +9678,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.assets",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                4
               ]
             },
             "accounting": {
@@ -9757,9 +9687,9 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           },
           {
@@ -9769,11 +9699,8 @@
               "status": "needs_information",
               "inventory": null,
               "source_count": 0,
-              "issues": [
-                {
-                  "field": "materials.financing",
-                  "message": "需要资料覆盖或无业务确认"
-                }
+              "issue_refs": [
+                5
               ]
             },
             "accounting": {
@@ -9781,39 +9708,21 @@
               "fact_count": 0,
               "calculation_count": 0,
               "pending_count": 0,
-              "issues": []
+              "issue_refs": []
             },
-            "close_issues": [],
+            "close_issue_refs": [],
             "sources": []
           }
         ],
         "close": {
           "status": "needs_information",
-          "issues": [
-            {
-              "field": "materials.transactions",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.payroll",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.bank",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.tax",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.assets",
-              "message": "需要资料覆盖或无业务确认"
-            },
-            {
-              "field": "materials.financing",
-              "message": "需要资料覆盖或无业务确认"
-            }
+          "issue_refs": [
+            2,
+            1,
+            0,
+            3,
+            4,
+            5
           ],
           "closure": {
             "state": "open"
@@ -9832,7 +9741,7 @@
               "actual_completion_status": "completed",
               "basis_review_status": "reviewed",
               "basis_review_calculation_id": "c_ed711f524a6a658b46b34ff13e9d730597a9c15bc9791866193753eacab51313",
-              "basis_issues": [],
+              "basis_issue_refs": [],
               "recorded_completions": [
                 {
                   "subject_id": "completion",
@@ -9856,7 +9765,7 @@
             "status": "not_established",
             "cutoff_period": "2026-01",
             "current_cutoff_period": "2026-01",
-            "issues": [],
+            "issue_refs": [],
             "obligation_count": 0,
             "followup_count": 0,
             "complete": true,
@@ -9875,13 +9784,13 @@
             "blocking_scope": "tax_import_file",
             "mapping_fact_ids": [],
             "calculation_ids": [],
-            "issues": []
+            "issue_refs": []
           }
         }
       },
-      "fact_issues": [
+      "issues": [
         {
-          "field": "materials.transactions",
+          "field": "materials.bank",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -9889,7 +9798,7 @@
           "message": "需要资料覆盖或无业务确认"
         },
         {
-          "field": "materials.bank",
+          "field": "materials.transactions",
           "message": "需要资料覆盖或无业务确认"
         },
         {
@@ -9904,6 +9813,14 @@
           "field": "materials.financing",
           "message": "需要资料覆盖或无业务确认"
         }
+      ],
+      "fact_issue_refs": [
+        2,
+        1,
+        0,
+        3,
+        4,
+        5
       ]
     }
   },

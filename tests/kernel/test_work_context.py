@@ -1,5 +1,6 @@
 """One bounded discovery snapshot reuses sources without deciding readiness."""
 
+from collections import Counter
 from contextlib import contextmanager
 
 import pytest
@@ -212,6 +213,72 @@ def test_page_limit_precedes_body_hydration_and_exact_related_sources(company, m
         assert not visited & new
         visited.update(new)
     assert len(visited) == 12
+
+
+def test_selected_raw_fact_bodies_and_digests_are_reused_within_one_read(company, monkeypatch):
+    from ai_accounting.kernel import work_context
+
+    for index in range(4):
+        expense(company, f"expense-{index}")
+    decoded = Counter()
+    hashed = Counter()
+    original_decode = Store._fact_data_many_from_headers
+    original_digest = work_context.digest
+
+    def decode(self, connection, rows):
+        decoded.update(row["id"] for row in rows)
+        return original_decode(self, connection, rows)
+
+    def hash_once(value):
+        if isinstance(value, dict) and "amount_fen" in value:
+            hashed[value["amount_fen"]] += 1
+        return original_digest(value)
+
+    monkeypatch.setattr(Store, "_fact_data_many_from_headers", decode)
+    monkeypatch.setattr(work_context, "digest", hash_once)
+    first = query(company, limit=3)
+    assert decoded == Counter({item["fact_id"]: 1 for item in first["items"]})
+    assert hashed == Counter({item["data"]["amount_fen"]: 1 for item in first["items"]})
+    assert all(item["identity_matches"] for item in first["items"])
+
+
+@pytest.mark.parametrize("damage_kind", ["raw_digest", "seal", "reference", "adoption"])
+def test_reused_raw_fact_read_preserves_all_selected_integrity_checks(company, damage_kind):
+    from test_integrity_content import damage
+
+    saved = expense(company, "one", publish=True)
+    if damage_kind == "raw_digest":
+        damage(company, "fact_revision", "UPDATE fact_revision SET digest=zeroblob(32) WHERE id=?",
+               (saved["fact_id"],))
+    elif damage_kind == "seal":
+        damage(company, "fact_seal", "DELETE FROM fact_seal WHERE fact_id=?",
+               (saved["fact_id"],), foreign_keys=False)
+    elif damage_kind == "reference":
+        with company.store.connection() as connection:
+            connection.execute("DELETE FROM entity_reference_current WHERE fact_id=?",
+                               (saved["fact_id"],))
+    else:
+        damage(company, "calculation_publication",
+               "UPDATE calculation_publication SET mode='review_no_impact' WHERE subject_id='one'")
+    with pytest.raises(KernelError) as error:
+        query(company)
+    assert error.value.code in {"content_integrity_failed", "entity_reference_corrupt"}
+
+
+def test_context_version_and_cursor_change_invalidate_previous_read_contract(company):
+    import base64
+    import json
+
+    expense(company, "one")
+    expense(company, "two")
+    first = query(company, limit=1)
+    assert first["schema_version"] == 2
+    old = json.loads(base64.urlsafe_b64decode(first["next_cursor"]))
+    old["version"] = 1
+    cursor = base64.urlsafe_b64encode(json.dumps(old).encode()).decode()
+    with pytest.raises(KernelError) as error:
+        query(company, limit=1, cursor=cursor)
+    assert error.value.code == "work_context_cursor_stale"
 
 
 @pytest.mark.parametrize("source_count", [1, 25, 75])

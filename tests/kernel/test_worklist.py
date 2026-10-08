@@ -10,6 +10,7 @@ from test_payroll import contribution_policy, income_tax_policy, opening, payrol
 from test_reports import book as book  # noqa: F401
 from test_reports import scenario
 from test_workflow import obligation, setup_company
+from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
@@ -30,7 +31,7 @@ def view(company, *, as_of="2026-03-01", period=None):
         connection.execute("BEGIN")
         result = Worklist(company.engine).query(connection, as_of=as_of, period=period)
         assert validate_response("workflow", result) == result
-        return result
+        return expand_workflow(result)
 
 
 def test_empty_company_does_not_invent_a_month(tmp_path):

@@ -47,10 +47,13 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
 )
 
 OPERATING_PROTOCOL = {
-    "version": 5,
+    "version": 6,
     "schema_discovery": (
         "finance_local_schema无参读取overview概要。按当前事项用view=selected明确选择"
         "fact_kinds、commands和response_types取得所需详细合同；通用登记命令同时选择事实类型。"
+        "同一会话、同一build_id复用已取得合同，只补取新合同；程序变化时重新读概要和所需合同。"
+        "检查返回view确为selected且selection包含所需内容；旧MCP连接未传选择参数时，"
+        "改用finance_local_command(command=schema,payload=所选请求)，不反复取概要。"
         "完整合同仅用view=full显式获取，不重复把整套事实和响应合同载入会话。"
     ),
     "work_entry": {
@@ -88,9 +91,18 @@ OPERATING_PROTOCOL = {
             "pending或running任务不能说已经交付，文件产物核验通过后才能提供。"
         ),
     },
+    "workflow_issue_references": (
+        "workflow版本2的完整问题集中在顶层issues；各位置的issue_refs、fact_issue_refs、"
+        "basis_issue_refs、close_issue_refs、contract_issue_refs和可空result_issue_ref"
+        "按本次响应内整数位置读取正文，保留所在公司、期间和事项范围及次序。"
+        "相同正文共用引用不等于不同业务范围可合并追问；编号不能跨响应复用。"
+        "期间准备、关账等其他接口仍按各自合同读取问题。"
+    ),
     "owner_answers": {
         "lookup_first": (
-            "当前事项先用work_context按明确公司、月份和事项读取已有资料、事实、对象与正式采用。"
+            "开始或恢复当前事项时用work_context(include_work_draft=true)，"
+            "按明确公司、月份和事项一次读取工作稿及已有资料、事实、对象与正式采用。"
+            "后续资料查询或翻页省略include_work_draft，不重复读工作稿；true不能与cursor同时使用。"
             "本页未出现或尚未展开的历史依据不表示资料缺失；沿游标或精确来源继续查询。"
             "需要原文细节时按原位置读取inspect_material；解析缓存只供阅读，不代表正式核验完成。"
             "查清已有来源和精确任务后，再问仍会改变处理的缺项；老板可陆续提供资料，无需一次交齐。"
@@ -114,7 +126,9 @@ OPERATING_PROTOCOL = {
     "work_drafts": {
         "scope": (
             "未提交工作稿按明确company_id、period、work_area保存，一份覆盖当前清单事项。"
-            "范围尚未明确时list_work_drafts只列当前公司的月份和事项，选择后read_work_draft；"
+            "范围尚未明确时list_work_drafts只列当前公司的月份和事项，"
+            "选择后work_context(include_work_draft=true)；单独查看或排错保留read_work_draft。"
+            "工作稿文件和内核快照分别核验，不宣称同一事务；工作稿不存在时明确返回。"
             "不自动选最新稿，不用工作月份代替资料实际所属期。"
         ),
         "content": (
@@ -160,7 +174,8 @@ OPERATING_PROTOCOL = {
         ),
         "resume": (
             "中断后重新读取schema、公司上下文、workflow、请求回执和相关任务。"
-            "明确当前事项后read_work_draft并用work_context核对实时状态，复用已保存候选、回答和来源；"
+            "明确当前事项后用work_context(include_work_draft=true)核对工作稿和实时状态，"
+            "复用已保存候选、回答和来源；后续分页不带工作稿。"
             "范围未知时只列工作稿供选择，不能从最新文件猜当前月份或完成状态。"
             "从真实业务状态和可核查的确认来源恢复清单；已处理但找不到适用确认时如实显示待确认，不猜已确认。"
             "后项已有结果如实保留，当前回到最早未完成或待确认项，不因后项有结果或待确认就跳过前项，不自行撤回已入账结果。"
@@ -783,23 +798,27 @@ class LocalService:
             return getattr(self.catalog, command)(**payload)
         data = dict(payload)
         company_id = data.pop("company_id")
+
+        def draft_store(engine):
+            from .work_drafts import WorkDraftStore
+
+            return WorkDraftStore(
+                self.catalog.root,
+                authority.catalog_instance_id,
+                engine.store.company_id,
+                engine.store.database_id,
+                registry=self.registry,
+                commands=self.command_models,
+                request_result=engine.request_result,
+                request_result_snapshot=engine._request_result_snapshot,
+            )
+
         if command in {
             "list_work_drafts", "read_work_draft", "save_work_draft", "delete_work_draft"
         }:
-            from .work_drafts import WorkDraftStore
-
             # Bind every request to the current catalog record and actual
             # database identity. Draft IO never changes business audit/epochs.
-            store = self.catalog.bind(company_id)
-            drafts = WorkDraftStore(
-                self.catalog.root,
-                authority.catalog_instance_id,
-                store.company_id,
-                store.database_id,
-                registry=self.registry,
-                commands=self.command_models,
-                request_result=Engine(store).request_result,
-            )
+            drafts = draft_store(Engine(self.catalog.bind(company_id)))
             action = getattr(drafts, {
                 "list_work_drafts": "list", "read_work_draft": "read",
                 "save_work_draft": "save", "delete_work_draft": "delete",
@@ -816,6 +835,15 @@ class LocalService:
             "session_id": authority.session_id,
             "credential_version": authority.credential_version,
         }
+        if command == "work_context":
+            from .work_context import WorkContext
+
+            # Reuse the one current company/database binding. The normal page
+            # path never opens a draft file, including subsequent pages.
+            return WorkContext(
+                engine,
+                work_drafts=draft_store(engine) if data.get("include_work_draft") else None,
+            ).query(**data)
         if command in {"preview_replay_close_range", "confirm_replay_close_range"}:
             replay = ReplayClose(self, engine, authority)
             if command == "preview_replay_close_range":
@@ -866,7 +894,6 @@ class LocalService:
         asset_batches = AssetBatches(engine)
         tax_import = TaxImport(engine)
         from .maintenance import Maintenance
-        from .work_context import WorkContext
 
         maintenance = Maintenance(engine)
         actions = {
@@ -927,7 +954,6 @@ class LocalService:
             "dashboard_period_preparation": dashboard.period_preparation,
             "dashboard_close_review": CloseReview(self, engine).read,
             "find_facts": discovery.find_facts,
-            "work_context": WorkContext(engine).query,
             "payroll_reuse_basis": payroll_preparation.reuse_basis,
             "prepare_payroll": payroll_preparation.prepare,
             "confirm_payroll_preparation": payroll_preparation.confirm,

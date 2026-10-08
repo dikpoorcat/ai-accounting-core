@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 
 from pydantic import ValidationError
@@ -16,7 +16,7 @@ from .build import calculator_build_id
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
 from .dependencies import checked_lanes, read_matches, scope_keys
 from .storage import Store
-from .stored_json import load_outcome
+from .stored_json import load_outcome, loads_unique
 from .types import (
     EvidenceDigest,
     YearMonth,
@@ -94,41 +94,55 @@ class Engine:
             raise KernelError(
                 "invalid_request_id", "request id must be nonempty and at most 200 chars"
             )
+        with self._request_result_snapshot() as read_result:
+            return read_result(submitted_request_id)
+
+    @contextmanager
+    def _request_result_snapshot(self):
+        """Read several receipts without changing their company-local snapshot."""
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            request = connection.execute(
-                "SELECT digest,result FROM request WHERE id=?", (submitted_request_id,)
-            ).fetchone()
-            audits = connection.execute(
-                "SELECT action,payload FROM audit WHERE request_id=? LIMIT 2",
-                (submitted_request_id,),
-            ).fetchall()
-            if request is None and not audits:
-                return {
-                    "status": "unknown",
-                    "company_id": self.store.company_id,
-                    "database_id": self.store.database_id,
-                    "submitted_request_id": submitted_request_id,
-                }
-            if request is None or len(audits) != 1 or len(request["digest"]) != 32:
-                raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
-            try:
-                result = json.loads(request["result"])
-                audit_payload = json.loads(audits[0]["payload"])
-            except (TypeError, ValueError):
-                raise KernelError("request_content_invalid", "请求记录与审计记录不一致") from None
-            from .provenance import _result
+            yield lambda request_id: self._request_result(connection, request_id)
 
-            if not audits[0]["action"] or _result(audit_payload) != result:
-                raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
+    def _request_result(self, connection, submitted_request_id: str) -> dict:
+        request = connection.execute(
+            "SELECT digest,result FROM request WHERE id=?", (submitted_request_id,)
+        ).fetchone()
+        audits = connection.execute(
+            "SELECT action,payload FROM audit WHERE request_id=? LIMIT 2",
+            (submitted_request_id,),
+        ).fetchall()
+        if request is None and not audits:
             return {
-                "status": "committed",
+                "status": "unknown",
                 "company_id": self.store.company_id,
                 "database_id": self.store.database_id,
                 "submitted_request_id": submitted_request_id,
-                "action": audits[0]["action"],
-                "result": result,
             }
+        if request is None or len(audits) != 1 or len(request["digest"]) != 32:
+            raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
+        from .provenance import _result
+
+        try:
+            result = loads_unique(request["result"])
+            audit_result = _result(loads_unique(audits[0]["payload"]))
+            consistent = (
+                isinstance(result, dict)
+                and isinstance(audit_result, dict)
+                and canonical(audit_result) == canonical(result)
+            )
+        except (TypeError, ValueError, RecursionError, OverflowError):
+            raise KernelError("request_content_invalid", "请求记录与审计记录不一致") from None
+        if not audits[0]["action"] or not consistent:
+            raise KernelError("request_content_invalid", "请求记录与审计记录不一致")
+        return {
+            "status": "committed",
+            "company_id": self.store.company_id,
+            "database_id": self.store.database_id,
+            "submitted_request_id": submitted_request_id,
+            "action": audits[0]["action"],
+            "result": result,
+        }
 
     @staticmethod
     def _replay(connection, key, request_hash):

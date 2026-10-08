@@ -4,6 +4,7 @@ import pytest
 from monthly_close_fixture import close_months, ready
 from test_payroll import payroll, profile
 from test_workflow import obligation, setup_company
+from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -132,7 +133,7 @@ def test_workflow_order_failure_keeps_current_month_followups(tmp_path):
 
     baseline = service.query("2026-02", as_of="2026-03-01")
     company.save(payroll(), "january")
-    current = service.query("2026-02", as_of="2026-03-01")
+    current = expand_workflow(service.query("2026-02", as_of="2026-03-01"))
 
     assert [item["id"] for item in current["sections"]["materials_and_accounting"]] == [
         item["id"] for item in baseline["sections"]["materials_and_accounting"]

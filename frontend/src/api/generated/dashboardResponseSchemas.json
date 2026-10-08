@@ -140,11 +140,12 @@
           "accounting": {
             "$ref": "#/$defs/WorkAccountingStatus"
           },
-          "close_issues": {
+          "close_issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Close Issues",
+            "title": "Close Issue Refs",
             "type": "array"
           },
           "sources": {
@@ -160,7 +161,7 @@
           "label",
           "materials",
           "accounting",
-          "close_issues",
+          "close_issue_refs",
           "sources"
         ],
         "title": "BusinessWorkArea",
@@ -799,173 +800,6 @@
         "title": "SelectionCandidate",
         "type": "object"
       },
-      "SettlementFollowup": {
-        "additionalProperties": false,
-        "properties": {
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "cutoff_period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Cutoff Period",
-            "type": "string"
-          },
-          "current_cutoff_period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Current Cutoff Period",
-            "type": "string"
-          },
-          "issues": {
-            "items": {
-              "$ref": "#/$defs/ReadinessIssue"
-            },
-            "title": "Issues",
-            "type": "array"
-          },
-          "obligation_count": {
-            "minimum": 0,
-            "title": "Obligation Count",
-            "type": "integer"
-          },
-          "followup_count": {
-            "minimum": 0,
-            "title": "Followup Count",
-            "type": "integer"
-          },
-          "complete": {
-            "title": "Complete",
-            "type": "boolean"
-          },
-          "unestablished_state_selection_count": {
-            "minimum": 0,
-            "title": "Unestablished State Selection Count",
-            "type": "integer"
-          },
-          "movement_count": {
-            "minimum": 0,
-            "title": "Movement Count",
-            "type": "integer"
-          },
-          "source_amount_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Amount Fen"
-          },
-          "paid_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paid Fen"
-          },
-          "other_settled_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Other Settled Fen"
-          },
-          "remaining_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remaining Fen"
-          }
-        },
-        "required": [
-          "status",
-          "obligation_count",
-          "followup_count",
-          "complete",
-          "unestablished_state_selection_count",
-          "movement_count",
-          "source_amount_fen",
-          "paid_fen",
-          "other_settled_fen",
-          "remaining_fen"
-        ],
-        "title": "SettlementFollowup",
-        "type": "object"
-      },
-      "TaxImportMappingFollowup": {
-        "additionalProperties": false,
-        "properties": {
-          "status": {
-            "enum": [
-              "ready",
-              "needs_information",
-              "unsupported",
-              "pending_publication",
-              "not_applicable"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "blocking_scope": {
-            "const": "tax_import_file",
-            "title": "Blocking Scope",
-            "type": "string"
-          },
-          "mapping_fact_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Mapping Fact Ids",
-            "type": "array"
-          },
-          "calculation_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Calculation Ids",
-            "type": "array"
-          },
-          "issues": {
-            "items": {
-              "$ref": "#/$defs/TaxImportMappingIssue"
-            },
-            "title": "Issues",
-            "type": "array"
-          }
-        },
-        "required": [
-          "status",
-          "blocking_scope",
-          "mapping_fact_ids",
-          "calculation_ids",
-          "issues"
-        ],
-        "title": "TaxImportMappingFollowup",
-        "type": "object"
-      },
       "TaxImportMappingIssue": {
         "additionalProperties": false,
         "properties": {
@@ -1044,11 +878,12 @@
             "title": "Pending Count",
             "type": "integer"
           },
-          "issues": {
+          "issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Issues",
+            "title": "Issue Refs",
             "type": "array"
           }
         },
@@ -1057,7 +892,7 @@
           "fact_count",
           "calculation_count",
           "pending_count",
-          "issues"
+          "issue_refs"
         ],
         "title": "WorkAccountingStatus",
         "type": "object"
@@ -1074,11 +909,12 @@
             "title": "Status",
             "type": "string"
           },
-          "issues": {
+          "issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Issues",
+            "title": "Issue Refs",
             "type": "array"
           },
           "closure": {
@@ -1098,7 +934,7 @@
         },
         "required": [
           "status",
-          "issues",
+          "issue_refs",
           "closure"
         ],
         "title": "WorkClose",
@@ -1109,7 +945,7 @@
         "properties": {
           "obligations": {
             "items": {
-              "$ref": "#/$defs/WorkflowObligation"
+              "$ref": "#/$defs/WorkObligation"
             },
             "title": "Obligations",
             "type": "array"
@@ -1117,7 +953,7 @@
           "settlements": {
             "anyOf": [
               {
-                "$ref": "#/$defs/SettlementFollowup"
+                "$ref": "#/$defs/WorkSettlementFollowup"
               },
               {
                 "type": "null"
@@ -1227,21 +1063,24 @@
             "title": "Current File Availability",
             "type": "string"
           },
-          "result_issue": {
+          "result_issue_ref": {
             "anyOf": [
               {
-                "$ref": "#/$defs/ReadinessIssue"
+                "minimum": 0,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Result Issue Ref"
           },
-          "contract_issues": {
+          "contract_issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Contract Issues",
+            "title": "Contract Issue Refs",
             "type": "array"
           }
         },
@@ -1257,8 +1096,8 @@
           "references",
           "verified_when_succeeded",
           "current_file_availability",
-          "result_issue",
-          "contract_issues"
+          "result_issue_ref",
+          "contract_issue_refs"
         ],
         "title": "WorkFileJob",
         "type": "object"
@@ -1276,7 +1115,7 @@
           "tax_import_mapping": {
             "anyOf": [
               {
-                "$ref": "#/$defs/TaxImportMappingFollowup"
+                "$ref": "#/$defs/WorkTaxImportMapping"
               },
               {
                 "type": "null"
@@ -1365,11 +1204,12 @@
             "title": "Source Count",
             "type": "integer"
           },
-          "issues": {
+          "issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Issues",
+            "title": "Issue Refs",
             "type": "array"
           }
         },
@@ -1377,114 +1217,12 @@
           "status",
           "inventory",
           "source_count",
-          "issues"
+          "issue_refs"
         ],
         "title": "WorkMaterialStatus",
         "type": "object"
       },
-      "WorkSections": {
-        "additionalProperties": false,
-        "properties": {
-          "materials_and_accounting": {
-            "items": {
-              "$ref": "#/$defs/BusinessWorkArea"
-            },
-            "maxItems": 6,
-            "minItems": 6,
-            "title": "Materials And Accounting",
-            "type": "array"
-          },
-          "close": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WorkClose"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "external": {
-            "$ref": "#/$defs/WorkExternal"
-          },
-          "files": {
-            "$ref": "#/$defs/WorkFiles"
-          }
-        },
-        "required": [
-          "materials_and_accounting",
-          "close",
-          "external",
-          "files"
-        ],
-        "title": "WorkSections",
-        "type": "object"
-      },
-      "WorkSource": {
-        "additionalProperties": false,
-        "properties": {
-          "subject_id": {
-            "title": "Subject Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "fact_id": {
-            "title": "Fact Id",
-            "type": "string"
-          },
-          "calculation_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Calculation Id"
-          },
-          "pending": {
-            "title": "Pending",
-            "type": "boolean"
-          },
-          "work_area": {
-            "enum": [
-              "bank",
-              "payroll",
-              "transactions",
-              "tax",
-              "assets",
-              "financing"
-            ],
-            "title": "Work Area",
-            "type": "string"
-          },
-          "lane": {
-            "enum": [
-              "accounting",
-              "material",
-              "management"
-            ],
-            "title": "Lane",
-            "type": "string"
-          }
-        },
-        "required": [
-          "subject_id",
-          "kind",
-          "fact_id",
-          "calculation_id",
-          "pending",
-          "work_area",
-          "lane"
-        ],
-        "title": "WorkSource",
-        "type": "object"
-      },
-      "WorkflowObligation": {
+      "WorkObligation": {
         "additionalProperties": false,
         "properties": {
           "id": {
@@ -1564,11 +1302,12 @@
             ],
             "title": "Basis Review Calculation Id"
           },
-          "basis_issues": {
+          "basis_issue_refs": {
             "items": {
-              "$ref": "#/$defs/ReadinessIssue"
+              "minimum": 0,
+              "type": "integer"
             },
-            "title": "Basis Issues",
+            "title": "Basis Issue Refs",
             "type": "array"
           },
           "recorded_completions": {
@@ -1590,17 +1329,288 @@
           "actual_completion_status",
           "basis_review_status",
           "basis_review_calculation_id",
-          "basis_issues",
+          "basis_issue_refs",
           "recorded_completions"
         ],
-        "title": "WorkflowObligation",
+        "title": "WorkObligation",
+        "type": "object"
+      },
+      "WorkSections": {
+        "additionalProperties": false,
+        "properties": {
+          "materials_and_accounting": {
+            "items": {
+              "$ref": "#/$defs/BusinessWorkArea"
+            },
+            "maxItems": 6,
+            "minItems": 6,
+            "title": "Materials And Accounting",
+            "type": "array"
+          },
+          "close": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkClose"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "external": {
+            "$ref": "#/$defs/WorkExternal"
+          },
+          "files": {
+            "$ref": "#/$defs/WorkFiles"
+          }
+        },
+        "required": [
+          "materials_and_accounting",
+          "close",
+          "external",
+          "files"
+        ],
+        "title": "WorkSections",
+        "type": "object"
+      },
+      "WorkSettlementFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Cutoff Period",
+            "type": "string"
+          },
+          "current_cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Current Cutoff Period",
+            "type": "string"
+          },
+          "issue_refs": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Issue Refs",
+            "type": "array"
+          },
+          "obligation_count": {
+            "minimum": 0,
+            "title": "Obligation Count",
+            "type": "integer"
+          },
+          "followup_count": {
+            "minimum": 0,
+            "title": "Followup Count",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "unestablished_state_selection_count": {
+            "minimum": 0,
+            "title": "Unestablished State Selection Count",
+            "type": "integer"
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "source_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Amount Fen"
+          },
+          "paid_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Fen"
+          },
+          "other_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Settled Fen"
+          },
+          "remaining_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Fen"
+          }
+        },
+        "required": [
+          "status",
+          "obligation_count",
+          "followup_count",
+          "complete",
+          "unestablished_state_selection_count",
+          "movement_count",
+          "source_amount_fen",
+          "paid_fen",
+          "other_settled_fen",
+          "remaining_fen"
+        ],
+        "title": "WorkSettlementFollowup",
+        "type": "object"
+      },
+      "WorkSource": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "lane": {
+            "enum": [
+              "accounting",
+              "material",
+              "management"
+            ],
+            "title": "Lane",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "kind",
+          "fact_id",
+          "calculation_id",
+          "pending",
+          "work_area",
+          "lane"
+        ],
+        "title": "WorkSource",
+        "type": "object"
+      },
+      "WorkTaxImportMapping": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information",
+              "unsupported",
+              "pending_publication",
+              "not_applicable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "mapping_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mapping Fact Ids",
+            "type": "array"
+          },
+          "calculation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation Ids",
+            "type": "array"
+          },
+          "issue_refs": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Issue Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "blocking_scope",
+          "mapping_fact_ids",
+          "calculation_ids",
+          "issue_refs"
+        ],
+        "title": "WorkTaxImportMapping",
         "type": "object"
       }
     },
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 1,
+        "const": 2,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -1648,11 +1658,26 @@
       "sections": {
         "$ref": "#/$defs/WorkSections"
       },
-      "fact_issues": {
+      "issues": {
         "items": {
-          "$ref": "#/$defs/ReadinessIssue"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            {
+              "$ref": "#/$defs/TaxImportMappingIssue"
+            }
+          ]
         },
-        "title": "Fact Issues",
+        "title": "Issues",
+        "type": "array"
+      },
+      "fact_issue_refs": {
+        "items": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": "Fact Issue Refs",
         "type": "array"
       }
     },
@@ -1665,7 +1690,8 @@
       "period",
       "period_selection",
       "sections",
-      "fact_issues"
+      "issues",
+      "fact_issue_refs"
     ],
     "title": "WorkflowResponse",
     "type": "object"
@@ -14298,6 +14324,380 @@
       "owner_review"
     ],
     "title": "DashboardCloseReviewResponse",
+    "type": "object"
+  },
+  "list_work_drafts": {
+    "$defs": {
+      "WorkDraftListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "work_area"
+        ],
+        "title": "WorkDraftListItem",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/WorkDraftListItem"
+        },
+        "title": "Items",
+        "type": "array"
+      },
+      "limit": {
+        "maximum": 500,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "next_cursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Cursor"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "items",
+      "limit",
+      "next_cursor"
+    ],
+    "title": "WorkDraftListResponse",
+    "type": "object"
+  },
+  "read_work_draft": {
+    "$defs": {
+      "JsonValue": {},
+      "WorkDraftAbsentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "status": {
+            "const": "absent",
+            "title": "Status",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "null"
+          },
+          "draft": {
+            "title": "Draft",
+            "type": "null"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/$defs/WorkDraftWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "company_id",
+          "database_id",
+          "period",
+          "work_area",
+          "status",
+          "revision",
+          "draft",
+          "warnings"
+        ],
+        "title": "WorkDraftAbsentResponse",
+        "type": "object"
+      },
+      "WorkDraftPresentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "status": {
+            "const": "present",
+            "title": "Status",
+            "type": "string"
+          },
+          "revision": {
+            "minLength": 1,
+            "title": "Revision",
+            "type": "string"
+          },
+          "draft": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/$defs/WorkDraftWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "company_id",
+          "database_id",
+          "period",
+          "work_area",
+          "status",
+          "revision",
+          "draft",
+          "warnings"
+        ],
+        "title": "WorkDraftPresentResponse",
+        "type": "object"
+      },
+      "WorkDraftWarning": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "draft_command_unavailable",
+              "draft_fact_kind_unavailable",
+              "draft_registration_route_changed"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "command"
+        ],
+        "title": "WorkDraftWarning",
+        "type": "object"
+      }
+    },
+    "anyOf": [
+      {
+        "$ref": "#/$defs/WorkDraftPresentResponse"
+      },
+      {
+        "$ref": "#/$defs/WorkDraftAbsentResponse"
+      }
+    ]
+  },
+  "save_work_draft": {
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "period": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+        "title": "Period",
+        "type": "string"
+      },
+      "work_area": {
+        "enum": [
+          "bank",
+          "payroll",
+          "transactions",
+          "tax",
+          "assets",
+          "financing"
+        ],
+        "title": "Work Area",
+        "type": "string"
+      },
+      "status": {
+        "const": "saved",
+        "title": "Status",
+        "type": "string"
+      },
+      "revision": {
+        "minLength": 1,
+        "title": "Revision",
+        "type": "string"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "period",
+      "work_area",
+      "status",
+      "revision"
+    ],
+    "title": "WorkDraftSavedResponse",
+    "type": "object"
+  },
+  "delete_work_draft": {
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "period": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+        "title": "Period",
+        "type": "string"
+      },
+      "work_area": {
+        "enum": [
+          "bank",
+          "payroll",
+          "transactions",
+          "tax",
+          "assets",
+          "financing"
+        ],
+        "title": "Work Area",
+        "type": "string"
+      },
+      "status": {
+        "const": "deleted",
+        "title": "Status",
+        "type": "string"
+      },
+      "revision": {
+        "minLength": 1,
+        "title": "Revision",
+        "type": "string"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "period",
+      "work_area",
+      "status",
+      "revision"
+    ],
+    "title": "WorkDraftDeletedResponse",
     "type": "object"
   }
 }

@@ -62,11 +62,16 @@ class Discovery:
             "note_semantics": "公司业务说明是管理背景，不能代替已确认事实或推断缺少的核算信息",
         }
 
-    def _hydrate_fact_records(self, connection, records, *, current_index, identity_matches=None):
+    def _hydrate_fact_records(
+        self, connection, records, *, current_index, identity_matches=None,
+        fact_data=None, fact_digests=None,
+    ):
         """Hydrate and prove only selected headers, shared with scoped work reads."""
         fact_ids = [record["fact_id"] for record in records]
-        data = self.store.fact_data_many(connection, fact_ids)
-        self._verify_fact_hits(connection, records, data, current_index=current_index)
+        data = self.store.fact_data_many(connection, fact_ids) if fact_data is None else fact_data
+        self._verify_fact_hits(
+            connection, records, data, current_index=current_index, fact_digests=fact_digests,
+        )
         evidence = {fact_id: [] for fact_id in fact_ids}
         for row in connection.execute(
             "SELECT e.fact_id,e.evidence_digest FROM json_each(?) ids "
@@ -253,7 +258,7 @@ class Discovery:
         return "(" + " OR ".join(predicates) + ")"
 
     @staticmethod
-    def _verify_fact_hits(connection, records, data, *, current_index):
+    def _verify_fact_hits(connection, records, data, *, current_index, fact_digests=None):
         """Verify only hydrated hits against their immutable source and seal."""
         identifiers = [row["fact_id"] for row in records]
         if not identifiers:
@@ -291,7 +296,9 @@ class Discovery:
                 reason = "discovery_source_mismatch"
             elif current_index and not source["stored_current"]:
                 reason = "discovery_current_mismatch"
-            elif digest(data[fact_id]) != source["digest"]:
+            elif (
+                digest(data[fact_id]) if fact_digests is None else fact_digests[fact_id]
+            ) != source["digest"]:
                 reason = "fact_digest_mismatch"
             if reason is not None:
                 raise KernelError(

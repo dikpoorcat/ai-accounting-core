@@ -43,10 +43,14 @@ test("the explicit generated manifest covers every browser-visible response cont
     "browser_security_status", "dashboard_assets", "dashboard_brief",
     "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
-    "dashboard_quarterly_report", "period_readiness", "report_export_receipt", "report_export_status", "workflow",
+    "dashboard_quarterly_report", "delete_work_draft", "list_work_drafts", "period_readiness",
+    "read_work_draft", "report_export_receipt", "report_export_status", "save_work_draft", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
-  for (const key of Object.keys(schemas)) assert(source.includes(`["${key}"`), key);
+  const serviceOnly = new Set(["delete_work_draft", "list_work_drafts", "read_work_draft", "save_work_draft"]);
+  for (const key of Object.keys(schemas)) {
+    if (!serviceOnly.has(key)) assert(source.includes(`["${key}"`), key);
+  }
 });
 
 test("new page contracts keep detail rows only under collections", () => {
@@ -81,7 +85,7 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    workflow: 1, period_readiness: 1,
+    workflow: 2, period_readiness: 1,
     dashboard_context: 3, dashboard_brief: 15, dashboard_funds: 9,
     dashboard_employees: 10, dashboard_assets: 10, dashboard_business_status: 7,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
@@ -111,6 +115,19 @@ test("generated money validation accepts canonical int64 strings and rejects num
     assert(field); field.owner[field.key] = value;
     assert.equal(validators.validateDashboardFundsResponse(changed), false, String(value));
   }
+});
+
+test("workflow references use version 2 and nonnegative integers", () => {
+  const original = samples.open_workflow.response;
+  assert(original.issues.length > 0);
+  for (const value of [-1, "0", true]) {
+    const changed = structuredClone(original);
+    changed.fact_issue_refs = [value];
+    assert.equal(validators.validateWorkflowResponse(changed), false, String(value));
+  }
+  const changed = structuredClone(original);
+  changed.schema_version = 1;
+  assert.equal(validators.validateWorkflowResponse(changed), false);
 });
 
 test("personnel date validators preserve month and day precision and reject malformed dates", () => {

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Annotated, Generic, Literal, NotRequired, TypeVar
 
 from pydantic import (
+    AfterValidator,
     BeforeValidator,
     ConfigDict,
     Field,
@@ -30,6 +31,7 @@ from .close_review import (
 from .contracts import KernelError
 from .response_types import (
     Version1,
+    Version2,
     Version3,
     Version4,
     Version5,
@@ -2562,7 +2564,7 @@ class WorkMaterialStatus(ResponseObject):
     status: Literal["ready", "needs_information", "unestablished"]
     inventory: WorkInventory | None
     source_count: Count
-    issues: list[ReadinessIssue]
+    issue_refs: list[Count]
 
 
 class WorkAccountingStatus(ResponseObject):
@@ -2570,7 +2572,7 @@ class WorkAccountingStatus(ResponseObject):
     fact_count: Count
     calculation_count: Count
     pending_count: Count
-    issues: list[ReadinessIssue]
+    issue_refs: list[Count]
 
 
 class WorkSource(ResponseObject):
@@ -2588,19 +2590,60 @@ class BusinessWorkArea(ResponseObject):
     label: str
     materials: WorkMaterialStatus
     accounting: WorkAccountingStatus
-    close_issues: list[ReadinessIssue]
+    close_issue_refs: list[Count]
     sources: list[WorkSource]
 
 
 class WorkClose(ResponseObject):
     status: Literal["closed", "ready", "needs_information"]
-    issues: list[ReadinessIssue]
+    issue_refs: list[Count]
     closure: Closure
 
 
+class WorkObligation(ResponseObject):
+    id: str
+    obligation_fact_id: str
+    kind: str
+    start_period: Month
+    end_period: Month
+    due_date: Day | None
+    status: ActualCompletionStatus
+    actual_completion_status: ActualCompletionStatus
+    basis_review_status: BasisReviewStatus
+    basis_review_calculation_id: str | None
+    basis_issue_refs: list[Count]
+    recorded_completions: list[ActualCompletionRecord]
+
+
+class WorkSettlementFollowup(ResponseObject):
+    status: str
+    cutoff_period: NotRequired[Month]
+    current_cutoff_period: NotRequired[Month]
+    issue_refs: NotRequired[list[Count]]
+    obligation_count: Count
+    followup_count: Count
+    complete: bool
+    unestablished_state_selection_count: Count
+    movement_count: Count
+    source_amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    remaining_fen: WireFen | None
+
+
+class WorkTaxImportMapping(ResponseObject):
+    status: Literal[
+        "ready", "needs_information", "unsupported", "pending_publication", "not_applicable"
+    ]
+    blocking_scope: Literal["tax_import_file"]
+    mapping_fact_ids: list[str]
+    calculation_ids: list[str]
+    issue_refs: list[Count]
+
+
 class WorkExternal(ResponseObject):
-    obligations: list[WorkflowObligation]
-    settlements: SettlementFollowup | None
+    obligations: list[WorkObligation]
+    settlements: WorkSettlementFollowup | None
 
 
 class WorkFileJob(ResponseObject):
@@ -2615,13 +2658,13 @@ class WorkFileJob(ResponseObject):
     references: list[FileReference]
     verified_when_succeeded: bool
     current_file_availability: Literal["not_checked"]
-    result_issue: ReadinessIssue | None
-    contract_issues: list[ReadinessIssue]
+    result_issue_ref: Count | None
+    contract_issue_refs: list[Count]
 
 
 class WorkFiles(ResponseObject):
     jobs: list[WorkFileJob]
-    tax_import_mapping: TaxImportMappingFollowup | None
+    tax_import_mapping: WorkTaxImportMapping | None
 
 
 class WorkSections(ResponseObject):
@@ -2632,7 +2675,7 @@ class WorkSections(ResponseObject):
 
 
 class WorkflowResponse(ResponseObject):
-    schema_version: Version1
+    schema_version: Version2
     company_id: str
     database_id: str
     as_of: Day
@@ -2646,7 +2689,20 @@ class WorkflowResponse(ResponseObject):
         "empty",
     ]
     sections: WorkSections
-    fact_issues: list[ReadinessIssue]
+    issues: list[ReadinessIssue | TaxImportMappingIssue]
+    fact_issue_refs: list[Count]
+
+
+_READINESS_ISSUE_ADAPTER = TypeAdapter(ReadinessIssue)
+_TAX_MAPPING_ISSUE_ADAPTER = TypeAdapter(TaxImportMappingIssue)
+
+
+def _workflow_issue_targets(value):
+    from .workflow_issues import validate_issue_references
+
+    return validate_issue_references(
+        value, _READINESS_ISSUE_ADAPTER, _TAX_MAPPING_ISSUE_ADAPTER
+    )
 
 
 DraftRevision = Annotated[str, Field(min_length=1)]
@@ -2724,7 +2780,7 @@ class WorkDraftListResponse(ResponseObject):
 
 
 RESPONSE_ADAPTERS = {
-    "workflow": TypeAdapter(WorkflowResponse),
+    "workflow": TypeAdapter(Annotated[WorkflowResponse, AfterValidator(_workflow_issue_targets)]),
     "period_readiness": TypeAdapter(PeriodReadinessResponse),
     "dashboard_context": TypeAdapter(DashboardContextResponse),
     "dashboard_brief": TypeAdapter(DashboardBriefResponse),

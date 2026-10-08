@@ -45,13 +45,15 @@ Vite 在服务状态变化或连接失败时重新发现后台，核验同一资
 
 唯一业务命令体系为 `finance-local`，MCP 是同一服务的薄适配：
 
-- `finance_local_schema`：无参返回协议、版本和事实／命令目录；`view="selected"` 按 `fact_kinds`、`commands`、`response_types` 获取当前事项合同；`view="full"` 显式读取完整合同。CLI `schema` 使用相同载荷。
+- `finance_local_schema`：无参返回完整操作协议、版本和事实／命令目录；`view="selected"` 按 `fact_kinds`、`commands`、`response_types` 获取当前事项合同及简短说明。同一会话、同一程序版本复用已读合同；旧MCP连接未传选择参数时用通用 `schema` 命令。`view="full"` 显式读取完整合同，CLI 使用相同载荷。
 - `finance_local_command(command, payload)`：公司查询、资料登记、事实版本、预览确认、报表及后台任务。
 - `finance_local_security(action, payload)`：请求、查询、取消原生窗口及查询登录状态；不接收密码。
 
 公司命令必须绑定 `company_id`。登记业务前用 `find_entities` 查找人员、机构、资金账户、资产、项目或基金产品，明确复用已有对象或用 `register_entity` 新建；对象编号由内核生成，业务另有编号。再登记实际证据与类型化事实，预览、核对摘要和版本、确认发布。公共接口不接受任意科目或借贷分录；金额使用整数分，规则小数使用 Decimal。
 
-确定工作清单的当前事项后，用 `work_context(company_id, period, work_area, ...)` 在同一读取快照取得公司说明、已有事实、精确采用与依赖引用、资料索引及本页直接引用对象。默认100条、最多500条，按游标继续；本页没有不等于资料缺失，接收月不代替所属月。需要原文时再调用 `inspect_material`。其纯解析结果在资料根 `.inspection-cache` 内复用，所有公司合计最多512MiB、按最后使用时间淘汰，服务内存只保留最近一份；原件摘要每次核对，正式核验独立执行。接口用法及测量见[会计AI读取链](docs/ai-reading-optimization.md)。
+确定工作清单的当前事项后，用 `work_context(company_id, period, work_area, include_work_draft=true, ...)` 一次取得工作稿和公司说明、已有事实、精确采用与依赖引用、资料索引及本页直接引用对象。工作稿文件和内核快照分别核验。后续资料查询和翻页省略该参数，不再返回整份稿；默认100条、最多500条。本页没有不等于资料缺失，接收月不代替所属月。需要原文时再调用 `inspect_material`。其纯解析结果在资料根 `.inspection-cache` 内复用，所有公司合计最多512MiB、按最后使用时间淘汰，服务内存只保留最近一份；原件摘要每次核对，正式核验独立执行。接口用法及测量见[会计AI读取链](docs/ai-reading-optimization.md)。
+
+`workflow` 版本2在顶层 `issues` 保存一份完整问题正文，各事项用本次响应的整数引用保留原范围、顺序及重复次数。检查与状态判断保持原规则，共用正文不表示不同事项可以合并追问。实现与比较见[读取和工作稿优化](docs/ai-reading-work-draft-optimization.md)。
 
 未提交事项工作稿通过 `list_work_drafts`、`read_work_draft`、`save_work_draft`、`delete_work_draft` 管理：每公司、月份、事项一份独立私有文件，最多8MiB，原子保存并按版本防止覆盖，只保留最新版直到明确删除。关键节点保存的候选输入、回答、来源和原请求可在同根重启后恢复；正式状态仍每次从内核核对，草稿不构成登记或批准。公司备份ZIP不包含工作稿，未成功保存的内容不能恢复。用法和验证见[工作稿恢复](docs/work-draft-recovery.md)。
 

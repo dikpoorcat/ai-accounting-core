@@ -91,7 +91,7 @@ def test_selected_registration_has_only_requested_variants_and_reference_closure
     assert result["response_schemas"] == {}
     for field in ("security_request_schema", "publication_contract", "period_close_contract"):
         assert field not in result
-    assert "scope_schema" not in result["replay_close_contract"]
+    assert "replay_close_contract" not in result
     # Every retained definition is reachable and every reference resolves.
     from ai_accounting.kernel.schema_discovery import _prune_definitions
 
@@ -164,6 +164,23 @@ def test_selected_response_and_read_command_generate_only_their_contracts(contra
     assert set(result["command_schemas"]) == {"workflow"}
     assert set(result["response_schemas"]) == {"workflow"}
     Draft202012Validator.check_schema(result["response_schemas"]["workflow"])
+
+
+def test_selected_metadata_does_not_repeat_operating_instructions(contracts):
+    selected = discover(contracts, view="selected", commands=["workflow"])
+    assert selected["agent_operating_protocol_version"] == 3
+    assert selected["build_identity"] == "synthetic-program"
+    assert selected["format"] == 1
+    assert selected["schema_discovery"]["version"] == 2
+    assert selected["error_handling"]["version"] == 1
+    assert len(json.dumps(selected["error_handling"], ensure_ascii=False)) < 250
+    assert set(selected) == {
+        "format", "build_identity", "agent_operating_protocol_version", "error_handling",
+        "view", "schema_query", "schema_discovery", "selection", "facts", "commands",
+        "command_schemas", "response_schemas",
+    }
+    assert "agent_operating_protocol" in discover(contracts)
+    assert "agent_operating_protocol" in discover(contracts, view="full")
 
 
 @pytest.mark.parametrize("field", ["fact_kinds", "commands", "response_types"])

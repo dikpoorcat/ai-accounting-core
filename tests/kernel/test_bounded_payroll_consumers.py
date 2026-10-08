@@ -5,6 +5,7 @@ from test_exports import evidence, inventory, template_bytes
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 from test_payroll_corrections import Company
 from test_workflow import obligation
+from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel.contracts import NeedsInformation
 from ai_accounting.kernel.domains.payroll import PayrollBounded
@@ -45,7 +46,7 @@ def test_unpublished_bounded_wage_is_not_missing_person_or_empty_external_basis(
     company = bounded_company
     company.save(obligation(), "obligation")
     workflow = Workflow(company.engine)
-    before = workflow.query("2026-01", as_of="2026-02-25")
+    before = expand_workflow(workflow.query("2026-01", as_of="2026-02-25"))
     payroll_area = next(
         item for item in before["sections"]["materials_and_accounting"] if item["id"] == "payroll"
     )

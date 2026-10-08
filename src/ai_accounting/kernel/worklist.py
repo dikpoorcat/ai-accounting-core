@@ -14,6 +14,7 @@ from .diagnostics import job_error_message, public_job_code
 from .periods import MATERIAL_CATEGORIES
 from .types import ActualDate, YearMonth
 from .workflow import Workflow
+from .workflow_issues import compact_workflow_issues
 
 AREA_LABELS = {
     "bank": "银行",
@@ -472,7 +473,7 @@ class Worklist:
                 for item in self._latest_file_jobs(connection, queries)
                 if item["job_id"] not in seen_jobs
             )
-            return {
+            return compact_workflow_issues({
                 "schema_version": 1,
                 "company_id": self.store.company_id,
                 "database_id": self.store.database_id,
@@ -490,7 +491,7 @@ class Worklist:
                     },
                 },
                 "fact_issues": [],
-            }
+            })
         month = YearMonth(selected).ordinal
         readiness = queries._period_readiness(
             connection, selected, as_of=day, _inspection_cache=inspection_cache
@@ -536,7 +537,7 @@ class Worklist:
                 for issue in raw_close_issues
             }.values()
         )
-        return {
+        return compact_workflow_issues({
             "schema_version": 1,
             "company_id": self.store.company_id,
             "database_id": self.store.database_id,
@@ -565,4 +566,4 @@ class Worklist:
                 },
             },
             "fact_issues": readiness["current_followups"]["external"]["fact_issues"],
-        }
+        })

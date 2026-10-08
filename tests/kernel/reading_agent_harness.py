@@ -30,7 +30,13 @@ def write_json(path, value):
 def value_from_mcp(result):
     if result.structuredContent is not None:
         return result.structuredContent
-    return json.loads("".join(item.text for item in result.content if item.type == "text"))
+    text = "".join(item.text for item in result.content if item.type == "text")
+    try:
+        return json.loads(text)
+    except ValueError:
+        if not result.isError:
+            raise
+        return {"status": "rejected", "code": "mcp_tool_error", "message": text}
 
 
 def seed(app, token, directory):

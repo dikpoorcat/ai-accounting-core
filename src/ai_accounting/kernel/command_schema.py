@@ -298,7 +298,9 @@ def validate_command(models, command, payload, *, registry=None):
         raise KernelError("invalid_command", "命令必须是 JSON 对象")
     try:
         value = models[command].validate_json(canonical(payload), strict=True)
-        result = value.model_dump(mode="json")
+        result = value.model_dump(
+            mode="json", exclude={"draft"} if command == "save_work_draft" else None
+        )
         if command == "save_work_draft":
             # The model checks the document structure, but a candidate is not
             # yet a complete business input. Never fill omitted draft fields.

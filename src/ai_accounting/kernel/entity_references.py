@@ -424,16 +424,21 @@ def validate_filter(connection, entity_id, role, identity_match):
         raise ValueError("unknown entity reference role")
 
 
-def _expected_rows(connection, fact_ids, *, identity_match="recorded", registry=None):
+def _expected_rows(
+    connection, fact_ids, *, identity_match="recorded", registry=None,
+    fact_data=None, fact_digests=None,
+):
     expected, metadata, registry = _recorded_reference_batch(
-        connection, fact_ids, registry=registry
+        connection, fact_ids, registry=registry, fact_data=fact_data, fact_digests=fact_digests,
     )
     if identity_match == "current":
         return _current_reference_rows(connection, expected, metadata, registry=registry)
     return expected
 
 
-def _recorded_reference_batch(connection, fact_ids, *, registry=None):
+def _recorded_reference_batch(
+    connection, fact_ids, *, registry=None, fact_data=None, fact_digests=None,
+):
     """Authenticate raw facts once before either reference interpretation."""
     from .storage import Store
 
@@ -455,14 +460,16 @@ def _recorded_reference_batch(connection, fact_ids, *, registry=None):
         registry = default_registry()
     reader = object.__new__(Store)
     reader.registry = registry
-    data = (
+    data = fact_data if fact_data is not None else (
         reader.fact_data_many(connection, fact_ids)
         if getattr(registry, "content_version", None) == 1 else
         reader._fact_data_many_from_headers(connection, metadata)
     )
     expected = []
     for row in metadata:
-        if digest(data[row["id"]]) != row["digest"]:
+        if (
+            digest(data[row["id"]]) if fact_digests is None else fact_digests[row["id"]]
+        ) != row["digest"]:
             raise KernelError(
                 "content_integrity_failed",
                 "对象引用的原始事实内容校验失败",
@@ -628,12 +635,18 @@ def sync_entity_references(connection, version, hashed):
         connection.executemany(f"INSERT INTO {table} VALUES(?,?,?,?,?,?,?)", rows)
 
 
-def verify_hits(connection, rows, *, identity_match="current", registry=None):
+def verify_hits(
+    connection, rows, *, identity_match="current", registry=None,
+    fact_data=None, fact_digests=None,
+):
     # Only the requested facts are verified here. Completeness belongs to full
     # integrity checks/backup and explicit repair, not a claimed global seal.
     ids = {row["fact_id"] if "fact_id" in row.keys() else row["id"] for row in rows}
     expected = set(
-        _expected_rows(connection, ids, identity_match=identity_match, registry=registry)
+        _expected_rows(
+            connection, ids, identity_match=identity_match, registry=registry,
+            fact_data=fact_data, fact_digests=fact_digests,
+        )
     )
     table = (
         "entity_reference_current" if identity_match == "current" else "entity_reference_recorded"

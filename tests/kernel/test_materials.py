@@ -586,6 +586,8 @@ def test_biff8_original_includes_hidden_rows_sheets_and_exact_fen():
 
 
 def test_worklist_material_area_remains_incomplete_until_actual_rows_are_resolved(company):
+    from workflow_test_helpers import expand_workflow
+
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
     from ai_accounting.kernel.workflow import Workflow
 
@@ -604,7 +606,7 @@ def test_worklist_material_area_remains_incomplete_until_actual_rows_are_resolve
     service = Workflow(company.engine)
     area = next(
         item
-        for item in service.query("2026-01", as_of="2026-01-31")["sections"][
+        for item in expand_workflow(service.query("2026-01", as_of="2026-01-31"))["sections"][
             "materials_and_accounting"
         ]
         if item["id"] == "transactions"

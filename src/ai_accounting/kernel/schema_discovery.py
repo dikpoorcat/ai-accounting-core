@@ -99,12 +99,27 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
         unknown = sorted(set(selected) - set(known))
         if unknown:
             raise KernelError("invalid_command", "接口合同选择不存在", field=field, unknown=unknown)
-    result = dict(metadata)
+    # Selected contracts are reused within a conversation/build. The initial
+    # overview carries the operating instructions; do not retransmit them here.
+    if query.view == "selected":
+        result = {
+            key: metadata[key]
+            for key in ("format", "build_id", "build_identity", "database_formats")
+            if key in metadata
+        }
+        result["agent_operating_protocol_version"] = metadata["agent_operating_protocol"]["version"]
+        result["error_handling"] = {
+            "version": metadata["error_handling"]["version"],
+            "instruction": "按status、code、fact_issues和resolution处理；先查可复用来源，"
+            "技术错误不直接转为业务追问；响应未确认时核对原请求或工作稿版本",
+        }
+    else:
+        result = dict(metadata)
     result.update(
         view=query.view,
         schema_query=SchemaQuery.model_json_schema(),
         schema_discovery={
-            "version": 1,
+            "version": 2,
             "entry": "finance_local_schema / schema",
             "views": ["overview", "selected", "full"],
             "selection_fields": ["fact_kinds", "commands", "response_types"],

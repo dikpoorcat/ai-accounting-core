@@ -193,6 +193,17 @@ class Workload(reading.Workload):
         super().install()
         if self.enabled:
             sys.addaudithook(self.file_access)
+            from ai_accounting.kernel import runtime
+
+            original_init = runtime._PrivateConnection.__init__
+
+            def connection_init(connection, *args, **kwargs):
+                original_init(connection, *args, **kwargs)
+                with self.lock:
+                    if self.active is not None:
+                        self.active["sql_connections"] += 1
+
+            runtime._PrivateConnection.__init__ = connection_init
 
     def file_access(self, event, args):
         if event != "open" or not args or not isinstance(args[0], (str, bytes, os.PathLike)):
@@ -213,6 +224,7 @@ class Workload(reading.Workload):
             "command": command,
             "instrumented": self.enabled,
             "sql_statements": 0 if self.enabled else None,
+            "sql_connections": 0 if self.enabled else None,
             "inspect_bytes_calls": 0 if self.enabled else None,
             "draft_file_reads": 0 if self.enabled else None,
             "draft_file_writes": 0 if self.enabled else None,
@@ -282,14 +294,27 @@ async def relay(directory, *, source_dir=None, resume=False, instrument=False):
                     if output.exists():
                         continue
                     request = json.loads(path.read_text(encoding="utf-8"))
+                    metrics_path = directory / "workload.jsonl"
+                    previous_size = metrics_path.stat().st_size if metrics_path.exists() else 0
                     start = time.perf_counter()
                     result = value_from_mcp(
                         await client.call_tool(request["tool"], request["arguments"])
                     )
                     duration = (time.perf_counter() - start) * 1000
-                    metric = json.loads(
-                        (directory / "workload.jsonl").read_text(encoding="utf-8").splitlines()[-1]
-                    )
+                    if not metrics_path.exists() or metrics_path.stat().st_size == previous_size:
+                        # MCP rejects invalid arguments before the service is
+                        # invoked. Record this failed tool attempt without
+                        # attributing the previous command's database work.
+                        metric = {
+                            key: 0 if instrument else None for key in (
+                                "sql_statements", "sql_connections", "inspect_bytes_calls",
+                                "draft_file_reads", "draft_file_writes",
+                            )
+                        }
+                    else:
+                        metric = json.loads(
+                            metrics_path.read_text(encoding="utf-8").splitlines()[-1]
+                        )
                     with (directory / "tools.jsonl").open("a", encoding="utf-8") as log:
                         log.write(
                             json.dumps(
@@ -307,6 +332,7 @@ async def relay(directory, *, source_dir=None, resume=False, instrument=False):
                                         key: metric[key]
                                         for key in (
                                             "sql_statements",
+                                            "sql_connections",
                                             "inspect_bytes_calls",
                                             "draft_file_reads",
                                             "draft_file_writes",

@@ -6,6 +6,7 @@ from collections import defaultdict
 import pytest
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 from test_payroll_corrections import Company
+from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -98,7 +99,7 @@ def save_completion(company, fact, subject="completion", *, adopted_basis=False)
 
 
 def external_item(company, day="2026-02-28", period="2026-01"):
-    result = workflow.Workflow(company.engine).query(period, as_of=day)
+    result = expand_workflow(workflow.Workflow(company.engine).query(period, as_of=day))
     return next(
         item for item in result["sections"]["external"]["obligations"] if item["id"] == "obligation"
     )

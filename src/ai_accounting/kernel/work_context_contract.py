@@ -13,7 +13,8 @@ from pydantic import ConfigDict, Field, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
 from .entities import DisplayDate, EntityKind
-from .response_types import Version1
+from .response_contracts import WorkDraftAbsentResponse, WorkDraftPresentResponse
+from .response_types import Version2
 from .types import EvidenceDigest, YearMonth
 
 Count = Annotated[int, Field(ge=0)]
@@ -162,7 +163,7 @@ class ContextEntity(ContextObject):
 
 
 class WorkContextResponse(ContextObject):
-    schema_version: Version1
+    schema_version: Version2
     company_id: str
     period: YearMonth
     work_area: Literal["bank", "payroll", "transactions", "tax", "assets", "financing"]
@@ -175,6 +176,7 @@ class WorkContextResponse(ContextObject):
     has_more: bool
     next_cursor: str | None
     page_semantics: str
+    work_draft: NotRequired[WorkDraftPresentResponse | WorkDraftAbsentResponse]
 
 
 WORK_CONTEXT_ADAPTER = TypeAdapter(WorkContextResponse)

@@ -8,7 +8,7 @@ import os
 import re
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .contracts import KernelError
@@ -53,6 +53,7 @@ class WorkDraftStore:
         registry,
         commands,
         request_result=None,
+        request_result_snapshot=None,
     ):
         if any(
             not isinstance(value, str) or not value
@@ -69,6 +70,7 @@ class WorkDraftStore:
         self.company_id, self.database_id = company_id, database_id
         self.registry, self.commands = registry, commands
         self.request_result = request_result
+        self.request_result_snapshot = request_result_snapshot
 
     def _scope(self, period, work_area):
         period = str(YearMonth(period))
@@ -183,6 +185,26 @@ class WorkDraftStore:
                 "work_draft_revision_conflict",
                 "工作稿版本已变化，请重新读取",
                 current_revision=revision,
+            )
+
+    def _preserve_pending_requests(self, previous, current):
+        # The snapshot opens only when an old request is being retired. Saves
+        # that retain all original requests do not add a database read.
+        with ExitStack() as stack:
+            read_result = None if self.request_result_snapshot else self.request_result
+
+            def receipt(ident):
+                nonlocal read_result
+                if read_result is None and self.request_result_snapshot:
+                    read_result = stack.enter_context(self.request_result_snapshot())
+                return read_result(ident) if read_result else None
+
+            preserve_pending_requests(
+                previous,
+                current,
+                request_result=receipt,
+                company_id=self.company_id,
+                database_id=self.database_id,
             )
 
     def list(
@@ -309,13 +331,7 @@ class WorkDraftStore:
             with self._locked(period, work_area, create=True) as path:
                 previous = self._read(path, period, work_area)
                 self._revision(previous, expected_revision)
-                preserve_pending_requests(
-                    previous["draft"] if previous else None,
-                    raw,
-                    request_result=self.request_result,
-                    company_id=self.company_id,
-                    database_id=self.database_id,
-                )
+                self._preserve_pending_requests(previous["draft"] if previous else None, raw)
                 revision = str(uuid.uuid4())
                 envelope = {
                     "format": WORK_DRAFT_FORMAT,

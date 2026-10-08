@@ -47,9 +47,10 @@ NON_MONTHLY_RECORDING_KINDS = {
 
 
 class WorkContext:
-    def __init__(self, engine):
+    def __init__(self, engine, *, work_drafts=None):
         self.engine, self.store = engine, engine.store
         self.discovery = Discovery(engine)
+        self.work_drafts = work_drafts
 
     @staticmethod
     def _ids(values, label):
@@ -73,7 +74,10 @@ class WorkContext:
             value = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
             if set(value) != {"version", "scope", "period", "fact_id"}:
                 raise ValueError("shape")
-            if value["version"] != 1 or value["scope"] != scope:
+            if (
+                type(value["version"]) is not int
+                or value["version"] != 2 or value["scope"] != scope
+            ):
                 raise KernelError(
                     "work_context_cursor_stale", "公司、事项、筛选或版本已变化，请重新读取首页"
                 )
@@ -94,7 +98,7 @@ class WorkContext:
     def _seal_cursor(scope, row):
         return base64.urlsafe_b64encode(
             canonical(
-                {"version": 1, "scope": scope, "period": row["period"], "fact_id": row["fact_id"]}
+                {"version": 2, "scope": scope, "period": row["period"], "fact_id": row["fact_id"]}
             ).encode()
         ).decode()
 
@@ -201,10 +205,13 @@ class WorkContext:
             canonical(sources),
         ]
 
-    def _identity_matches(self, connection, records):
+    def _identity_matches(self, connection, records, *, fact_data, fact_digests):
         matches = {record["fact_id"]: [] for record in records}
         if records:
-            verified = verify_hits(connection, records, registry=self.store.registry)
+            verified = verify_hits(
+                connection, records, registry=self.store.registry,
+                fact_data=fact_data, fact_digests=fact_digests,
+            )
             for fact_id, path, entity_id, role, *_ in verified:
                 matches[fact_id].append(
                     {
@@ -288,23 +295,38 @@ class WorkContext:
         source_ids: ContextIds | None = None,
         limit: PageLimit = 100,
         cursor: str | None = None,
+        include_work_draft: bool = False,
     ):
         month = YearMonth(period)
         if work_area not in AREA_LABELS:
             raise ValueError("unknown work area")
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("work context page limit must be 1..500")
+        if type(include_work_draft) is not bool:
+            raise ValueError("include_work_draft must be a boolean")
+        if include_work_draft and cursor is not None:
+            raise KernelError(
+                "work_context_draft_first_page_only", "工作稿只能随首页读取；续页请去掉工作稿选项"
+            )
         subjects, sources = (
             self._ids(subject_ids, "subject_ids"),
             self._ids(source_ids, "source_ids"),
         )
+        draft = None
+        if include_work_draft:
+            if self.work_drafts is None:
+                raise KernelError("work_draft_unavailable", "当前读取未绑定工作稿存储")
+            # The private file is authenticated separately, before the kernel
+            # snapshot. Returning them together does not make the file part of
+            # the SQLite transaction or turn draft notes into business state.
+            draft = self.work_drafts.read(period=str(month), work_area=work_area)
         with QueryReads.snapshot(self.engine) as reads:
             connection = reads.connection
             context = self.discovery._company_context(connection)
             revision = repair_revision(connection)
             scope = digest(
                 {
-                    "contract": "work-context/1",
+                    "contract": "work-context/2",
                     "company_id": self.store.company_id,
                     "database_id": self.store.database_id,
                     "period": str(month),
@@ -332,11 +354,22 @@ class WorkContext:
                 )
             )
             selected = records[:limit]
+            # Reuse only this snapshot's raw JSON and freshly computed digests.
+            # Both discovery seals and object-reference indexes still compare
+            # their own source metadata against these exact selected facts.
+            fact_data = self.store.fact_data_many(
+                connection, [record["fact_id"] for record in selected]
+            )
+            fact_digests = {fact_id: digest(data) for fact_id, data in fact_data.items()}
             items = self.discovery._hydrate_fact_records(
                 connection,
                 selected,
                 current_index=True,
-                identity_matches=self._identity_matches(connection, selected),
+                identity_matches=self._identity_matches(
+                    connection, selected, fact_data=fact_data, fact_digests=fact_digests,
+                ),
+                fact_data=fact_data,
+                fact_digests=fact_digests,
             )
             material_sources = self._material_sources(connection, items)
             calculation_ids = sorted(
@@ -384,8 +417,8 @@ class WorkContext:
                     if ref["reference_type"] == "business"
                 ]
             has_more = len(records) > limit
-            return {
-                "schema_version": 1,
+            result = {
+                "schema_version": 2,
                 "company_id": self.store.company_id,
                 "period": str(month),
                 "work_area": work_area,
@@ -402,3 +435,7 @@ class WorkContext:
                 "不推断发生月；摘要关联来源和解析映射可能在续页；"
                 "关联历史正文按精确引用继续读取",
             }
+            if include_work_draft:
+                result["work_draft"] = draft
+                result["page_semantics"] += "；工作稿文件与内核快照分别核验，不属于同一事务"
+            return result
