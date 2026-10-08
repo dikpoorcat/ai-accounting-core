@@ -1442,7 +1442,7 @@ def main():
         assert app.security_controller.status(request["request_id"])["status"] == "succeeded"
         return approved["approval_id"]
 
-    schema = call("schema", {})
+    schema = call("schema", {"view": "full"})
     assert not {"preview_close_range", "close_range"} & set(schema["commands"])
     assert "approve_close_batches" not in json.dumps(schema["security_request_schema"])
     assert "calculation_hash" not in schema["security_request_schema"]["properties"]

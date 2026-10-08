@@ -301,7 +301,7 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
     company_engine = service.engine(company)
     seed_entities(company_engine, (("expense-supplier", "organization", None),))
     _publish_expense(company_engine, "expense", 12345)
-    schema = service.dispatch("schema", {})["command_schemas"]
+    schema = service.dispatch("schema", {"view": "full"})["command_schemas"]
     command = "dashboard_period_preparation"
     assert {"company_id", "period", "as_of", "expected_read_version"} <= set(
         schema[command]["required"]

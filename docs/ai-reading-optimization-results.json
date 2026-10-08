@@ -1,0 +1,2336 @@
+{
+  "synthetic_only": true,
+  "date": "2026-10-08",
+  "baseline_reference": "457fefa17f393baceb06a62d52d15c37bf2bec1e",
+  "transport": "MCP SDK -> production MCP -> ServiceClient -> HTTP -> LocalService",
+  "timing_and_workload_runs_separated": true,
+  "response_bytes_semantics": "compact UTF-8 serialized MCP structured response, excluding transport envelope",
+  "sql_work_semantics": "executed SQL statements, not scan rows or SQLite VM instructions",
+  "cache_quota_bytes": 536870912,
+  "dialogue_model_settings": "both agents inherit the same parent model and reasoning settings without overrides; exact model ID and tokens unavailable from this relay",
+  "dialogue_code_snapshot_note": "Dialogue current uses a fixed snapshot before the final explicit cross-area source_ids filtering fix. This condition was not used in the dialogue case and is covered by a dedicated final regression. Benchmark current uses the final source.",
+  "dialogue_time_semantics": "instrumented tool time only; excludes model thinking, human wait and the deliberate timing-isolation pause; not whole AI dialogue latency",
+  "dialogue_scenario": "250 rows, two saved unpublished facts, one true creditor_kind gap; then owner supplement, one new fact and three-fact preview; same-root restart and company switch",
+  "dialogue_results": "both asked only the true gap, reused original facts/entities, preserved saved facts/request results after restart, did not infer no-business from company B empty state, did not publish",
+  "formal_work_note": "Current dialogue phase1 independently previewed two facts, adding two formal parse calls. Formal work was retained; pure reading parse calls are counted separately.",
+  "verification": {
+    "final_regression": {
+      "passed": 286,
+      "elapsed_seconds": 323.92
+    },
+    "earlier_interface_regression": {
+      "passed": 205,
+      "elapsed_seconds": 119.16,
+      "note": "overlaps final regression; counts must not be added as unique tests"
+    },
+    "later_native_service_and_response_checks": {
+      "passed": 4,
+      "elapsed_seconds": 10.45
+    },
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "database_structure_changes": false,
+    "real_business_writes": false,
+    "existing_service_restart": false,
+    "git_commit": false
+  },
+  "benchmarks": {
+    "baseline": {
+      "build_id": "local-kernel-2:ebd2c2442d98235bb49064a7d2b40d80b273b242ade5042f1ce212d5bfdcc7e2",
+      "checks": {
+        "page_rows": [
+          100,
+          100,
+          50
+        ],
+        "existing_facts": 4,
+        "restart_same_result": true,
+        "formal_receive_status": "confirmed",
+        "saved_request_found": "committed"
+      },
+      "skipped": [
+        "schema.selected: baseline exposes only the complete schema",
+        "context.aggregate: baseline has no work_context",
+        "reading.changed_build: baseline has no persistent cache build identity"
+      ],
+      "scenarios": {
+        "context.separate": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 6,
+          "response_bytes_per_retrieval": 7716,
+          "sql_statements_per_retrieval": 618,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 759.424,
+          "elapsed_ms_min": 741.354,
+          "elapsed_ms_max": 773.593
+        },
+        "reading.changed_map": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 181.322,
+          "elapsed_ms_min": 181.322,
+          "elapsed_ms_max": 181.322
+        },
+        "reading.changed_map_stale": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 128,
+          "sql_statements_per_retrieval": 71,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 156.171,
+          "elapsed_ms_min": 156.171,
+          "elapsed_ms_max": 156.171
+        },
+        "reading.cold_page1": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 196.054,
+          "elapsed_ms_min": 196.054,
+          "elapsed_ms_max": 196.054
+        },
+        "reading.formal_receive": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 203,
+          "sql_statements_per_retrieval": 145,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 176.124,
+          "elapsed_ms_min": 176.124,
+          "elapsed_ms_max": 176.124
+        },
+        "reading.hot_page1": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 189.733,
+          "elapsed_ms_min": 180.863,
+          "elapsed_ms_max": 193.681
+        },
+        "reading.new_source": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 192.719,
+          "elapsed_ms_min": 192.719,
+          "elapsed_ms_max": 192.719
+        },
+        "reading.new_source_register": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 99,
+          "sql_statements_per_retrieval": 122,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 159.969,
+          "elapsed_ms_min": 159.969,
+          "elapsed_ms_max": 159.969
+        },
+        "reading.page2": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 25065,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 187.618,
+          "elapsed_ms_min": 187.618,
+          "elapsed_ms_max": 187.618
+        },
+        "reading.page3": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 12737,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 197.217,
+          "elapsed_ms_min": 197.217,
+          "elapsed_ms_max": 197.217
+        },
+        "reading.restart": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 874.057,
+          "elapsed_ms_min": 874.057,
+          "elapsed_ms_max": 874.057
+        },
+        "recovery.saved_request": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 394,
+          "sql_statements_per_retrieval": 97,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 262.0,
+          "elapsed_ms_min": 262.0,
+          "elapsed_ms_max": 262.0
+        },
+        "schema.default": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 1283525,
+          "sql_statements_per_retrieval": 0,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 973.589,
+          "elapsed_ms_min": 851.68,
+          "elapsed_ms_max": 981.049
+        },
+        "schema.full": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 1283525,
+          "sql_statements_per_retrieval": 0,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 910.67,
+          "elapsed_ms_min": 850.499,
+          "elapsed_ms_max": 964.946
+        }
+      },
+      "timing_samples": [
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 981.048900008318,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 964.9461999943014,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 851.6795999894384,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 910.669599994435,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 973.5887000133516,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 850.4986000043573,
+          "response_bytes": 1283525,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.cold_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 196.05430000228807,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page2",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 187.61839999933727,
+          "response_bytes": 25065,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page3",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 197.2169000073336,
+          "response_bytes": 12737,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 193.68130000657402,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 180.86269999912474,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 189.7326000034809,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 129.6923999907449,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 120.78070000279695,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 122.4415000033332,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 123.18839998624753,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 125.8120999991661,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 137.5088000058895,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 117.25890000525396,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 130.91069999791216,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 128.99099999049213,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 133.0044999922393,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 126.31999999575783,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 137.10819999687374,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 118.87610000849236,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 126.66080000053626,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 115.59919999854174,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 138.54499999433756,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 113.09539999638218,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 128.57719999738038,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.restart",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 874.0572999959113,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.changed_map_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 156.17100000963546,
+          "response_bytes": 128,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_map",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 181.3216000009561,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.new_source_register",
+          "command": "evidence",
+          "tool_calls": 1,
+          "elapsed_ms": 159.96949998952914,
+          "response_bytes": 99,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "registered"
+        },
+        {
+          "scenario": "reading.new_source",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 192.7192000002833,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.formal_receive",
+          "command": "receive_material",
+          "tool_calls": 1,
+          "elapsed_ms": 176.12400000507478,
+          "response_bytes": 203,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "confirmed"
+        },
+        {
+          "scenario": "recovery.saved_request",
+          "command": "request_result",
+          "tool_calls": 1,
+          "elapsed_ms": 262.00030000472907,
+          "response_bytes": 394,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "committed"
+        }
+      ],
+      "workload_samples": [
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1283525,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.cold_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page2",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 25065,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page3",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 12737,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.restart",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.changed_map_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 128,
+          "sql_statements": 71,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_map",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.new_source_register",
+          "command": "evidence",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 99,
+          "sql_statements": 122,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "registered"
+        },
+        {
+          "scenario": "reading.new_source",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.formal_receive",
+          "command": "receive_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 203,
+          "sql_statements": 145,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "confirmed"
+        },
+        {
+          "scenario": "recovery.saved_request",
+          "command": "request_result",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 394,
+          "sql_statements": 97,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "committed"
+        }
+      ]
+    },
+    "current": {
+      "build_id": "local-kernel-2:76a1fbc650829b42534fee36b2371f2f4c6b49cfe331f7661d95fbfa2ad7150c",
+      "checks": {
+        "page_rows": [
+          100,
+          100,
+          50
+        ],
+        "existing_facts": 4,
+        "restart_same_result": true,
+        "formal_receive_status": "confirmed",
+        "saved_request_found": "committed"
+      },
+      "skipped": [],
+      "scenarios": {
+        "context.aggregate": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 9868,
+          "sql_statements_per_retrieval": 130,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 139.756,
+          "elapsed_ms_min": 122.401,
+          "elapsed_ms_max": 144.256
+        },
+        "context.separate": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 6,
+          "response_bytes_per_retrieval": 7716,
+          "sql_statements_per_retrieval": 618,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 781.355,
+          "elapsed_ms_min": 748.31,
+          "elapsed_ms_max": 912.248
+        },
+        "reading.changed_build": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 255.777,
+          "elapsed_ms_min": 255.777,
+          "elapsed_ms_max": 255.777
+        },
+        "reading.changed_build_stale": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 128,
+          "sql_statements_per_retrieval": 71,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 695.633,
+          "elapsed_ms_min": 695.633,
+          "elapsed_ms_max": 695.633
+        },
+        "reading.changed_map": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 277.069,
+          "elapsed_ms_min": 277.069,
+          "elapsed_ms_max": 277.069
+        },
+        "reading.changed_map_stale": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 128,
+          "sql_statements_per_retrieval": 71,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 109.512,
+          "elapsed_ms_min": 109.512,
+          "elapsed_ms_max": 109.512
+        },
+        "reading.cold_page1": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 167.838,
+          "elapsed_ms_min": 167.838,
+          "elapsed_ms_max": 167.838
+        },
+        "reading.formal_receive": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 203,
+          "sql_statements_per_retrieval": 145,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 190.355,
+          "elapsed_ms_min": 190.355,
+          "elapsed_ms_max": 190.355
+        },
+        "reading.hot_page1": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 127.391,
+          "elapsed_ms_min": 126.981,
+          "elapsed_ms_max": 147.842
+        },
+        "reading.new_source": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 1,
+          "elapsed_ms_median": 200.838,
+          "elapsed_ms_min": 200.838,
+          "elapsed_ms_max": 200.838
+        },
+        "reading.new_source_register": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 99,
+          "sql_statements_per_retrieval": 122,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 168.642,
+          "elapsed_ms_min": 168.642,
+          "elapsed_ms_max": 168.642
+        },
+        "reading.page2": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 25065,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 145.879,
+          "elapsed_ms_min": 145.879,
+          "elapsed_ms_max": 145.879
+        },
+        "reading.page3": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 12737,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 129.943,
+          "elapsed_ms_min": 129.943,
+          "elapsed_ms_max": 129.943
+        },
+        "reading.restart": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 24853,
+          "sql_statements_per_retrieval": 94,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 725.942,
+          "elapsed_ms_min": 725.942,
+          "elapsed_ms_max": 725.942
+        },
+        "recovery.saved_request": {
+          "retrievals": 1,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 394,
+          "sql_statements_per_retrieval": 97,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 132.591,
+          "elapsed_ms_min": 132.591,
+          "elapsed_ms_max": 132.591
+        },
+        "schema.default": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 38867,
+          "sql_statements_per_retrieval": 0,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 50.111,
+          "elapsed_ms_min": 44.257,
+          "elapsed_ms_max": 58.467
+        },
+        "schema.full": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 1298844,
+          "sql_statements_per_retrieval": 0,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 896.543,
+          "elapsed_ms_min": 867.436,
+          "elapsed_ms_max": 989.156
+        },
+        "schema.selected": {
+          "retrievals": 3,
+          "tool_calls_per_retrieval": 1,
+          "response_bytes_per_retrieval": 25606,
+          "sql_statements_per_retrieval": 0,
+          "parse_calls_per_retrieval": 0,
+          "elapsed_ms_median": 69.62,
+          "elapsed_ms_min": 50.722,
+          "elapsed_ms_max": 70.294
+        }
+      },
+      "timing_samples": [
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 58.46739999833517,
+          "response_bytes": 38867,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 867.4355999974068,
+          "response_bytes": 1298844,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 69.6198999939952,
+          "response_bytes": 25606,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 50.11119999107905,
+          "response_bytes": 38867,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 896.5426000067964,
+          "response_bytes": 1298844,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 50.72170001221821,
+          "response_bytes": 25606,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 44.2571999883512,
+          "response_bytes": 38867,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 989.1564999998081,
+          "response_bytes": 1298844,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": 70.29350000084378,
+          "response_bytes": 25606,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.cold_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 167.83759999088943,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page2",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 145.87930000561755,
+          "response_bytes": 25065,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page3",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 129.9427000049036,
+          "response_bytes": 12737,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 147.84200000576675,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 127.3914000048535,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 126.98129999625962,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 117.78519999643322,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 118.35259999497794,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 114.67300000367686,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 127.34999999520369,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 136.4663999993354,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 133.68260000424925,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": 139.7556000010809,
+          "response_bytes": 9868,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 130.4627000063192,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 123.15680000756402,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 159.38889999233652,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 124.5236999966437,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 248.368999993545,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 126.34659999457654,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": 122.4006999982521,
+          "response_bytes": 9868,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": 120.40040000283625,
+          "response_bytes": 3361,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 115.48240001138765,
+          "response_bytes": 1241,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 134.46570000087377,
+          "response_bytes": 1182,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 163.54050001245923,
+          "response_bytes": 927,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": 133.0144000094151,
+          "response_bytes": 132,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": 114.45179999282118,
+          "response_bytes": 873,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": 144.25639998808037,
+          "response_bytes": 9868,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.restart",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 725.9415000007721,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.changed_map_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 109.5115999924019,
+          "response_bytes": 128,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_map",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 277.06860000034794,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.new_source_register",
+          "command": "evidence",
+          "tool_calls": 1,
+          "elapsed_ms": 168.6416000011377,
+          "response_bytes": 99,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "registered"
+        },
+        {
+          "scenario": "reading.new_source",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 200.83770000201184,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.formal_receive",
+          "command": "receive_material",
+          "tool_calls": 1,
+          "elapsed_ms": 190.35489999805577,
+          "response_bytes": 203,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "confirmed"
+        },
+        {
+          "scenario": "recovery.saved_request",
+          "command": "request_result",
+          "tool_calls": 1,
+          "elapsed_ms": 132.59149999066722,
+          "response_bytes": 394,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "committed"
+        },
+        {
+          "scenario": "reading.changed_build_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 695.632699993439,
+          "response_bytes": 128,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_build",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": 255.77720000001136,
+          "response_bytes": 24853,
+          "sql_statements": null,
+          "inspect_bytes_calls": null,
+          "tokens": null,
+          "status": "ready"
+        }
+      ],
+      "workload_samples": [
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 38867,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1298844,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 25606,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 38867,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1298844,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 25606,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.default",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 38867,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.full",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1298844,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "schema.selected",
+          "command": "schema",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 25606,
+          "sql_statements": 0,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.cold_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page2",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 25065,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.page3",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 12737,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.hot_page1",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 9868,
+          "sql_statements": 130,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 9868,
+          "sql_statements": 130,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "company_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 3361,
+          "sql_statements": 107,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1241,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 1182,
+          "sql_statements": 103,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 927,
+          "sql_statements": 104,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_facts",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 132,
+          "sql_statements": 99,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.separate",
+          "command": "find_entities",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 873,
+          "sql_statements": 102,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "context.aggregate",
+          "command": "work_context",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 9868,
+          "sql_statements": 130,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": null
+        },
+        {
+          "scenario": "reading.restart",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.changed_map_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 128,
+          "sql_statements": 71,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_map",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.new_source_register",
+          "command": "evidence",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 99,
+          "sql_statements": 122,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "registered"
+        },
+        {
+          "scenario": "reading.new_source",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        },
+        {
+          "scenario": "reading.formal_receive",
+          "command": "receive_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 203,
+          "sql_statements": 145,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "confirmed"
+        },
+        {
+          "scenario": "recovery.saved_request",
+          "command": "request_result",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 394,
+          "sql_statements": 97,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "committed"
+        },
+        {
+          "scenario": "reading.changed_build_stale",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 128,
+          "sql_statements": 71,
+          "inspect_bytes_calls": 0,
+          "tokens": null,
+          "status": "rejected"
+        },
+        {
+          "scenario": "reading.changed_build",
+          "command": "inspect_material",
+          "tool_calls": 1,
+          "elapsed_ms": null,
+          "response_bytes": 24853,
+          "sql_statements": 94,
+          "inspect_bytes_calls": 1,
+          "tokens": null,
+          "status": "ready"
+        }
+      ]
+    }
+  },
+  "dialogue": {
+    "baseline": {
+      "build_id": "local-kernel-2:ebd2c2442d98235bb49064a7d2b40d80b273b242ade5042f1ce212d5bfdcc7e2",
+      "phases": {
+        "phase1": {
+          "tool_calls": 12,
+          "response_bytes": 1353824,
+          "sql_statements": 1012,
+          "reading_parse_calls": 3,
+          "formal_parse_calls": 0,
+          "instrumented_tool_elapsed_ms": 2527.451,
+          "commands": {
+            "schema": 1,
+            "company_context": 1,
+            "companies": 1,
+            "find_entities": 1,
+            "find_facts": 3,
+            "inspect_material": 3,
+            "prepare_fact_registration": 1,
+            "business_status": 1
+          }
+        },
+        "phase2": {
+          "tool_calls": 4,
+          "response_bytes": 6025,
+          "sql_statements": 514,
+          "reading_parse_calls": 0,
+          "formal_parse_calls": 4,
+          "instrumented_tool_elapsed_ms": 660.919,
+          "commands": {
+            "evidence": 1,
+            "save_fact": 1,
+            "preview": 1,
+            "find_facts": 1
+          }
+        },
+        "phase3": {
+          "tool_calls": 16,
+          "response_bytes": 1546939,
+          "sql_statements": 1590,
+          "reading_parse_calls": 2,
+          "formal_parse_calls": 1,
+          "instrumented_tool_elapsed_ms": 3791.642,
+          "commands": {
+            "schema": 1,
+            "request_result": 2,
+            "companies": 1,
+            "find_facts": 4,
+            "company_context": 2,
+            "inspect_material": 2,
+            "find_entities": 2,
+            "workflow": 2
+          }
+        }
+      },
+      "total": {
+        "tool_calls": 32,
+        "response_bytes": 2906788,
+        "sql_statements": 3116,
+        "reading_parse_calls": 5,
+        "formal_parse_calls": 5,
+        "instrumented_tool_elapsed_ms": 6980.012
+      }
+    },
+    "current": {
+      "build_id": "local-kernel-2:4bdc6edaefda0b86c74a1ace633308692df2fd43b1a7be96586cd989c6b232df",
+      "phases": {
+        "phase1": {
+          "tool_calls": 9,
+          "response_bytes": 165249,
+          "sql_statements": 667,
+          "reading_parse_calls": 1,
+          "formal_parse_calls": 2,
+          "instrumented_tool_elapsed_ms": 1055.007,
+          "commands": {
+            "schema": 3,
+            "company_context": 1,
+            "work_context": 1,
+            "inspect_material": 3,
+            "preview": 1
+          }
+        },
+        "phase2": {
+          "tool_calls": 4,
+          "response_bytes": 30513,
+          "sql_statements": 411,
+          "reading_parse_calls": 0,
+          "formal_parse_calls": 4,
+          "instrumented_tool_elapsed_ms": 555.151,
+          "commands": {
+            "schema": 1,
+            "evidence": 1,
+            "save_fact": 1,
+            "preview": 1
+          }
+        },
+        "phase3": {
+          "tool_calls": 12,
+          "response_bytes": 332008,
+          "sql_statements": 1132,
+          "reading_parse_calls": 0,
+          "formal_parse_calls": 1,
+          "instrumented_tool_elapsed_ms": 2124.117,
+          "commands": {
+            "schema": 2,
+            "companies": 1,
+            "company_context": 2,
+            "request_result": 1,
+            "work_context": 2,
+            "workflow": 2,
+            "inspect_material": 2
+          }
+        }
+      },
+      "total": {
+        "tool_calls": 25,
+        "response_bytes": 527770,
+        "sql_statements": 2210,
+        "reading_parse_calls": 1,
+        "formal_parse_calls": 7,
+        "instrumented_tool_elapsed_ms": 3734.275
+      }
+    }
+  },
+  "raw_evidence_directory": ".tmp/ai-reading-20261008",
+  "tokens": null,
+  "limits": "One independent dialogue per version. Warm/schema/context timing has three repetitions; cold/pages/restart/formal cases have one. This is a disclosed synthetic sample, not a promised speed multiplier."
+}

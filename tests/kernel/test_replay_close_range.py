@@ -612,7 +612,7 @@ def test_released_company_cannot_use_replay_scope(replay_book, monkeypatch):
 
 def test_replay_schema_keeps_ordinary_close_password_contract(replay_book):
     book = replay_book
-    schema = book.app.dispatch("schema", {})
+    schema = book.app.dispatch("schema", {"view": "full"})
     contract = schema["replay_close_contract"]
     assert contract["enabled"] and contract["normal_close_password_required"]
     assert contract["maximum_months"] == 120

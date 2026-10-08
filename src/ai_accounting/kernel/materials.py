@@ -7,11 +7,13 @@ All confirmations are new typed revisions. A citation of a file is not coverage.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import posixpath
 import re
 from bisect import bisect_left, bisect_right
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
@@ -37,6 +39,7 @@ from pydantic import (
 
 from .build import calculator_build_id
 from .contracts import Fact, FactVersion, KernelError, NeedsInformation
+from .inspection_cache import InspectionCache
 from .storage import Store
 from .types import (
     ActualDate,
@@ -3167,8 +3170,9 @@ def check_completeness(
 
 
 class Materials:
-    def __init__(self, engine):
+    def __init__(self, engine, *, inspection_cache: InspectionCache | None = None):
         self.engine, self.store = engine, engine.store
+        self.inspection_cache = inspection_cache
 
     def _inspection(self, evidence_digest, spec):
         with self.store.connection(read_only=True) as connection:
@@ -3179,6 +3183,34 @@ class Materials:
                 raise NeedsInformation("evidence_digest", "先留存原件")
         # All source bytes have been copied; parsing does not hold a SQLite read transaction.
         return inspect_bytes(row[0], spec)
+
+    def _reading_inspection(self, evidence_digest, spec):
+        """Only public reading borrows the resident parsing cache."""
+        with self.store.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT content FROM evidence WHERE digest=?", (bytes.fromhex(evidence_digest),)
+            ).fetchone()
+            if row is None:
+                raise NeedsInformation("evidence_digest", "先留存原件")
+        raw = row[0]
+        if self.inspection_cache is not None:
+            return self.inspection_cache.inspect(
+                company_id=self.store.company_id,
+                database_id=self.store.database_id,
+                evidence_digest=evidence_digest,
+                specification=spec.model_dump(mode="json"),
+                raw=raw,
+                parse=lambda: inspect_bytes(raw, spec),
+            )
+        if hashlib.sha256(raw).hexdigest() != evidence_digest:
+            raise KernelError(
+                "content_integrity_failed",
+                "已保存的资料原件摘要不一致",
+                component="evidence",
+                record_id=evidence_digest,
+                reason="evidence_digest_mismatch",
+            )
+        return inspect_bytes(raw, spec)
 
     def inspect(
         self,
@@ -3197,7 +3229,11 @@ class Materials:
             {
                 "evidence_digest": evidence_digest,
                 "specification_digest": spec_digest,
-                "parser_build": calculator_build_id(),
+                "parser_build": (
+                    self.inspection_cache.build_id
+                    if self.inspection_cache is not None
+                    else calculator_build_id()
+                ),
             }
         ).hex()
         offset = 0
@@ -3210,35 +3246,40 @@ class Materials:
                     "material_cursor_stale", "原件、解析映射或程序已变化，请重新读取首页"
                 )
             offset = int(position)
-        result = self._inspection(evidence_digest, spec)
+        result = self._reading_inspection(evidence_digest, spec)
         if offset > len(result["items"]):
             raise KernelError("material_cursor_invalid", "资料游标超出明细范围")
         page = result["items"][offset : offset + limit]
         end = offset + len(page)
-        return {
-            "evidence_digest": evidence_digest,
-            "specification_digest": spec_digest,
-            "inspection_digest": inspection_digest,
-            "status": "needs_information" if result["issues"] else "ready",
-            "summary": {
-                "item_count": len(result["items"]),
-                "cell_count": len(result["coverage"]),
-                "issue_count": len(result["issues"]),
-                "control_total_count": len(result["control_totals"]),
-            },
-            "items": page,
-            "coverage": [
-                {"location": item["location"], "hidden": item.get("hidden", False)} for item in page
-            ],
-            "issues": result["issues"][:limit],
-            "issues_truncated": len(result["issues"]) > limit,
-            "control_totals": [
-                {key: value for key, value in control.items() if key != "member_locations"}
-                for control in result["control_totals"][:limit]
-            ],
-            "control_totals_truncated": len(result["control_totals"]) > limit,
-            "next_cursor": f"{inspection_digest}:{end}" if end < len(result["items"]) else None,
-        }
+        # Clone only this bounded response, never the entire parsed original.
+        # A consumer can freely modify its page without poisoning later reads.
+        return deepcopy(
+            {
+                "evidence_digest": evidence_digest,
+                "specification_digest": spec_digest,
+                "inspection_digest": inspection_digest,
+                "status": "needs_information" if result["issues"] else "ready",
+                "summary": {
+                    "item_count": len(result["items"]),
+                    "cell_count": len(result["coverage"]),
+                    "issue_count": len(result["issues"]),
+                    "control_total_count": len(result["control_totals"]),
+                },
+                "items": page,
+                "coverage": [
+                    {"location": item["location"], "hidden": item.get("hidden", False)}
+                    for item in page
+                ],
+                "issues": result["issues"][:limit],
+                "issues_truncated": len(result["issues"]) > limit,
+                "control_totals": [
+                    {key: value for key, value in control.items() if key != "member_locations"}
+                    for control in result["control_totals"][:limit]
+                ],
+                "control_totals_truncated": len(result["control_totals"]) > limit,
+                "next_cursor": f"{inspection_digest}:{end}" if end < len(result["items"]) else None,
+            }
+        )
 
     def receive(
         self,

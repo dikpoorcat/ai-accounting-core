@@ -8,6 +8,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
 
+from pydantic import ValidationError
+
 from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
@@ -17,7 +19,7 @@ from .contracts import KernelError, Registry
 from .discovery import Discovery
 from .display import Display
 from .duplicates import Duplicates
-from .engine import Engine
+from .engine import PROGRAM_VERSION, Engine
 from .entities import Entities
 from .exports import Exports, run_export_jobs
 from .identity_corrections import IdentityCorrections
@@ -45,7 +47,12 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
 )
 
 OPERATING_PROTOCOL = {
-    "version": 3,
+    "version": 4,
+    "schema_discovery": (
+        "finance_local_schema无参读取overview概要。按当前事项用view=selected明确选择"
+        "fact_kinds、commands和response_types取得所需详细合同；通用登记命令同时选择事实类型。"
+        "完整合同仅用view=full显式获取，不重复把整套事实和响应合同载入会话。"
+    ),
     "work_entry": {
         "generic_start": (
             "泛化开始先绑定公司、读取company_context，再调用workflow，as_of使用当前实际日期。"
@@ -83,7 +90,10 @@ OPERATING_PROTOCOL = {
     },
     "owner_answers": {
         "lookup_first": (
-            "先查原件、公司说明、对象、事实、正式结果和任务，再问仍会改变处理的缺项。"
+            "当前事项先用work_context按明确公司、月份和事项读取已有资料、事实、对象与正式采用。"
+            "本页未出现或尚未展开的历史依据不表示资料缺失；沿游标或精确来源继续查询。"
+            "需要原文细节时按原位置读取inspect_material；解析缓存只供阅读，不代表正式核验完成。"
+            "查清已有来源和精确任务后，再问仍会改变处理的缺项；老板可陆续提供资料，无需一次交齐。"
             "已有唯一明确依据时直接复用；仍有歧义时说明具体范围和有依据的建议，不能补造同意。"
         ),
         "scope": (
@@ -344,6 +354,9 @@ class LocalService:
                 raise ValueError("daemon runtime does not match the production bundle")
         self.registry = self.bundle.registry
         self.catalog = Catalog(root, self.bundle)
+        from .inspection_cache import InspectionCache
+
+        self.inspection_cache = InspectionCache(self.catalog.root, build_id=PROGRAM_VERSION)
         self.read_pool = None
         self._catalog_observer = None
         self._catalog_observer_connection = None
@@ -515,6 +528,7 @@ class LocalService:
         """Closed set of business commands, with company binding on every request."""
         from .command_schema import validate_command
         from .response_contracts import RESPONSE_ADAPTERS, validate_response
+        from .work_context_contract import WORK_CONTEXT_ADAPTER
 
         if response_format not in {"native", "http", "http_json"} or (
             response_format in {"http", "http_json"} and command not in _HTTP_DASHBOARD_COMMANDS
@@ -529,7 +543,16 @@ class LocalService:
             with self.security.authorization_gate:
                 self.security.validate_authority(authority)
                 return self._dispatch(command, payload, authority=authority)
-        result = validate_response(command, self._dispatch(command, payload, authority=authority))
+        result = self._dispatch(command, payload, authority=authority)
+        if command == "work_context":
+            try:
+                result = WORK_CONTEXT_ADAPTER.validate_python(result)
+            except ValidationError:
+                raise KernelError(
+                    "response_contract_mismatch", "读取结果不符合接口合同"
+                ) from None
+        else:
+            result = validate_response(command, result)
         if response_format == "http_json":
             return RESPONSE_ADAPTERS[command].dump_json(result)
         if response_format == "http":
@@ -547,15 +570,13 @@ class LocalService:
     def _dispatch(self, command, payload, *, authority=None):
         if command == "schema":
             from .close_contract import ADOPTION_ROLES, CLOSE_FORMAT, CLOSE_FORMAT_VERSION
-            from .response_contracts import response_schemas
+            from .response_contracts import RESPONSE_ADAPTERS
+            from .schema_discovery import discover_schema
             from .security.native import NativeRequest
+            from .work_context_contract import WORK_CONTEXT_ADAPTER
 
-            return {
-                "facts": self.registry.schemas(),
-                "command_schemas": {
-                    name: model.json_schema() for name, model in self.command_models.items()
-                },
-                "response_schemas": response_schemas(),
+            metadata = {
+                "build_id": PROGRAM_VERSION,
                 "error_handling": {
                     "version": 1,
                     "needs_information": {
@@ -677,7 +698,6 @@ class LocalService:
                 "database_formats": {
                     kind: self.bundle.database_format(kind) for kind in ("catalog", "company")
                 },
-                "security_request_schema": NativeRequest.model_json_schema(),
                 "security_operations": ["request", "status", "cancel", "session_status"],
                 "replay_close_contract": {
                     "format": "ai-accounting-kernel/2/replay-close-scope/1",
@@ -688,7 +708,6 @@ class LocalService:
                     "authorization_method": "replay_scope",
                     "startup": "daemon --replay-scope <private-scope.json>",
                     "maximum_months": 120,
-                    "scope_schema": ReplayScopeConfig.model_json_schema(),
                     "normal_close_password_required": True,
                 },
                 "agent_operating_protocol": OPERATING_PROTOCOL,
@@ -696,6 +715,15 @@ class LocalService:
                 "fact_semantics": "核算字段决定计算；管理说明单独版本化；实际收付日不得由月份代替",
                 "commands": sorted(self.command_models),
             }
+            if payload["view"] == "full":
+                metadata["security_request_schema"] = NativeRequest.model_json_schema()
+                metadata["replay_close_contract"]["scope_schema"] = (
+                    ReplayScopeConfig.model_json_schema()
+                )
+            return discover_schema(
+                metadata, self.registry, self.command_models, payload,
+                response_adapters={**RESPONSE_ADAPTERS, "work_context": WORK_CONTEXT_ADAPTER},
+            )
         if command == "companies":
             return self.catalog.companies()
         if command == "dashboard_context":
@@ -753,7 +781,7 @@ class LocalService:
         exports = Exports(engine)
         reports = Reports(engine)
         workflow = Workflow(engine)
-        materials = Materials(engine)
+        materials = Materials(engine, inspection_cache=self.inspection_cache)
         discovery = Discovery(engine)
         duplicates = Duplicates(engine)
         entities = Entities(engine)
@@ -769,6 +797,7 @@ class LocalService:
         asset_batches = AssetBatches(engine)
         tax_import = TaxImport(engine)
         from .maintenance import Maintenance
+        from .work_context import WorkContext
 
         maintenance = Maintenance(engine)
         actions = {
@@ -829,6 +858,7 @@ class LocalService:
             "dashboard_period_preparation": dashboard.period_preparation,
             "dashboard_close_review": CloseReview(self, engine).read,
             "find_facts": discovery.find_facts,
+            "work_context": WorkContext(engine).query,
             "payroll_reuse_basis": payroll_preparation.reuse_basis,
             "prepare_payroll": payroll_preparation.prepare,
             "confirm_payroll_preparation": payroll_preparation.confirm,

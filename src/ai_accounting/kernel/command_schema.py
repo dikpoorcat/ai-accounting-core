@@ -32,8 +32,10 @@ from .payroll_preparation import PayrollPreparation
 from .periods import Periods
 from .replay_close import ReplayClose
 from .reports import Reports
+from .schema_discovery import SchemaQuery
 from .tax_import import TaxImport
 from .types import EvidenceDigest, canonical
+from .work_context import WorkContext
 from .workflow import Workflow
 
 CONFIG = ConfigDict(extra="forbid", strict=True)
@@ -44,6 +46,35 @@ Epochs = create_model(
     material=(int, Field(ge=0)),
     management=(int, Field(ge=0)),
 )
+
+
+def _registration_adapter(command, variants):
+    record = Annotated[reduce(or_, variants.values()), Field(discriminator="kind")]
+    if command == "save_facts":
+        adapter = TypeAdapter(
+            create_model(
+                "SaveFactsCommand",
+                __config__=CONFIG,
+                company_id=(str, ...),
+                request_id=(str, ...),
+                facts=(list[record], Field(min_length=1, max_length=5000)),
+            )
+        )
+    else:
+        adapter = TypeAdapter(record)
+    # Discovery reuses these exact models. Runtime validation retains all of them.
+    adapter._registration_variants = variants
+    return adapter
+
+
+def selected_registration_schema(adapter, command, fact_kinds):
+    variants = {
+        kind: model for kind, model in adapter._registration_variants.items()
+        if kind in fact_kinds
+    }
+    if not variants:
+        raise ValueError("registration discovery requires at least one generic fact")
+    return _registration_adapter(command, variants).json_schema()
 
 
 def command_models(registry):
@@ -123,6 +154,7 @@ def command_models(registry):
         "preview_period_commentary": Display.preview_period_commentary,
         "update_period_commentary": Display.update_period_commentary,
         "find_facts": Discovery.find_facts,
+        "work_context": WorkContext.query,
         "payroll_reuse_basis": PayrollPreparation.reuse_basis,
         "prepare_payroll": PayrollPreparation.prepare,
         "confirm_payroll_preparation": PayrollPreparation.confirm,
@@ -174,47 +206,35 @@ def command_models(registry):
         elif name in {"register_entity", "update_entity_profile"}:
             fields["data"] = (EntityProfile, ...)
         result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
-    records = []
+    records = {}
     for kind, model in registry.models.items():
         if model.registration_command:
             continue
-        records.append(
-            create_model(
-                kind + "Registration",
-                __config__=CONFIG,
-                kind=(Literal[kind], ...),
-                subject_id=(str, ...),
-                data=(model, ...),
-                evidence=(list[EvidenceDigest], Field(min_length=1)),
-                expected_revision=(int, Field(ge=0, strict=True)),
-                review=(DuplicateReview | None, None),
-                source_locations=(list[SourceLocation], Field(default_factory=list)),
-            )
+        records[kind] = create_model(
+            kind + "Registration",
+            __config__=CONFIG,
+            kind=(Literal[kind], ...),
+            subject_id=(str, ...),
+            data=(model, ...),
+            evidence=(list[EvidenceDigest], Field(min_length=1)),
+            expected_revision=(int, Field(ge=0, strict=True)),
+            review=(DuplicateReview | None, None),
+            source_locations=(list[SourceLocation], Field(default_factory=list)),
         )
-    record = Annotated[reduce(or_, records), Field(discriminator="kind")]
     # Single and batch commands share exactly the same registered fact models.
     for name in ("save_fact", "amend_fact"):
-        variants = []
-        for registration in records:
+        variants = {}
+        for kind, registration in records.items():
             fields = {"company_id": (str, ...), "request_id": (str, ...)}
             if name == "amend_fact":
                 fields["recording_error_confirmed"] = (Literal[True], ...)
-            variants.append(
-                create_model(name + registration.__name__, __base__=registration, **fields)
+            variants[kind] = create_model(
+                name + registration.__name__, __base__=registration, **fields
             )
-        result[name] = TypeAdapter(Annotated[reduce(or_, variants), Field(discriminator="kind")])
-    result["save_facts"] = TypeAdapter(
-        create_model(
-            "SaveFactsCommand",
-            __config__=CONFIG,
-            company_id=(str, ...),
-            request_id=(str, ...),
-            facts=(list[record], Field(min_length=1, max_length=5000)),
-        )
-    )
-    for name in ("companies", "schema"):
-        fields = {} if name in global_commands else {"company_id": (str, ...)}
-        result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
+        result[name] = _registration_adapter(name, variants)
+    result["save_facts"] = _registration_adapter("save_facts", records)
+    result["companies"] = TypeAdapter(create_model("companiesCommand", __config__=CONFIG))
+    result["schema"] = TypeAdapter(SchemaQuery)
     return result
 
 

@@ -275,7 +275,7 @@ def test_generated_command_schemas_validate_typed_facts_and_exclude_journals(ser
     from jsonschema import Draft202012Validator, ValidationError
 
     app, company = service
-    discovery = app.dispatch("schema", {})
+    discovery = app.dispatch("schema", {"view": "full"})
     schemas = discovery["command_schemas"]
     for schema in schemas.values():
         Draft202012Validator.check_schema(schema)

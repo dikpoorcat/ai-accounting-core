@@ -44,19 +44,57 @@ class Discovery:
     def company_context(self):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            identity = dict(
-                connection.execute(
-                    "SELECT company_id,taxpayer_id,database_id FROM identity WHERE id=1"
-                ).fetchone()
-            )
-            return {
-                "identity": identity,
-                "database_format": database_format(connection, bundle=self.store.bundle),
-                "company_note": self._note(connection),
-                "epochs": self.store.epochs(connection),
-                "source_kinds": sorted(self.store.registry.models),
-                "note_semantics": "公司业务说明是管理背景，不能代替已确认事实或推断缺少的核算信息",
+            return self._company_context(connection)
+
+    def _company_context(self, connection):
+        """Use a caller-owned snapshot when combining existing read interfaces."""
+        identity = dict(
+            connection.execute(
+                "SELECT company_id,taxpayer_id,database_id FROM identity WHERE id=1"
+            ).fetchone()
+        )
+        return {
+            "identity": identity,
+            "database_format": database_format(connection, bundle=self.store.bundle),
+            "company_note": self._note(connection),
+            "epochs": self.store.epochs(connection),
+            "source_kinds": sorted(self.store.registry.models),
+            "note_semantics": "公司业务说明是管理背景，不能代替已确认事实或推断缺少的核算信息",
+        }
+
+    def _hydrate_fact_records(self, connection, records, *, current_index, identity_matches=None):
+        """Hydrate and prove only selected headers, shared with scoped work reads."""
+        fact_ids = [record["fact_id"] for record in records]
+        data = self.store.fact_data_many(connection, fact_ids)
+        self._verify_fact_hits(connection, records, data, current_index=current_index)
+        evidence = {fact_id: [] for fact_id in fact_ids}
+        for row in connection.execute(
+            "SELECT e.fact_id,e.evidence_digest FROM json_each(?) ids "
+            "JOIN fact_evidence e ON e.fact_id=ids.value "
+            "ORDER BY e.fact_id,e.evidence_digest",
+            (canonical(sorted(fact_ids)),),
+        ):
+            evidence[row["fact_id"]].append(row["evidence_digest"].hex())
+        adoptions = self._adoptions(connection, fact_ids)
+        matches = identity_matches or {}
+        return [
+            {
+                "fact_id": record["fact_id"],
+                "subject_id": record["subject_id"],
+                "revision": record["revision"],
+                "kind": record["kind"],
+                "period": str(YearMonth.from_ordinal(record["period"])),
+                "data": data[record["fact_id"]],
+                "evidence": evidence[record["fact_id"]],
+                "is_current": bool(record["is_current"]),
+                "superseded": bool(record["superseded"]),
+                "pending": bool(record["pending"]),
+                "calculation_id": record["calculation_id"],
+                "adoption": adoptions.get(record["fact_id"]),
+                "identity_matches": matches.get(record["fact_id"], []),
             }
+            for record in records
+        ]
 
     def update_company_note(
         self,
@@ -482,37 +520,12 @@ class Discovery:
                             "identity_match": identity_match,
                         }
                     )
-            data = self.store.fact_data_many(connection, fact_ids)
-            self._verify_fact_hits(connection, selected, data, current_index=not history)
-            evidence = {fact_id: [] for fact_id in fact_ids}
-            for row in connection.execute(
-                "SELECT e.fact_id,e.evidence_digest FROM json_each(?) ids "
-                "JOIN fact_evidence e ON e.fact_id=ids.value "
-                "ORDER BY e.fact_id,e.evidence_digest",
-                (canonical(sorted(fact_ids)),),
-            ):
-                evidence[row["fact_id"]].append(row["evidence_digest"].hex())
-            adoptions = self._adoptions(connection, fact_ids)
-            result = []
-            for record in selected:
-                fact_id = record["fact_id"]
-                result.append(
-                    {
-                        "fact_id": fact_id,
-                        "subject_id": record["subject_id"],
-                        "revision": record["revision"],
-                        "kind": record["kind"],
-                        "period": str(YearMonth.from_ordinal(record["period"])),
-                        "data": data[fact_id],
-                        "evidence": evidence[fact_id],
-                        "is_current": bool(record["is_current"]),
-                        "superseded": bool(record["superseded"]),
-                        "pending": bool(record["pending"]),
-                        "calculation_id": record["calculation_id"],
-                        "adoption": adoptions.get(fact_id),
-                        "identity_matches": identity_matches[fact_id],
-                    }
-                )
+            result = self._hydrate_fact_records(
+                connection,
+                selected,
+                current_index=not history,
+                identity_matches=identity_matches,
+            )
             return {
                 "schema_version": 2,
                 "company_id": self.store.company_id,

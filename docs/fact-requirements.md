@@ -24,7 +24,7 @@
 
 ## 错误与解决顺序
 
-`schema`（MCP `finance_local_schema`）是当前的发现入口；`data.fact_issues` 的项结构如下：
+`schema`（MCP `finance_local_schema`）无参返回当前协议和目录；按事项用 `view="selected"` 选择事实、命令及响应合同，查询通用登记命令必须一并指定事实类型，完整诊断显式用 `view="full"`。读取精简不改变完整运行校验模型；`data.fact_issues` 的项结构如下：
 
 - `code`、`kind`：区分缺少核算事实和现有事实冲突。
 - `fields`、`alternatives`：说明相关字段及可选表达；替代字段不代表必须一并填写。

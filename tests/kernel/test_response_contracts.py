@@ -140,7 +140,9 @@ def test_long_term_asset_summary_uses_exact_fen_and_nonnegative_integer_counts(s
     summary = response["data"]["long_term_assets"]
     for amount in (0, 2**53 + 1, -(2**63), 2**63 - 1):
         summary["net_fen"] = amount
-        assert http_response("dashboard_brief", response)["data"]["long_term_assets"]["net_fen"] == str(amount)
+        assert http_response("dashboard_brief", response)["data"]["long_term_assets"][
+            "net_fen"
+        ] == str(amount)
     for field, invalid in (("net_fen", None), ("net_fen", 1.0), ("net_fen", 2**63),
                            ("fixed_active_count", -1), ("fixed_active_count", True),
                            ("intangible_active_count", 1.0)):
@@ -416,8 +418,10 @@ def test_contract_mismatch_is_a_program_error(samples, mutation):
 
 def test_schema_command_exposes_native_contracts(resident):
     service, _, _, _, _ = resident
-    result = service.dispatch("schema", {})["response_schemas"]
-    assert result == response_schemas()
+    result = service.dispatch("schema", {"view": "full"})["response_schemas"]
+    from ai_accounting.kernel.work_context_contract import WORK_CONTEXT_ADAPTER
+
+    assert result == {**response_schemas(), "work_context": WORK_CONTEXT_ADAPTER.json_schema()}
     native = result["dashboard_funds"]["$defs"]["FundsData"]["properties"]["inflow_fen"]
     assert native["type"] == "integer" and native["maximum"] == 2**63 - 1
     wire = response_schemas(mode="serialization")["dashboard_funds"]["$defs"]["FundsData"][

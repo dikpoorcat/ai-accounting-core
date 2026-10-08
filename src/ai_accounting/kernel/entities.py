@@ -173,6 +173,30 @@ def profiles(connection, *, profile_ids=None):
     }
 
 
+def profiles_for_entities(connection, entity_ids):
+    """Authenticate latest profiles for an exact, caller-selected object set."""
+    if not entity_ids:
+        return {}
+    rows = list(
+        connection.execute(
+            "SELECT p.*,e.kind,e.account_type FROM json_each(?) ids "
+            "JOIN entity e ON e.id=ids.value JOIN entity_profile_revision p ON p.entity_id=e.id "
+            "WHERE p.revision=(SELECT max(q.revision) FROM entity_profile_revision q "
+            "WHERE q.entity_id=e.id) ORDER BY e.id",
+            (canonical(sorted(set(entity_ids))),),
+        )
+    )
+    result = {
+        row["entity_id"]: dict(
+            _profile_record(row), entity_kind=row["kind"], account_type=row["account_type"]
+        )
+        for row in rows
+    }
+    if len(result) != len(set(entity_ids)):
+        raise KernelError("content_integrity_failed", "已引用对象缺少档案来源")
+    return result
+
+
 def employee_entities(connection, period, *, registry):
     """Explicit employment records or profiles, with scoped corrections applied."""
     cutoff = YearMonth(period).ordinal

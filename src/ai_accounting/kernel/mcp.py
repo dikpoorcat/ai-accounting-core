@@ -1,6 +1,7 @@
 """Local stdio transport, owned by the launching OS user; no listening network socket."""
 
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -20,10 +21,24 @@ def serve(root: Path):
     )
 
     @mcp.tool()
-    def finance_local_schema() -> dict:
-        """Get all typed business fact schemas, field meanings and supported commands."""
+    def finance_local_schema(
+        view: Literal["overview", "selected", "full"] = "overview",
+        fact_kinds: list[str] | None = None,
+        commands: list[str] | None = None,
+        response_types: list[str] | None = None,
+    ) -> dict:
+        """Read the overview first; explicitly select needed contracts or request full.
+
+        The selected view requires fact_kinds for save_fact/amend_fact/save_facts.
+        Dedicated facts include their required registration command automatically.
+        """
         try:
-            return service.dispatch("schema", {})
+            return service.dispatch("schema", {
+                "view": view,
+                "fact_kinds": fact_kinds or [],
+                "commands": commands or [],
+                "response_types": response_types or [],
+            })
         except Exception as exc:
             return error_response(exc)
 

@@ -1,12 +1,12 @@
 # 类型化业务事实与组合处理
 
-当前 SQLite 内核的公共入口只接收注册的类型化事实、证据和明确来源，不接受任意科目、借贷方向或自由分录行。`finance_local_schema` 列出实际可用的事实、字段、专用登记命令和精度；`finance_local_command` 使用同一合同。金额以整数分提交，税率和税额计算使用十进制数。
+当前 SQLite 内核的公共入口只接收注册的类型化事实、证据和明确来源，不接受任意科目、借贷方向或自由分录行。`finance_local_schema` 无参返回概要，当前事项的事实、字段、专用登记命令和精度通过 `view="selected"` 明确选择，完整检查用 `view="full"`；`finance_local_command` 使用同一完整运行校验器。金额以整数分提交，税率和税额计算使用十进制数。
 
 旧 `finance_record_event` 的 `components`／`funds` 请求、`finance_preview_event` 和 `finance_configure_account` 已退出运行接口。需要同次保存多项事实时使用当前 `save_facts` 合同；每种事实仍按自己的来源、日期、证据和身份规则计算。批量登记不等于所有事实已经正式发布，更不允许提交自由分录。
 
 ## 登记、发布与更正
 
-先用 `find_entities` 和 `find_facts` 查已登记对象与来源，再登记原件 `evidence`。普通事实用 `save_fact`，已登记事实的开放期更正用 `amend_fact`；带 `x-registration-command` 的事实走 Schema 指定的专用入口。登记只保存事实。需要核算的业务先 `preview`，核对结果摘要、依赖、期间与版本，再 `confirm` 发布。正式凭证由内核计算并保证借贷平衡。
+确定当前公司、月份和工作事项后，先用 `work_context` 读取有界已有资料；必要时用 `find_entities` 和 `find_facts` 精确续查对象、历史来源与采用依据，再登记新增原件 `evidence`。分页遗漏不代表缺项，查清已有来源后只询问会改变处理的剩余事实。普通事实用 `save_fact`，已登记事实的开放期更正用 `amend_fact`；带 `x-registration-command` 的事实走 Schema 指定的专用入口。查询通用登记合同同时选择 `fact_kinds`，专用事实保留指定入口。登记只保存事实。需要核算的业务先 `preview`，核对结果摘要、依赖、期间与版本，再 `confirm` 发布。正式凭证由内核计算并保证借贷平衡。
 
 同次保存时，每项事实保留自己的业务身份、实际日期或允许的月份精度、证据和引用。已知真实收付要提供实际日期；按月确认的业务可在其模型允许时使用确认月份。外部申报日期、用途、名称等管理资料不能填充核算日期。核算缺项用 `needs_information.fact_issues` 指明字段、精度及可复用来源；核查已有资料后再问负责人，不从错误码编造问题。
 

@@ -757,7 +757,7 @@ def test_nested_reference_models_and_published_schemas_keep_same_wire_shape(serv
                 adapter.validate_json(canonical(value))
         assert adapter.validate_json(canonical(UNKNOWN)) == UNKNOWN
     app, _ = service
-    schemas = app.dispatch("schema", {})["command_schemas"]
+    schemas = app.dispatch("schema", {"view": "full"})["command_schemas"]
     for command, _field, _ in public_cases():
         encoded = canonical(schemas[command])
         assert '"pattern":"^[0-9a-f]{64}$"' in encoded

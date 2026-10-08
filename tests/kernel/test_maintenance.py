@@ -165,6 +165,6 @@ def test_new_commands_are_available_through_the_existing_service_and_schema(tmp_
     assert response["status"] == "verified"
     result = dispatch("repair_read_indexes", {"company_id": company["id"], "request_id": "repair"})
     assert result["status"] == "repaired" and result["changed"] is False
-    schema = dispatch("schema", {})
+    schema = dispatch("schema", {"view": "full"})
     assert "verify_integrity" in schema["commands"]
     assert "repair_read_indexes" in schema["commands"]

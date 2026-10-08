@@ -149,7 +149,7 @@ def test_public_security_state_covers_session_request_and_cancel(resident):
 @pytest.mark.parametrize("command", ["preview_close_range", "close_range"])
 def test_retired_batch_commands_have_no_public_schema_or_dispatch(resident, command):
     service, *_ = resident
-    schema = service.dispatch("schema", {})
+    schema = service.dispatch("schema", {"view": "full"})
     assert command not in schema["command_schemas"]
     assert "approve_close_batches" not in str(schema["security_request_schema"])
     assert "closing_batches" not in schema["agent_operating_protocol"]
