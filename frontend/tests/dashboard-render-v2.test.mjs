@@ -21,8 +21,9 @@ const responses = {
 };
 const companyId = responses.context.current_company.company_id;
 
-async function withServer(run, { displayMode } = {}) {
+async function withServer(run, { displayMode, assetWork, assetListInitialized } = {}) {
   globalThis.stage7RenderResponses = responses;
+  if (assetWork) globalThis.stage7AssetRenderWork = assetWork;
   globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${companyId}` } };
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
@@ -41,6 +42,11 @@ async function withServer(run, { displayMode } = {}) {
         code = code.replace(/const displayMode = ref<[^;\n]+>\("cards"\)/, `const displayMode = ref("${displayMode}")`);
         if (key === "assets" && displayMode === "list") code = code.replace("const listInitialized = ref(false)", "const listInitialized = ref(true)");
       }
+      if (key === "assets" && assetListInitialized) code = code.replace("const listInitialized = ref(false)", "const listInitialized = ref(true)");
+      if (key === "assets" && assetWork) code = code.replace(
+        "function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {",
+        "function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary { globalThis.stage7AssetRenderWork.paymentSummaries += 1;",
+      );
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")').replaceAll("{ immediate: true }", "{ immediate: false }");
       return code;
@@ -48,7 +54,7 @@ async function withServer(run, { displayMode } = {}) {
     server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
   try { return await run(server); }
-  finally { await server.close(); delete globalThis.stage7RenderResponses; }
+  finally { await server.close(); delete globalThis.stage7RenderResponses; delete globalThis.stage7AssetRenderWork; }
 }
 
 function routerFor(path) {
@@ -434,6 +440,47 @@ test("asset card and list modes share a single title toolbar while list details 
     assert.match(scrappedText, /收款金额 ¥0\.00/);
     assert.match(scrappedText, /处置损失 ¥1,518\.00/);
   }, { displayMode });
+});
+
+test("asset modes render only their stateless summaries while retaining initialized list details", async () => {
+  for (const displayMode of ["cards", "list"]) await withServer(async server => {
+    const html = await renderAssets(server, assetListResponse());
+    const cardSummaries = [...html.matchAll(/<div\b[^>]*class="asset-card-summary"[^>]*>/g)];
+    const unknownListSummaries = [...html.matchAll(/<div\b[^>]*class="asset-list-summary asset-list-unestablished"[^>]*>/g)];
+    assert.equal(cardSummaries.length, displayMode === "cards" ? 5 : 0);
+    assert.equal(unknownListSummaries.length, displayMode === "list" ? 1 : 0);
+    const details = [...html.matchAll(/<details\b[^>]*class="asset-list-details"[^>]*>/g)];
+    assert.equal(details.length, 4, "initialized details remain mounted in both modes");
+    for (const [tag] of details) assert.equal(/display:none/.test(tag), displayMode === "cards");
+    assert.match(html, /整批付款/);
+    assert.match(html, /暂无法确定/);
+    assert.match(html, /处置时账面价值/);
+  }, { displayMode, assetListInitialized: true });
+});
+
+test("asset list rendering does not format hidden card payment summaries as loaded records grow", async () => {
+  const work = { paymentSummaries: 0 };
+  await withServer(async server => {
+    const source = assetListResponse().data.collections.assets.items[0];
+    for (const count of [100, 200, 400]) {
+      const response = structuredClone(responses.assets);
+      response.data.collections.assets = {
+        items: Array.from({ length: count }, (_, index) => ({
+          ...structuredClone(source), asset_id: `loaded-asset-${index}`, name: `已加载资产 ${index}`,
+        })),
+        page: { total_count: count, filtered_count: count, returned_count: count, has_more: false, next_cursor: null },
+      };
+      work.paymentSummaries = 0;
+      const html = await renderAssets(server, response);
+      assert.doesNotMatch(html, /class="asset-card-summary"/);
+      assert.equal([...html.matchAll(/<summary\b[^>]*class="asset-list-summary"/g)].length, count);
+      assert.equal([...html.matchAll(/class="asset-list-detail dashboard-business-expansion"/g)].length, count);
+      assert.match(html, /¥9,007,199,254,740,993\.45/);
+      assert.match(html, /¥1,318\.00/);
+      assert(work.paymentSummaries > 0, "visible list payment summaries remain formatted");
+      assert(work.paymentSummaries <= 3 * count, `${count} list rows must not also format their hidden cards`);
+    }
+  }, { displayMode: "list", assetWork: work });
 });
 
 test("incomplete business classification labels confirmed amounts without making a boss task", async () => withServer(async server => {

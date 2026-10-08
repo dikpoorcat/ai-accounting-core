@@ -466,6 +466,113 @@ def test_browser_stderr_diagnostic_redacts_secrets_and_keeps_timeout():
     assert "C:\\private" not in diagnostic
 
 
+@pytest.mark.parametrize("failed_call", ("request", "native_execute", "native_update"))
+def test_browser_login_failure_keeps_original_report_and_cleans_up(
+    tmp_path, monkeypatch, failed_call,
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    from ai_accounting.kernel import daemon, http
+    from ai_accounting.kernel.security import credentials, transport
+
+    source = Path(__file__).resolve().parents[2]
+    folder = tmp_path / ".tmp"
+    folder.mkdir()
+    book = complete_report()
+    book.update(source=str(source), root=str(folder / "stage9-login-book"), employee_count=0)
+    book["verified_open_preview"] = fake_current_preview(book)
+    report_path, output_path = folder / "stage9-book.json", folder / "stage9-failure.json"
+    report_path.write_text(json.dumps(book), encoding="utf-8")
+    static = folder / "stage9-static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    events = []
+    store = credentials.InMemoryCredentialStore()
+    issued_token = SecretStr("synthetic-issued-session")
+    failure = RuntimeError(
+        f"{failed_call} failed password=Synthetic-stage9-browser-only-2026 "
+        "token=synthetic-issued-session http://127.0.0.1/private"
+    )
+
+    def request(**kwargs):
+        assert kwargs == {"kind": "login"}
+        events.append("request")
+        if failed_call == "request":
+            raise failure
+        return {"request_id": "synthetic-request"}
+
+    def native_call(command, request_id, **kwargs):
+        assert request_id == "synthetic-request"
+        events.append(command)
+        if command == "native_execute":
+            assert kwargs["password"].get_secret_value() == "Synthetic-stage9-browser-only-2026"
+            store.save_session_token(issued_token)
+        if command == failed_call:
+            raise failure
+
+    def logout(token):
+        assert token == issued_token
+        events.append("logout")
+
+    app = SimpleNamespace(
+        catalog=SimpleNamespace(
+            companies=lambda: [book["company"]],
+            connection=lambda **kwargs: nullcontext(SimpleNamespace(
+                execute=lambda _: [("synthetic-stage9-owner",)],
+            )),
+        ),
+        security=SimpleNamespace(catalog_instance_id="synthetic-catalog", logout=logout),
+        dispatch=lambda *args, **kwargs: pytest.fail("login failure dispatched business read"),
+        close=lambda: events.append("app-close"),
+    )
+    server = SimpleNamespace(
+        RequestHandlerClass=SimpleNamespace(send_response=lambda *args: None),
+        server_port=1234, build_id="synthetic-build",
+        serve_forever=lambda: pytest.fail("test started a real server"),
+        shutdown=lambda: events.append("shutdown"),
+        server_close=lambda: events.append("server-close"),
+    )
+    monkeypatch.setenv("STAGE9_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / ".tmp-kernel-venv"))
+    monkeypatch.setattr(benchmark_stage9_browser, "configure_source", lambda *args: source)
+    monkeypatch.setattr(benchmark_stage9_browser, "prepare_browser_static_runtime", lambda: ((), 0))
+    monkeypatch.setattr(benchmark_stage9_browser, "prepare_browser_service", lambda *args: (app, 0))
+    monkeypatch.setattr(benchmark_stage9_browser, "browser_source_paths",
+                        lambda *args, **kwargs: (static, source / "unused-harness.cjs"))
+    monkeypatch.setattr(http, "create_server", lambda *args, **kwargs: (server, "synthetic-capability"))
+    monkeypatch.setattr(credentials, "InMemoryCredentialStore", lambda: store)
+    monkeypatch.setattr(daemon, "build_native_security_controller",
+                        lambda *args, **kwargs: SimpleNamespace(request=request))
+    monkeypatch.setattr(transport, "NativeHttpClient",
+                        lambda **kwargs: SimpleNamespace(call=native_call))
+    monkeypatch.setattr(benchmark_stage9_browser.threading, "Thread", lambda **kwargs: SimpleNamespace(
+        start=lambda: events.append("thread-start"),
+        join=lambda **kwargs: events.append("thread-join"),
+    ))
+    monkeypatch.setattr(sys, "argv", [
+        "benchmark_stage9_browser.py", "--book-report", str(report_path),
+        "--workspace", str(tmp_path), "--output", str(output_path),
+        "--node", "unused-node", "--playwright-module", "unused-module",
+    ])
+    with pytest.raises(RuntimeError) as caught:
+        benchmark_stage9_browser.main()
+    assert caught.value is failure
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result["status"] == "failed" and result["failed_phase"] == "setup"
+    assert result["error"]["type"] == "RuntimeError"
+    assert result["error"]["message"].startswith(f"{failed_call} failed")
+    assert "Synthetic-stage9-browser-only-2026" not in result["error"]["message"]
+    assert "synthetic-issued-session" not in result["error"]["message"]
+    assert "127.0.0.1" not in result["error"]["message"]
+    assert result["synthetic_credentials_revoked"] is True
+    assert store.load_session_token() is None
+    assert ("logout" in events) == (failed_call != "request")
+    assert events[-4:] == ["shutdown", "thread-join", "server-close", "app-close"]
+
+
 def test_browser_current_contracts_preserve_complete_pages_and_voucher_amounts():
     node = shutil.which("node")
     if node is None:

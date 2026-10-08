@@ -44,7 +44,9 @@ def test_brief_includes_pending_intangible_in_asset_amount_and_count(book):
     assert result["ledger_net_fen"] == 1600000
     assert result["pending_intangible_count"] == 1
     assert result["intangible"]["active_count"] == 0
-    assert "long_term_assets" not in Dashboard(engine).brief("2026-09")["data"]
+    assert Dashboard(engine).brief("2026-09")["data"]["long_term_assets"] == {
+        "net_fen": 1600000, "fixed_active_count": 0, "intangible_active_count": 0,
+    }
 
 
 def test_business_receipt_is_not_voucher_total_including_vat_transfer(service_company):

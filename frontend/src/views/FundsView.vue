@@ -122,7 +122,8 @@ const bankAccountOptions = computed(() => {
   return options;
 });
 const visibleBankRows = bankRows;
-const previewBatchRow = computed(() => visibleBankRows.value.find(item => item.id === previewBatchId.value));
+const previewBatchRow = computed(() => previewBatchId.value
+  ? visibleBankRows.value.find(item => item.id === previewBatchId.value) : undefined);
 const selectedBankAccountLabel = computed(
   () => bankAccountOptions.value.find((option) => option.value === selectedBankAccount.value)?.label ?? "全部银行账户",
 );
@@ -1267,7 +1268,7 @@ onBeforeUnmount(() => {
                       </span>
                       <span class="bank-activity-details">
                         <button v-if="item.batch_payment?.items.length" type="button" class="bank-batch-trigger"
-                            :disabled="loading || pageStates.bank.loading"
+                            :disabled="loading"
                             :aria-label="`${batchDetailsTitle(item)}，${item.batch_payment.items.length}项`"
                             :aria-expanded="expandedBatchId === item.id || previewBatchId === item.id"
                             :aria-controls="expandedBatchId === item.id ? `bank-batch-inline-${item.id}` : previewBatchId === item.id ? 'bank-batch-preview' : undefined"

@@ -21,14 +21,14 @@ def _posted_pair(engine, *, closed=False):
     publish(engine, ["off-page"], request="post-second")
     if closed:
         close(engine)
-    response = Dashboard(engine).brief(PERIOD, limit=1)
+    response = Dashboard(engine).brief(PERIOD, section="vouchers", limit=1)
     data = response["data"]
     assert data["position"] == {
         "month_revenue_fen": 0, "month_expense_fen": 300,
         "month_result_fen": -300, "complete": True,
     }
-    assert data["collections"]["activity"]["items"][0]["subject_id"] == "first"
-    assert data["collections"]["activity"]["page"]["total_count"] == 2
+    assert data["collections"]["vouchers"]["items"][0]["subject_id"] == "first"
+    assert data["collections"]["vouchers"]["page"]["total_count"] == 2
     with engine.store.connection(read_only=True) as connection:
         return dict(connection.execute(
             "SELECT v.id,v.calculation_id,c.fact_id,c.outcome FROM voucher_version v "
@@ -93,7 +93,7 @@ def test_whole_month_amounts_reject_off_page_source_damage(engine, closed, corru
         damage(engine, "fact_test_charge",
                "UPDATE fact_test_charge SET amount=amount+1 WHERE revision_id=?", (row["fact_id"],))
     with pytest.raises(KernelError) as failure:
-        Dashboard(engine).brief(PERIOD, limit=1)
+        Dashboard(engine).brief(PERIOD, section="vouchers", limit=1)
     assert failure.value.code == "content_integrity_failed"
 
 
@@ -158,7 +158,7 @@ def test_whole_month_amounts_reject_off_page_frozen_adoption_damage(engine):
            "UPDATE close_reference SET position='99999' WHERE reference_type='voucher' "
            "AND reference_id=?", (row["id"],))
     with pytest.raises(KernelError) as failure:
-        Dashboard(engine).brief(PERIOD, limit=1)
+        Dashboard(engine).brief(PERIOD, section="vouchers", limit=1)
     assert failure.value.code == "content_integrity_failed"
 
 

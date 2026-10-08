@@ -680,7 +680,7 @@ onBeforeUnmount(() => {
               tabindex="-1"
             >
               <template v-if="isUnestablishedAsset(item)">
-              <div v-show="displayMode === 'cards'" class="asset-card-summary">
+              <div v-if="displayMode === 'cards'" class="asset-card-summary">
                 <div class="asset-card-topline">
                   <span class="asset-classification">{{ unresolvedAssetTypeLabel(item) }}</span>
                 </div>
@@ -696,7 +696,7 @@ onBeforeUnmount(() => {
                 </div>
                 <p class="asset-unestablished-note">该项资料尚未确认，暂不计入资产数量和金额；由 AI 会计核对。</p>
               </div>
-              <div v-show="displayMode === 'list'" class="asset-list-summary asset-list-unestablished">
+              <div v-if="displayMode === 'list'" class="asset-list-summary asset-list-unestablished">
                 <div class="asset-list-identity"><span class="asset-list-status needs-attention" role="img" aria-label="资料待确认" title="资料待确认"></span><div class="asset-list-name"><h3>{{ assetDisplayName(item) }}</h3><p>{{ unresolvedAssetTypeLabel(item) }}</p></div></div>
                 <div class="asset-list-state" data-label="状态"><span>资料待确认</span></div>
                 <strong v-for="column in assetListColumns" :key="column.key" :data-label="column.label" :aria-labelledby="`asset-column-${column.key}`" :class="{ 'asset-list-book': column.key === 'book' }">暂无法确定</strong>
@@ -705,7 +705,7 @@ onBeforeUnmount(() => {
               </div>
               </template>
               <template v-else>
-              <div v-show="displayMode === 'cards'" class="asset-card-summary">
+              <div v-if="displayMode === 'cards'" class="asset-card-summary">
                 <div class="asset-card-topline">
                   <span class="asset-classification">
                     {{ assetTypeLabel(item) }}<template v-if="assetCategoryLabel(item)"> · {{ assetCategoryLabel(item) }}</template> · {{ item.code }}

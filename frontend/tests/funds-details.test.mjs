@@ -7,6 +7,8 @@ import vue from "@vitejs/plugin-vue";
 import * as Vue from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { compile } from "@vue/compiler-dom";
+import { compileScript, parse } from "@vue/compiler-sfc";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
@@ -169,11 +171,15 @@ test("fund related payments keep exact pagination scope, cancel collapse continu
   } finally { view.unmount(); }
 });
 
-async function rowHarness() {
+async function rowHarness({ deferRequests = false } = {}) {
   const key = `fundsRowsHarness${++sequence}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09" }, hash: "" });
-  const mounted = [], cleanup = [];
-  globalThis[key] = { Vue, route, appendDashboardCollection, mounted, cleanup };
+  const mounted = [], cleanup = [], calls = [];
+  globalThis[key] = { Vue, route, appendDashboardCollection, mounted, cleanup,
+    fetch: (...args) => {
+      if (!deferRequests) return Promise.reject(new Error("unexpected fetch"));
+      return new Promise((resolve, reject) => calls.push({ args, resolve, reject }));
+    } };
   const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
   const money = readFileSync(new URL("../src/utils/money.ts", import.meta.url), "utf8").replace(/export /g, "");
   const prefix = `const environment = globalThis.${key}; const { computed, nextTick, ref, watch } = environment.Vue;
@@ -183,12 +189,12 @@ async function rowHarness() {
     const useRoute = () => environment.route, useRouter = () => ({ replace: async () => {}, push: async () => {} });
     const useDashboardContext = () => ({ context: ref(null), loading: ref(false), error: ref(''), load: async () => {}, refresh: async () => {} });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
-    const fetchFundsDashboard = async () => { throw new Error('unexpected fetch'); };
+    const fetchFundsDashboard = environment.fetch;
     const dashboardErrorMessage = String, isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fundAccountDisplayLabel = String, fundAccountDisplayName = String, fundAccountLabel = () => null, rememberFundAccounts = () => {};`;
-  const { outputText } = ts.transpileModule(prefix + money + source + "\nexport { toggleMovement, handleMovementKey, expandedMovementId, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, snapshotVersion, activeSection, movementAmount, funds, expandedBatchId, previewBatchId, previewBatchRow, batchPreviewPanel, batchPreviewList, batchPreviewPosition, showBatchPreview, toggleBatchDetails, clearBatchPreview, resetBatchDetails, leaveBatchTrigger, leaveBatchPreview, keepBatchPreview, handleBatchTriggerKey, handleBatchPreviewKey, handleBatchEscape, handleBatchViewportChange, invalidateRequests, loadFunds };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
+  const { outputText } = ts.transpileModule(prefix + money + source + "\nexport { toggleMovement, handleMovementKey, expandedMovementId, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, snapshotVersion, activeSection, movementAmount, funds, expandedBatchId, previewBatchId, previewBatchRow, batchPreviewPanel, batchPreviewList, batchPreviewPosition, showBatchPreview, toggleBatchDetails, clearBatchPreview, resetBatchDetails, leaveBatchTrigger, leaveBatchPreview, keepBatchPreview, handleBatchTriggerKey, handleBatchPreviewKey, handleBatchEscape, handleBatchViewportChange, invalidateRequests, loadFunds, loadMore, pausePages, paginationScope, pageStates, loading, bankRows, batchDetailsTitle, batchScopeNote, cancelBatchClose, scheduleBatchClose, formatFen };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const instance = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-  return { ...instance, route, mount: async () => { for (const callback of mounted) await callback(); }, unmount: () => { cleanup.forEach(callback => callback()); delete globalThis[key]; } };
+  return { ...instance, route, calls, mount: async () => { for (const callback of mounted) await callback(); }, unmount: () => { cleanup.forEach(callback => callback()); delete globalThis[key]; } };
 }
 
 test("movement rows toggle by stable occurrence id, support row keyboard input and keep exact cash amount", async () => {
@@ -240,8 +246,8 @@ function batchDOM() {
     }
     getBoundingClientRect() { return this.rect; }
     getClientRects() { return [this.rect]; }
-    focus() { this.focusCount += 1; document.activeElement = this; this.onFocus?.(); }
-    contains(node) { return node === this || node?.parent === this; }
+    focus() { if (this.props?.disabled) return; this.focusCount += 1; document.activeElement = this; this.onFocus?.(); }
+    contains(node) { for (let current = node; current; current = current.parent) if (current === this) return true; return false; }
     closest() { return null; }
   }
   class HTMLButtonElementStub extends HTMLElementStub {}
@@ -262,6 +268,123 @@ function batchDOM() {
 function setBatchRows(view, rows) {
   view.funds.value = { collections: { statements: { items: rows } } };
 }
+
+async function mountBatchTemplate(view, dom, { controls = false } = {}) {
+  const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8");
+  const popover = source.slice(source.lastIndexOf('  <Teleport to="body">'), source.lastIndexOf("</template>"));
+  const button = source.match(/<button v-if="item\.batch_payment\?\.items\.length"[\s\S]*?<\/button>/)[0];
+  const pagination = source.match(/<DashboardPagination automatic[^\n]+paginationScope\('bank'\)[^\n]+\/>/)[0];
+  const template = controls
+    ? `<button id="before-batch">Before</button><div v-for="item in bankRows" :key="item.id">${button}</div><button id="after-batch">After</button>${pagination}${popover}`
+    : `<span>{{ funds.collections.statements.items.length }}</span>${popover}`;
+  const render = new Function("Vue", compile(template, { mode: "function", prefixIdentifiers: true }).code)(Vue);
+  const { descriptor } = parse(readFileSync(new URL("../src/components/DashboardPagination.vue", import.meta.url), "utf8"));
+  let paginationSource = ts.transpileModule(compileScript(descriptor, { id: "funds-batch-pagination", inlineTemplate: true }).content,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+  const key = `fundsBatchRender${++sequence}`;
+  globalThis[key] = Vue;
+  paginationSource = paginationSource.replace(/import \{([^}]+)\} from ["']vue["'];?/g,
+    (_match, names) => `const {${names.replace(/\bas\b/g, ":")}} = globalThis.${key};`);
+  const { default: paginationComponent } = await import(`data:text/javascript;base64,${Buffer.from(paginationSource).toString("base64")}`);
+  delete globalThis[key];
+  const makeNode = (tag, text = "") => {
+    const node = new (tag === "button" ? dom.HTMLButtonElementStub : dom.HTMLElementStub)();
+    Object.assign(node, { tag, text, children: [], props: {}, parent: null });
+    return Vue.markRaw(node);
+  };
+  const root = makeNode("root"), body = makeNode("body");
+  const renderer = Vue.createRenderer({
+    createElement: tag => makeNode(tag), createText: text => makeNode("#text", text), createComment: () => makeNode("#comment"),
+    insert(node, target, anchor) {
+      if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1);
+      const index = anchor ? target.children.indexOf(anchor) : -1;
+      target.children.splice(index < 0 ? target.children.length : index, 0, node); node.parent = target;
+    },
+    remove(node) { node.parent?.children.splice(node.parent.children.indexOf(node), 1); node.parent = null; },
+    setText(node, text) { node.text = text; }, setElementText(node, text) { node.text = text; node.children = []; },
+    parentNode: node => node.parent, nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] ?? null,
+    querySelector: selector => selector === "body" ? body : null,
+    patchProp(node, key, _previous, value) { node.props[key] = value; if (key === "onFocus") node.onFocus = () => value({ currentTarget: node }); },
+  });
+  const app = renderer.createApp({ setup: () => ({ ...view }), render });
+  app.component("DashboardPagination", paginationComponent);
+  app.mount(root);
+  const nodes = () => {
+    const result = [], visit = node => { result.push(node); node.children.forEach(visit); };
+    visit(root); visit(body); return result;
+  };
+  document.querySelectorAll = () => nodes().filter(node => node.tag === "button" && !node.props.disabled);
+  return { nodes, close: () => app.unmount() };
+}
+
+test("closed bank previews perform zero row identity reads through 100/200/400 reactive pages", async () => {
+  for (const count of [100, 200, 400]) {
+    const dom = batchDOM(), view = await rowHarness(); let mounted;
+    try {
+      let reads = 0;
+      setBatchRows(view, []);
+      const items = view.funds.value.collections.statements.items;
+      mounted = await mountBatchTemplate(view, dom);
+      for (let start = 0; start < count; start += 20) {
+        items.push(...Array.from({ length: 20 }, (_, offset) => ({ ...batchRow(`row-${start + offset}`),
+          get id() { reads += 1; return `row-${start + offset}`; } })));
+        await Vue.nextTick();
+        assert.equal(reads, 0, `closed preview after ${start + 20} rows`);
+      }
+      const last = items.at(-1), anchor = new dom.HTMLElementStub();
+      await view.showBatchPreview(last, anchor, "pointer");
+      assert.equal(view.previewBatchRow.value, last);
+      assert.equal(view.batchPreviewPosition.value.ready, true);
+      assert(reads >= count, "an open preview still locates its loaded row");
+      setBatchRows(view, [batchRow("replacement")]); await Vue.nextTick();
+      assert.equal(view.previewBatchRow.value, undefined);
+      assert.equal(view.previewBatchId.value, "");
+      assert(!mounted.nodes().some(node => node.props.id === "bank-batch-preview"));
+    } finally { mounted?.close(); view.unmount(); dom.restore(); }
+  }
+});
+
+test("loaded batch controls remain usable while real automatic bank pagination is pending", async () => {
+  const dom = batchDOM(), view = await rowHarness({ deferRequests: true }); let mounted;
+  const page = (cursor, total = 60) => ({ total_count: total, filtered_count: total, returned_count: 20, has_more: Boolean(cursor), next_cursor: cursor });
+  try {
+    await view.mount();
+    view.selectedPeriod.value = "2026-09"; view.selectedDetailView.value = "bank";
+    view.activeSection.value = "bank-details"; view.snapshotVersion.value = "v1";
+    setBatchRows(view, Array.from({ length: 20 }, (_, i) => batchRow(`statement-${i}`)));
+    view.funds.value.collections.statements.page = page("next-20");
+    mounted = await mountBatchTemplate(view, dom, { controls: true }); await tick();
+    assert.equal(view.calls.length, 1); assert.equal(view.calls[0].args[2].cursor, "next-20");
+    assert.equal(view.pageStates.value.bank.loading, true);
+    const anchor = mounted.nodes().find(node => node.props.class === "bank-batch-trigger");
+    const event = () => ({ target: anchor, currentTarget: anchor, stopPropagation() {} });
+    assert.equal(anchor.props.disabled, false);
+    await anchor.props.onMouseenter(event());
+    assert.equal(view.previewBatchId.value, "statement-0");
+    for (const listener of dom.listeners.get("keydown")) listener({ key: "Escape", preventDefault() {} }); await tick();
+    assert.equal(document.activeElement, anchor); assert.equal(view.previewBatchId.value, "");
+    await anchor.props.onClick(event()); await tick();
+    assert.equal(view.expandedBatchId.value, "statement-0");
+    await anchor.props.onClick(event()); await tick();
+    assert.equal(view.expandedBatchId.value, "");
+    anchor.focus(); await tick();
+    assert.equal(view.previewBatchId.value, "statement-0");
+    anchor.props.onKeydown({ key: "Tab", shiftKey: false, preventDefault() {} });
+    assert.equal(document.activeElement, view.batchPreviewList.value);
+    const footer = mounted.nodes().find(node => node.tag === "button" && node.parent.props.class === "bank-batch-preview-footer");
+    view.batchPreviewPanel.value.props.onKeydown({ key: "Tab", shiftKey: false, target: footer, preventDefault() {} });
+    const buttons = mounted.nodes().filter(node => node.props.class === "bank-batch-trigger");
+    assert.equal(document.activeElement, buttons[1]);
+    assert.equal(view.calls.length, 1); assert.equal(view.calls[0].args[1].aborted, false);
+    view.calls[0].resolve({ snapshot_version: "v1", data: { collections: { statements: {
+      items: Array.from({ length: 20 }, (_, i) => batchRow(`statement-${20 + i}`)), page: page("next-40"),
+    } } } }); await tick(); await tick();
+    assert.equal(view.bankRows.value.length, 40);
+    assert.equal(view.calls.length, 2); assert.equal(view.calls[1].args[2].cursor, "next-40");
+    assert.equal(view.calls[1].args[1].aborted, false, "batch interaction must not pause continuation");
+    view.loading.value = true; await tick(); assert.equal(anchor.props.disabled, true);
+  } finally { mounted?.close(); view.unmount(); dom.restore(); }
+});
 
 test("bank batches open only for populated rows and remain independent by statement id", async () => {
   const dom = batchDOM(), view = await rowHarness();

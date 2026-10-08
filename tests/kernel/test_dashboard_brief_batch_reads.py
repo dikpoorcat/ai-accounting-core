@@ -253,7 +253,9 @@ def test_brief_asset_counts_do_not_load_consumption_histories(tmp_path, monkeypa
     monkeypatch.setattr(BusinessQueries, "_selected_asset_member_heads", unexpected_charge_history)
     monkeypatch.setattr("ai_accounting.kernel.dashboard._assets", unexpected_charge_history)
     brief = dashboard.brief("2026-04")["data"]
-    assert "long_term_assets" not in brief
+    assert brief["long_term_assets"] == {
+        "net_fen": 120000, "fixed_active_count": 2, "intangible_active_count": 0,
+    }
     assert brief["position"]["complete"]
 
 

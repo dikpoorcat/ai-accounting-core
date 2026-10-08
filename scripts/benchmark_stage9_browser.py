@@ -653,6 +653,7 @@ def main():
         catalog_instance_id=app.security.catalog_instance_id,
     )
     result = {"status": "failed"}
+    token = None
     try:
         request = app.security_controller.request(kind="login")
         native.call("native_execute", request["request_id"], password=password)

@@ -1921,17 +1921,35 @@ class Dashboard:
                 if not found:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这项精确业务")
                 focused_row = found[0]
-            _brief_prime_activity(snap, [*rows, *([focused_row] if focused_row else [])])
-            _brief_prime_voucher_profiles(snap, [*rows, *([focused_row] if focused_row else [])])
+            displayed_rows = [*rows, *([focused_row] if focused_row else [])]
+            resolutions = _brief_prime_activity(snap, displayed_rows)
+            _brief_prime_voucher_profiles(snap, displayed_rows)
             focused = _brief_activity_row(snap, focused_row) if focused_row else None
             focused_voucher = snap.owner_voucher(focused_row) if focused_row else None
             vouchers = [snap.owner_voucher(row) for row in rows]
+            # Own obligations establish shared historical progress; profile
+            # exclusions remain specific to each displayed voucher version.
+            obligation_subjects = set()
+            for row in displayed_rows:
+                calc = row["basis"]
+                if any(
+                    item.get("source_calculation_id") == calc["id"]
+                    and (item.get("source_business") or {}).get("subject_id") == calc["subject_id"]
+                    and isinstance(item.get("key"), str) and item["key"]
+                    for item in resolutions[calc["id"]].get("obligations", ())
+                ):
+                    obligation_subjects.add(calc["subject_id"])
+            displayed_vouchers = [*vouchers, *([focused_voucher] if focused_voucher else [])]
+            for item in displayed_vouchers:
+                item["has_business_progress"] |= item["subject_id"] in obligation_subjects
             progress_subjects = {
-                item["subject_id"] for item in [*vouchers, *([focused_voucher] if focused_voucher else [])]
+                item["subject_id"] for item in displayed_vouchers
                 if not item["has_business_progress"]
             }
-            progress = snap.queries.business_progress(snap.connection, snap.period, progress_subjects)
-            for item in [*vouchers, *([focused_voucher] if focused_voucher else [])]:
+            progress = snap.queries.business_progress(
+                snap.connection, snap.period, progress_subjects
+            ) if progress_subjects else {}
+            for item in displayed_vouchers:
                 item["has_business_progress"] |= progress.get(item["subject_id"], False)
             # Activity and voucher pages share their exact selected rows. The
             # voucher projection adds saved lines without diagnostic graphs.
@@ -2557,6 +2575,7 @@ def _brief_prime_activity(snap, rows):
     snap.metadata.prime_profiles("counterparty", parties)
     if asset_ids:
         snap.metadata.prime_profiles("asset", asset_ids)
+    return resolutions
 
 
 def _brief_activity_row(snap, row):
