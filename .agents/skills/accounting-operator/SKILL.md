@@ -10,7 +10,7 @@ description: Operate real local accounting from invoices, bank records, payroll,
 ## 入口与工作范围
 
 - 单独“启动”使用 `$accounting-startup`，只准备环境。开始业务先取 `finance_local_schema` 无参概要，遵守版本化的 `agent_operating_protocol` 和错误处理说明；按当前事项用 `view="selected"` 明确选择 `fact_kinds`、`commands`、`response_types` 获取详细合同。同一会话、同一 `build_id` 复用已取得合同，只补取新增所需内容；程序变化时重新取概要和所需合同。检查返回 `view="selected"` 且 `selection` 包含所选内容；旧MCP连接未传递选择参数时，改用 `finance_local_command(command="schema", payload=所选请求)`，不反复读取概要。查询通用登记命令时一并选择事实类型；完整合同仅用 `view="full"` 显式获取。
-- 使用 `finance_local_command(command=..., payload=...)`。先查 `companies`，已明确选择的公司继续有效；多公司且范围不明确时才问，随后读取 `company_context`。每个业务请求显式绑定公司。
+- 使用 `finance_local_command(command=..., payload=...)`。先查 `companies`，已明确选择的公司继续有效；多公司且范围不明确时才问。开始、恢复、切换公司及准备追问前读取 `company_context`，应用当前公司负责人已确认的长期管理边界。每个业务请求显式绑定公司。
 - 泛化“开始记账”用 `workflow(as_of=当前实际日期)`。指定月份时传 `period`；否则由内核选择最早真实待处理月。空公司没有可靠月份时问起点，不根据今天补造业务月份。
 - 开场说明公司、月份和“当前处理”，用编号清单按 `workflow` 顺序完整展示银行、工资、普通业务、税务、资产、融资；关账、实际办理和文件交付分别列出。工资、社保、公积金、个税等具体结果与缺项写在对应事项中，默认按展示顺序逐项推进。
 - 用户明确交办先处理某件业务时直接查证处理，不插入无关开场；指定事项结束后回到最早未完成或待确认项。补充资料、回答当前项或泛化“继续”不表示改序。
@@ -66,11 +66,11 @@ description: Operate real local accounting from invoices, bank records, payroll,
 - 人员、机构、账户、资产等先查身份再复用或登记；疑似重复先查证，身份纠错用专用原子入口。普通改名不改变账务归属。
 - 工资准备、资产批次、资料分期、外部义务、文件和关账采用各自的类型化准备入口。细节只读相应事实与命令 Schema，不套用退役流程。
 - 实际办理与账务核对分开：先申报可保存真实结果，后续核对不冒充再次申报。申报、扣税、缴款、文件生成各有依据。
-- 个税文件映射只影响文件；备用金只将实际支出和实际退回公司计入公司账，已确认边界内的平台原行通过无凭证留证入口处理，不询问余额或退款额度。
+- 个税文件映射只影响文件；备用金只将已确认的实际支出和实际退回公司计入公司账，不把现金收付推定为备用金费用。依每家公司负责人确认应用支付平台及现金账户不纳入管理的边界，不追问范围外的资金来源、余额、内部支出或内部对账细节；支持原件完整保全，公司银行真实收付及有独立来源的股东投资、验证款、押金仍按原性质处理。已登记平台原行继续通过现有入口精确核验和唯一处置，长期说明不能忽略已登记业务或替代正式核算缺项。
 
 ## 核对、关账与文件
 
-普通记账按公司逐月 `preview_close`，让老板通过 `review_locator` 查看页面的同版核对内容。随后请求 `finance_local_security` 的 `approve_period_close`，携带同一 `preview_digest` 和版本；查询安全状态取得批准后由 AI 执行 `close`。页面和密码窗口不替代正式关账。
+普通记账按公司逐月 `preview_close`。随后请求 `finance_local_security` 的 `approve_period_close`，携带同一 `preview_digest` 和版本；查询安全状态取得批准后由 AI 执行 `close`。页面和密码窗口不替代正式关账。
 
 空库重放仅在用户明确指定时建立新目标；补齐缺口和结构变化默认保留当前进度库。按[当前内核重建文档](../../../docs/empty-database-replay.md)执行已确认重放范围时，默认使用[重放专用批量关账](../../../docs/replay-batch-close.md)，不逐月请求密码批准。先检查运行 Schema 的 `replay_close_contract.enabled`；服务缺少能力时停止重放并交由开发完成，不退回逐月密码流程。开发交付不自动恢复已暂停的真实业务；已有明确继续授权时沿原范围接续。
 
