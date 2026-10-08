@@ -103,7 +103,7 @@ async function run(config) {
     const nav = label => page.locator(".section-nav").getByRole("button", { name: label, exact: true });
     async function navigate(name) {
       phase = `${name} first page`; requests.length = 0;
-      await page.goto(`${config.origin}${name === "brief" ? "/" : "/" + name}?company_id=${config.company_id}&period=${config.period}`);
+      await page.goto(`${config.origin}${name === "brief" ? "/" : "/" + name}?company_id=${config.company_id}&period=${config.period}${name === "employees" ? "&employee_filter=all" : ""}`);
       await idle(); await frames();
       assert.equal(requests.filter(r => r.section).length, 0, `${name} overview auto-read unselected modules`);
       assert.equal(await page.getByRole("button", { name: "加载更多", exact: true }).count(), 0);
@@ -116,7 +116,7 @@ async function run(config) {
       ["funds", "资金明细", ["accounts", "movements"], ".book-activity-row"],
       ["employees", "员工明细", ["employees"], ".panel:has(#employee-list-title) .employee-card"],
       ["employees", "个人劳务", ["labor_sources"], ".panel:has(#labor-title) .employee-card"],
-      ["assets", "资产卡片", ["assets"], ".asset-grid .asset-card"],
+      ["assets", "资产明细", ["assets"], ".asset-grid .asset-card"],
       ["assets", "项目投入", ["projects"], ".project-card"],
     ];
     const results = [];
@@ -154,7 +154,7 @@ async function run(config) {
 
     for (const [name, label, section, control, value, selector] of [
       ["employees", "员工明细", "employees", "筛选员工", "in_period", ".panel:has(#employee-list-title) .employee-card"],
-      ["assets", "资产卡片", "assets", "筛选资产", "fixed", ".asset-grid .asset-card"],
+      ["assets", "资产明细", "assets", "筛选资产", "fixed", ".asset-grid .asset-card"],
     ]) {
       await navigate(name); phase = `${name} filter continuation`;
       await nav(label).click();
@@ -174,7 +174,7 @@ async function run(config) {
       ["brief", "本月发生", "activity", "#activity .event-row"],
       ["funds", "账户", "accounts", ".account-grid .account-card"],
       ["employees", "员工明细", "employees", ".panel:has(#employee-list-title) .employee-card"],
-      ["assets", "资产卡片", "assets", ".asset-grid .asset-card"],
+      ["assets", "资产明细", "assets", ".asset-grid .asset-card"],
     ]) {
       await navigate(name); phase = `${name} deselect cancellation`; holdTarget = { name, section }; release = null;
       const pending = page.waitForRequest(request => new URL(request.url()).searchParams.get("cursor") === "20");

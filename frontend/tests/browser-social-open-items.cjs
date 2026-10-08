@@ -76,12 +76,14 @@ async function run(config) {
     });
     setPhase("incomplete collection");
     await refresh();
-    await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
-    await bounded(started, "initial continuation start");
     const rows = page.locator("#open-items .open-event-row"), group = rows.first();
+    assert.match(await group.locator(".open-event-money").textContent(), /等待读取/);
+    const beforeExpand = details(); await group.focus();
+    await bounded(started, "keyboard focus continuation start without navigation");
+    assert.equal(await page.locator('.section-nav [aria-current="location"]').textContent().then(text => text.trim()), "待收待付");
     assert.match(await group.textContent(), /正在汇总|尚未读全/);
     assert.doesNotMatch(await group.locator(".open-event-money").textContent(), /¥/);
-    const beforeExpand = details(); await group.focus(); await group.press("Enter");
+    await group.press("Enter");
     assert.equal(await group.getAttribute("aria-expanded"), "true"); await frames(); assert.equal(details(), beforeExpand);
     setPhase("failed continuation");
     hold = false; releasePage();
@@ -160,7 +162,7 @@ async function run(config) {
     assert.equal(await rows.count(), 22); assert.equal(requests.length, beforeLate, "late old page triggered an extra refresh");
     assert.match(await group.locator(".open-event-money").textContent(), /¥400\.00/);
     assert.equal(errors.length, 0);
-    return { status: "passed", real_group_detail: realGroupDetail, original_obligations: source.length, grouped_rows: 22, incomplete_amount_hidden: true, continuation_retry: true, local_group_detail: true, cached_reopen: true, changed_components_only: true, status_colors: true, late_snapshot_rejected: true, page_limit: 20, keyboard: true, independent_identity_and_period: true, layouts, browser_errors: errors.length };
+    return { status: "passed", real_group_detail: realGroupDetail, original_obligations: source.length, grouped_rows: 22, incomplete_amount_hidden: true, continuation_retry: true, local_group_detail: true, cached_reopen: true, changed_components_only: true, status_colors: true, late_snapshot_rejected: true, page_limit: 20, keyboard: true, keyboard_activation_without_navigation: true, independent_identity_and_period: true, layouts, browser_errors: errors.length };
   } catch (error) { throw new Error(`${phase}: ${error.message}`); }
   finally { clearTimeout(overallTimer); releasePage?.(); await browser.close(); }
 }

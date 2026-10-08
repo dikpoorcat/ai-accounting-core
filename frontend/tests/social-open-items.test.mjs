@@ -44,11 +44,12 @@ test("social and housing obligations aggregate only explicit identity and payrol
       assert.doesNotMatch(previousCopy, /2026|年|月|工资所属|社保与公积金/);
       assert.match(crossMonth, /class="open-event-matter business-list-matter"[^>]*>[\s\S]*?社保与公积金/);
     });
-    await t.test("incomplete pages cannot publish partial grouped amounts even after a read failure", async () => {
-      for (const itemsError of [null, "暂时无法继续读取"]) {
-        const html = await render([item("first")], { itemsComplete: false, itemsError });
+    await t.test("incomplete groups distinguish active reads, paused reads and failures without publishing partial amounts", async () => {
+      for (const [itemsLoading, itemsError, label] of [[true, null, "正在汇总"], [false, null, "等待读取"], [false, "暂时无法继续读取", "尚未读全"]]) {
+        const html = await render([item("first")], { itemsComplete: false, itemsLoading, itemsError }, true);
         const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0];
-        assert.doesNotMatch(money, /¥/); assert.match(html, /正在汇总|尚未读全/);
+        assert.doesNotMatch(money, /¥/); assert(money.includes(label));
+        assert(html.match(/class="contribution-reading"[\s\S]*?<\/p>/)[0].includes(label));
       }
     });
     await t.test("big integer totals preserve cents and any unknown member stays unknown", async () => {

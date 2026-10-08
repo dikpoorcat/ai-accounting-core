@@ -9,6 +9,7 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
   const activeSection = ref(initialId);
   let locked = false;
   let mounted = false;
+  let pointerFocusing = false;
   function offset() {
     const nav = document.querySelector<HTMLElement>(".section-nav");
     const sticky = nav?.closest<HTMLElement>("[data-section-header]") ?? nav;
@@ -35,11 +36,30 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
     focusTarget.focus({ preventScroll: true });
   }
   function focusSelectedPanel(event: MouseEvent) {
+    activateSectionFromTarget(event);
     if (!(event.target instanceof Element) || event.target.closest("button, a, summary, input, select, textarea")) return;
     const panel = event.target.closest<HTMLElement>("[data-section-focus], .selectable-card")
       ?? event.target.closest<HTMLElement>(".selectable-section, .section-panel, .panel, .report-review")
         ?.querySelector<HTMLElement>("[data-section-focus]");
     panel?.focus({ preventScroll: true });
+  }
+  function activateSectionFromTarget(event: Event) {
+    if (!(event.target instanceof Element)) return;
+    const sections = toValue(items).map(item => {
+      const anchor = document.getElementById(item.id);
+      return { id: item.id, element: anchor?.closest("section") ?? anchor };
+    });
+    for (let element: Element | null = event.target; element; element = element.parentElement) {
+      const section = sections.find(item => item.element === element);
+      if (!section) continue;
+      lockSectionSync();
+      activeSection.value = section.id;
+      return;
+    }
+  }
+  function activateFocusedSection(event: FocusEvent) {
+    // Pointer clicks activate after the control has applied its tab or filter change.
+    if (!pointerFocusing) activateSectionFromTarget(event);
   }
   function updateSectionFromScroll() {
     if (locked) return;
@@ -47,7 +67,9 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
       .filter(item => item.element && item.element.getClientRects().length)
       .sort((a, b) => a.element!.getBoundingClientRect().top - b.element!.getBoundingClientRect().top);
     if (!sections.length) return;
-    const probe = offset();
+    // Near the document end, the next section cannot reach the sticky header.
+    const atEnd = Math.ceil(window.scrollY + window.innerHeight) >= document.documentElement.scrollHeight;
+    const probe = atEnd ? Math.max(offset(), window.innerHeight / 2) : offset();
     let candidate = sections[0].id;
     for (const section of sections) {
       if (section.element!.getBoundingClientRect().top > probe) break;
@@ -60,12 +82,15 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
   }
   function unlock() { locked = false; }
   function scrollKey(event: KeyboardEvent) {
+    pointerFocusing = false;
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)
       && !(event.target instanceof Element && event.target.closest("input, select, textarea, [contenteditable=true]"))) unlock();
   }
   function scrollbarPointer(event: PointerEvent) {
+    pointerFocusing = true;
     if (event.clientX >= document.documentElement.clientWidth) unlock();
   }
+  function releasePointerFocus() { pointerFocusing = false; }
   watch([() => route.hash, () => toValue(items).map(item => item.id).join("|")], async ([hash]) => {
     const links = toValue(items);
     if (!links.some(item => item.id === activeSection.value)) activeSection.value = initialId;
@@ -81,6 +106,9 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
     window.addEventListener("touchmove", unlock, { passive: true });
     window.addEventListener("keydown", scrollKey);
     window.addEventListener("pointerdown", scrollbarPointer);
+    window.addEventListener("pointerup", releasePointerFocus);
+    window.addEventListener("pointercancel", releasePointerFocus);
+    window.addEventListener("focusin", activateFocusedSection);
   });
   onBeforeUnmount(() => {
     mounted = false;
@@ -89,6 +117,9 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
     window.removeEventListener("touchmove", unlock);
     window.removeEventListener("keydown", scrollKey);
     window.removeEventListener("pointerdown", scrollbarPointer);
+    window.removeEventListener("pointerup", releasePointerFocus);
+    window.removeEventListener("pointercancel", releasePointerFocus);
+    window.removeEventListener("focusin", activateFocusedSection);
   });
   return { activeSection, focusSection, focusSelectedPanel, positionSection, lockSectionSync };
 }

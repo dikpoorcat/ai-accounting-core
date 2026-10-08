@@ -12,13 +12,14 @@ const props = withDefaults(defineProps<{
   openItems: BriefOpenItems;
   items: BriefOpenRow[];
   itemsComplete?: boolean;
+  itemsLoading?: boolean;
   itemsError?: string | null;
   periodLabel: string;
   periodStatus: string;
   period: string;
   snapshotVersion?: string | null;
   focusRequest?: number;
-}>(), { itemsComplete: true, itemsError: null });
+}>(), { itemsComplete: true, itemsLoading: false, itemsError: null });
 defineEmits<{ changed: [] }>();
 
 const route = useRoute();
@@ -42,7 +43,7 @@ const expandedContributionRows = computed(() => {
   return item && props.itemsComplete ? contributionProgressRows(item) : [];
 });
 const changedContributionRows = computed(() => expandedContributionRows.value.filter(item => item.changed));
-const collectionState = computed(() => props.itemsError ? "尚未读全" : "正在汇总");
+const collectionState = computed(() => props.itemsError ? "尚未读全" : props.itemsLoading ? "正在汇总" : "等待读取");
 const countUnit = computed(() => props.itemsComplete ? "项" : "余额分项");
 const visibleCategories = computed(() => props.openItems.categories.filter((item) => item.count).map(category => ({
   ...category,

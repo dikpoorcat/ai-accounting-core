@@ -306,7 +306,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
       </section>
       <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
-        <BriefOpenItems v-if="openItemDisplay" :open-items="openItemDisplay.summary" :items="openItemDisplay.items" :items-complete="openItemsComplete" :items-error="sectionErrors.open_items" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
+        <BriefOpenItems v-if="openItemDisplay" :open-items="openItemDisplay.summary" :items="openItemDisplay.items" :items-complete="openItemsComplete" :items-loading="sectionLoading.open_items" :items-error="sectionErrors.open_items" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
         <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="余额分项" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
       </section>
       <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
