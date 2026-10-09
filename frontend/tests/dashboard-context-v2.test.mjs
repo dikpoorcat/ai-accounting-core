@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { validateDashboardEmployeesResponse } from "../src/api/generated/dashboardValidators.js";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
-import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs";
 
 const contractSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 
@@ -24,7 +23,7 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-01", ...initialQuery }, hash: "" });
   const calls = [], unmount = [], replaces = [];
   const dashboardContext = Vue.ref(initialContext);
-  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, createBriefOpenItemGrouping, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
   const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "")
@@ -32,7 +31,7 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   const prefix = `
     const environment = globalThis.${key};
     const { ref, shallowReactive, shallowRef, computed, nextTick, watch } = environment.Vue;
-    const { appendDashboardCollection, createBriefOpenItemGrouping } = environment;
+    const { appendDashboardCollection } = environment;
     const onMounted = () => {}; const onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route;
     const useRouter = () => ({ replace: async value => environment.replaces.push(value), push: async () => {} });
@@ -318,6 +317,7 @@ test("business history API carries the selected settlement view and version thro
     optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   const { fetchBusinessStatus } = await server.ssrLoadModule("/src/api/businessStatus.ts");
   const response = structuredClone(contractSamples.business_status.response);
+  response.data.settlement_view = "historical";
   const companyId = response.read_context.company_id;
   const subjectId = response.data.identity.subject_id;
   globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${companyId}` } };
@@ -330,6 +330,18 @@ test("business history API carries the selected settlement view and version thro
     assert.equal(calls[1].get("settlement_view"), "historical");
     assert.equal(calls[1].get("subject_id"), subjectId);
     assert.equal(calls[1].get("company_id"), companyId);
+    response.data.detail_scope = { category: "payroll", voucher_version_id: "exact-voucher", amount_fen: "123", amount_label: "实际付款" };
+    const scope = { settlement_view: "historical", detail_scope_category: "payroll", voucher_version_id: "exact-voucher", expected_version: response.snapshot_version };
+    await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, scope);
+    await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, { ...scope, section: "settlement_events" });
+    assert.equal(calls[2].get("detail_scope_category"), "payroll"); assert.equal(calls[3].get("voucher_version_id"), "exact-voucher");
+    for (const wrong of [
+      { ...scope, detail_scope_category: "expense_supplier" },
+      { ...scope, voucher_version_id: "different-voucher" },
+      { ...scope, settlement_view: "current" },
+      { ...scope, expected_version: "different-snapshot" },
+      { settlement_view: "historical" },
+    ]) await assert.rejects(fetchBusinessStatus(response.selected_period.key, subjectId, undefined, wrong), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
   } finally { await server.close(); }
 });
 

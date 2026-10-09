@@ -3,6 +3,7 @@ export { validateWorkflowResponse } from "./workflow.js";
 export { validatePeriodReadinessResponse } from "./periodReadiness.js";
 export { validateDashboardContextResponse } from "./dashboardContext.js";
 export { validateDashboardBriefResponse } from "./dashboardBrief.js";
+export { validateDashboardBriefGroupResponse } from "./dashboardBriefGroup.js";
 export { validateDashboardFundsResponse } from "./dashboardFunds.js";
 export { validateDashboardEmployeesResponse } from "./dashboardEmployees.js";
 export { validateDashboardAssetsResponse } from "./dashboardAssets.js";

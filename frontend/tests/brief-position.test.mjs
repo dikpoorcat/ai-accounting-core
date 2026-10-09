@@ -59,7 +59,7 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const { fetchDeferredBrief } = await server.ssrLoadModule("/src/api/brief.ts");
     const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
     const value = structuredClone(samples.brief.response);
-    value.schema_version = 15; value.data.financial_position = position; value.data.workforce_cost = workforce;
+    value.schema_version = 17; value.data.financial_position = position; value.data.workforce_cost = workforce;
     const company = value.read_context.company_id, period = value.selected_period.key;
     globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` } };
     globalThis.fetch = async () => new Response(JSON.stringify(value));
@@ -71,20 +71,12 @@ test("brief API requires main summaries and permits summary-free continuation pa
     }
     const page = structuredClone(value); delete page.data.financial_position; delete page.data.workforce_cost; delete page.data.long_term_assets;
     globalThis.fetch = async () => new Response(JSON.stringify(page));
-    await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "vouchers" });
     await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" });
-    const missingVouchers = structuredClone(page); delete missingVouchers.data.collections.vouchers;
-    globalThis.fetch = async () => new Response(JSON.stringify(missingVouchers));
-    await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
-    for (const change of [
-      changed => { changed.data.collections.vouchers.items[0].voucher_version_id = "wrong-identity"; },
-      changed => { changed.data.collections.vouchers.items.reverse(); },
-    ]) {
-      const changed = structuredClone(page); change(changed);
-      globalThis.fetch = async () => new Response(JSON.stringify(changed));
-      await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "activity" }), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
-    }
-    const focused = structuredClone(value), target = focused.data.collections.vouchers.items[0];
+    assert.equal('vouchers' in page.data.collections, false, 'activity groups do not preload vouchers');
+    const voucherPage = structuredClone(samples.brief_vouchers.response);
+    globalThis.fetch = async () => new Response(JSON.stringify(voucherPage));
+    await fetchDeferredBrief(company, period, undefined, value.snapshot_version, { section: "vouchers" });
+    const focused = structuredClone(value), target = voucherPage.data.collections.vouchers.items[0];
     assert.ok(target);
     focused.data.focused_voucher = target;
     globalThis.fetch = async () => new Response(JSON.stringify(focused));

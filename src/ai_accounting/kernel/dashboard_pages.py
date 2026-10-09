@@ -10,6 +10,7 @@ from .contracts import KernelError
 from .types import canonical
 
 SECTIONS = {
+    "brief-group": frozenset({"activity", "open_items"}),
     "brief": frozenset(
         {
             "activity",
@@ -25,12 +26,14 @@ SECTIONS = {
     "business-status": frozenset({"settlement_events"}),
 }
 
-# Public response shapes stay unchanged. These internal profiles invalidate old
-# seek positions and distinguish business-paired cards from voucher-number pages.
+# Profiles bind seek positions to group summaries, bounded business members or
+# independent voucher-number pages, so incompatible continuations are rejected.
 SORT_PROFILES = {
-    ("brief", "activity"): "business-date-object/1",
+    ("brief", "activity"): "business-group/2",
     ("brief", "vouchers"): "voucher-number/1",
-    ("brief", "open_items"): "object-matter/1",
+    ("brief", "open_items"): "open-business-group/1",
+    ("brief-group", "activity"): "business-date-object/2",
+    ("brief-group", "open_items"): "object-matter/1",
     ("funds", "movements"): "business-date-object/1",
 }
 
@@ -70,7 +73,9 @@ def page_scope(snapshot, endpoint, section, filters, *, collection_version=None,
     ).hexdigest()
 
 
-def decode_cursor(snapshot, endpoint, section, cursor, filters, *, collection_version=None, sort_profile=None):
+def decode_cursor(
+    snapshot, endpoint, section, cursor, filters, *, collection_version=None, sort_profile=None,
+):
     if cursor is None:
         return None
     try:

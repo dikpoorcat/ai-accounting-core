@@ -18,6 +18,11 @@ from dataclasses import field as dataclass_field
 
 from .close_storage import derived_root, verified_header
 from .contracts import KernelError
+from .obligation_classification import (
+    SEMANTIC_SOURCE_KINDS,
+    classify_obligations,
+    obligation_category,
+)
 from .types import YearMonth, canonical, checked, is_sha256_hex
 
 DDL = """
@@ -1672,29 +1677,6 @@ def frozen_labor_outstanding_net(connection, period: str, *, reads=None) -> dict
     return {"remaining_fen": None if unknown else remaining}
 
 
-def obligation_category(category, account, source_kind) -> str:
-    if category == "receivable":
-        if account == "1122":
-            return "customer_receivables"
-        if account == "1123":
-            return "supplier_advances"
-        if "deposit" in (source_kind or ""):
-            return "refundable_deposit_receivables"
-        return "other_receivables"
-    if source_kind in {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}:
-        return "payroll_payables"
-    if source_kind in {"labor", "labor_accrual"}:
-        return "labor_payables"
-    if account == "2202":
-        return "supplier_payables"
-    if source_kind in {
-        "employee_advance", "reimbursement_acceptance", "reimbursed_asset",
-        "reimbursed_asset_batch",
-    }:
-        return "employee_payables"
-    return "other_payables"
-
-
 def _verified_page_sources(connection, period: int, states: list[dict]) -> None:
     expected = [
         state for state in states if state["source_calculation_id"] is not None
@@ -1882,6 +1864,160 @@ def _page_entries(
     return entries
 
 
+def _semantic_open_states(connection, scope: FrozenScope, *, reads=None) -> list[dict]:
+    """Read only ambiguous open families from authenticated directory ranges.
+
+    transactions.obligation_key creates ``kind:subject:name`` for all three
+    supported domains, with one primary obligation per source. Subject IDs may
+    contain colons; only the fixed kind prefix is used to locate candidates.
+    Prefixes never prove their meaning. Every
+    resulting state/source is checked and its complete five-field cohort is
+    reconciled against the authenticated measures before it affects a total.
+    """
+    expected = {
+        key: (group[_G_OPEN_COUNT], group[_G_OPEN_UNKNOWN_COUNT], group[_G_OPEN_SUM])
+        for key, group in _included_groups(scope)
+        if key[4] in SEMANTIC_SOURCE_KINDS and group[_G_OPEN_COUNT]
+    }
+    if not expected:
+        return []
+    directory = scope.base_root["directories"]["open"]
+    block_cache = (
+        reads._frozen_settlement_blocks
+        if reads is not None and getattr(reads, "_snapshot_active", False)
+        else {}
+    )
+    entries = {}
+    for kind in sorted(SEMANTIC_SOURCE_KINDS):
+        if not any(key[4] == kind for key in expected):
+            continue
+        prefix, upper = kind + ":", kind + ";"
+        index = bisect.bisect_left(directory, prefix, key=lambda header: header[2])
+        while index < len(directory) and directory[index][1] < upper:
+            header = directory[index]
+            cache_key = (scope.base_period, tuple(header))
+            if cache_key not in block_cache:
+                block_cache[cache_key] = _read_block(connection, scope.base_period, header)
+            for key, digest_hex, first in block_cache[cache_key]:
+                if (
+                    key.startswith(prefix) and first is not None and first <= scope.cutoff
+                    and key not in scope.overrides
+                ):
+                    entries[key] = (digest_hex, first)
+            index += 1
+    base = _read_states(
+        connection, scope.base_period,
+        {key: item[0] for key, item in entries.items()}, reads=reads,
+    )
+    states = []
+    for key, state in base.items():
+        if state["first_source_period"] != entries[key][1]:
+            _fail("freeze_classification_source_period_mismatch", scope.base_period)
+        states.append(state)
+    states.extend(
+        state for state in scope.overrides.values()
+        if state["source_kind"] in SEMANTIC_SOURCE_KINDS and state["source_event_count"]
+        and state["first_source_period"] <= scope.cutoff and _remaining(state) != 0
+    )
+    observed = {}
+    for state in states:
+        key = _group_key(state)
+        remaining = _remaining(state)
+        if (
+            state["source_kind"] not in SEMANTIC_SOURCE_KINDS
+            or not state["source_event_count"] or remaining == 0 or key not in expected
+        ):
+            _fail("freeze_classification_source_cohort_mismatch", scope.base_period)
+        counts = observed.setdefault(key, [0, 0, 0])
+        counts[0] += 1
+        counts[1] += remaining is None
+        counts[2] = checked(counts[2] + (remaining or 0))
+    if {key: tuple(values) for key, values in observed.items()} != expected:
+        _fail("freeze_classification_cohort_measures_mismatch", scope.base_period)
+    _verified_page_sources(connection, scope.base_period, states)
+    return states
+
+
+def frozen_dashboard_open_sources(connection, period, *, current=False, page_keys=None, reads=None):
+    """Authenticate open-state scalars without decoding their event histories.
+
+    The directory commits membership; original state bytes commit identity and
+    amounts. Only those scalar fields survive the read. Existing root measures
+    still decide overall completeness, including obligations outside this page.
+    """
+    from .settlement_projection import _obligation_view
+
+    scope = _scope(connection, period, current=current, reads=reads)
+    if scope is None:
+        return None
+    entries = _page_entries(
+        connection, scope, include_settled=False, page_keys=None,
+        limit=sum(group[_G_OPEN_COUNT] for key, group in _included_groups(scope)) + len(scope.overrides),
+        reads=reads,
+    )
+    if page_keys:
+        entries.update(_page_entries(
+            connection, scope, include_settled=True, page_keys=set(page_keys), reads=reads,
+        ))
+    fields = (
+        "obligation_key", "first_source_period", "source_event_count", "source_amount",
+        "paid", "other_settled", "bad_source", "bad_paid", "bad_other",
+        "source_subject_id", "category", "account", "counterparty_id", "component",
+        "source_calculation_id", "source_kind", "source_fact_id", "source_digest",
+    )
+    states = {key: dict(scope.overrides[key]) for key in entries if key in scope.overrides}
+    base = [[key, entries[key][0]] for key in entries if key not in scope.overrides]
+    if base:
+        for row in connection.execute(
+            "SELECT json_extract(ids.value,'$[0]') requested_key,"
+            "json_extract(ids.value,'$[1]') digest_hex,s.obligation_key saved_key,s.payload,"
+            + ",".join(f"json_extract(s.payload,'$.{field}') {field}" for field in fields)
+            + " FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
+            "s.digest=unhex(json_extract(ids.value,'$[1]'))",
+            (canonical(base),),
+        ):
+            key = row["requested_key"]
+            if (row["saved_key"] != key or row["payload"] is None
+                    or _sha(row["payload"]).hex() != row["digest_hex"]
+                    or row["obligation_key"] != key):
+                _fail("freeze_state_digest_mismatch", scope.base_period)
+            state = {field: row[field] for field in fields}
+            if state["first_source_period"] != entries[key][1]:
+                _fail("freeze_classification_source_period_mismatch", scope.base_period)
+            states[key] = state
+    if states.keys() != entries.keys():
+        _fail("freeze_state_missing_group_source", scope.base_period)
+    _verified_page_sources(connection, scope.base_period, list(states.values()))
+    obligations = []
+    for key, state in states.items():
+        state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
+        obligations.append(_obligation_view(state))
+    obligations = classify_obligations(connection, obligations, reads=reads)
+    categories = {}
+    for item in obligations:
+        if item["remaining_fen"] == 0:
+            continue
+        category = categories.setdefault(item["category_key"], {"count": 0, "amount": 0})
+        category["count"] += 1
+        category["amount"] = (
+            None if category["amount"] is None or item["remaining_fen"] is None
+            else checked(category["amount"] + item["remaining_fen"])
+        )
+    included = list(_included_groups(scope))
+    count = sum(group[_G_OBLIGATION_COUNT] for key, group in included)
+    unknown = any(group[_G_UNKNOWN_COUNT] for key, group in included)
+    through = str(YearMonth.from_ordinal(scope.through))
+    return {
+        "cutoff_period": through,
+        "status": "partially_established" if unknown else "established" if count else "not_established",
+        "complete": not unknown,
+        "issues": ([{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []),
+        "categories": categories,
+        "obligations": obligations,
+        **({"current_cutoff_period": through} if current else {}),
+    }
+
+
 def frozen_dashboard_open(
     connection,
     period: str,
@@ -1927,13 +2063,23 @@ def frozen_dashboard_open(
     for key, group in _included_groups(scope):
         obligation_count += group[_G_OBLIGATION_COUNT]
         unknown = unknown or bool(group[_G_UNKNOWN_COUNT])
-        if not group[_G_OPEN_COUNT]:
+        if not group[_G_OPEN_COUNT] or key[4] in SEMANTIC_SOURCE_KINDS:
             continue
         label = obligation_category(key[1], key[2], key[4])
         item = categories.setdefault(label, {"count": 0, "amount": 0, "unknown": False})
         item["count"] += group[_G_OPEN_COUNT]
         item["amount"] = checked(item["amount"] + group[_G_OPEN_SUM])
         item["unknown"] = item["unknown"] or bool(group[_G_OPEN_UNKNOWN_COUNT])
+    semantic_states = _semantic_open_states(connection, scope, reads=reads)
+    for obligation in classify_obligations(
+        connection, [_obligation_view(state) for state in semantic_states], reads=reads,
+    ):
+        item = categories.setdefault(
+            obligation["category_key"], {"count": 0, "amount": 0, "unknown": False},
+        )
+        item["count"] += 1
+        item["amount"] = checked(item["amount"] + (obligation["remaining_fen"] or 0))
+        item["unknown"] = item["unknown"] or obligation["remaining_fen"] is None
     category_rows = {
         key: {"count": value["count"], "amount": None if value["unknown"] else value["amount"]}
         for key, value in categories.items()
@@ -1995,7 +2141,9 @@ def frozen_dashboard_open(
             state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
             states.append(state)
     _verified_page_sources(connection, scope.base_period, states)
-    obligations = [_obligation_view(state) for state in states[:limit]]
+    obligations = classify_obligations(
+        connection, [_obligation_view(state) for state in states[:limit]], reads=reads,
+    )
     more = len(selected) > limit
     through = str(YearMonth.from_ordinal(scope.through))
     total = sum(item["count"] for item in category_rows.values())

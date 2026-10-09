@@ -195,7 +195,17 @@ def assert_dashboard(call, references):
     assert brief["funds_overview"]["cash_fen"] == 87500
     assert brief["management_commentary_details"]["current"]["text"] == COMMENTARY
     assert brief["management_commentary_details"]["status"] == "current"
-    by_subject = {item["subject_id"]: item for item in brief["collections"]["activity"]["items"]}
+    assert "vouchers" not in brief["collections"]
+    members = [
+        item
+        for group in brief["collections"]["activity"]["items"]
+        for item in call(
+            "dashboard_brief_group", period=PERIOD, section="activity",
+            group_key=group["group_key"],
+        )["data"]["collections"]["members"]["items"]
+    ]
+    assert len(members) == 3
+    by_subject = {item["subject_id"]: item for item in members}
     funding, expense = by_subject[references["funding"]], by_subject[references["expense"]]
     assert funding["party"] == "甲出资人"
     accounts = call("dashboard_funds", period=PERIOD)["data"]["collections"]["accounts"]["items"]

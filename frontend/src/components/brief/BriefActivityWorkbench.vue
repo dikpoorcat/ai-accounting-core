@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
-import type { BriefActivityGroup, BriefActivityRow, BriefVoucher } from "../../api/brief";
+import type { BriefActivityGroup, BriefActivityRow, BriefActivityDisplayGroup, BriefVoucher } from "../../api/brief";
 import type { BusinessStatusCacheEntry } from "../../api/businessStatus";
 import { fen, formatFen } from "../../utils/money";
+import BriefGroupMembers from "./BriefGroupMembers.vue";
 import BusinessStatusDetails from "../BusinessStatusDetails.vue";
 
 const props = withDefaults(defineProps<{
-  groups: BriefActivityGroup[]; items: BriefActivityRow[]; activityCount: number;
-  focusedActivity?: BriefActivityRow | null; period: string; snapshotVersion?: string | null;
+  groups: BriefActivityGroup[]; items: BriefActivityDisplayGroup[]; activityCount: number; groupCount?: number; refreshGeneration?: number;
+  focusedActivity?: BriefActivityRow | null; focusedActivityGroup?: BriefActivityDisplayGroup | null; period: string; snapshotVersion?: string | null;
   vouchers: BriefVoucher[]; voucherCount: number; focusedVoucher?: BriefVoucher | null;
   voucherPreviewIndex?: ReadonlyMap<string, BriefVoucher>; focusedVoucherSelection?: number;
   vouchersLoading?: boolean; vouchersError?: string; vouchersHasMore?: boolean; vouchersReady?: boolean; active?: boolean; refreshing?: boolean;
 }>(), { vouchersReady: true, active: true, refreshing: false });
-const emit = defineEmits<{ changed: []; moreVouchers: []; allVouchers: []; initializeVouchers: []; pauseVouchers: []; requestVoucher: [voucherVersionId: string] }>();
+const emit = defineEmits<{ changed: []; moreVouchers: []; allVouchers: []; initializeVouchers: []; pauseVouchers: []; requestVoucher: [voucherVersionId: string]; vouchers: [items: BriefVoucher[]] }>();
 const route = useRoute();
 const mode = ref<"business" | "voucher">("business");
 const voucherDisplayMode = ref<"paged" | "all">("paged");
@@ -21,9 +22,7 @@ const voucherPage = ref(1), pendingVoucherPage = ref<number | null>(null);
 const selectedVoucher = ref("");
 const voucherProgressCache = new Map<string, BusinessStatusCacheEntry>();
 const manualVoucherView = ref(false);
-const expandedBusinessKey = ref(""), previewBusinessKey = ref(""), previewVoucherId = ref("");
-const previewPosition = ref({ offset: 0, arrowTop: "50%" });
-let previewPositionGeneration = 0;
+const expandedBusinessKey = ref("");
 const progressVoucher = shallowRef<BriefVoucher | null>(null);
 const progressPanel = ref<HTMLElement | null>(null);
 const progressIsMobile = ref(false), progressPosition = ref({ left: 12, top: 12, side: "left", arrow: 14, ready: false });
@@ -174,47 +173,15 @@ async function openProgress(voucher: BriefVoucher, event: Event, source: "hover"
     progressObserver = new ResizeObserver(positionProgress); progressObserver.observe(progressPanel.value);
   }
 }
-const vouchersByVersion = computed(() => props.voucherPreviewIndex ?? new Map([
-  ...props.vouchers.map(voucher => [voucher.voucher_version_id, voucher] as const),
-  ...(props.focusedVoucher ? [[props.focusedVoucher.voucher_version_id, props.focusedVoucher] as const] : []),
-]));
-const previewVoucher = computed(() => vouchersByVersion.value.get(previewVoucherId.value));
-function clearPreview(key?: string) {
-  if (key && previewBusinessKey.value !== key) return;
-  previewPositionGeneration += 1; previewPosition.value = { offset: 0, arrowTop: "50%" };
-  previewBusinessKey.value = ""; previewVoucherId.value = "";
-}
-async function showPreview(item: BriefActivityRow) {
-  if (typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches) return;
-  const generation = ++previewPositionGeneration;
-  const selection = JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, mode.value, activeGroup.value]);
-  const index = props.voucherPreviewIndex;
-  previewPosition.value = { offset: 0, arrowTop: "50%" };
-  previewBusinessKey.value = item.key; previewVoucherId.value = item.voucher_version_id ?? "";
-  await nextTick();
-  if (generation !== previewPositionGeneration || previewBusinessKey.value !== item.key || index !== props.voucherPreviewIndex
-    || selection !== JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, mode.value, activeGroup.value])
-    || typeof document === "undefined" || typeof window === "undefined") return;
-  const tooltip = document.getElementById("activity-voucher-preview"), button = tooltip?.previousElementSibling;
-  if (!tooltip || !button) return;
-  const bounds = tooltip.getBoundingClientRect(), anchor = button.getBoundingClientRect();
-  const top = Math.max(12, Math.min(bounds.top, window.innerHeight - 12 - bounds.height));
-  previewPosition.value = { offset: top - bounds.top, arrowTop: `${anchor.top + anchor.height / 2 - top}px` };
-}
-onBeforeUnmount(() => { clearPreview(); closeProgress(); });
-function toggleBusiness(item: BriefActivityRow, event: Event) {
-  if (!item.subject_id) return;
+onBeforeUnmount(closeProgress);
+function toggleBusiness(item: BriefActivityDisplayGroup, event: Event) {
   const target = event.target;
   if (typeof Element !== "undefined" && target instanceof Element && target.closest("button, a, details, .business-status-details")) return;
-  expandedBusinessKey.value = expandedBusinessKey.value === item.key ? "" : item.key;
+  expandedBusinessKey.value = expandedBusinessKey.value === item.group_key ? "" : item.group_key;
 }
-function businessKeydown(item: BriefActivityRow, event: KeyboardEvent) {
+function businessKeydown(item: BriefActivityDisplayGroup, event: KeyboardEvent) {
   if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
   event.preventDefault(); toggleBusiness(item, event);
-}
-function openBusinessVoucher(item: BriefActivityRow) {
-  clearPreview();
-  if (item.voucher_version_id) emit("requestVoucher", item.voucher_version_id);
 }
 const VOUCHER_PAGE_SIZE = 20;
 const voucherPageCount = computed(() => Math.max(1, Math.ceil(props.voucherCount / VOUCHER_PAGE_SIZE)));
@@ -287,11 +254,10 @@ function assetTarget(assetId: string) {
 function voucherDate(voucher: BriefVoucher) {
   return voucher.date || voucher.recognition.label;
 }
-function activityDate(item: BriefActivityRow) {
-  if (!item.date) return item.recognition.precision === "month"
-    ? item.recognition.period : "日期未提供";
-  const parts = item.date.split("-");
-  return parts.length === 3 ? `${Number(parts[1])} 月 ${Number(parts[2])} 日` : item.date;
+function groupDate(item: BriefActivityDisplayGroup) {
+  const label = (date: string) => { const [, month, day] = date.split("-"); return `${Number(month)} 月 ${Number(day)} 日`; };
+  const dates = item.date_from ? item.date_from === item.date_to ? label(item.date_from) : `${label(item.date_from)} ～ ${label(item.date_to!)}` : '';
+  return [dates, item.has_month_recognition ? '按月确认' : ''].filter(Boolean).join(' · ') || '日期未提供';
 }
 watch(() => props.vouchersReady, ready => {
   if (ready) resumeVouchers();
@@ -315,15 +281,13 @@ watch(() => [route.query.company_id, props.period, props.snapshotVersion], () =>
   mode.value = "business"; voucherDisplayMode.value = "paged";
   voucherPage.value = 1; pendingVoucherPage.value = null; selectedVoucher.value = "";
   manualVoucherView.value = false;
-  expandedBusinessKey.value = ""; clearPreview();
+  expandedBusinessKey.value = "";
 });
-watch(() => props.voucherPreviewIndex, () => clearPreview());
 watch(mode, (value, previous) => {
-  clearPreview();
   if (previous === "voucher" && value === "business") emit("pauseVouchers");
 });
 watch(() => props.active, active => { if (active === false) closeProgress(); });
-watch(() => props.refreshing, refreshing => { if (refreshing) closeProgress(); });
+watch(() => props.refreshing, refreshing => { if (refreshing) { closeProgress(); expandedBusinessKey.value = ""; } }, { flush: "sync" });
 watch(() => [mode.value, voucherPage.value, voucherDisplayMode.value], () => closeProgress());
 watch(visibleVouchers, vouchers => {
   if (progressVoucher.value && !vouchers.some(voucher => voucher.voucher_version_id === progressVoucher.value?.voucher_version_id)) closeProgress();
@@ -340,13 +304,14 @@ watch(() => [props.focusedVoucher, props.focusedVoucherSelection] as const, asyn
 const selectedGroup = ref("");
 const activeGroup = computed(() => props.groups.some(group => group.key === selectedGroup.value)
   ? selectedGroup.value : props.groups[0]?.key || "");
-const availableItems = computed(() => props.focusedActivity && !props.items.some(item => item.key === props.focusedActivity?.key)
-  ? [props.focusedActivity, ...props.items] : props.items);
+const availableItems = computed(() => props.focusedActivityGroup && !props.items.some(item => item.group_key === props.focusedActivityGroup?.group_key)
+  ? [props.focusedActivityGroup, ...props.items] : props.items);
 const visibleItems = computed(() => availableItems.value.filter(item => item.group === activeGroup.value));
-watch(activeGroup, () => { expandedBusinessKey.value = ""; clearPreview(); });
+watch(activeGroup, () => { expandedBusinessKey.value = ""; });
 watch(() => props.focusedActivity, async item => {
   if (!item) return;
   selectedGroup.value = item.group;
+  expandedBusinessKey.value = item.group_key;
   await nextTick();
   if (typeof document !== "undefined") document.getElementById("selected-business")?.scrollIntoView({ block: "center" });
 }, { immediate: true });
@@ -355,7 +320,7 @@ watch(() => props.focusedActivity, async item => {
 <template>
   <section class="activity-section" aria-labelledby="activity-title">
     <header class="section-heading">
-      <div><h2 id="activity-title">本月发生</h2><p>本月共 {{ activityCount }} 项 · {{ voucherCount }} 张凭证</p></div>
+      <div><h2 id="activity-title">本月发生</h2><p>本月共 {{ groupCount ?? items.length }} 项 · {{ activityCount }} 笔记录 · {{ voucherCount }} 张凭证</p></div>
       <div class="heading-controls">
         <div v-if="mode === 'voucher'" class="voucher-display-toggle">
           <span :class="{ active: voucherDisplayMode === 'paged' }">分页</span>
@@ -374,28 +339,20 @@ watch(() => props.focusedActivity, async item => {
     <div v-if="mode === 'business'" class="workbench" data-section-focus tabindex="-1">
       <nav class="index" aria-label="业务分类">
         <span class="category-heading">业务分类</span>
-        <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.event_count }} 项</b></button>
+        <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.group_count }} 项 · {{ group.event_count }} 笔</b></button>
       </nav>
       <div class="detail">
         <div class="list-columns business-list-columns" aria-hidden="true"><span>业务时间</span><span>对象</span><span>事项</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">凭证</span><span></span></div>
         <ul class="event-list">
-          <li v-for="item in visibleItems" :id="item.key === focusedActivity?.key ? 'selected-business' : undefined" :key="item.key" :class="['event-row', 'business-list-row', { highlighted: item.key === focusedActivity?.key, expandable: !!item.subject_id }]" :role="item.subject_id ? 'button' : undefined" :tabindex="item.subject_id ? 0 : undefined" :aria-expanded="item.subject_id ? expandedBusinessKey === item.key : undefined" :aria-label="item.subject_id ? `${item.party || item.title}，${expandedBusinessKey === item.key ? '收起' : '展开'}业务详情` : undefined" @click="toggleBusiness(item, $event)" @keydown="businessKeydown(item, $event)">
-            <small class="event-date business-list-date">{{ activityDate(item) }}<template v-if="!item.date && item.recognition.precision === 'month'"><br />按月确认</template></small>
-            <div class="event-copy business-list-object"><strong>{{ item.party || "无需往来对象" }}</strong></div>
-            <span class="event-matter business-list-matter">{{ item.title }}</span>
+          <li v-for="item in visibleItems" :id="item.group_key === focusedActivity?.group_key ? 'selected-business' : undefined" :key="item.group_key" :class="['event-row', 'business-list-row', { highlighted: item.group_key === focusedActivity?.group_key, expandable: true }]" role="button" tabindex="0" :aria-expanded="expandedBusinessKey === item.group_key" :aria-label="`${item.party || item.title}，${expandedBusinessKey === item.group_key ? '收起' : '展开'}业务记录`" @click="toggleBusiness(item, $event)" @keydown="businessKeydown(item, $event)">
+            <small class="event-date business-list-date">{{ groupDate(item) }}</small>
+            <div class="event-copy business-list-object"><strong>{{ item.party || '无需往来对象' }}</strong></div>
+            <span class="event-matter business-list-matter">{{ item.title }}<small>{{ item.member_count }} 笔记录</small></span>
             <span :class="['state', 'business-list-state', { correction: item.state === '更正原业务' || item.state.includes('冲正') || item.state.includes('撤回') }]">{{ item.state }}</span>
-            <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? "待核对" : formatFen(item.amount_fen) }}</b></span>
-            <span v-if="item.voucher_version_id" class="event-voucher-link business-list-voucher" @mouseenter="showPreview(item)" @mouseleave="clearPreview(item.key)">
-              <button type="button" class="event-voucher-button" :disabled="!vouchersByVersion.has(item.voucher_version_id)" :aria-describedby="previewBusinessKey === item.key && previewVoucher ? 'activity-voucher-preview' : undefined" @focus="showPreview(item)" @blur="clearPreview(item.key)" @click.stop="openBusinessVoucher(item)">{{ vouchersByVersion.has(item.voucher_version_id) ? '凭证 ' + vouchersByVersion.get(item.voucher_version_id)?.number : '凭证未加载' }}</button>
-              <span v-if="previewBusinessKey === item.key && previewVoucher" id="activity-voucher-preview" class="event-voucher-preview dashboard-hover-preview" data-side="left" :class="{ correction: !!previewVoucher.reverses_version_id }" :style="{ '--preview-offset': `${previewPosition.offset}px`, '--preview-arrow': previewPosition.arrowTop }" role="tooltip">
-                <span class="voucher-preview-heading"><span><small>凭证 {{ previewVoucher.number }} · {{ voucherDate(previewVoucher) }}</small><strong>{{ previewVoucher.list_summary }}</strong></span><span class="voucher-preview-amount"><small>{{ previewVoucher.business_amount_label }}</small><b>{{ formatFen(previewVoucher.business_amount_fen) }}</b></span></span>
-                <span class="voucher-preview-lines"><span v-for="line in previewVoucher.lines" :key="line.line_number"><span>{{ line.account }}</span><strong>{{ fen(line.debit_fen) ? '借 ' + formatFen(line.debit_fen) : '贷 ' + formatFen(line.credit_fen) }}</strong></span></span>
-                <span class="voucher-preview-footer"><span :class="['state', { correction: !!previewVoucher.reverses_version_id }]">{{ previewVoucher.state }}</span><small>点击打开凭证详情</small></span>
-              </span>
-            </span>
-            <span v-else class="event-voucher-link business-list-voucher">—</span>
-            <svg v-if="item.subject_id" class="row-chevron business-list-arrow" :class="{ expanded: expandedBusinessKey === item.key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
-            <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :activity-context="item" :expanded="expandedBusinessKey === item.key" hide-summary presentation="brief" @click.stop @keydown.stop @changed="$emit('changed')" />
+            <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? '待核对' : formatFen(item.amount_fen) }}</b></span>
+            <span class="event-voucher-link business-list-voucher">{{ item.voucher_count }} 张</span>
+            <svg class="row-chevron business-list-arrow" :class="{ expanded: expandedBusinessKey === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+            <BriefGroupMembers section="activity" :group-key="item.group_key" :is-batch="item.is_batch" :expanded="expandedBusinessKey === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :focused-activity="focusedActivity" :voucher-index="voucherPreviewIndex" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
           </li>
         </ul>
         <p v-if="!visibleItems.length" class="empty">当前已加载记录中没有此类业务。</p>
@@ -491,20 +448,6 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .event-row :deep(.compact-status-details) { display: contents; }
 .event-row :deep(.compact-status-panel) { grid-column: 1 / -1; }
 .event-voucher-link { position: relative; min-width: 0; justify-self: end; font-size: 11px; color: var(--muted); }
-.event-voucher-button { min-height: 32px; padding: 0 9px; border-radius: 8px; font-weight: 750; white-space: nowrap; }
-.event-voucher-button:hover, .event-voucher-button:focus-visible { background: var(--accent-soft); }
-.event-voucher-button:disabled { color: var(--muted); cursor: default; }
-.event-voucher-preview { position: absolute; top: 50%; right: calc(100% + 10px); z-index: 30; display: grid; width: min(380px, calc(100vw - 48px)); gap: 10px; pointer-events: none; transform: translateY(calc(-50% + var(--preview-offset))); }
-.voucher-preview-heading, .voucher-preview-footer, .voucher-preview-lines > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.voucher-preview-heading > span { display: grid; min-width: 0; gap: 3px; }
-.voucher-preview-heading small, .voucher-preview-footer small { color: var(--muted); font-size: 10px; }
-.voucher-preview-heading strong { font-size: 13px; overflow-wrap: anywhere; }
-.voucher-preview-amount { flex: none; text-align: right; }
-.voucher-preview-amount b { font-size: 14px; white-space: nowrap; }
-.voucher-preview-lines { display: grid; gap: 5px; padding: 8px 9px; border-radius: 8px; background: var(--surface-soft); }
-.voucher-preview-lines > span { align-items: flex-start; min-width: 0; color: var(--muted); font-size: 11px; }
-.voucher-preview-lines > span > span { min-width: 0; overflow-wrap: anywhere; }
-.voucher-preview-lines strong { flex: none; color: var(--text); font-size: 11px; white-space: nowrap; }
 .state.correction { background: var(--surface-soft); color: var(--muted); }
 .highlighted, .event-row.highlighted:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); border-radius: 8px; }
 .empty { margin: 0; padding: 22px 4px; color: var(--muted); font-size: 13px; }
@@ -854,7 +797,6 @@ td:first-child small {
 
 
 .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.event-voucher-button { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
 .voucher-retry { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .voucher-row-amount { display: grid; min-width: 0; gap: 3px; white-space: normal; overflow-wrap: anywhere; }
 .voucher-row-amount small, .voucher-load-status { color: var(--muted); font-size: 12px; }
@@ -906,8 +848,6 @@ tfoot th, tfoot td { font-size: 12px; font-weight: 650; }
   .voucher-progress-button, .voucher-progress-empty { grid-row: 1; }
 }
 @media (max-width: 760px) {
-  .event-voucher-preview { display: none; }
-  .event-voucher-button { min-height: 44px; }
   .heading-controls { width: 100%; }
   .view-switch button { min-height: 44px; }
   .voucher-inline-detail { margin: 8px 0 14px 11px; padding: 4px 0 4px 12px; border-left: 1px solid var(--line); }

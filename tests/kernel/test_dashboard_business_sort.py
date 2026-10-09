@@ -25,7 +25,7 @@ def _read_all(dashboard, endpoint, response, section, **filters):
     page = response["data"]["collections"][section]["page"]
     while page["has_more"]:
         response = getattr(dashboard, endpoint)(
-            "2026-09", section=section, cursor=page["next_cursor"], limit=20,
+            "2026-09", section=("activity" if endpoint == "brief_group" else section), cursor=page["next_cursor"], limit=20,
             expected_version=response["snapshot_version"], **filters,
         )
         result.extend(response["data"]["collections"][section]["items"])
@@ -58,12 +58,17 @@ def test_business_date_object_order_crosses_pages_and_vouchers_have_separate_str
         return original_hydrate(self, rows, **options)
     monkeypatch.setattr(Journal, "hydrate", hydrate)
     first = dashboard.brief("2026-09")
-    activity = _read_all(dashboard, "brief", first, "activity")
-    assert len(activity) == 44
+    groups = _read_all(dashboard, "brief", first, "activity")
+    assert len(groups) == 2 and sum(row["member_count"] for row in groups) == 44
+    assert "vouchers" not in first["data"]["collections"]
+    first_members = dashboard.brief_group("2026-09", section="activity", group_key=groups[0]["group_key"])
+    activity = _read_all(dashboard, "brief_group", first_members, "members",
+                         group_key=groups[0]["group_key"])
+    assert len(activity) == 22
     assert [(row["date"], row["party"]) for row in activity] == sorted(
         (row["date"], row["party"]) for row in activity
     )
-    preview_cards = first["data"]["collections"]["vouchers"]["items"]
+    preview_cards = first_members["data"]["collections"]["vouchers"]["items"]
     assert [row["voucher_version_id"] for row in preview_cards] == [
         row["voucher_version_id"] for row in activity[:20]
     ]
@@ -71,13 +76,13 @@ def test_business_date_object_order_crosses_pages_and_vouchers_have_separate_str
     independent = dashboard.brief("2026-09", section="vouchers")
     numbered = _read_all(dashboard, "brief", independent, "vouchers")
     assert [int(row["number"]) for row in numbered] == list(range(1, 45))
-    paired_cursor = first["data"]["collections"]["vouchers"]["page"]["next_cursor"]
-    assert json.loads(base64.urlsafe_b64decode(paired_cursor))["sort"] == "business-paired-date/1"
+    paired_cursor = first_members["data"]["collections"]["members"]["page"]["next_cursor"]
+    assert json.loads(base64.urlsafe_b64decode(paired_cursor))["sort"] == "business-date-object/2"
     assert json.loads(base64.urlsafe_b64decode(
         independent["data"]["collections"]["vouchers"]["page"]["next_cursor"]
     ))["sort"] == "voucher-number/1"
-    following = dashboard.brief("2026-09", section="vouchers", cursor=paired_cursor,
-                                expected_version=first["snapshot_version"])
+    following = dashboard.brief_group("2026-09", section="activity", group_key=groups[0]["group_key"],
+                                     cursor=paired_cursor, expected_version=first["snapshot_version"])
     assert [row["voucher_version_id"] for row in following["data"]["collections"]["vouchers"]["items"]] == [
         row["voucher_version_id"] for row in activity[20:40]
     ]
@@ -119,8 +124,10 @@ def test_open_obligations_order_by_complete_object_before_page_in_open_and_froze
     assert [row["party"] for row in rows] == [f"对象{i:02}" for i in range(23)]
     assert sum(row["outstanding_fen"] for row in rows) == sum(range(1, 24))
     if closed:
-        assert state_batches and max(state_batches) == 20
-        assert source_batches and max(source_batches) == 20
+        assert not state_batches
+        # Complete group membership needs the exact source proof for all 23
+        # narrow states; no full state payload is hydrated for root summaries.
+        assert source_batches and max(source_batches) == 23
 
 
 def test_month_confirmation_follows_actual_days_without_making_up_a_date():
@@ -149,7 +156,13 @@ def test_open_sort_uses_formal_identity_group_and_matter_without_hidden_month(mo
     monkeypatch.setattr(sorting, "fact_sort_scalars", lambda *_: scalars)
     snapshot = SimpleNamespace(store=SimpleNamespace(company_id="company"),
                                metadata=SimpleNamespace(prime_profiles=lambda *_: None),
-                               party=lambda party: "同名员工")
+                               party=lambda party: "同名员工",
+                               profiles={kind: {f"employee-{person:02}": {"display_name": "同名员工"}
+                                                for person in range(6)}
+                                         for kind in ("employee", "counterparty")},
+                               current_profiles={kind: {f"employee-{person:02}": {"display_name": "同名员工"}
+                                                        for person in range(6)}
+                                                 for kind in ("employee", "counterparty")})
     ordered = open_item_order(snapshot, reversed(rows))
     by_key = {row["obligation_key"]: row for row in rows}
     group_positions = {}
@@ -170,6 +183,66 @@ def test_open_sort_uses_formal_identity_group_and_matter_without_hidden_month(mo
     assert social_employees == sorted(social_employees)
 
 
+@pytest.mark.parametrize("kind,component,data,settlement_party,expected", [
+    ("payroll", "net", {"employee_id": "employee"}, "recipient", ("employee", "实发工资")),
+    ("payroll_bounded", "tax", {"employee_id": "employee"}, "authority",
+     ("employee", "代扣个人所得税")),
+    ("payroll", "employee_social", {"employee_id": "employee"}, "authority",
+     ("employee", "个人社保")),
+    ("payroll", "employer_housing", {"employee_id": "employee"}, "authority",
+     ("employee", "单位公积金")),
+    ("opening_payroll_payable", "net", {"employee_id": "employee"}, "recipient",
+     ("employee", "实发工资")),
+    ("annual_bonus", "net", {"employee_id": "employee"}, "recipient", ("employee", "实发奖金")),
+    ("annual_bonus", "tax", {"employee_id": "employee"}, "authority", ("employee", "奖金代扣个税")),
+    ("payroll", "net", {}, "recipient", ("recipient", "实发工资")),
+    ("payroll", "tax", {"employee_id": None}, "authority", ("authority", "代扣个人所得税")),
+    ("expense", "primary", {}, "supplier", ("supplier", "费用")),
+    ("labor_project_cost", "net", {}, "person", ("person", "劳务报酬")),
+    ("pass_through", "remittance", {}, None, (None, "代收代付")),
+])
+def test_open_sort_display_matches_existing_selected_page(
+    kind, component, data, settlement_party, expected,
+):
+    from ai_accounting.kernel.dashboard import _open_item_display
+
+    party, missing, matter = _open_item_display(kind, component, data, settlement_party)
+    assert (party, matter) == expected
+    assert missing == ("最终收款人未具名" if kind == "pass_through" else "未提供")
+
+
+def test_open_sort_uses_adopted_opening_component_and_bonus_matter(monkeypatch):
+    import ai_accounting.kernel.dashboard_sort as sorting
+
+    scalars = {
+        "opening": {"employee_id": "employee", "component": "net", "payroll_period": "2026-08"},
+        "bonus": {"employee_id": "employee", "period": "2026-09"},
+    }
+    monkeypatch.setattr(sorting, "fact_sort_scalars", lambda *_: scalars)
+    rows = [
+        {"obligation_key": "opening", "source_kind": "opening_payroll_payable",
+         "source_fact_id": "opening", "component": "primary", "counterparty_id": "recipient"},
+        {"obligation_key": "bonus-tax", "source_kind": "annual_bonus", "source_fact_id": "bonus",
+         "component": "tax", "counterparty_id": "authority"},
+        {"obligation_key": "bonus-net", "source_kind": "annual_bonus", "source_fact_id": "bonus",
+         "component": "net", "counterparty_id": "recipient"},
+    ]
+    primed = []
+    snapshot = SimpleNamespace(
+        store=SimpleNamespace(company_id="company"),
+        metadata=SimpleNamespace(
+            prime_profiles=lambda kind, parties: primed.append((kind, set(parties))),
+        ),
+        party=lambda party: {"employee": "员工", "authority": "税局", "recipient": "收款人"}[party],
+        profiles={kind: {"employee": {"display_name": "员工"}}
+                  for kind in ("employee", "counterparty")},
+        current_profiles={kind: {"employee": {"display_name": "员工"}}
+                          for kind in ("employee", "counterparty")},
+    )
+    assert open_item_order(snapshot, rows) == ["bonus-tax", "bonus-net", "opening"]
+    assert primed == [("employee", {"employee"}), ("counterparty", {"employee"})]
+
+
 def test_multiple_formal_objects_have_the_same_complete_names_in_sort_and_rows(bank_book):
     engine, save, publish, _ = bank_book
     seed_entities(engine, [("party-a", "person", None), ("party-b", "person", None)])
@@ -181,7 +254,7 @@ def test_multiple_formal_objects_have_the_same_complete_names_in_sort_and_rows(b
     response = Dashboard(engine).brief("2026-09")
     activity = response["data"]["collections"]["activity"]["items"][0]
     assert activity["party"] == "同名、同名"
-    assert activity["date"] is None and activity["recognition"]["precision"] == "month"
+    assert activity["date_from"] is None and activity["has_month_recognition"]
     with Dashboard(engine)._snapshot("2026-09") as snapshot:
         headers = list(snapshot.month_journal.verified_rows() or snapshot.connection.execute(*snapshot.month_journal.sql()))
         identifier = headers[0]["basis_calculation_id"]
@@ -224,7 +297,9 @@ def test_sort_objects_match_typed_individual_batch_and_advanced_debt(bank_book):
     profile(engine, "counterparty", "owner", display_name="owner")
     publish("advanced")
     dashboard = Dashboard(engine)
-    activity = dashboard.brief("2026-09")["data"]["collections"]["activity"]["items"]
+    from test_dashboard_activity_classification import _loaded_members
+
+    activity = _loaded_members(engine, dashboard.brief("2026-09")["data"])
     displayed = {row["subject_id"]: row for row in activity}
     assert displayed["individual"]["party"] == "party-a"
     assert displayed["batch"]["party"] == "party-a、party-b"

@@ -203,9 +203,24 @@ def test_owner_default_activity_page_keeps_complete_monthly_expense(bank_book):
         epochs=preview["epochs"],
         request_id="owner-expenses-published",
     )
-    result = Dashboard(book).brief("2026-09")["data"]
-    assert len(result["collections"]["activity"]["items"]) == 20
+    dashboard = Dashboard(book)
+    response = dashboard.brief("2026-09")
+    result = response["data"]
+    groups = result["collections"]["activity"]["items"]
+    assert len(groups) == result["group_count"] == 1
+    assert groups[0]["member_count"] == groups[0]["amount_fen"] == 21
     assert result["activity_count"] == 21
+    members = dashboard.brief_group(
+        "2026-09", section="activity", group_key=groups[0]["group_key"],
+        expected_version=response["snapshot_version"],
+    )["data"]["collections"]["members"]
+    assert len(members["items"]) == 20
+    assert members["page"]["total_count"] == 21 and members["page"]["has_more"]
+    following = dashboard.brief_group(
+        "2026-09", section="activity", group_key=groups[0]["group_key"],
+        expected_version=response["snapshot_version"], cursor=members["page"]["next_cursor"],
+    )["data"]["collections"]["members"]
+    assert len(following["items"]) == 1 and not following["page"]["has_more"]
     assert result["position"]["month_revenue_fen"] == 0
     assert result["position"]["month_expense_fen"] == 21
     assert result["position"]["month_result_fen"] == -21
@@ -286,8 +301,14 @@ def test_unpublished_or_missing_inventory_is_not_complete(bank_book):
         issue["field"].startswith("materials.")
         for issue in checks["material_completeness"]["issues"]
     )
-    assert data["collections"]["activity"]["items"][0]["date"] is None
-    assert data["collections"]["activity"]["items"][0]["recognition"]["precision"] == "month"
+    group = data["collections"]["activity"]["items"][0]
+    assert group["date_from"] is group["date_to"] is None
+    assert group["has_month_recognition"]
+    member = dashboard.brief_group(
+        "2026-09", section="activity", group_key=group["group_key"],
+    )["data"]["collections"]["members"]["items"][0]
+    assert member["date"] is None
+    assert member["recognition"]["precision"] == "month"
 
 
 def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
@@ -344,15 +365,17 @@ def test_reviewed_no_impact_source_keeps_number_and_displays_new_evidence(engine
         request_id="reviewed-fact",
     )
     _, reviewed = publish(engine, request="reviewed-publication")
-    data = Dashboard(engine).brief("2026-01")["data"]
+    dashboard = Dashboard(engine)
+    data = dashboard.brief("2026-01")["data"]
     diagnostic = diagnostic_vouchers(engine, "2026-01")[0]
     assert diagnostic["number"] == str(original["results"][0]["voucher_number"])
     assert diagnostic["calculation_id"] == reviewed["results"][0]["calculation_id"]
     assert diagnostic["evidence"] == [proof]
-    assert (
-        data["collections"]["activity"]["items"][0]["voucher_version_id"]
-        == diagnostic["voucher_version_id"]
-    )
+    group = data["collections"]["activity"]["items"][0]
+    member = dashboard.brief_group(
+        "2026-01", section="activity", group_key=group["group_key"],
+    )["data"]["collections"]["members"]["items"][0]
+    assert member["voucher_version_id"] == diagnostic["voucher_version_id"]
 
 
 def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
@@ -437,17 +460,18 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
     }
     assert by_component["employee_social"]["creditor_id"] is None
     assert by_component["employee_social"]["field_sources"]["party"]["id"] == profile["id"]
-    contributions = [item for item in payroll_items if item["contribution_component"]]
+    social = next(item for item in payroll_items if item["description"] == "社保与公积金")
+    assert social["member_count"] == 2
+    contributions = Dashboard(company.engine).brief_group(
+        "2026-01", section="open_items", group_key=social["group_key"],
+    )["data"]["collections"]["members"]["items"]
     assert {item["contribution_component"] for item in contributions} == {
         "employee_social", "employer_social"
     }
     assert {item["payroll_period"] for item in contributions} == {"2026-01"}
     assert len({item["contribution_group_key"] for item in contributions}) == 1
     assert all(item["contribution_group_key"] for item in contributions)
-    assert all(
-        item["contribution_group_key"] is None and item["payroll_period"] is None
-        for item in payroll_items if not item["contribution_component"]
-    )
+    assert sum(item["outstanding_fen"] for item in contributions) == social["outstanding_fen"]
 
 
 def test_bonus_remains_separate_from_regular_wages(tmp_path):
@@ -489,7 +513,22 @@ def test_opening_contributions_keep_four_obligations_and_form_one_prior_month_gr
             expected_version=response["snapshot_version"],
         )["data"]["collections"]["open_items"]
         items.extend(collection["items"])
-    contributions = [item for item in items if item["contribution_component"]]
+    social_groups = [item for item in items if item["description"] == "社保与公积金"]
+    assert len(social_groups) == 1 and social_groups[0]["member_count"] == 4
+    group_key = social_groups[0]["group_key"]
+    member_collection = Dashboard(engine).brief_group(
+        "2026-01", section="open_items", group_key=group_key, limit=2,
+        expected_version=response["snapshot_version"],
+    )["data"]["collections"]["members"]
+    contributions = list(member_collection["items"])
+    assert len(contributions) == 2 and member_collection["page"]["has_more"]
+    following = Dashboard(engine).brief_group(
+        "2026-01", section="open_items", group_key=group_key, limit=2,
+        cursor=member_collection["page"]["next_cursor"],
+        expected_version=response["snapshot_version"],
+    )["data"]["collections"]["members"]
+    contributions.extend(following["items"])
+    assert not following["page"]["has_more"]
     assert len(contributions) == 4
     assert {item["contribution_component"] for item in contributions} == set(components)
     assert {item["payroll_period"] for item in contributions} == {"2025-12"}
@@ -597,7 +636,9 @@ def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_compa
     corrected_items = dashboard.brief("2026-01", section="open_items")["data"]["collections"][
         "open_items"
     ]["items"]
-    fields = ("id", "outstanding_fen", "contribution_group_key", "contribution_component", "payroll_period")
+    fields = (
+        "group_key", "outstanding_fen", "source_amount_fen", "member_count", "party", "description",
+    )
     assert [tuple(item[field] for field in fields) for item in corrected_items] == [
         tuple(item[field] for field in fields) for item in frozen_items
     ]

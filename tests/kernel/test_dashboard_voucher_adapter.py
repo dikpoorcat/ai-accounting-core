@@ -24,6 +24,36 @@ from ai_accounting.kernel.exports import Exports
 service_company = _service_company
 
 
+def activity_members(engine, period):
+    """Read explicit bounded groups and their exact member pages for presentation assertions."""
+    dashboard = Dashboard(engine)
+    root = dashboard.brief(period)
+    result = []
+    while True:
+        groups = root["data"]["collections"]["activity"]
+        for group in groups["items"]:
+            response = dashboard.brief_group(
+                period, section="activity", group_key=group["group_key"],
+                expected_version=root["snapshot_version"],
+            )
+            while True:
+                collection = response["data"]["collections"]["members"]
+                result.extend(collection["items"])
+                if not collection["page"]["has_more"]:
+                    break
+                response = dashboard.brief_group(
+                    period, section="activity", group_key=group["group_key"],
+                    cursor=collection["page"]["next_cursor"],
+                    expected_version=root["snapshot_version"],
+                )
+        if not groups["page"]["has_more"]:
+            return result
+        root = dashboard.brief(
+            period, section="activity", cursor=groups["page"]["next_cursor"],
+            expected_version=root["snapshot_version"],
+        )
+
+
 def test_brief_includes_pending_intangible_in_asset_amount_and_count(book):
     engine, save, publish, _ = book
     save(
@@ -87,7 +117,7 @@ def test_batch_recipients_and_individual_obligation_lines_use_exact_relationship
     assert "甲员工" in voucher["components"][0]["parties"]
     activity = next(
         item
-        for item in Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"]
+        for item in activity_members(engine, "2026-09")
         if item["subject_id"] == voucher["components"][0]["id"]
     )
     assert activity["party"] == "甲员工、乙员工"
@@ -121,15 +151,17 @@ def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
     assert all(item["source"] == "display_profile" for item in component["party_sources"])
     # Both employees have the same net salary. Equal amounts must not erase their identities.
     assert [line["party"] for line in voucher["lines"][:4]] == ["甲员工", "", "乙员工", ""]
-    activity = next(
-        item
-        for item in Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"][
-            "items"
-        ]
-        if item["subject_id"] == "gross-batch"
-    )
+    parts = [item for item in activity_members(company.engine, "2026-02")
+             if item["subject_id"] == "gross-batch"]
+    assert {item["detail_scope_category"] for item in parts} == {"payroll", "expense_supplier"}
+    activity = next(item for item in parts if item["detail_scope_category"] == "payroll")
     assert activity["party"] == "甲员工、乙员工"
     assert "payroll-group" not in activity["party"]
+    reserve = next(item for item in parts if item["detail_scope_category"] == "expense_supplier")
+    assert reserve["party"] == ""
+    assert reserve["amount_fen"] == company.current(
+        "gross-batch", "payroll_reserve_payment"
+    ).values["reserve_expense_fen"]
 
 
 @pytest.mark.parametrize("channel", ["bank", "cash", "platform"])
@@ -208,9 +240,7 @@ def test_social_payment_uses_actual_recipient_and_exact_wage_sources(tmp_path, c
     voucher = diagnostic_vouchers(company.engine, "2026-02")[0]
     activity = next(
         item
-        for item in Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"][
-            "items"
-        ]
+        for item in activity_members(company.engine, "2026-02")
         if item["subject_id"] == "social-payment"
     )
     assert activity["party"] == "合成社保收款机构"
@@ -349,7 +379,7 @@ def test_all_three_correction_vouchers_open_their_own_basis(engine):
     save(engine, amount=125, revision=1, request="amend")
     publish(engine, request="amend-publish", posting_period="2026-02")
     rows = diagnostic_vouchers(engine, "2026-02")
-    owner = Dashboard(engine).brief("2026-02")["data"]["collections"]["activity"]["items"]
+    owner = activity_members(engine, "2026-02")
     assert {item["voucher_version_id"] for item in owner} == {
         item["voucher_version_id"] for item in rows
     }
@@ -373,21 +403,26 @@ def test_paged_queries_reject_changed_or_missing_version_before_returning_rows(b
     funding(save, publish, subject="a", amount=100)
     funding(save, publish, subject="b", amount=200)
     dashboard = Dashboard(engine)
-    first = dashboard.brief("2026-09", limit=1)
+    summary = dashboard.brief("2026-09", limit=1)
+    group_key = summary["data"]["collections"]["activity"]["items"][0]["group_key"]
+    first = dashboard.brief_group(
+        "2026-09", section="activity", group_key=group_key, limit=1,
+        expected_version=summary["snapshot_version"],
+    )
     funds = dashboard.funds("2026-09", limit=1)
-    cursor = first["data"]["collections"]["activity"]["page"]["next_cursor"]
-    following = dashboard.brief(
-        "2026-09",
-        section="activity",
-        cursor=cursor,
-        limit=1,
+    cursor = first["data"]["collections"]["members"]["page"]["next_cursor"]
+    following = dashboard.brief_group(
+        "2026-09", section="activity", group_key=group_key, cursor=cursor, limit=1,
         expected_version=first["snapshot_version"],
     )
-    assert following["data"]["funds_overview"]["bank_fen"] == 300
+    assert following["data"]["collections"]["members"]["page"]["returned_count"] == 1
+    assert summary["data"]["funds_overview"]["bank_fen"] == 300
     funding(save, publish, subject="c", amount=50)
     for kwargs in ({}, {"expected_version": first["snapshot_version"]}):
         with pytest.raises(KernelError) as failure:
-            dashboard.brief("2026-09", section="activity", cursor=cursor, **kwargs)
+            dashboard.brief_group(
+                "2026-09", section="activity", group_key=group_key, cursor=cursor, **kwargs,
+            )
         assert failure.value.code == "dashboard_snapshot_changed"
     with pytest.raises(KernelError) as failure:
         dashboard.funds(

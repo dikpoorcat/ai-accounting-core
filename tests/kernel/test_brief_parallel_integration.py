@@ -103,10 +103,10 @@ def _brief(service, token, company, **options):
 
 
 def test_read_failure_discards_connection_and_recovers(resident_service, monkeypatch):
-    from ai_accounting.kernel import dashboard
+    from ai_accounting.kernel import dashboard_open_groups
 
     service, token, first, _ = resident_service
-    original = dashboard._open_items
+    original = dashboard_open_groups.open_group_page
     failed = []
 
     def fail_once(*args, **kwargs):
@@ -115,7 +115,7 @@ def test_read_failure_discards_connection_and_recovers(resident_service, monkeyp
             raise KernelError("synthetic_open_items_failure", "synthetic open item failure")
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(dashboard, "_open_items", fail_once)
+    monkeypatch.setattr(dashboard_open_groups, "open_group_page", fail_once)
     with pytest.raises(KernelError) as rejected:
         _brief(service, token, first)
     assert rejected.value.code == "synthetic_open_items_failure"

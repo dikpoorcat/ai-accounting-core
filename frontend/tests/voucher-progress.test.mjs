@@ -108,7 +108,7 @@ test("voucher progress adds business facts without repeating the voucher", async
       const data = scenario([obligation({ direction: "unknown", category_key: "unknown", source_amount_fen: "9007199254740993", remaining_fen: "9007199254740993", settlement_status: "settled" })]);
       const html = await render(data);
       assert.match(html, /AI 会计核对中/); assert.match(html, /¥90,071,992,547,409\.93/); assert.doesNotMatch(html, /已结清|还需支付/);
-      data.collections.settlement_events = { items: [{ id: "unresolved-payment", name: "net", mode: "payment", posting_period: "2026-09", direction: 1, relation_state: "unresolved", signed_amount_fen: "9007199254740993" }], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
+      data.collections.settlement_events = { items: [{ id: "unresolved-payment", name: "net", purpose_label: "实发工资", mode: "payment", posting_period: "2026-09", direction: 1, relation_state: "unresolved", signed_amount_fen: "9007199254740993" }], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
       const unresolved = (await render(data)).split("这笔业务的相关收付")[1];
       assert.match(unresolved, /AI 会计核对中/); assert.match(unresolved, /¥90,071,992,547,409\.93/);
       const missing = await render(scenario([obligation({ remaining_fen: null })])); assert.match(missing, /待核对/);
@@ -275,7 +275,7 @@ test("the main row binds one interactive progress popover with a scope-local cac
   assert.match(progressComponents[0], /(?:\bhide-summary(?:\s|\/>))|:hide-summary="true"/);
   assert.doesNotMatch(source, /fetchBusinessStatus/);
   assert.match(source, /watch\(\(\) => \[route.query.company_id, props.period, props.snapshotVersion\], \(\) => \{\s*?voucherProgressCache.clear\(\)/);
-  const preview = source.match(/id="activity-voucher-preview"[\s\S]*?点击打开凭证详情/)?.[0];
+  const preview = readFileSync(new URL("../src/components/brief/BriefVoucherPreview.vue", import.meta.url), "utf8").match(/class="preview event-voucher-preview dashboard-hover-preview"[\s\S]*?点击打开凭证详情/)?.[0];
   assert.ok(preview); assert.doesNotMatch(preview, /BusinessStatusDetails|业务进展/);
 });
 
@@ -283,7 +283,8 @@ test("business progress, business voucher and bank batch previews share one fram
   const brief = readFileSync(new URL("../src/components/brief/BriefActivityWorkbench.vue", import.meta.url), "utf8");
   const funds = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8");
   const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-  assert.match(brief, /class="event-voucher-preview dashboard-hover-preview"/);
+  const shared = readFileSync(new URL("../src/components/brief/BriefVoucherPreview.vue", import.meta.url), "utf8");
+  assert.match(shared, /class="preview event-voucher-preview dashboard-hover-preview"/);
   assert.match(brief, /class="voucher-progress-popover dashboard-hover-preview"/);
   assert.match(funds, /class="bank-batch-preview dashboard-hover-preview"/);
   assert.match(css, /\.dashboard-hover-preview\s*\{/);

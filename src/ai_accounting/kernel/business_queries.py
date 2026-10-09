@@ -48,42 +48,48 @@ _PAYROLL_CONFIRMATION_KINDS = {
 }
 
 
+BUSINESS_AMOUNT_SPEC = {
+    "service_sale": ("gross_fen", "含税收入确认额"),
+    "payroll": ("gross_fen", "税前工资"),
+    "payroll_bounded": ("gross_fen", "税前工资"),
+    "annual_bonus": ("gross_fen", "税前奖金"),
+    "labor": ("gross_fen", "劳务确认毛额"),
+    "labor_accrual": ("gross_fen", "劳务确认毛额"),
+    "labor_project_cost": ("gross_fen", "资本化劳务确认毛额"),
+    "asset": ("cost_fen", "已确认资产成本"),
+    "reimbursed_asset": ("cost_fen", "已确认资产成本"),
+    "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
+    "asset_activation": ("cost_fen", "启用资产成本"),
+    "asset_consumption": ("consumption_fen", "本期折旧摊销"),
+    "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
+    "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
+    "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
+    "loan_interest": ("interest_fen", "本期确认利息"),
+    "loan_drawdown": ("principal_fen", "借款本金"),
+    "project_release": ("released_fen", "转费用成本"),
+    "money_fund_subscription": ("cost_fen", "申购确认成本"),
+    "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
+    "income_tax_assessment": ("change_fen", "本期所得税确认额"),
+    "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
+    "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
+    "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
+    "managed_reserve_internal_movement": (
+        "original_amount_fen",
+        "备用金内部原行金额合计（不入公司账）",
+    ),
+}
+
+
+def business_amount_field(kind):
+    return BUSINESS_AMOUNT_SPEC.get(kind, ("amount_fen", "业务确认金额"))[0]
+
+
 def business_display_amount(calculation):
     """Return the explicit owner-facing amount for one exact calculation version."""
 
     data = calculation["fact"]["data"]
     values = calculation["outcome"]["values"]
-    spec = {
-        "service_sale": ("gross_fen", "含税收入确认额"),
-        "payroll": ("gross_fen", "税前工资"),
-        "payroll_bounded": ("gross_fen", "税前工资"),
-        "annual_bonus": ("gross_fen", "税前奖金"),
-        "labor": ("gross_fen", "劳务确认毛额"),
-        "labor_accrual": ("gross_fen", "劳务确认毛额"),
-        "labor_project_cost": ("gross_fen", "资本化劳务确认毛额"),
-        "asset": ("cost_fen", "已确认资产成本"),
-        "reimbursed_asset": ("cost_fen", "已确认资产成本"),
-        "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
-        "asset_activation": ("cost_fen", "启用资产成本"),
-        "asset_consumption": ("consumption_fen", "本期折旧摊销"),
-        "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
-        "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
-        "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
-        "loan_interest": ("interest_fen", "本期确认利息"),
-        "loan_drawdown": ("principal_fen", "借款本金"),
-        "project_release": ("released_fen", "转费用成本"),
-        "money_fund_subscription": ("cost_fen", "申购确认成本"),
-        "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
-        "income_tax_assessment": ("change_fen", "本期所得税确认额"),
-        "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
-        "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
-        "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
-        "managed_reserve_internal_movement": (
-            "original_amount_fen",
-            "备用金内部原行金额合计（不入公司账）",
-        ),
-    }
-    field, label = spec.get(calculation["kind"], ("amount_fen", "业务确认金额"))
+    field, label = BUSINESS_AMOUNT_SPEC.get(calculation["kind"], ("amount_fen", "业务确认金额"))
     amount = values.get(field, data.get(field))
     if calculation["kind"] == "employee_advance":
         obligations = values.get("obligations", ())
@@ -3230,6 +3236,7 @@ class BusinessQueries:
         limit=100,
         as_of=None,
         current=False,
+        allowed_slots=None,
     ):
         """Page exact source/event keys; the HTTP adapter binds the opaque cursor."""
         period = str(YearMonth(period))
@@ -3323,7 +3330,8 @@ class BusinessQueries:
             )
             return {
                 **self._settlement_collection(
-                    connection, subjects, selected, after=after, limit=limit
+                    connection, subjects, selected, after=after, limit=limit,
+                    allowed_slots=allowed_slots,
                 ),
                 "scope_period": period,
                 "current_cutoff_period": cutoff,
@@ -3345,7 +3353,8 @@ class BusinessQueries:
         )
         if section == "settlement_events":
             return self._settlement_collection(
-                connection, subjects, selected, after=after, limit=limit
+                connection, subjects, selected, after=after, limit=limit,
+                allowed_slots=allowed_slots,
             )
         through = selected["through_period"]
         events = [
@@ -3392,7 +3401,9 @@ class BusinessQueries:
         ]
         return {"items": items, "page": page}
 
-    def _settlement_collection(self, connection, subjects, selected, *, after, limit):
+    def _settlement_collection(
+        self, connection, subjects, selected, *, after, limit, allowed_slots=None,
+    ):
         """Select normalized declared slots, then run the same resolver on page calculations."""
         reads = self._reads(connection)
         events = [
@@ -3458,6 +3469,8 @@ class BusinessQueries:
                 calc_subject = metadata[event["calculation_id"]]["subject_id"]
                 if subjects is None or row["source_id"] in subjects or calc_subject in subjects:
                     slots.append((row["event_id"], row["item_no"]))
+        if allowed_slots is not None:
+            slots = [slot for slot in slots if slot in allowed_slots]
         slots.sort(
             key=lambda slot: (
                 event_map[slot[0]]["posting_period"],

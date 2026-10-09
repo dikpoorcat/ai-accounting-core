@@ -64,9 +64,8 @@ test("personal labor details remove only facts already displayed for the exact s
         const context = laborContext(); context.capitalized = kind === "labor_project_cost";
         context.obligations[0].key = `${kind}:${context.subject_id}:net`;
         const data = scenario(context); data.identity.kind = kind;
-        data.settlements.obligations[0].category_key = context.capitalized ? "other_payables" : "labor_payables";
         data.current_business_result.amount_label = context.capitalized ? "资本化劳务确认毛额" : "劳务确认毛额";
-        assert.doesNotMatch(await render(data, context), /¥5,000\.00|¥4,500\.00/, `${kind} retains its known accounting meaning`);
+        assert.doesNotMatch(await render(data, context), /补充款项进度|¥5,000\.00|¥4,500\.00|¥1,000\.00|¥500\.00|¥3,000\.00/, `${kind} does not repeat the displayed labor amounts or progress`);
       }
     });
     await t.test("distinct keys, names or periods retain full progress and changed amounts show only the new cells", async () => {
@@ -161,7 +160,7 @@ test("personal labor details remove only facts already displayed for the exact s
       assert.match(await render(scenario(), capitalizedContext), /¥4,500\.00/, "capitalization mismatch keeps distinct progress visible");
       const data = scenario();
       data.collections.settlement_events = { items: [{ id: "labor-payment", subject_id: "payment", source_subject_id: "labor",
-        posting_period: "2026-01", direction: 1, signed_amount_fen: "9007199254740993", relation_state: "unresolved", kind: "cash_payment", name: "net", mode: "payment" }],
+        posting_period: "2026-01", direction: 1, signed_amount_fen: "9007199254740993", relation_state: "unresolved", kind: "cash_payment", name: "net", purpose_label: "实发劳务款", party: "劳务对象未提供", mode: "payment" }],
         page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
       const event = await render(data);
       assert.match(event, /AI 会计核对中/); assert.match(event, /¥90,071,992,547,409\.93/);

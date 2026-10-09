@@ -13,6 +13,11 @@ import sqlite3
 from dataclasses import dataclass
 
 from .contracts import KernelError
+from .obligation_classification import (
+    SEMANTIC_SOURCE_KINDS,
+    adopted_source_semantics,
+    obligation_category_sql,
+)
 from .query_reads import SETTLEMENT_KINDS, QueryReads
 from .types import YearMonth, canonical, checked, digest
 
@@ -803,21 +808,45 @@ def settlement_dashboard_open(
             },
             **({"current_cutoff_period": str(YearMonth.from_ordinal(through))} if current else {}),
         }
-    category = (
-        "CASE WHEN category='receivable' THEN "
-        "CASE WHEN account='1122' THEN 'customer_receivables' "
-        "WHEN account='1123' THEN 'supplier_advances' "
-        "WHEN instr(coalesce(source_kind,''),'deposit')>0 "
-        "THEN 'refundable_deposit_receivables' ELSE 'other_receivables' END "
-        "WHEN source_kind IN ('payroll','payroll_bounded','annual_bonus',"
-        "'opening_payroll_payable') "
-        "THEN 'payroll_payables' "
-        "WHEN source_kind IN ('labor','labor_accrual') THEN 'labor_payables' "
-        "WHEN account='2202' THEN 'supplier_payables' "
-        "WHEN source_kind IN ('employee_advance','reimbursement_acceptance',"
-        "'reimbursed_asset','reimbursed_asset_batch') THEN 'employee_payables' "
-        "ELSE 'other_payables' END"
+    # Only open obligations and a requested settled current page need meanings.
+    # Select exact source IDs from the already checked relation before JSON1
+    # reads their adopted nature/payer identity; current facts are irrelevant.
+    semantic_condition = "remaining IS NULL OR remaining<>0"
+    semantic_parameters = []
+    if include_settled_page:
+        if page_keys is None:
+            semantic_condition = "1"
+        else:
+            semantic_condition += " OR obligation_key IN (SELECT value FROM json_each(?))"
+            semantic_parameters.append(canonical(sorted(page_keys)))
+    semantic_rows = connection.execute(
+        _summary_relation(source_keys)
+        + "SELECT obligation_key,component,category,account,source_calculation_id,"
+        "source_fact_id,source_kind,source_subject_id FROM obligations "
+        "WHERE source_kind IN (SELECT value FROM json_each(?)) "
+        f"AND ({semantic_condition})",
+        [*scope_parameters, through, cutoff, cutoff,
+         canonical(sorted(SEMANTIC_SOURCE_KINDS)), *semantic_parameters],
+    ).fetchall()
+    semantics = adopted_source_semantics(
+        connection,
+        [{
+            "key": row["obligation_key"], "name": row["component"],
+            "category": row["category"], "account": row["account"],
+            "source_calculation_id": row["source_calculation_id"],
+            "source_fact_id": row["source_fact_id"],
+            "source_business": {
+                "kind": row["source_kind"], "subject_id": row["source_subject_id"],
+            },
+        } for row in semantic_rows],
+        reads=reads,
     )
+    semantic_ids = canonical(sorted(semantics))
+    category = obligation_category_sql(semantic=(
+        "CASE WHEN source_kind='opening_obligation' THEN "
+        "json_extract(meaning.outcome,'$.values.nature') ELSE "
+        "json_extract(meaning.outcome,'$.values.payer_kind') END"
+    ))
     page_condition = (
         "obligation_key IN (SELECT value FROM json_each(?))"
         if page_keys is not None
@@ -868,12 +897,13 @@ def settlement_dashboard_open(
     if summary_only:
         fields = ("obligation_key",)
     row_json = "json_object(" + ",".join(f"'{field}',{field}" for field in fields) + ")"
-    page_relation = (
-        f"(SELECT *,{category} category_key FROM obligations)" if include_settled_page else "open"
-    )
+    page_relation = "classified" if include_settled_page else "open"
     rows = connection.execute(
         _summary_relation(source_keys)
-        + f", open AS MATERIALIZED (SELECT *,{category} category_key FROM obligations "
+        + f", classified AS (SELECT o.*,{category} category_key FROM obligations o "
+        "LEFT JOIN calculation meaning ON meaning.id=o.source_calculation_id "
+        "AND meaning.id IN (SELECT value FROM json_each(?))), "
+        "open AS MATERIALIZED (SELECT * FROM classified "
         "WHERE remaining IS NULL OR remaining<>0), "
         f"page AS (SELECT * FROM {page_relation} WHERE {page_condition} "
         f"ORDER BY {page_order} LIMIT ?) "
@@ -882,7 +912,8 @@ def settlement_dashboard_open(
         "UNION ALL SELECT 0,category_key,count(*),sum(remaining),"
         "max(remaining IS NULL),sum(obligation_key=?),NULL FROM open GROUP BY category_key "
         "UNION ALL SELECT 1,category_key,NULL,NULL,NULL,NULL," + row_json + " FROM page",
-        [*scope_parameters, through, cutoff, cutoff, *page_parameters, limit + 1, after],
+        [*scope_parameters, through, cutoff, cutoff, semantic_ids,
+         *page_parameters, limit + 1, after],
     )
     obligation_count = 0
     unknown = False
@@ -901,7 +932,9 @@ def settlement_dashboard_open(
             cursor_matches += row["cursor_matches"] or 0
         else:
             value = json.loads(row["item"])
-            page_rows.append(value if summary_only else _obligation_view(value))
+            page_rows.append(value if summary_only else {
+                **_obligation_view(value), "category_key": row["category_key"],
+            })
     if after is not None and page_keys is None and not cursor_matches:
         raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
     if selected_keys is not None:
@@ -931,6 +964,54 @@ def settlement_dashboard_open(
             "next_cursor": (items[-1].get("key") or items[-1]["obligation_key"]) if more else None,
         },
         **({"current_cutoff_period": str(YearMonth.from_ordinal(through))} if current else {}),
+    }
+
+
+def settlement_dashboard_open_sources(connection, period, *, current=False, page_keys=None, reads=None):
+    """Read verified scalar amounts/identities for complete dashboard grouping.
+
+    Group totals require every open obligation, but no result or fact body. Exact
+    historically displayed keys additionally retain settled current amounts.
+    """
+    from .settlement_freeze import frozen_dashboard_open_sources
+
+    frozen = frozen_dashboard_open_sources(
+        connection, period, current=current, page_keys=page_keys, reads=reads,
+    )
+    if frozen is not None:
+        return frozen
+    cutoff, through, source_keys, parameters = _summary_scope(
+        connection, period, subject_ids=None, current=current, reads=reads,
+    )
+    rows = list(connection.execute(
+        _summary_relation(source_keys) + "SELECT * FROM obligations",
+        [*parameters, through, cutoff, cutoff],
+    ))
+    unknown = any(row["remaining"] is None for row in rows)
+    selected = [_obligation_view(row) for row in rows if row["remaining"] is None
+                or row["remaining"] != 0 or row["obligation_key"] in (page_keys or ())]
+    from .obligation_classification import classify_obligations
+
+    obligations = classify_obligations(connection, selected, reads=reads)
+    categories = {}
+    for item in obligations:
+        if item["remaining_fen"] == 0:
+            continue
+        category = categories.setdefault(item["category_key"], {"count": 0, "amount": 0})
+        category["count"] += 1
+        category["amount"] = (
+            None if category["amount"] is None or item["remaining_fen"] is None
+            else checked(category["amount"] + item["remaining_fen"])
+        )
+    through_label = str(YearMonth.from_ordinal(through))
+    return {
+        "cutoff_period": through_label,
+        "status": "partially_established" if unknown else "established" if rows else "not_established",
+        "complete": not unknown,
+        "issues": ([{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []),
+        "categories": categories,
+        "obligations": obligations,
+        **({"current_cutoff_period": through_label} if current else {}),
     }
 
 

@@ -36,6 +36,7 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
     {
         "dashboard_context",
         "dashboard_brief",
+        "dashboard_brief_group",
         "dashboard_funds",
         "dashboard_employees",
         "dashboard_assets",
@@ -946,6 +947,7 @@ class LocalService:
             "preview_period_commentary": display.preview_period_commentary,
             "update_period_commentary": display.update_period_commentary,
             "dashboard_brief": dashboard.brief,
+            "dashboard_brief_group": dashboard.brief_group,
             "dashboard_funds": dashboard.funds,
             "dashboard_employees": dashboard.employees,
             "dashboard_assets": dashboard.assets,

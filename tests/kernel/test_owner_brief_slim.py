@@ -35,6 +35,7 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
 
     monkeypatch.setattr(BusinessQueries, "_period_readiness", forbidden)
     monkeypatch.setattr(_Snapshot, "voucher", forbidden)
+    monkeypatch.setattr(_Snapshot, "owner_voucher", forbidden)
     monkeypatch.setattr(_Snapshot, "evidence_details", forbidden)
     import ai_accounting.kernel.close_review as review_module
     import ai_accounting.kernel.dashboard as dashboard_module
@@ -57,13 +58,14 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 15
+    assert response["schema_version"] == 17
     assert data["month_state"] == "open"
     assert data["owner_review_request"] is None
     assert data["activity_count"] == 31
     assert len(data["collections"]["activity"]["items"]) == 20
     assert data["voucher_count"] == 31
-    assert len(data["collections"]["vouchers"]["items"]) == 20
+    assert "vouchers" not in data["collections"]
+    assert data["group_count"] == 31
     assert data["funds_overview"]["total_fen"] == 31
     assert data["financial_position"]["assets_fen"] == 31
     assert data["financial_position"]["bank_fen"] == 31
@@ -283,7 +285,10 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
     )
     dashboard = Dashboard(engine)
     first = dashboard.brief("2026-09")
-    loaded = {item["subject_id"] for item in first["data"]["collections"]["activity"]["items"]}
+    assert len(first["data"]["collections"]["activity"]["items"]) == 20
+    loaded = {item["subject_id"] for item in dashboard.brief(
+        "2026-09", section="vouchers", expected_version=first["snapshot_version"],
+    )["data"]["collections"]["vouchers"]["items"]}
     subject = next(
         f"filter-2026-09-{index:04}"
         for index in range(31)

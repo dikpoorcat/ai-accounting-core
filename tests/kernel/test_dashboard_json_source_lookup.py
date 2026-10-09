@@ -1,5 +1,6 @@
 """JSON source identities bound the read work, even with many same-kind results."""
 
+import json
 import sqlite3
 from collections import Counter
 from types import SimpleNamespace
@@ -7,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.dashboard import _Snapshot
+from ai_accounting.kernel.dashboard import _group
+from ai_accounting.kernel.dashboard_activity_parts import classification_values
 from ai_accounting.kernel.dashboard_funds import FundsRead
 from ai_accounting.kernel.stored_json import verify_sql_outcomes
 from ai_accounting.kernel.types import canonical, digest
@@ -32,7 +34,7 @@ def _source_book(domain, source_count):
     connection.row_factory = sqlite3.Row
     connection.executescript(
         "CREATE TABLE calculation(id TEXT PRIMARY KEY,kind TEXT,period INTEGER,"
-        "fact_id TEXT,outcome TEXT,digest BLOB);"
+        "fact_id TEXT,subject_id TEXT,outcome TEXT,digest BLOB);"
         "CREATE INDEX calculation_kind_period ON calculation(kind,period,id);"
         "CREATE TABLE fact_revision(id TEXT PRIMARY KEY,subject_id TEXT);"
         "CREATE TABLE month_event(id TEXT,basis_calculation_id TEXT,basis_kind TEXT,"
@@ -43,14 +45,14 @@ def _source_book(domain, source_count):
     values = {"creditor_kind": "employee", "fund_id": "fund"}
     outcome = {"values": values}
     connection.executemany(
-        "INSERT INTO calculation VALUES(?,?,?,?,?,?)",
-        [(f"source-{i}", kind, i, f"fact-{i}", canonical(outcome), digest(outcome))
+        "INSERT INTO calculation VALUES(?,?,?,?,?,?,?)",
+        [(f"source-{i}", kind, i, f"fact-{i}", f"source-{i}", canonical(outcome), digest(outcome))
          for i in range(source_count)],
     )
     connection.executemany(
-        "INSERT INTO calculation VALUES(?,?,?,?,?,?)",
+        "INSERT INTO calculation VALUES(?,?,?,?,?,?,?)",
         [(f"unrelated-{i}", ("payroll", "funding", "asset_consumption")[i % 3],
-          i, f"unrelated-fact-{i}", canonical(outcome), digest(outcome))
+          i, f"unrelated-fact-{i}", f"unrelated-{i}", canonical(outcome), digest(outcome))
          for i in range(300)],
     )
     for i in range(20):
@@ -58,9 +60,9 @@ def _source_book(domain, source_count):
             {"source_calculation": f"source-{i}", "amount_fen": 123}
         ]}}
         connection.execute(
-            "INSERT INTO calculation VALUES(?,?,?,?,?,?)",
+            "INSERT INTO calculation VALUES(?,?,?,?,?,?,?)",
             (f"payment-{i}", "payment", 20, f"payment-fact-{i}",
-             canonical(outcome), digest(outcome)),
+             f"payment-{i}", canonical(outcome), digest(outcome)),
         )
         connection.execute(
             "INSERT INTO fact_revision VALUES(?,?)", (f"payment-fact-{i}", f"payment-{i}")
@@ -70,6 +72,7 @@ def _source_book(domain, source_count):
             (f"event-{i}", f"payment-{i}", "payment", i + 1),
         )
     reads = SimpleNamespace(
+        _verified_source_contents={},
         verify_sql_outcomes=lambda identifiers: verify_sql_outcomes(connection, identifiers),
         # This minimal plan fixture has no publication/fact storage. Real
         # saved-input identity and seal rejection are covered by the funds
@@ -88,8 +91,27 @@ def _source_book(domain, source_count):
         ),
     )
     if domain == "activity":
+        # Source semantics now live in this shared exact-ID reader. Its real
+        # payment/adoption wrapper is covered by native three-path fixtures;
+        # this minimal SQLite fixture isolates growth and JSON damage checks.
+        bindings = {
+            row["id"]: json.loads(row["outcome"])["values"]["settlements"][0]["source_calculation"]
+            for row in connection.execute(
+                "SELECT c.id,c.outcome FROM month_event m "
+                "JOIN calculation c ON c.id=m.basis_calculation_id WHERE m.period=20"
+            )
+        }
+
         def operation():
-            return _Snapshot.activity_classification.func(snap)
+            reads.verify_sql_outcomes(set(bindings))
+            values = classification_values(snap, set(bindings.values()))
+            groups = {
+                (payment_id, False): _group(
+                    "expense", creditor_kind=values[source]["creditor_kind"],
+                )
+                for payment_id, source in bindings.items()
+            }
+            return groups, Counter((category, "payment") for category in groups.values())
     else:
         # Supply only the already-selected event relation. The real consumer
         # generates both source-validation and settlement-row SQL below.

@@ -35,10 +35,9 @@ from .response_types import (
     Version3,
     Version4,
     Version5,
-    Version7,
     Version9,
     Version10,
-    Version15,
+    Version17,
     WireFen,
 )
 from .work_draft_contract import WorkDraft
@@ -847,8 +846,11 @@ class ActivityTypeCount(ResponseObject):
 
 class BriefActivityRow(ResponseObject):
     key: str
+    group_key: str
     subject_id: str
     voucher_version_id: str
+    detail_scope_category: str | None
+    voucher_number: Count
     date: Day | None
     recognition: Recognition
     title: str
@@ -860,10 +862,29 @@ class BriefActivityRow(ResponseObject):
     group: str
 
 
+class BriefActivityDisplayGroup(ResponseObject):
+    key: str
+    group_key: str
+    group: str
+    kind: str
+    party: str
+    title: str
+    member_count: Count
+    voucher_count: Count
+    amount_fen: WireFen | None
+    amount_label: str
+    state: str
+    date_from: Day | None
+    date_to: Day | None
+    has_month_recognition: bool
+    is_batch: bool
+
+
 class BriefActivityGroup(ResponseObject):
     key: str
     label: str
     event_count: Count
+    group_count: Count
     type_counts: list[ActivityTypeCount]
 
 
@@ -1194,9 +1215,16 @@ class BriefValidation(ResponseObject):
 
 class BriefOpenItem(ResponseObject):
     id: str
+    group_key: str
+    date: Day | None
+    recognition: Recognition
+    source_period: Month
+    voucher_version_id: str | None
+    voucher_number: Count | None
     category_key: str
     party: str
     description: str
+    purpose: str | None
     status: str
     source_amount_fen: WireFen | None
     paid_fen: WireFen | None
@@ -1212,17 +1240,35 @@ class BriefOpenItem(ResponseObject):
     payroll_period: Month | None
 
 
+class BriefOpenDisplayGroup(ResponseObject):
+    id: str
+    group_key: str
+    category_key: str
+    party: str
+    description: str
+    member_count: Count
+    source_amount_fen: WireFen | None
+    paid_fen: WireFen | None
+    other_settled_fen: WireFen | None
+    outstanding_fen: WireFen | None
+    current_outstanding_fen: WireFen | None
+    status: str
+    current_status: str | None
+
+
 class BriefOpenCategory(ResponseObject):
     key: str
     label: str
     direction: Literal["receivable", "payable"]
     unit: Literal["笔"]
     count: Count
+    group_count: Count
     loaded_count: Count
     outstanding_fen: WireFen | None
 
 
 class BriefOpenSummary(ResponseObject):
+    group_count: Count
     receivable_count: Count
     receivable_fen: WireFen | None
     payable_count: Count
@@ -1255,9 +1301,9 @@ class BriefRisk(ResponseObject):
 
 
 class BriefCollections(ResponseObject):
-    activity: NotRequired[Collection[BriefActivityRow]]
+    activity: NotRequired[Collection[BriefActivityDisplayGroup]]
     vouchers: NotRequired[Collection[OwnerBriefVoucher]]
-    open_items: NotRequired[Collection[BriefOpenItem]]
+    open_items: NotRequired[Collection[BriefOpenDisplayGroup]]
 
 
 class AdoptedBasisSources(ResponseObject):
@@ -1286,7 +1332,9 @@ class BriefData(ResponseObject):
     owner_review_request: OwnerReviewRequest | None
     management_commentary_details: BriefNotes
     activity_count: Count
+    group_count: Count
     focused_activity: BriefActivityRow | None
+    focused_activity_group: BriefActivityDisplayGroup | None
     voucher_count: Count
     focused_voucher: OwnerBriefVoucher | None
     activity_groups: list[BriefActivityGroup]
@@ -1302,12 +1350,43 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version15
+    schema_version: Version17
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
     read_context: DashboardReadContext
     data: BriefData | None
+
+
+class BriefActivityMemberCollections(ResponseObject):
+    members: Collection[BriefActivityRow]
+    vouchers: Collection[OwnerBriefVoucher]
+
+
+class BriefOpenMemberCollections(ResponseObject):
+    members: Collection[BriefOpenItem]
+    vouchers: Collection[OwnerBriefVoucher]
+
+
+class BriefActivityMemberData(ResponseObject):
+    section: Literal["activity"]
+    group_key: str
+    collections: BriefActivityMemberCollections
+
+
+class BriefOpenMemberData(ResponseObject):
+    section: Literal["open_items"]
+    group_key: str
+    collections: BriefOpenMemberCollections
+
+
+class DashboardBriefGroupResponse(ResponseObject):
+    schema_version: Version2
+    snapshot_version: str | None
+    selected_period: DashboardPeriod | None
+    read_semantics: ReadSemantics
+    read_context: DashboardReadContext
+    data: BriefActivityMemberData | BriefOpenMemberData
 
 
 class TraceTarget(ResponseObject):
@@ -2077,7 +2156,9 @@ class OwnerSettlementEvent(ResponseObject):
     relation_state: Literal["resolved", "unresolved"]
     kind: str
     name: str
+    purpose_label: str
     mode: str
+    party: str
 
 
 class OwnerScopedSettlementCollection(Collection[OwnerSettlementEvent]):
@@ -2172,6 +2253,13 @@ class BusinessIdentityDetails(ResponseObject):
     kind: str
 
 
+class BusinessDetailScope(ResponseObject):
+    voucher_version_id: str
+    category: str
+    amount_fen: WireFen | None
+    amount_label: str
+
+
 class BusinessStatusData(ResponseObject):
     identity: BusinessIdentityDetails
     period: Month
@@ -2186,10 +2274,11 @@ class BusinessStatusData(ResponseObject):
     current_followups: OwnerSettlementFollowups
     settlement_view: Literal["historical", "current"]
     collections: BusinessCollections
+    detail_scope: BusinessDetailScope | None
 
 
 class DashboardBusinessStatusResponse(ResponseObject):
-    schema_version: Version7
+    schema_version: Version9
     snapshot_version: str
     selected_period: DashboardPeriod
     read_semantics: ReadSemantics
@@ -2784,6 +2873,7 @@ RESPONSE_ADAPTERS = {
     "period_readiness": TypeAdapter(PeriodReadinessResponse),
     "dashboard_context": TypeAdapter(DashboardContextResponse),
     "dashboard_brief": TypeAdapter(DashboardBriefResponse),
+    "dashboard_brief_group": TypeAdapter(DashboardBriefGroupResponse),
     "dashboard_funds": TypeAdapter(FundsDashboardResponse),
     "dashboard_employees": TypeAdapter(DashboardEmployeesResponse),
     "dashboard_assets": TypeAdapter(DashboardAssetsResponse),

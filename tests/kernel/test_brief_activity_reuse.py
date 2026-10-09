@@ -87,13 +87,21 @@ def test_actual_month_work_removes_repeated_selection_and_settlement_expansion(
 ])
 def test_default_brief_rejects_prior_month_source_outside_first_page(paid_month, corruption):
     engine, sources = paid_month
-    baseline = Dashboard(engine).brief("2026-09")
-    assert len(baseline["data"]["collections"]["activity"]["items"]) == 20
-    assert "payment-23" not in {
-        row["subject_id"] for row in baseline["data"]["collections"]["activity"]["items"]
-    }
+    dashboard = Dashboard(engine)
+    baseline = dashboard.brief("2026-09")
+    groups = baseline["data"]["collections"]["activity"]["items"]
+    assert len(groups) == 2
+    payment_group = next(group for group in groups if group["kind"] == "cash_payment")
+    assert payment_group["member_count"] == 24
+    members = dashboard.brief_group(
+        "2026-09", section="activity", group_key=payment_group["group_key"],
+        expected_version=baseline["snapshot_version"],
+    )["data"]["collections"]["members"]
+    assert len(members["items"]) == 20 and members["page"]["has_more"]
+    loaded = {row["subject_id"] for row in members["items"]}
+    index = next(index for index in range(24) if f"payment-{index:02}" not in loaded)
     assert baseline["data"]["funds_overview"]["total_fen"] == 976
-    row = sources["expense-23"]
+    row = sources[f"expense-{index:02}"]
     if corruption in {"anchor", "both_authorities"}:
         damage(engine, "report_open_contribution_anchor",
                "DELETE FROM report_open_contribution_anchor WHERE publication_id=?",
@@ -107,7 +115,7 @@ def test_default_brief_rejects_prior_month_source_outside_first_page(paid_month,
                (row["id"],))
     elif corruption == "fact_binding":
         damage(engine, "calculation", "UPDATE calculation SET fact_id=? WHERE id=?",
-               (sources["expense-00"]["fact_id"], row["id"]))
+               (sources[f"expense-{(index + 1) % 24:02}"]["fact_id"], row["id"]))
     elif corruption == "fact_seal":
         damage(engine, "fact_seal", "DELETE FROM fact_seal WHERE fact_id=?", (row["fact_id"],),
                foreign_keys=False)

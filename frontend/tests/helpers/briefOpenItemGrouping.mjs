@@ -8,4 +8,5 @@ const { outputText } = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } },
 );
 const implementation = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-export const createBriefOpenItemGrouping = implementation.createBriefOpenItemGrouping;
+export const groupContributionMembers = implementation.groupContributionMembers;
+export const contributionProgressRows = implementation.contributionProgressRows;

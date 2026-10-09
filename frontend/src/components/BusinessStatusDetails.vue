@@ -30,7 +30,7 @@ const props = withDefaults(defineProps<{
   voucherContext?: BriefVoucher;
   laborContext?: PersonalLaborItem;
   detailCache?: Map<string, BusinessStatusCacheEntry>;
-  expanded?: boolean; hideSummary?: boolean;
+  expanded?: boolean; hideSummary?: boolean; refreshGeneration?: number;
 }>(), { presentation: "default", expanded: undefined });
 const emit = defineEmits<{ changed: [] }>();
 const route = useRoute();
@@ -46,7 +46,7 @@ const objects = computed(() => {
   const profiles = data.value?.display_profiles;
   return [...new Set([...(profiles?.counterparties ?? []), ...(profiles?.employees ?? []), ...(profiles?.assets ?? []), ...(profiles?.fund_accounts ?? [])].map(item => item.values.display_name).filter((item): item is string => Boolean(item)))];
 });
-const businessAmount = computed(() => data.value?.frozen_adoption || data.value?.current_business_result);
+const businessAmount = computed(() => data.value?.detail_scope || data.value?.frozen_adoption || data.value?.current_business_result);
 const currentSettlements = computed(() => data.value?.current_followups.settlements);
 const showCurrent = computed(() => currentSettlements.value && currentSettlements.value.cutoff_period !== data.value?.settlements.cutoff_period);
 const collection = computed(() => data.value?.collections.settlement_events);
@@ -124,8 +124,7 @@ function sameKnownLaborAmount(value: string | null, shown: string | null | undef
 }
 function laborProgressRows(settlements: BusinessStatusData["settlements"]) {
   const context = props.laborContext, kind = data.value?.identity.kind;
-  const category = kind === "labor_project_cost" ? "other_payables"
-    : kind === "labor" || kind === "labor_accrual" ? "labor_payables" : undefined;
+  const category = kind === "labor" || kind === "labor_accrual" || kind === "labor_project_cost" ? "labor_payables" : undefined;
   return settlements.obligations.flatMap(item => {
     const sameMeaning = context && category && item.direction === "payable" && item.category_key === category
       && context.capitalized === (kind === "labor_project_cost") && item.key === `${kind}:${context.subject_id}:${item.name}`;
@@ -328,11 +327,16 @@ function activityTone(item: Obligation, checking: boolean) {
 function movementPurpose(name: string) {
   const kind = data.value?.identity.kind;
   const netLabel = kind === "annual_bonus" ? "实发奖金" : kind === "payroll" || kind === "payroll_bounded" ? "实发工资" : kind === "labor" || kind === "labor_accrual" ? "实发劳务款" : "个人实发款";
-  const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
+  const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", collection: "代收款", remittance: "代付款", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
 }
-function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, props.fundsContext?.id, props.fundsContext?.account_id, props.voucherContext?.voucher_version_id]); }
-function cacheKey() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.subjectId, props.settlementView ?? "current"]); }
+function detailScope() {
+  const item = props.activityContext;
+  return isActivity.value && item?.detail_scope_category
+    ? { detail_scope_category: item.detail_scope_category, voucher_version_id: item.voucher_version_id } : {};
+}
+function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.refreshGeneration, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, detailScope(), props.fundsContext?.id, props.fundsContext?.account_id, props.voucherContext?.voucher_version_id]); }
+function cacheKey() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.subjectId, props.settlementView ?? "current", detailScope()]); }
 function rememberRead() {
   if (isVoucher.value && props.detailCache && props.snapshotVersion && data.value) {
     props.detailCache.set(cacheKey(), { data: data.value, snapshotVersion: responseVersion.value, moreError: moreError.value });
@@ -360,7 +364,7 @@ async function load() {
   controller = request; loading.value = true; error.value = "";
   const valid = () => mounted && generation === version && selection() === key && controller === request;
   try {
-    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current", limit: 20 });
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current", ...detailScope(), limit: 20 });
     if (!valid()) return;
     data.value = result.data; responseVersion.value = result.snapshot_version; notice.value = "";
     rememberRead();
@@ -374,7 +378,7 @@ async function loadMore() {
   pageController = request; moreLoading.value = true; moreError.value = "";
   const valid = () => mounted && generation === version && selection() === key && pageController === request;
   try {
-    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", limit: 20 });
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", ...detailScope(), limit: 20 });
     if (!valid() || !data.value || !result.data.collections.settlement_events) return;
     const next = result.data.collections.settlement_events, latest = data.value;
     const previous = latest.collections.settlement_events;
@@ -401,7 +405,7 @@ function movementLabel(item: NonNullable<BusinessStatusData["collections"]["sett
   return item.direction < 0 ? `更正原${label}` : label;
 }
 watch(selection, invalidate, { flush: "sync" });
-watch(panelOpen, open => { if (!open && isVoucher.value) cancelRead(); }, { flush: "sync" });
+watch(panelOpen, open => { if (!open) cancelRead(); }, { flush: "sync" });
 watch(() => props.expanded, loadOnExpansion, { immediate: true });
 onBeforeUnmount(() => { mounted = false; invalidate(); });
 </script>
@@ -419,9 +423,9 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <p v-for="purpose in purposes" :key="purpose">用途／备注：{{ purpose }}</p>
         <p v-for="group in laborObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         <dl v-if="businessAmount && !laborResultRepeated" class="business-amounts">
-          <div><dt>{{ data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ ownerMoney(businessAmount.amount_fen) }}</dd></div>
+          <div><dt>{{ data.detail_scope ? '本次' : data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ ownerMoney(businessAmount.amount_fen) }}</dd></div>
           <div v-if="data.frozen_adoption"><dt>关账月份</dt><dd>{{ periodText(data.frozen_adoption.close_period) }}</dd></div>
-          <div v-else-if="data.current_business_result"><dt>该金额入账月</dt><dd>{{ periodText(data.current_business_result.posting_period) }}</dd></div>
+          <div v-else-if="!data.detail_scope && data.current_business_result"><dt>该金额入账月</dt><dd>{{ periodText(data.current_business_result.posting_period) }}</dd></div>
         </dl>
         <p v-if="data.settlements.checking && !laborCheckingRepeated(data.settlements)" class="checking">AI 会计核对中，所选月末的收付进度尚不能完整确认。</p>
         <template v-if="laborHistoricalRows.length">
@@ -443,6 +447,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         </template>
       </template>
       <template v-else-if="isActivity || isFunds || isVoucher">
+        <dl v-if="isActivity && data.detail_scope" class="business-amounts"><div><dt>本次{{ data.detail_scope.amount_label }}</dt><dd>{{ ownerMoney(data.detail_scope.amount_fen) }}</dd></div></dl>
         <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
         <p v-else-if="isActivity && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
         <p v-else-if="isVoucher && data.latest_source.deleted">这笔业务目前已撤回；凭证保留历史记录。</p>
@@ -454,7 +459,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         </div>
         <p v-if="isVoucher && data.settlements.checking && !data.settlements.obligations.length" class="checking">AI 会计核对中，所选月末的收付进度暂不能完整确认。</p>
         <template v-if="data.settlements.obligations.length">
-          <h4>{{ isFunds ? '款项进度' : '整笔业务的款项进度' }} · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
+          <h4>{{ isFunds ? '款项进度' : data.detail_scope ? '本项业务的款项进度' : '整笔业务的款项进度' }} · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
           <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
           <table v-for="group in voucherHistoricalGroups" :key="group.key" class="voucher-progress-table" aria-label="所选月末款项进度">
             <colgroup><col class="voucher-progress-name-column" /><col /><col /><col v-if="group.showOther" /><col /><col class="voucher-progress-state-column" /></colgroup>
@@ -523,10 +528,10 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <dl class="business-amounts">
         <div v-if="data.frozen_adoption"><dt>关账月份</dt><dd>{{ data.frozen_adoption.close_period }}</dd></div>
         <div v-else><dt>业务所属月</dt><dd>{{ data.latest_source.period }}</dd></div>
-        <div v-if="businessAmount"><dt>{{ data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ formatFen(businessAmount.amount_fen) }}</dd></div>
-        <div v-if="!data.frozen_adoption && data.current_business_result"><dt>该金额入账月</dt><dd>{{ data.current_business_result.posting_period }}</dd></div>
+        <div v-if="businessAmount"><dt>{{ data.detail_scope ? '本次' : data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ ownerMoney(businessAmount.amount_fen) }}</dd></div>
+        <div v-if="!data.detail_scope && !data.frozen_adoption && data.current_business_result"><dt>该金额入账月</dt><dd>{{ data.current_business_result.posting_period }}</dd></div>
       </dl>
-      <p v-if="!data.frozen_adoption && data.current_business_result">以上是当前业务结果；本月更正或冲回的金额见对应记录。</p>
+      <p v-if="!data.detail_scope && !data.frozen_adoption && data.current_business_result">以上是当前业务结果；本月更正或冲回的金额见对应记录。</p>
       <h4>截至 {{ data.settlements.cutoff_period }} 的收付进展</h4>
       <p v-if="data.settlements.checking" class="checking">AI 会计核对中，已知金额暂不能代表完整结果。</p>
       <DashboardBusinessRecords :items="data.settlements.obligations" :period="period" :show-business="false" />
@@ -538,13 +543,13 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       </template>
       <template v-if="collection?.page.total_count">
         <div class="owner-records-heading">
-          <h4>{{ isFunds ? '相关款项处理' : isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
-          <p v-if="isOwnerDetail">含本业务其他款项 · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
+          <h4>{{ isFunds ? '相关款项处理' : data.detail_scope ? '本项业务的相关收付' : isOwnerDetail ? '这笔业务的相关收付' : '实际清偿记录' }}</h4>
+          <p v-if="isOwnerDetail">{{ data.detail_scope ? '本项款项' : '含本业务其他款项' }} · 截至{{ periodText(data.settlement_view === 'current' ? currentSettlements?.cutoff_period : data.settlements.cutoff_period) }}末</p>
         </div>
-        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ movementPurpose(item.name) }}</template> · {{ movementLabel(item) }}<template v-if="(isFunds || isVoucher || isLabor) && item.relation_state === 'unresolved'"> · AI 会计核对中</template></span><strong>{{ item.relation_state === 'unresolved' && !isFunds && !isVoucher && !isLabor ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
+        <ul><li v-for="item in collection.items" :key="item.id"><span>{{ item.party || '对象未提供' }} · {{ isOwnerDetail ? periodText(item.posting_period) : item.posting_period }}<template v-if="isOwnerDetail"> · {{ item.purpose_label }}</template> · {{ movementLabel(item) }}<template v-if="(isFunds || isVoucher || isLabor) && item.relation_state === 'unresolved'"> · AI 会计核对中</template></span><strong>{{ item.relation_state === 'unresolved' && !isFunds && !isVoucher && !isLabor ? 'AI 会计核对中' : isOwnerDetail ? ownerMoney(item.signed_amount_fen) : formatFen(item.signed_amount_fen) }}</strong></li></ul>
         <DashboardPagination automatic :active="panelOpen" :scope="paginationScope()" @pause="pausePages" :compact="isOwnerDetail" :page="collection.page" :loaded="collection.items.length" :loading="moreLoading" :error="moreError" @more="loadMore" @retry="loadMore" />
       </template>
-      <p v-else-if="isOwnerDetail && !isVoucher">{{ isFunds ? '这笔业务暂无相关款项处理记录。' : '这笔业务暂无相关收付记录。' }}</p>
+      <p v-else-if="isOwnerDetail && !isVoucher && !data.detail_scope">{{ isFunds ? '这笔业务暂无相关款项处理记录。' : '这笔业务暂无相关收付记录。' }}</p>
     </section>
   </details>
 </template>

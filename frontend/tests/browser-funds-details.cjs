@@ -124,7 +124,7 @@ async function run(config) {
     const tax = { ...obligation, key: "synthetic-tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" };
     const event = (subject, n) => ({ id: `${subject}-event-${n}`, subject_id: `synthetic-payment-${n}`, source_subject_id: subject,
       posting_period: config.period, direction: n === 4 ? -1 : 1, signed_amount_fen: n === 4 ? "-10000" : "10000",
-      relation_state: n === 5 ? "unresolved" : "resolved", kind: "payment", name: n % 2 ? "tax" : "net", mode: ["payment", "offset", "advance", "accepted"][n % 4] });
+      relation_state: n === 5 ? "unresolved" : "resolved", kind: "payment", name: n % 2 ? "tax" : "net", purpose_label: n % 2 ? "个人所得税" : "实发工资", party: "演示员工张某", mode: ["payment", "offset", "advance", "accepted"][n % 4] });
     function scope(response, url) {
       response.snapshot_version = snapshot; response.read_context.company_id = url.searchParams.get("company_id");
       const period = url.searchParams.get("period") || config.period;

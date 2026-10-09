@@ -5,7 +5,6 @@ import * as Vue from "vue";
 import { compileScript, parse } from "@vue/compiler-sfc";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
-import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs";
 
 let sequence = 0;
 async function harness(contextValue = null) {
@@ -13,13 +12,13 @@ async function harness(contextValue = null) {
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/import[\s\S]*?from "[^"]+";/g, "");
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02" } });
-  const environment = { Vue, route, context: Vue.ref(contextValue), appendDashboardCollection, createBriefOpenItemGrouping, calls: [], contextCalls: [], unmount: [] };
+  const environment = { Vue, route, context: Vue.ref(contextValue), appendDashboardCollection, calls: [], contextCalls: [], unmount: [] };
   const key = `briefVoucherLoading${++sequence}`;
   globalThis[key] = environment;
   const { outputText } = ts.transpileModule(`const environment = globalThis.${key};
     export function instantiate() {
       const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
-      const { appendDashboardCollection, createBriefOpenItemGrouping } = environment;
+      const { appendDashboardCollection } = environment;
       const useRoute = () => environment.route;
       const useRouter = () => ({ replace() {}, push() {} });
       const useDashboardContext = () => ({ context: environment.context, load: async () => null,

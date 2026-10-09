@@ -145,6 +145,7 @@ def command_models(registry):
         "display_profiles": Display.display_profiles,
         "dashboard_context": LocalService.dashboard_context,
         "dashboard_brief": Dashboard.brief,
+        "dashboard_brief_group": Dashboard.brief_group,
         "dashboard_funds": Dashboard.funds,
         "dashboard_employees": Dashboard.employees,
         "dashboard_assets": Dashboard.assets,

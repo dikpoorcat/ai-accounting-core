@@ -21,7 +21,7 @@ test("closed-period open items prefer each item's current settlement status", as
       "/src/components/brief/BriefOpenItems.vue",
     );
     const item = (id, party, currentStatus) => ({
-      id,
+      id, group_key: id, member_count: 1,
       voucher: "",
       party_key: id,
       party,
@@ -74,10 +74,10 @@ test("closed-period open items prefer each item's current settlement status", as
     assert.match(html, /class="status business-list-state"[^>]*>当前待收<\/span>/);
     assert.match(html, /class="status business-list-state status-settled"[^>]*>当前已收回<\/span>/);
     assert.match(html, /class="status business-list-state status-historical"[^>]*>关账时待收<\/span>/);
-    assert.equal((html.match(/<details\b[^>]*class="[^"]*\bbusiness-status-details\b[^"]*"/g) ?? []).length, 3);
-    assert.equal((html.match(/class="[^"]*\bcompact-status-trigger\b[^"]*"/g) ?? []).length, 3);
+    assert.equal((html.match(/<details\b[^>]*class="[^"]*\bbusiness-status-details\b[^"]*"/g) ?? []).length, 0);
+    assert.equal((html.match(/class="[^"]*\bcompact-status-trigger\b[^"]*"/g) ?? []).length, 0);
     assert.equal((html.match(/role="button" tabindex="0" aria-expanded="false"/g) ?? []).length, 3);
-    assert.equal((html.match(/compact-status-trigger hidden-summary/g) ?? []).length, 3);
+    assert.equal((html.match(/compact-status-trigger hidden-summary/g) ?? []).length, 0);
     assert.doesNotMatch(html, /column-action|settlement-progress/);
     assert.doesNotMatch(html, /业务月份|业务月份未提供/);
     assert.doesNotMatch(html, /精确来源与候选依据/);
@@ -87,11 +87,46 @@ test("closed-period open items prefer each item's current settlement status", as
 });
 
 
+test("supplier advance rows label their historical balance as money awaiting offset", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefOpenItems.vue");
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=co&period=2026-09");
+    const categories = [
+      { key: "supplier_advances", label: "待冲抵供应商预付款", direction: "receivable", expected: { open: "待冲抵", closed: "关账时待冲抵" } },
+      { key: "customer_receivables", label: "待收客户款", direction: "receivable", expected: { open: "待收", closed: "应收" } },
+      { key: "supplier_payables", label: "待付供应商款", direction: "payable", expected: { open: "待付", closed: "应付" } },
+    ];
+    for (const periodStatus of ["open", "closed"]) for (const scenario of categories) {
+      const { expected, ...category } = scenario;
+      const app = createSSRApp(component, {
+        openItems: { complete: true, cutoff_period: "2026-09", current_cutoff_period: "2026-10", receivable_count: category.direction === "receivable" ? 1 : 0, receivable_fen: category.direction === "receivable" ? "10000" : "0", payable_count: category.direction === "payable" ? 1 : 0, payable_fen: category.direction === "payable" ? "10000" : "0", total_count: 1, categories: [{ ...category, unit: "笔", count: 1, loaded_count: 1, outstanding_fen: "10000" }] },
+        items: [{ id: "selected", group_key: "selected", member_count: 1, category_key: category.key, party: "合成往来方", description: "合成款项", status: "open", source_amount_fen: "10000", paid_fen: "0", other_settled_fen: "0", outstanding_fen: "10000", current_status: "settled", current_outstanding_fen: "0", subject_id: null, contribution_group_key: null, contribution_component: null, payroll_period: null }],
+        periodLabel: "2026年9月", period: "2026-09", periodStatus,
+      });
+      app.use(router);
+      const html = await renderToString(app);
+      const label = expected[periodStatus];
+      const heading = html.match(/<span class="column-money"[^>]*>([^<]+)<\/span>/)[1];
+      const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0];
+      assert.equal(heading, `${label}金额`);
+      assert.match(money, new RegExp(`<small[^>]*>${label}</small>`));
+      assert.match(money, /¥100\.00/);
+      assert.doesNotMatch(money, /¥0\.00/);
+      if (category.key === "supplier_advances") {
+        assert.doesNotMatch(money, /待收|应收|待付|应付/);
+        assert.match(html, /当前已处理完毕/);
+      }
+    }
+  } finally { await server.close(); }
+});
+
+
 test("open-item rows control a single expansion and collapse on each scope change", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
     const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefOpenItems.vue");
-    const items = ["a", "b", "no-id"].map(id => ({ id, category_key: "payroll_payables", party: id, description: "工资", subject_id: id === "no-id" ? null : id, status: "partial", outstanding_fen: "200000", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0" }));
+    const items = ["a", "b", "no-id"].map(id => ({ id, group_key: id, member_count: 1, category_key: "payroll_payables", party: id, description: "工资", subject_id: id === "no-id" ? null : id, status: "partial", outstanding_fen: "200000", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0" }));
     const props = reactive({ items, period: "2026-09", periodLabel: "9月", periodStatus: "open", snapshotVersion: "v1", openItems: { categories: [{ key: "payroll_payables", direction: "payable", label: "待付工资", count: 3, unit: "笔", outstanding_fen: "600000" }], total_count: 3, cutoff_period: "2026-09", current_cutoff_period: "2026-09" } });
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
     let state;
@@ -102,14 +137,14 @@ test("open-item rows control a single expansion and collapse on each scope chang
     state.itemKeydown(items[0], event("Enter")); assert.equal(state.expandedItemId.value, "a");
     state.itemKeydown(items[1], event(" ")); assert.equal(state.expandedItemId.value, "b");
     state.itemKeydown(items[1], { ...event("Enter"), target: {} }); assert.equal(state.expandedItemId.value, "b");
-    state.toggleItem(items[2], event("Enter")); assert.equal(state.expandedItemId.value, "b");
+    state.toggleItem(items[2], event("Enter")); assert.equal(state.expandedItemId.value, "no-id");
     for (const change of [() => props.snapshotVersion = "v2", () => props.period = "2026-10", () => state.selectedCategoryKey.value = "different", () => router.push("/?company_id=b")]) {
       state.toggleItem(items[0], event("Enter")); assert.equal(state.expandedItemId.value, "a"); await change(); await nextTick(); assert.equal(state.expandedItemId.value, "");
     }
     app.unmount();
     const view = createSSRApp(component, props); view.use(router); const html = await renderToString(view);
-    assert.equal((html.match(/role="button" tabindex="0"/g) ?? []).length, 2);
-    assert.equal((html.match(/class="row-chevron/g) ?? []).length, 2);
+    assert.equal((html.match(/role="button" tabindex="0"/g) ?? []).length, 3);
+    assert.equal((html.match(/class="row-chevron/g) ?? []).length, 3);
     assert.doesNotMatch(html, /原金额|settlement-progress/);
   } finally { await server.close(); }
 });

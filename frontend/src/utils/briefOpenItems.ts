@@ -1,4 +1,4 @@
-import type { BriefOpenItem, BriefOpenItems } from "../api/brief";
+import type { BriefOpenItem } from "../api/brief";
 
 export type ContributionComponent = NonNullable<BriefOpenItem["contribution_component"]>;
 export type BriefOpenRow = BriefOpenItem & { contributionMembers?: BriefOpenItem[]; contributionNotices?: string[] };
@@ -51,72 +51,19 @@ export function payrollMonthLabel(period: string) {
   return `${year}年${Number(month)}月`;
 }
 
-type OpenItemDisplay = { items: BriefOpenRow[]; summary: BriefOpenItems };
-
-export function createBriefOpenItemGrouping(makeRows: () => BriefOpenRow[] = () => []) {
-  let source: BriefOpenItem[] | null = null, loaded = 0;
-  let rows = makeRows();
+// This only prepares the four contribution components within an already read group.
+// Root display groups and their totals always come from the server.
+export function groupContributionMembers(items: BriefOpenItem[]): BriefOpenRow[] {
   const groups = new Map<string, BriefOpenRow>();
-  let previousSummary: BriefOpenItems | null = null, previousComplete = false;
-  let result: OpenItemDisplay | null = null;
-  return (summary: BriefOpenItems, items: BriefOpenItem[], complete: boolean): OpenItemDisplay => {
-    // A new raw collection is a new read scope; continuations append to the same array.
-    if (source !== items || items.length < loaded) {
-      source = items; loaded = 0; rows = makeRows(); groups.clear(); result = null;
-    }
-    if (result && loaded === items.length && previousSummary === summary && previousComplete === complete) return result;
-    for (let index = loaded; index < items.length; index++) {
-      const item = items[index]!;
-      if (item.category_key !== "payroll_payables" || !item.contribution_group_key || !item.payroll_period
-        || !contributionComponents.some(component => component.key === item.contribution_component)) {
-        rows.push(item);
-        continue;
-      }
-      // Both fields are formal metadata; the month also guards inconsistent response metadata.
-      const key = JSON.stringify([item.contribution_group_key, item.payroll_period]);
-      const existing = groups.get(key);
-      if (existing) existing.contributionMembers!.push(item);
-      else {
-        const row: BriefOpenRow = { ...item, id: `contribution:${key}`, subject_id: null,
-          description: "社保与公积金", contributionMembers: [item],
-          source_amount_fen: null, paid_fen: null, other_settled_fen: null, outstanding_fen: null,
-          current_outstanding_fen: null, current_status: null };
-        groups.set(key, row); rows.push(row);
-      }
-    }
-    loaded = items.length;
-    previousSummary = summary; previousComplete = complete;
-    result = finishGrouping(summary, rows, groups, complete);
-    return result;
-  };
-}
-
-function finishGrouping(summary: BriefOpenItems, rows: BriefOpenRow[], groups: Map<string, BriefOpenRow>, complete: boolean): OpenItemDisplay {
-  if (!complete) return { items: rows, summary };
-  for (const row of groups.values()) {
-    const members = row.contributionMembers!;
-    row.source_amount_fen = sum(members, "source_amount_fen");
-    row.paid_fen = sum(members, "paid_fen");
-    row.other_settled_fen = sum(members, "other_settled_fen");
-    row.outstanding_fen = sum(members, "outstanding_fen");
-    row.current_outstanding_fen = sum(members, "current_outstanding_fen");
-    row.status = combinedStatus(members);
-    row.current_status = combinedStatus(members, true);
-    row.contributionNotices = settlementNotices(members, row.current_status, true);
+  for (const item of items) {
+    if (item.category_key !== "payroll_payables" || !item.contribution_group_key || !item.payroll_period
+      || !contributionComponents.some(component => component.key === item.contribution_component)) continue;
+    const key = JSON.stringify([item.contribution_group_key, item.payroll_period]);
+    const group = groups.get(key);
+    if (group) group.contributionMembers!.push(item);
+    else groups.set(key, { ...item, id: `contribution:${key}`, subject_id: null, contributionMembers: [item] });
   }
-  const categoryCounts = new Map<string, number>();
-  for (const row of rows) categoryCounts.set(row.category_key, (categoryCounts.get(row.category_key) ?? 0) + 1);
-  const categories = summary.categories.map(category => {
-    const count = categoryCounts.get(category.key) ?? 0;
-    return { ...category, count, loaded_count: count };
-  });
-  const receivableCount = categories.filter(category => category.direction === "receivable").reduce((count, category) => count + category.count, 0);
-  const payableCount = categories.filter(category => category.direction === "payable").reduce((count, category) => count + category.count, 0);
-  return { items: rows, summary: { ...summary, categories, receivable_count: receivableCount, payable_count: payableCount, total_count: rows.length } };
-}
-
-export function groupBriefOpenItems(summary: BriefOpenItems, items: BriefOpenItem[], complete: boolean): OpenItemDisplay {
-  return createBriefOpenItemGrouping()(summary, items, complete);
+  return [...groups.values()];
 }
 
 export interface ContributionProgressRow {

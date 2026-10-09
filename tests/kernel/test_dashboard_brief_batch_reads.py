@@ -37,10 +37,10 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
     response = Dashboard(engine).brief(
-        "2026-09", limit=30, voucher_number=31, preparation="deferred"
+        "2026-09", section="vouchers", limit=30, voucher_number=31, preparation="deferred"
     )
     data = response["data"]
-    page = data["collections"]["activity"]
+    page = data["collections"]["vouchers"]
     assert page["page"]["total_count"] == 31
     assert page["page"]["returned_count"] == len(page["items"]) == 30
     assert {item["subject_id"] for item in page["items"]} == {
@@ -53,7 +53,7 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
     for item in [*page["items"], data["focused_activity"]]:
         assert item["amount_fen"] == 1
         assert item["group"] == "financing_owner"
-        assert {"components", "evidence", "lines"}.isdisjoint(item)
+        assert {"components", "evidence"}.isdisjoint(item)
     assert (
         sum(
             count

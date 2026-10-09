@@ -17,11 +17,11 @@ function scenario(changes = {}, currentChanges = {}) {
   data.settlements = { cutoff_period: "2026-09", status: "established", checking: false, obligations: [obligation(changes), obligation({ key: "different-tax", name: "tax", remaining_fen: "12345678" })] };
   data.current_followups.settlements = { ...data.settlements, cutoff_period: "2026-10", obligations: [obligation({ paid_fen: "800000", remaining_fen: "0", settlement_status: "settled", ...currentChanges })] };
   data.collections.settlement_events.items = [
-    { id: "payment", name: "net", mode: "payment", posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen: "600000" },
-    { id: "offset", name: "tax", mode: "offset", posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen: "12300" },
-    { id: "accepted", name: "employee_social", mode: "accepted", posting_period: "2026-10", direction: 1, relation_state: "resolved", signed_amount_fen: "45600" },
-    { id: "advance", name: "employer_social", mode: "advance", posting_period: "2026-10", direction: 1, relation_state: "resolved", signed_amount_fen: "78900" },
-    { id: "correction", name: "net", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-600000" },
+    { id: "payment", name: "net", purpose_label: "实发工资", mode: "payment", posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen: "600000" },
+    { id: "offset", name: "tax", purpose_label: "个人所得税", mode: "offset", posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen: "12300" },
+    { id: "accepted", name: "employee_social", purpose_label: "个人社保", mode: "accepted", posting_period: "2026-10", direction: 1, relation_state: "resolved", signed_amount_fen: "45600" },
+    { id: "advance", name: "employer_social", purpose_label: "公司社保", mode: "advance", posting_period: "2026-10", direction: 1, relation_state: "resolved", signed_amount_fen: "78900" },
+    { id: "correction", name: "net", purpose_label: "实发工资", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-600000" },
   ];
   data.collections.settlement_events.page = { total_count: 5, filtered_count: 5, returned_count: 5, has_more: false, next_cursor: null };
   return data;

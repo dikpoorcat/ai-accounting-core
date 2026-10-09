@@ -6,6 +6,7 @@ import test_payroll_corrections as payroll_corrections
 import test_platforms as platforms
 import test_reimbursement_assets as reimbursement_assets
 from entity_fixture import seed_entities
+from test_dashboard_voucher_adapter import activity_members
 from test_opening_continuation import book as _opening_book
 from test_payroll import payroll
 from test_payroll_corrections import payment
@@ -54,7 +55,7 @@ def display_profile(engine, kind, entity_id, **fields):
 def voucher(engine, period, subject):
     return next(
         row
-        for row in Dashboard(engine).brief(period)["data"]["collections"]["activity"]["items"]
+        for row in activity_members(engine, period)
         if row["subject_id"] == subject and row["state"] == "已入账"
     )
 
@@ -103,13 +104,15 @@ def test_activity_omits_repeated_party_and_keeps_purpose_and_full_voucher_summar
     )
     before = engine.ledger("2026-09")
     data = Dashboard(engine).brief("2026-09")["data"]
-    row = data["collections"]["activity"]["items"][0]
+    row = activity_members(engine, "2026-09")[0]
+    assert "vouchers" not in data["collections"]
     assert row["title"] == "办公用品采购"
     assert row["description"] == (
         "办公用品采购（2026-09）；供研发办公室日常使用；已核对本次采购清单"
     )
     assert row["party"] == "甲办公用品店"
-    assert data["collections"]["vouchers"]["items"][0]["summary"] == (
+    full = Dashboard(engine).brief("2026-09", section="vouchers")
+    assert full["data"]["collections"]["vouchers"]["items"][0]["summary"] == (
         "办公用品采购（2026-09） · 甲办公用品店；供研发办公室日常使用；已核对本次采购清单"
     )
     assert row["amount_fen"] == 1000
@@ -230,7 +233,7 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     company.save(payroll(accounting_gross_salary_fen=1100000), "january", revision=1)
     company.confirm_payroll("january")
     company.publish("january", posting_period="2026-02")
-    rows = Dashboard(company.engine).brief("2026-02")["data"]["collections"]["activity"]["items"]
+    rows = activity_members(company.engine, "2026-02")
     reversal = next(
         row for row in rows if row["subject_id"] == "january" and row["state"] == "更正原业务"
     )
@@ -387,7 +390,7 @@ def test_offset_changes_obligations_without_presenting_company_money(bank_book):
     publish("office", "prepayment", "offset")
     data = Dashboard(engine).brief("2026-09")["data"]
     row = next(
-        row for row in data["collections"]["activity"]["items"] if row["subject_id"] == "offset"
+        row for row in activity_members(engine, "2026-09") if row["subject_id"] == "offset"
     )
     assert row["title"] == "款项抵销"
     assert row["amount_fen"] == 15000

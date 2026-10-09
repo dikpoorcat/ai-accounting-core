@@ -1,30 +1,24 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
 import { requestGeneratedJson } from "./client";
 import type { DashboardBriefContract, DashboardBriefResponse } from "./generated/dashboardBrief";
+import type { DashboardBriefGroupContract } from "./generated/dashboardBriefGroup";
 import { validateDashboardBriefResponse } from "./generated/dashboardBrief.js";
 
 export type BriefResponse = DashboardBriefResponse;
 export type BriefData = DashboardBriefContract.BriefData;
 export type BriefActivityGroup = DashboardBriefContract.BriefActivityGroup;
+export type BriefActivityDisplayGroup = DashboardBriefContract.BriefActivityDisplayGroup;
+export type BriefOpenDisplayGroup = DashboardBriefContract.BriefOpenDisplayGroup;
 export type BriefActivityRow = DashboardBriefContract.BriefActivityRow;
 export type BriefOpenItems = DashboardBriefContract.BriefOpenSummary;
 export type BriefOpenCategory = DashboardBriefContract.BriefOpenCategory;
-export type BriefOpenItem = DashboardBriefContract.BriefOpenItem;
+export type BriefOpenItem = DashboardBriefGroupContract.BriefOpenItem;
 export type BriefVoucher = DashboardBriefContract.OwnerBriefVoucher;
 
 export interface BriefQuery extends DashboardPageQuery {
   section?: "activity" | "open_items" | "vouchers";
   voucher_version_id?: string;
   voucher_number?: number;
-}
-
-function pairedActivityVouchers(data: BriefData | null) {
-  if (data === null) return true;
-  const activity = data.collections.activity, vouchers = data.collections.vouchers;
-  if (!activity || !vouchers) return false;
-  const ids = [...new Set(activity.items.flatMap(item => item.voucher_version_id ? [item.voucher_version_id] : []))];
-  return ids.length === vouchers.items.length
-    && ids.every((id, index) => vouchers.items[index]?.voucher_version_id === id);
 }
 
 function matchesRequest(url: URL, response: DashboardBriefResponse) {
@@ -40,7 +34,6 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
     && (period === null || response.selected_period?.key === period)
     && (expectedVersion === null || response.snapshot_version === expectedVersion)
     && (section === null || (response.data !== null && section in response.data.collections))
-    && ((section !== null && section !== "activity") || pairedActivityVouchers(response.data))
     && (response.data === null || voucherVersionId === null || response.data.focused_voucher?.voucher_version_id === voucherVersionId)
     && (response.data === null || voucherNumber === null || response.data.focused_voucher?.number === voucherNumber);
 }

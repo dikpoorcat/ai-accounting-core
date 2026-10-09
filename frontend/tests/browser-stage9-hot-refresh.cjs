@@ -42,7 +42,7 @@ const modules = [
   { key: "reports", path: "/reports", action: "quarterly-report", heading: "季度财务报表", visible: "#report-overview, .summary-grid, #report-statements" },
 ];
 const defaultCollections = {
-  brief: ["activity", "vouchers", "open_items"],
+  brief: responseVersions.dashboard_brief >= 16 ? ["activity", "open_items"] : ["activity", "vouchers", "open_items"],
   funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
   employees: ["employees", "labor_sources"],
   assets: ["assets", "projects"],
@@ -413,9 +413,15 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
     if (!section) {
       assert(payload.data.financial_position && payload.data.workforce_cost, "brief: main financial/workforce summaries missing");
       verifyLongTermAssets(payload.data.long_term_assets);
-      assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
-      assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
-      if (requireVouchers) assert(vouchers.page.total_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
+      if (payload.schema_version >= 16) {
+        assert.equal(vouchers, undefined, "brief: default refresh preloaded independent vouchers");
+        assert.equal(activity.page.total_count, payload.data.group_count, "brief: activity group total lost");
+        assert.equal(payload.data.collections.open_items.page.total_count, payload.data.open_items.group_count, "brief: open group total lost");
+      } else {
+        assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
+        assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
+      }
+      if (requireVouchers) assert(payload.data.voucher_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
     }
     for (const voucher of vouchers?.items ?? []) verifyVoucher(voucher);
     if (payload.data.focused_voucher) verifyVoucher(payload.data.focused_voucher);
@@ -643,7 +649,7 @@ async function run(config) {
       assert.equal((await page.locator("#employees-count-value").textContent())?.replace(/\s/g, ""),
         `${data.employees.in_period_count}人`, "employees: confirmed in-period headcount differs from full summary");
       assert.equal(await page.locator(".employee-grid").first().locator(".employee-card").count(), data.collections.employees.items.length, "employees: default employee rows incomplete");
-      assert.equal(await page.locator("section:has(> #labor-title) .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
+      assert.equal(await page.locator("[aria-label='个人劳务明细记录'] .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
     } else if (module.key === "assets") {
       assert.equal(await page.locator(".asset-grid .asset-card").count(), data.collections.assets.items.length, "assets: default asset rows incomplete");
       assert.equal(await page.locator(".project-card").count(), data.collections.projects.items.length, "assets: default project rows incomplete");

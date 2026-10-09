@@ -5,6 +5,7 @@ import json
 import pytest
 from entity_fixture import save_entity_display_profile, seed_entities
 from test_dashboard_projection import diagnostic_open_items, diagnostic_vouchers
+from test_dashboard_voucher_adapter import activity_members
 from test_engine import close, publish, save
 from test_engine import engine as engine  # noqa: F401
 from test_payroll_corrections import company as company  # noqa: F401
@@ -112,7 +113,10 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert management["metadata"]["description"] == "后来补齐备注"
     assert management["field_sources"]["description"]["id"] == note["id"]
     assert voucher["field_sources"]["list_summary"]["id"] == business["id"]
-    activity = brief["collections"]["activity"]["items"][0]
+    group = brief["collections"]["activity"]["items"][0]
+    assert group["title"] == "工资计提"
+    assert "vouchers" not in brief["collections"]
+    activity = activity_members(company.engine, "2026-01")[0]
     assert activity["title"] == voucher["list_summary"] == "原业务"
     assert activity["party"] == "原姓名"
     assert activity["description"] == "原业务（2026-01）；后来补齐备注"

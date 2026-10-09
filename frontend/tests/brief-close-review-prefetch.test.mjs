@@ -5,7 +5,6 @@ import * as Vue from "vue";
 import { parse } from "@vue/compiler-sfc";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
-import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs";
 
 const source = readFileSync(new URL("../src/components/CloseReviewPanel.vue", import.meta.url), "utf8");
 const script = parse(source).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "");
@@ -112,13 +111,13 @@ async function briefHarness() {
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02" } });
   const calls = [], unmount = [];
   const context = Vue.ref({ current_company: { company_id: "a" }, periods: [{ key: "2026-02" }] });
-  const environment = { Vue, route, calls, unmount, context, appendDashboardCollection, createBriefOpenItemGrouping };
+  const environment = { Vue, route, calls, unmount, context, appendDashboardCollection };
   const key = `briefReview${++sequence}`;
   globalThis[key] = environment;
   const { outputText } = ts.transpileModule(`const environment = globalThis.${key};
     export function instantiate() {
       const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
-      const { appendDashboardCollection, createBriefOpenItemGrouping } = environment;
+      const { appendDashboardCollection } = environment;
       const useRoute = () => environment.route;
       const useRouter = () => ({ replace() {}, push() {} });
       const useDashboardContext = () => ({ context: environment.context, load: async () => environment.context.value, refresh: async () => environment.context.value });

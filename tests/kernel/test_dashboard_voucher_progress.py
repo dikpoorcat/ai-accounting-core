@@ -193,7 +193,7 @@ def test_checked_obligation_shortcut_still_rejects_damaged_selected_source(
     _source_obligation(engine, monkeypatch)
     save(engine, subject="source")
     publish(engine, ["source"])
-    assert Dashboard(engine).brief("2026-01")["data"]["collections"]["vouchers"]["items"][0]["has_business_progress"] is True
+    assert Dashboard(engine).brief("2026-01", section="vouchers")["data"]["collections"]["vouchers"]["items"][0]["has_business_progress"] is True
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT id,fact_id,outcome FROM calculation WHERE subject_id='source'").fetchone()
     if broken == "outcome":
@@ -210,6 +210,10 @@ def test_checked_obligation_shortcut_still_rejects_damaged_selected_source(
     with pytest.raises(KernelError) as failure:
         Dashboard(engine).brief("2026-01", section="vouchers", limit=1)
     assert failure.value.code == "content_integrity_failed"
+    # The default grouped summary retains the same source trust checks.
+    with pytest.raises(KernelError) as grouped_failure:
+        Dashboard(engine).brief("2026-01", limit=1)
+    assert grouped_failure.value.code == "content_integrity_failed"
 
 
 def test_page_progress_does_not_expand_offpage_payments_for_checked_source(
@@ -319,7 +323,7 @@ def test_closed_and_open_replacement_profiles_use_selected_adoption(engine):
     save(engine, amount=125, revision=1, request="replace")
     publish(engine, request="replacement", posting_period="2026-02")
     for period in ("2026-01", "2026-02"):
-        vouchers = Dashboard(engine).brief(period)["data"]["collections"]["vouchers"]["items"]
+        vouchers = Dashboard(engine).brief(period, section="vouchers")["data"]["collections"]["vouchers"]["items"]
         assert all(item["has_business_progress"] is False for item in vouchers)
 
 
@@ -343,7 +347,7 @@ def test_new_obligation_respects_historical_source_cutoff(engine, monkeypatch, c
     publish(engine, request="new-obligation", posting_period="2026-02" if closed else None)
     dashboard = Dashboard(engine)
     status = dashboard.business_status("2026-01", "charge")["data"]
-    vouchers = dashboard.brief("2026-01")["data"]["collections"]["vouchers"]["items"]
+    vouchers = dashboard.brief("2026-01", section="vouchers")["data"]["collections"]["vouchers"]["items"]
     # An open replacement belongs to this month. A future source is outside
     # this historical month even in its current settlement followup view.
     assert bool(status["settlements"]["obligations"]) is (not closed)

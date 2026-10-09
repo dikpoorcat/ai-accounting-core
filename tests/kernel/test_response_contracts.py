@@ -52,7 +52,8 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     brief = samples["brief"]["response"]["data"]
     assert {"financial_position", "workforce_cost"} <= brief.keys()
     assert "adopted_basis" not in brief
-    vouchers = brief["collections"]["vouchers"]
+    assert "vouchers" not in brief["collections"]
+    vouchers = samples["brief_vouchers"]["response"]["data"]["collections"]["vouchers"]
     assert vouchers["page"]["returned_count"] == len(vouchers["items"])
     assert brief["voucher_count"] == brief["activity_count"]
     for voucher in vouchers["items"]:
@@ -70,7 +71,7 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
 
 @pytest.mark.parametrize("value", [None, "true", 1])
 def test_brief_voucher_progress_is_required_strict_boolean(samples, value):
-    response = copy.deepcopy(samples["brief"]["response"])
+    response = copy.deepcopy(samples["brief_vouchers"]["response"])
     voucher = response["data"]["collections"]["vouchers"]["items"][0]
     voucher["has_business_progress"] = value
     with pytest.raises(KernelError):
@@ -84,13 +85,13 @@ def test_brief_voucher_progress_is_required_strict_boolean(samples, value):
     "contribution_group_key", "contribution_component", "payroll_period"
 ])
 def test_brief_contribution_metadata_is_required_and_nullable(samples, field):
-    response = copy.deepcopy(samples["brief_payroll_open_items"]["response"])
-    item = response["data"]["collections"]["open_items"]["items"][0]
+    response = copy.deepcopy(samples["brief_payroll_members"]["response"])
+    item = response["data"]["collections"]["members"]["items"][0]
     item[field] = None
-    assert validate_response("dashboard_brief", response) == response
+    assert validate_response("dashboard_brief_group", response) == response
     del item[field]
     with pytest.raises(KernelError):
-        validate_response("dashboard_brief", response)
+        validate_response("dashboard_brief_group", response)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -100,10 +101,10 @@ def test_brief_contribution_metadata_is_required_and_nullable(samples, field):
     ("payroll_period", "2026-01-01"),
 ])
 def test_brief_rejects_invalid_contribution_metadata(samples, field, value):
-    response = copy.deepcopy(samples["brief_payroll_open_items"]["response"])
-    response["data"]["collections"]["open_items"]["items"][0][field] = value
+    response = copy.deepcopy(samples["brief_payroll_members"]["response"])
+    response["data"]["collections"]["members"]["items"][0][field] = value
     with pytest.raises(KernelError):
-        validate_response("dashboard_brief", response)
+        validate_response("dashboard_brief_group", response)
 
 
 @pytest.mark.parametrize("path", [

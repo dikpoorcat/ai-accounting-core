@@ -4348,6 +4348,117 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "BriefActivityDisplayGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "member_count": {
+            "minimum": 0,
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "voucher_count": {
+            "minimum": 0,
+            "title": "Voucher Count",
+            "type": "integer"
+          },
+          "amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "amount_label": {
+            "title": "Amount Label",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "date_from": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date From"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date To"
+          },
+          "has_month_recognition": {
+            "title": "Has Month Recognition",
+            "type": "boolean"
+          },
+          "is_batch": {
+            "title": "Is Batch",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "group_key",
+          "group",
+          "kind",
+          "party",
+          "title",
+          "member_count",
+          "voucher_count",
+          "amount_fen",
+          "amount_label",
+          "state",
+          "date_from",
+          "date_to",
+          "has_month_recognition",
+          "is_batch"
+        ],
+        "title": "BriefActivityDisplayGroup",
+        "type": "object"
+      },
       "BriefActivityGroup": {
         "additionalProperties": false,
         "properties": {
@@ -4364,6 +4475,11 @@
             "title": "Event Count",
             "type": "integer"
           },
+          "group_count": {
+            "minimum": 0,
+            "title": "Group Count",
+            "type": "integer"
+          },
           "type_counts": {
             "items": {
               "$ref": "#/$defs/ActivityTypeCount"
@@ -4376,6 +4492,7 @@
           "key",
           "label",
           "event_count",
+          "group_count",
           "type_counts"
         ],
         "title": "BriefActivityGroup",
@@ -4388,6 +4505,10 @@
             "title": "Key",
             "type": "string"
           },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
           "subject_id": {
             "title": "Subject Id",
             "type": "string"
@@ -4395,6 +4516,22 @@
           "voucher_version_id": {
             "title": "Voucher Version Id",
             "type": "string"
+          },
+          "detail_scope_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Scope Category"
+          },
+          "voucher_number": {
+            "minimum": 0,
+            "title": "Voucher Number",
+            "type": "integer"
           },
           "date": {
             "anyOf": [
@@ -4451,8 +4588,11 @@
         },
         "required": [
           "key",
+          "group_key",
           "subject_id",
           "voucher_version_id",
+          "detail_scope_category",
+          "voucher_number",
           "date",
           "recognition",
           "title",
@@ -4521,13 +4661,13 @@
         "additionalProperties": false,
         "properties": {
           "activity": {
-            "$ref": "#/$defs/Collection_BriefActivityRow_"
+            "$ref": "#/$defs/Collection_BriefActivityDisplayGroup_"
           },
           "vouchers": {
             "$ref": "#/$defs/Collection_OwnerBriefVoucher_"
           },
           "open_items": {
-            "$ref": "#/$defs/Collection_BriefOpenItem_"
+            "$ref": "#/$defs/Collection_BriefOpenDisplayGroup_"
           }
         },
         "title": "BriefCollections",
@@ -4567,10 +4707,25 @@
             "title": "Activity Count",
             "type": "integer"
           },
+          "group_count": {
+            "minimum": 0,
+            "title": "Group Count",
+            "type": "integer"
+          },
           "focused_activity": {
             "anyOf": [
               {
                 "$ref": "#/$defs/BriefActivityRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "focused_activity_group": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BriefActivityDisplayGroup"
               },
               {
                 "type": "null"
@@ -4641,7 +4796,9 @@
           "owner_review_request",
           "management_commentary_details",
           "activity_count",
+          "group_count",
           "focused_activity",
+          "focused_activity_group",
           "voucher_count",
           "focused_voucher",
           "activity_groups",
@@ -5182,6 +5339,11 @@
             "title": "Count",
             "type": "integer"
           },
+          "group_count": {
+            "minimum": 0,
+            "title": "Group Count",
+            "type": "integer"
+          },
           "loaded_count": {
             "minimum": 0,
             "title": "Loaded Count",
@@ -5207,17 +5369,22 @@
           "direction",
           "unit",
           "count",
+          "group_count",
           "loaded_count",
           "outstanding_fen"
         ],
         "title": "BriefOpenCategory",
         "type": "object"
       },
-      "BriefOpenItem": {
+      "BriefOpenDisplayGroup": {
         "additionalProperties": false,
         "properties": {
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
             "type": "string"
           },
           "category_key": {
@@ -5232,9 +5399,10 @@
             "title": "Description",
             "type": "string"
           },
-          "status": {
-            "title": "Status",
-            "type": "string"
+          "member_count": {
+            "minimum": 0,
+            "title": "Member Count",
+            "type": "integer"
           },
           "source_amount_fen": {
             "anyOf": [
@@ -5288,17 +5456,6 @@
             ],
             "title": "Outstanding Fen"
           },
-          "current_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Status"
-          },
           "current_outstanding_fen": {
             "anyOf": [
               {
@@ -5312,18 +5469,11 @@
             ],
             "title": "Current Outstanding Fen"
           },
-          "subject_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subject Id"
+          "status": {
+            "title": "Status",
+            "type": "string"
           },
-          "contribution_group_key": {
+          "current_status": {
             "anyOf": [
               {
                 "type": "string"
@@ -5332,61 +5482,35 @@
                 "type": "null"
               }
             ],
-            "title": "Contribution Group Key"
-          },
-          "contribution_component": {
-            "anyOf": [
-              {
-                "enum": [
-                  "employee_social",
-                  "employer_social",
-                  "employee_housing",
-                  "employer_housing"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Contribution Component"
-          },
-          "payroll_period": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payroll Period"
+            "title": "Current Status"
           }
         },
         "required": [
           "id",
+          "group_key",
           "category_key",
           "party",
           "description",
-          "status",
+          "member_count",
           "source_amount_fen",
           "paid_fen",
           "other_settled_fen",
           "outstanding_fen",
-          "current_status",
           "current_outstanding_fen",
-          "subject_id",
-          "contribution_group_key",
-          "contribution_component",
-          "payroll_period"
+          "status",
+          "current_status"
         ],
-        "title": "BriefOpenItem",
+        "title": "BriefOpenDisplayGroup",
         "type": "object"
       },
       "BriefOpenSummary": {
         "additionalProperties": false,
         "properties": {
+          "group_count": {
+            "minimum": 0,
+            "title": "Group Count",
+            "type": "integer"
+          },
           "receivable_count": {
             "minimum": 0,
             "title": "Receivable Count",
@@ -5451,6 +5575,7 @@
           }
         },
         "required": [
+          "group_count",
           "receivable_count",
           "receivable_fen",
           "payable_count",
@@ -5735,12 +5860,12 @@
         "title": "CollectionPage",
         "type": "object"
       },
-      "Collection_BriefActivityRow_": {
+      "Collection_BriefActivityDisplayGroup_": {
         "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/$defs/BriefActivityRow"
+              "$ref": "#/$defs/BriefActivityDisplayGroup"
             },
             "title": "Items",
             "type": "array"
@@ -5756,12 +5881,12 @@
         "title": "Collection",
         "type": "object"
       },
-      "Collection_BriefOpenItem_": {
+      "Collection_BriefOpenDisplayGroup_": {
         "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/$defs/BriefOpenItem"
+              "$ref": "#/$defs/BriefOpenDisplayGroup"
             },
             "title": "Items",
             "type": "array"
@@ -6615,7 +6740,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 15,
+        "const": 17,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -6666,6 +6791,1191 @@
       "data"
     ],
     "title": "DashboardBriefResponse",
+    "type": "object"
+  },
+  "dashboard_brief_group": {
+    "$defs": {
+      "BriefActivityMemberCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "members": {
+            "$ref": "#/$defs/Collection_BriefActivityRow_"
+          },
+          "vouchers": {
+            "$ref": "#/$defs/Collection_OwnerBriefVoucher_"
+          }
+        },
+        "required": [
+          "members",
+          "vouchers"
+        ],
+        "title": "BriefActivityMemberCollections",
+        "type": "object"
+      },
+      "BriefActivityMemberData": {
+        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "const": "activity",
+            "title": "Section",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "collections": {
+            "$ref": "#/$defs/BriefActivityMemberCollections"
+          }
+        },
+        "required": [
+          "section",
+          "group_key",
+          "collections"
+        ],
+        "title": "BriefActivityMemberData",
+        "type": "object"
+      },
+      "BriefActivityRow": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "voucher_version_id": {
+            "title": "Voucher Version Id",
+            "type": "string"
+          },
+          "detail_scope_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Scope Category"
+          },
+          "voucher_number": {
+            "minimum": 0,
+            "title": "Voucher Number",
+            "type": "integer"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "recognition": {
+            "$ref": "#/$defs/Recognition"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "amount_label": {
+            "title": "Amount Label",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "group_key",
+          "subject_id",
+          "voucher_version_id",
+          "detail_scope_category",
+          "voucher_number",
+          "date",
+          "recognition",
+          "title",
+          "description",
+          "amount_fen",
+          "amount_label",
+          "state",
+          "party",
+          "group"
+        ],
+        "title": "BriefActivityRow",
+        "type": "object"
+      },
+      "BriefOpenItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "recognition": {
+            "$ref": "#/$defs/Recognition"
+          },
+          "source_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Source Period",
+            "type": "string"
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "voucher_number": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Number"
+          },
+          "category_key": {
+            "title": "Category Key",
+            "type": "string"
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "source_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Amount Fen"
+          },
+          "paid_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Fen"
+          },
+          "other_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Settled Fen"
+          },
+          "outstanding_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outstanding Fen"
+          },
+          "current_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Status"
+          },
+          "current_outstanding_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Outstanding Fen"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "contribution_group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contribution Group Key"
+          },
+          "contribution_component": {
+            "anyOf": [
+              {
+                "enum": [
+                  "employee_social",
+                  "employer_social",
+                  "employee_housing",
+                  "employer_housing"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contribution Component"
+          },
+          "payroll_period": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Period"
+          }
+        },
+        "required": [
+          "id",
+          "group_key",
+          "date",
+          "recognition",
+          "source_period",
+          "voucher_version_id",
+          "voucher_number",
+          "category_key",
+          "party",
+          "description",
+          "purpose",
+          "status",
+          "source_amount_fen",
+          "paid_fen",
+          "other_settled_fen",
+          "outstanding_fen",
+          "current_status",
+          "current_outstanding_fen",
+          "subject_id",
+          "contribution_group_key",
+          "contribution_component",
+          "payroll_period"
+        ],
+        "title": "BriefOpenItem",
+        "type": "object"
+      },
+      "BriefOpenMemberCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "members": {
+            "$ref": "#/$defs/Collection_BriefOpenItem_"
+          },
+          "vouchers": {
+            "$ref": "#/$defs/Collection_OwnerBriefVoucher_"
+          }
+        },
+        "required": [
+          "members",
+          "vouchers"
+        ],
+        "title": "BriefOpenMemberCollections",
+        "type": "object"
+      },
+      "BriefOpenMemberData": {
+        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "const": "open_items",
+            "title": "Section",
+            "type": "string"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "collections": {
+            "$ref": "#/$defs/BriefOpenMemberCollections"
+          }
+        },
+        "required": [
+          "section",
+          "group_key",
+          "collections"
+        ],
+        "title": "BriefOpenMemberData",
+        "type": "object"
+      },
+      "CollectionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "total_count": {
+            "minimum": 0,
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "filtered_count": {
+            "minimum": 0,
+            "title": "Filtered Count",
+            "type": "integer"
+          },
+          "returned_count": {
+            "minimum": 0,
+            "title": "Returned Count",
+            "type": "integer"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "collection_version": {
+            "title": "Collection Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "total_count",
+          "filtered_count",
+          "returned_count",
+          "has_more",
+          "next_cursor"
+        ],
+        "title": "CollectionPage",
+        "type": "object"
+      },
+      "Collection_BriefActivityRow_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/BriefActivityRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_BriefOpenItem_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/BriefOpenItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_OwnerBriefVoucher_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/OwnerBriefVoucher"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "DashboardPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Key",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "short_label": {
+            "title": "Short Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "start_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "end_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "End Date",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          }
+        },
+        "required": [
+          "key",
+          "year",
+          "month",
+          "label",
+          "short_label",
+          "status",
+          "start_date",
+          "end_date",
+          "closed_at"
+        ],
+        "title": "DashboardPeriod",
+        "type": "object"
+      },
+      "DashboardReadContext": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "as_of": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "As Of",
+            "type": "string"
+          },
+          "read_version": {
+            "title": "Read Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company_id",
+          "database_id",
+          "as_of",
+          "read_version"
+        ],
+        "title": "DashboardReadContext",
+        "type": "object"
+      },
+      "OwnerBriefVoucher": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "pattern": "^[1-9][0-9]*$",
+            "title": "Number",
+            "type": "string"
+          },
+          "voucher_version_id": {
+            "title": "Voucher Version Id",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "reverses_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverses Version Id"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "recognition": {
+            "$ref": "#/$defs/Recognition"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "已入账",
+              "冲正"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "list_summary": {
+            "title": "List Summary",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "business_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Amount Fen"
+          },
+          "business_amount_label": {
+            "title": "Business Amount Label",
+            "type": "string"
+          },
+          "has_business_progress": {
+            "title": "Has Business Progress",
+            "type": "boolean"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OwnerVoucherAsset"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "asset_members": {
+            "items": {
+              "$ref": "#/$defs/OwnerVoucherAssetMember"
+            },
+            "title": "Asset Members",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/$defs/OwnerVoucherLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "number",
+          "voucher_version_id",
+          "subject_id",
+          "reverses_version_id",
+          "date",
+          "recognition",
+          "type",
+          "kind",
+          "state",
+          "group",
+          "summary",
+          "list_summary",
+          "amount_fen",
+          "business_amount_fen",
+          "business_amount_label",
+          "has_business_progress",
+          "asset",
+          "asset_members",
+          "lines"
+        ],
+        "title": "OwnerBriefVoucher",
+        "type": "object"
+      },
+      "OwnerVoucherAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "asset_type": {
+            "enum": [
+              "fixed",
+              "intangible"
+            ],
+            "title": "Asset Type",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          }
+        },
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "code"
+        ],
+        "title": "OwnerVoucherAsset",
+        "type": "object"
+      },
+      "OwnerVoucherAssetMember": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "asset_type": {
+            "enum": [
+              "fixed",
+              "intangible"
+            ],
+            "title": "Asset Type",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "owner_calculation_id": {
+            "title": "Owner Calculation Id",
+            "type": "string"
+          },
+          "amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "amount_label": {
+            "title": "Amount Label",
+            "type": "string"
+          },
+          "line_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Start"
+          },
+          "line_count": {
+            "minimum": 0,
+            "title": "Line Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "code",
+          "calculation_id",
+          "owner_calculation_id",
+          "amount_fen",
+          "amount_label",
+          "line_start",
+          "line_count"
+        ],
+        "title": "OwnerVoucherAssetMember",
+        "type": "object"
+      },
+      "OwnerVoucherLine": {
+        "additionalProperties": false,
+        "properties": {
+          "line_number": {
+            "minimum": 1,
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "debit_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Debit Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "credit_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Credit Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "parties": {
+            "items": {
+              "$ref": "#/$defs/VoucherLineParty"
+            },
+            "title": "Parties",
+            "type": "array"
+          },
+          "party_state": {
+            "enum": [
+              "known",
+              "multiple",
+              "name_missing",
+              "not_applicable",
+              "unresolved"
+            ],
+            "title": "Party State",
+            "type": "string"
+          },
+          "asset": {
+            "$ref": "#/$defs/OwnerVoucherAssetMember"
+          }
+        },
+        "required": [
+          "line_number",
+          "code",
+          "account",
+          "debit_fen",
+          "credit_fen",
+          "party",
+          "source_label",
+          "parties",
+          "party_state"
+        ],
+        "title": "OwnerVoucherLine",
+        "type": "object"
+      },
+      "ReadSemantics": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "accounting": {
+            "const": "as_posted",
+            "title": "Accounting",
+            "type": "string"
+          },
+          "business_basis": {
+            "enum": [
+              "current_known",
+              "frozen_adoption"
+            ],
+            "title": "Business Basis",
+            "type": "string"
+          },
+          "display": {
+            "enum": [
+              "current",
+              "frozen_with_current_supplements"
+            ],
+            "title": "Display",
+            "type": "string"
+          },
+          "system_time_replay": {
+            "const": false,
+            "title": "System Time Replay",
+            "type": "boolean"
+          },
+          "recorded_at": {
+            "const": "system_recording_time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recording_period": {
+            "const": "business_recording_period",
+            "title": "Recording Period",
+            "type": "string"
+          },
+          "recorded_later": {
+            "const": "business_recording_period_after_selected_period",
+            "title": "Recorded Later",
+            "type": "string"
+          }
+        },
+        "required": [
+          "knowledge",
+          "accounting",
+          "business_basis",
+          "display",
+          "system_time_replay",
+          "recorded_at",
+          "recording_period",
+          "recorded_later"
+        ],
+        "title": "ReadSemantics",
+        "type": "object"
+      },
+      "Recognition": {
+        "additionalProperties": false,
+        "properties": {
+          "precision": {
+            "enum": [
+              "month",
+              "day"
+            ],
+            "title": "Precision",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "precision",
+          "period",
+          "date",
+          "label"
+        ],
+        "title": "Recognition",
+        "type": "object"
+      },
+      "VoucherLineParty": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "amount_fen"
+        ],
+        "title": "VoucherLineParty",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 2,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "snapshot_version": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Snapshot Version"
+      },
+      "selected_period": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DashboardPeriod"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "read_semantics": {
+        "$ref": "#/$defs/ReadSemantics"
+      },
+      "read_context": {
+        "$ref": "#/$defs/DashboardReadContext"
+      },
+      "data": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/BriefActivityMemberData"
+          },
+          {
+            "$ref": "#/$defs/BriefOpenMemberData"
+          }
+        ],
+        "title": "Data"
+      }
+    },
+    "required": [
+      "schema_version",
+      "snapshot_version",
+      "selected_period",
+      "read_semantics",
+      "read_context",
+      "data"
+    ],
+    "title": "DashboardBriefGroupResponse",
     "type": "object"
   },
   "dashboard_funds": {
@@ -10879,6 +12189,44 @@
         "title": "BusinessCollections",
         "type": "object"
       },
+      "BusinessDetailScope": {
+        "additionalProperties": false,
+        "properties": {
+          "voucher_version_id": {
+            "title": "Voucher Version Id",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "amount_label": {
+            "title": "Amount Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "voucher_version_id",
+          "category",
+          "amount_fen",
+          "amount_label"
+        ],
+        "title": "BusinessDetailScope",
+        "type": "object"
+      },
       "BusinessIdentityDetails": {
         "additionalProperties": false,
         "properties": {
@@ -10983,6 +12331,16 @@
           },
           "collections": {
             "$ref": "#/$defs/BusinessCollections"
+          },
+          "detail_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BusinessDetailScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -10998,7 +12356,8 @@
           "display_profiles",
           "current_followups",
           "settlement_view",
-          "collections"
+          "collections",
+          "detail_scope"
         ],
         "title": "BusinessStatusData",
         "type": "object"
@@ -11773,7 +13132,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 7,
+        "const": 9,
         "title": "Schema Version",
         "type": "integer"
       },

@@ -4,6 +4,7 @@ export type { WorkflowResponse, WorkflowContract } from "./workflow";
 export type { PeriodReadinessResponse, PeriodReadinessContract } from "./periodReadiness";
 export type { DashboardContextResponse, DashboardContextContract } from "./dashboardContext";
 export type { DashboardBriefResponse, DashboardBriefContract } from "./dashboardBrief";
+export type { DashboardBriefGroupResponse, DashboardBriefGroupContract } from "./dashboardBriefGroup";
 export type { DashboardFundsResponse, DashboardFundsContract } from "./dashboardFunds";
 export type { DashboardEmployeesResponse, DashboardEmployeesContract } from "./dashboardEmployees";
 export type { DashboardAssetsResponse, DashboardAssetsContract } from "./dashboardAssets";

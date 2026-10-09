@@ -9,6 +9,7 @@ const validatorNames = {
   period_readiness: "validatePeriodReadinessResponse",
   dashboard_context: "validateDashboardContextResponse",
   dashboard_brief: "validateDashboardBriefResponse",
+  dashboard_brief_group: "validateDashboardBriefGroupResponse",
   dashboard_funds: "validateDashboardFundsResponse",
   dashboard_employees: "validateDashboardEmployeesResponse",
   dashboard_assets: "validateDashboardAssetsResponse",

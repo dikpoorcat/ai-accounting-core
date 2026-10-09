@@ -418,7 +418,11 @@ def test_dashboard_settlements_aggregate_and_hydrate_only_open_page(domain_book)
             )
     open_rows = [row for row in full["obligations"] if row["remaining_fen"]]
     assert compact["page"]["total_count"] == len(open_rows) == 1
-    assert compact["obligations"] == open_rows
+    assert [row["category_key"] for row in compact["obligations"]] == ["supplier_payables"]
+    assert [
+        {key: value for key, value in row.items() if key != "category_key"}
+        for row in compact["obligations"]
+    ] == open_rows
     assert compact["categories"]["supplier_payables"] == {"count": 1, "amount": 200}
     assert compact_summary["obligations"] == []
     assert compact_summary["page"] == compact["page"]

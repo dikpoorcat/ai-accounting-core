@@ -1,6 +1,9 @@
 """The restored Vue routes share one authenticated SQLite service."""
 
 from urllib.parse import quote
+import json
+import sys
+from types import SimpleNamespace
 
 import test_resident_service as resident_cases
 from entity_fixture import seed_entities
@@ -192,6 +195,63 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
     assert status == 200 and browser["data"]["position"]["month_expense_fen"] == "123456"
 
 
+def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, tmp_path, monkeypatch, capsys):
+    from ai_accounting.kernel import cli, mcp
+
+    service, _, capability, http, _ = resident
+    _, token = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "组命令传输测试企业")["id"]
+    engine = service.engine(company)
+    amount = 9007199254740993
+    _publish_expense(engine, "expense", amount)
+    summary = Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"][0]
+    payload = {"company_id": company, "period": "2026-09", "section": "activity",
+               "group_key": summary["group_key"]}
+
+    def dispatch(command, data):
+        status, _, _, response = http.request(
+            "/api/command", {"command": command, "payload": data},
+            headers={"X-Local-Capability": capability,
+                     "Authorization": "Bearer " + token.get_secret_value()},
+        )
+        assert status == 200, response
+        return response
+
+    client = SimpleNamespace(dispatch=dispatch)
+    monkeypatch.setattr(cli, "ServiceClient", lambda _: client)
+    request = tmp_path / "group.json"
+    request.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["finance-local", "--root", str(tmp_path), "call",
+                                     "dashboard_brief_group", "--input", str(request)])
+    cli.main()
+    cli_response = json.loads(capsys.readouterr().out)
+    tools = {}
+
+    class StdioServer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def tool(self):
+            def register(function):
+                tools[function.__name__] = function
+                return function
+            return register
+
+        def run(self, **kwargs):
+            assert kwargs == {"transport": "stdio"}
+
+    monkeypatch.setattr(mcp, "ServiceClient", lambda _: client)
+    monkeypatch.setattr(mcp, "FastMCP", StdioServer)
+    mcp.serve(tmp_path)
+    mcp_response = tools["finance_local_command"]("dashboard_brief_group", payload)
+    for response in (cli_response, mcp_response):
+        assert response["schema_version"] == 2
+        members = response["data"]["collections"]["members"]["items"]
+        vouchers = response["data"]["collections"]["vouchers"]["items"]
+        assert type(members[0]["amount_fen"]) is int and members[0]["amount_fen"] == amount
+        assert members[0]["voucher_version_id"] == vouchers[0]["voucher_version_id"]
+
+
 def test_dashboard_company_selection_query_contract_and_expiration(resident):
     service, _, _, http, _ = resident
     headers, token = authenticated(resident)
@@ -252,7 +312,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 7
+    assert response["schema_version"] == 9
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
     assert "events" not in response["data"]["collections"]
@@ -328,8 +388,9 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
     )[0] == 404
 
 
-def _publish_expense(engine, subject, amount, revision=0):
-    seed_entities(engine, [(subject + "-supplier", "organization", None)])
+def _publish_expense(engine, subject, amount, revision=0, party=None):
+    party = party or subject + "-supplier"
+    seed_entities(engine, [(party, "organization", None)])
     proof = engine.register_evidence(
         b"synthetic HTTP adapter evidence", "text/plain", "fixture", request_id="adapter-proof"
     )["digest"]
@@ -339,7 +400,7 @@ def _publish_expense(engine, subject, amount, revision=0):
         {
             "period": "2026-09",
             "amount_fen": amount,
-            "counterparty_id": subject + "-supplier",
+            "counterparty_id": party,
             "expense_class": "administration",
             "creditor_kind": "supplier",
         },
@@ -407,19 +468,22 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
     headers, _ = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "分页版本测试企业")["id"]
     engine = service.engine(company)
-    _publish_expense(engine, "first", 100)
-    _publish_expense(engine, "second", 200)
+    _publish_expense(engine, "first", 100, party="same-supplier")
+    _publish_expense(engine, "second", 200, party="same-supplier")
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     status, _, _, first = http.request(base, headers=headers)
-    assert status == 200 and first["data"]["collections"]["activity"]["page"]["has_more"]
-    cursor = quote(first["data"]["collections"]["activity"]["page"]["next_cursor"], safe="")
-    following = (
-        base + f"&section=activity&cursor={cursor}&expected_version={first['snapshot_version']}"
-    )
+    assert status == 200
+    group = first["data"]["collections"]["activity"]["items"][0]
+    assert group["member_count"] == 2
+    member_base = f"/api/dashboard/brief-group?company_id={company}&period=2026-09&section=activity&group_key={group['group_key']}&limit=1"
+    status, _, _, members = http.request(member_base, headers=headers)
+    assert status == 200 and members["data"]["collections"]["members"]["page"]["has_more"]
+    cursor = quote(members["data"]["collections"]["members"]["page"]["next_cursor"], safe="")
+    following = member_base + f"&cursor={cursor}&expected_version={first['snapshot_version']}"
     status, _, _, page = http.request(following, headers=headers)
     assert status == 200 and page["snapshot_version"] == first["snapshot_version"]
-    assert len(page["data"]["collections"]["activity"]["items"]) == 1
-    _publish_expense(engine, "first", 150, revision=1)
+    assert len(page["data"]["collections"]["members"]["items"]) == 1
+    _publish_expense(engine, "first", 150, revision=1, party="same-supplier")
     status, _, _, error = http.request(following, headers=headers)
     assert status == 409 and error["code"] == "dashboard_snapshot_changed"
     assert "data" not in error
@@ -441,9 +505,10 @@ def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     assert status == 200, result
     assert result["data"]["focused_activity"]["subject_id"] == "target"
     assert result["data"]["focused_activity"]["amount_fen"] == "200"
-    assert [item["subject_id"] for item in result["data"]["collections"]["activity"]["items"]] == [
-        "first"
-    ]
+    group = result["data"]["collections"]["activity"]["items"][0]
+    assert group["member_count"] == 1
+    assert result["data"]["focused_activity_group"]["group_key"] == result["data"]["focused_activity"]["group_key"]
+    assert result["data"]["focused_activity_group"]["group_key"] != group["group_key"]
     assert result["data"]["collections"]["activity"]["page"]["has_more"]
     status, _, _, exact = http.request(
         base + f"&voucher_version_id={target['id']}", headers=headers

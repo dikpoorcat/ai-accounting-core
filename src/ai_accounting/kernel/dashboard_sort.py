@@ -8,6 +8,7 @@ states before any business content is returned.
 from __future__ import annotations
 
 from .contracts import KernelError
+from .dashboard import _PAYROLL_COMPONENT_NAMES as PAYROLL_MATTERS
 from .domains.money import SETTLEMENT_PAYMENT_KINDS
 from .schema import sequence_model, table_name
 from .types import YearMonth, canonical
@@ -15,11 +16,8 @@ from .types import YearMonth, canonical
 DATES = ("actual_date", "acquisition_date", "in_use_date", "disposal_date",
          "income_date", "fulfillment_date", "recognition_date")
 PARTIES = ("employee_id", "person_id", "counterparty_id", "customer_id", "supplier_id",
-           "owner_id", "buyer_id", "lender_id", "payer_id", "recipient_id")
+           "owner_id", "buyer_id", "lender_id", "payer_id", "beneficiary_id", "recipient_id")
 CONTRIBUTIONS = frozenset({"employee_social", "employer_social", "employee_housing", "employer_housing"})
-PAYROLL_MATTERS = {"net": "实发工资", "tax": "代扣个人所得税", "withheld_tax": "代扣个人所得税",
-                   "employee_social": "个人社保", "employer_social": "单位社保",
-                   "employee_housing": "个人公积金", "employer_housing": "单位公积金"}
 
 
 def fact_sort_scalars(snapshot, headers):
@@ -73,6 +71,27 @@ def calculation_headers(snapshot, identifiers):
     return rows
 
 
+def _prime_party_metadata(snapshot, identifiers):
+    identifiers = set(identifiers)
+    snapshot.metadata.prime_profiles("employee", identifiers)
+    snapshot.metadata.prime_profiles("counterparty", identifiers)
+    unnamed = {
+        ident for ident in identifiers
+        if not any(profiles[kind].get(ident, {}).get("display_name")
+                   for profiles in (snapshot.profiles, snapshot.current_profiles)
+                   for kind in ("employee", "counterparty"))
+    }
+    if not unnamed:
+        return
+    snapshot.metadata.payee_records.prime(unnamed)
+    snapshot.metadata.current_payees.prime(unnamed)
+    without_payees = {
+        ident for ident in unnamed
+        if ident not in snapshot.payees and ident not in snapshot.current_payees
+    }
+    snapshot.metadata.tax_candidates.prime(without_payees)
+
+
 def business_sort_metadata(snapshot, identifiers, *, funds=False):
     headers = calculation_headers(snapshot, identifiers)
     scalars = fact_sort_scalars(snapshot, headers.values())
@@ -103,14 +122,30 @@ def business_sort_metadata(snapshot, identifiers, *, funds=False):
         "roots(id) AS (SELECT DISTINCT root FROM keys), "
         "ancestry(root,id) AS (SELECT id,id FROM roots UNION SELECT a.root,d.upstream_id "
         "FROM ancestry a JOIN dependency_calculation d ON d.calculation_id=a.id) "
-        "SELECT DISTINCT a.root,c.subject_id,c.kind,json_extract(o.value,'$.name') component,"
+        "SELECT DISTINCT a.root,c.id ancestor_id,c.subject_id,c.kind,"
+        "json_extract(o.value,'$.name') component,"
         "json_extract(o.value,'$.counterparty_id') party FROM ancestry a "
         "JOIN calculation c ON c.id=a.id,json_each(c.outcome,'$.values.obligations') o "
         "JOIN keys k ON k.root=a.root AND k.obligation_key=json_extract(o.value,'$.key') "
-        "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL",
+        "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL "
+        "UNION SELECT DISTINCT a.root,a.id,NULL,NULL,NULL,NULL FROM ancestry a "
+        "JOIN calculation c ON c.id=a.id "
+        "WHERE c.kind NOT IN ('asset_activation','asset_consumption')",
         (canonical(sorted(relation_ids)),),
-    ) if relation_ids else ()
+    ).fetchall() if relation_ids else ()
+    # These exact ancestor results supply identities used by the page and group
+    # keys. Prove their original publication bindings before using JSON scalars.
+    if relation_rows:
+        from .report_open_contribution import verify_published_source_bindings
+
+        used = {row["ancestor_id"] for row in relation_rows}
+        fallback = verify_published_source_bindings(snapshot.reads, used)
+        if fallback:
+            snapshot.reads.verify_saved_input_identity(fallback)
+        snapshot.reads.verify_sql_outcomes(used)
     for row in relation_rows:
+        if row["party"] is None:
+            continue
         value = scalars[headers[row["root"]]["fact_id"]]
         recipient = next((item.get("recipient_id") for item in value["recipients"]
                           if item.get("source_id") == row["subject_id"]
@@ -119,8 +154,7 @@ def business_sort_metadata(snapshot, identifiers, *, funds=False):
         if not recipient:
             parties[row["root"]].add(row["party"])
     all_parties = set().union(*parties.values()) if parties else set()
-    snapshot.metadata.prime_profiles("employee", all_parties)
-    snapshot.metadata.prime_profiles("counterparty", all_parties)
+    _prime_party_metadata(snapshot, all_parties)
     result = {}
     for ident, header in headers.items():
         value, identities = scalars[header["fact_id"]], tuple(sorted(parties[ident]))
@@ -146,28 +180,33 @@ def date_object_key(metadata, period, identity, *, month_confirmation=True, inte
 
 def open_item_order(snapshot, rows):
     """Object/matter identities deliberately exclude undisplayed payroll months."""
-    from .dashboard import _contribution_identity, _name
+    from .dashboard import LABOR_KINDS, PAYROLL_KINDS, _contribution_identity, _open_item_display
+    from .dashboard_party_supplements import pass_through_party_supplements
 
     rows = list(rows)
-    payroll = [row for row in rows if row.get("source_kind") in {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}
+    supplements = pass_through_party_supplements(snapshot, [{
+        **row, "key": row["obligation_key"], "name": row.get("component"),
+        "source_business": {"kind": row.get("source_kind"),
+                            "subject_id": row.get("source_subject_id")},
+    } for row in rows])
+    remuneration = [row for row in rows if row.get("source_kind") in PAYROLL_KINDS | LABOR_KINDS | {"opening_payroll_payable", "labor_project_cost"}
                and row.get("source_fact_id")]
-    scalars = fact_sort_scalars(snapshot, ({"kind": row["source_kind"], "fact_id": row["source_fact_id"]} for row in payroll))
+    scalars = fact_sort_scalars(snapshot, ({"kind": row["source_kind"], "fact_id": row["source_fact_id"]} for row in remuneration))
     keys, all_parties = {}, set()
     for row in rows:
         data = scalars.get(row.get("source_fact_id"), {})
         component = data.get("component") if row.get("source_kind") == "opening_payroll_payable" else row.get("component")
-        party = data.get("employee_id") if component in PAYROLL_MATTERS else None
-        party = party or row.get("counterparty_id")
+        party, missing_party, matter = _open_item_display(
+            row.get("source_kind"), component, data, row.get("counterparty_id"),
+        )
+        if party is None and row["obligation_key"] in supplements:
+            party = supplements[row["obligation_key"]]["party_id"]
         all_parties.update((party,) if party else ())
-        matter = PAYROLL_MATTERS.get(component, _name(row.get("source_kind") or ""))
-        if row.get("source_kind") == "annual_bonus" and component in {"net", "tax"}:
-            matter = "实发奖金" if component == "net" else "奖金代扣个税"
         group = _contribution_identity(snapshot.store.company_id, row.get("source_kind"), data, component)
         group_key = group["contribution_group_key"]
         if group_key:
             matter = "社保与公积金"
-        keys[row["obligation_key"]] = (party, matter, group_key or row["obligation_key"])
-    snapshot.metadata.prime_profiles("employee", all_parties)
-    snapshot.metadata.prime_profiles("counterparty", all_parties)
-    return sorted(keys, key=lambda key: (snapshot.party(keys[key][0]), keys[key][1],
+        keys[row["obligation_key"]] = (party, matter, group_key or row["obligation_key"], missing_party)
+    _prime_party_metadata(snapshot, all_parties)
+    return sorted(keys, key=lambda key: (snapshot.party(keys[key][0]) if keys[key][0] else keys[key][3], keys[key][1],
                                         keys[key][0] or "", keys[key][2], key))

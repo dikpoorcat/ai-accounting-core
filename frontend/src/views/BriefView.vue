@@ -16,7 +16,7 @@ import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
-import { createBriefOpenItemGrouping, type BriefOpenRow } from "../utils/briefOpenItems";
+
 
 const route = useRoute(), router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
@@ -38,14 +38,8 @@ const needsMonthlyReview = computed(() => reviewRequest.value !== null);
 const activity = computed(() => data.value?.collections.activity?.items ?? []);
 const vouchers = computed(() => vouchersReady.value ? data.value?.collections.vouchers?.items ?? [] : []);
 const openItems = computed(() => data.value?.collections.open_items?.items ?? []);
-const openItemsComplete = computed(() => {
-  const page = data.value?.collections.open_items?.page;
-  return !!page && !page.has_more && openItems.value.length === page.filtered_count;
-});
-function newOpenItemGrouping() { return createBriefOpenItemGrouping(() => shallowReactive<BriefOpenRow[]>([])); }
-let groupOpenItems = newOpenItemGrouping();
-const openItemDisplay = computed(() => data.value ? groupOpenItems(data.value.open_items, openItems.value, openItemsComplete.value) : null);
-const openItemCountUnit = computed(() => openItemsComplete.value ? "项" : "余额分项");
+const refreshGeneration = ref(0);
+const openItemCountUnit = computed(() => "笔");
 const periodOptions = computed(() => context.value?.periods || []);
 const briefTitle = computed(() => {
   const month = /\d{4}-(\d{2})/.exec(selectedPeriod.value || queryPeriod() || "")?.[1];
@@ -63,6 +57,9 @@ const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections
 function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
+function addVouchers(items: BriefVoucher[]) {
+  for (const voucher of items) if (!voucherPreviewIndex.value.has(voucher.voucher_version_id)) voucherPreviewIndex.value.set(voucher.voucher_version_id, voucher);
+}
 function indexVouchers(result: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
   const index = voucherPreviewIndex.value;
   for (const voucher of result.data?.collections.vouchers?.items ?? []) {
@@ -72,15 +69,17 @@ function indexVouchers(result: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
   if (focused && !index.has(focused.voucher_version_id)) index.set(focused.voucher_version_id, focused);
 }
 function invalidateRequests(keepContent = false) {
+  refreshGeneration.value++;
   requestGeneration += 1; controller?.abort(); controller = null;
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
   voucherPreviewIndex.value = shallowReactive(new Map());
   if (!keepContent) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
-  if (!keepContent) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
+  if (!keepContent) { response.value = null }
   showMonthlyReview.value = false; loading.value = keepContent;
 }
 async function loadData(period: string | null, contextGate?: Promise<void>) {
+  refreshGeneration.value++;
   const generation = ++requestGeneration, selection = selectionKey(), companyId = route.query.company_id;
   const retainedVouchers = contextGate && response.value ? {
     companyId: response.value.read_context.company_id, period: selectedPeriod.value,
@@ -95,7 +94,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
   if (!contextGate) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   const request = new AbortController(); controller = request;
   loading.value = true;
-  if (!contextGate) { response.value = null; groupOpenItems = newOpenItemGrouping(); }
+  if (!contextGate) { response.value = null }
   showMonthlyReview.value = false; error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("请先选择公司。");
@@ -285,8 +284,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <div class="kpi-grid">
           <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
           <button v-if="data.long_term_assets" class="kpi asset" type="button" @click="router.push({ name: 'assets', query: { company_id: route.query.company_id, period: selectedPeriod }, hash: '#assets-overview' })"><span>长期资产净值</span><strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong><small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项</small></button>
-          <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ openItemDisplay?.summary.receivable_count }} {{ openItemCountUnit }}</small></button>
-          <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ openItemDisplay?.summary.payable_count }} {{ openItemCountUnit }}</small></button>
+          <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} {{ openItemCountUnit }}</small></button>
+          <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} {{ openItemCountUnit }}</small></button>
         </div>
         </div>
         <div v-if="data.management_commentary_details.current" class="note"><strong>经营说明</strong><p>{{ data.management_commentary_details.current.text }}</p></div>
@@ -298,7 +297,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefFinancialOverview v-if="data.financial_position" id="financial-overview" class="section-anchor selectable-section" :funds="data.funds_overview" :position="data.financial_position" />
       </section>
       <section id="activity" class="section-anchor selectable-section" tabindex="-1">
-        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :focused-activity="data.focused_activity" :vouchers="vouchers" :vouchers-ready="vouchersReady" :refreshing="loading" :active="activeSection === 'activity'" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="vouchersReady && data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @initialize-vouchers="initializeVouchers" @pause-vouchers="pausePages('vouchers', paginationScope())" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
+        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :group-count="data.group_count" :refresh-generation="refreshGeneration" @vouchers="addVouchers" :focused-activity="data.focused_activity" :focused-activity-group="data.focused_activity_group" :vouchers="vouchers" :vouchers-ready="vouchersReady" :refreshing="loading" :active="activeSection === 'activity'" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="vouchersReady && data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @initialize-vouchers="initializeVouchers" @pause-vouchers="pausePages('vouchers', paginationScope())" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
           <template #pagination><DashboardPagination automatic :active="!loading && activeSection === 'activity'" :scope="paginationScope()" @pause="pausePages('activity', $event)" compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
         </BriefActivityWorkbench>
       </section>
@@ -306,8 +305,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
       </section>
       <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
-        <BriefOpenItems v-if="openItemDisplay" :open-items="openItemDisplay.summary" :items="openItemDisplay.items" :items-complete="openItemsComplete" :items-loading="sectionLoading.open_items" :items-error="sectionErrors.open_items" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
-        <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="余额分项" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
+        <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" :refresh-generation="refreshGeneration" :voucher-index="voucherPreviewIndex" @vouchers="addVouchers" @request-voucher="openVoucher" @changed="refreshChanged" />
+        <DashboardPagination automatic :active="!loading && activeSection === 'open-items'" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="项款项" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" />
       </section>
       <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
         <h2 id="tasks-title">老板待办</h2>

@@ -107,6 +107,13 @@ def native_samples(root):
     add("company_with_period", "dashboard_context", call("dashboard_context"))
     brief = call("dashboard_brief", period="2026-01")
     add("brief", "dashboard_brief", brief)
+    add("brief_vouchers", "dashboard_brief", call("dashboard_brief", period="2026-01", section="vouchers"))
+    for section in ("activity", "open_items"):
+        for index, group in enumerate(brief["data"]["collections"][section]["items"]):
+            add(f"brief_{section}_members_{index}", "dashboard_brief_group", call(
+                "dashboard_brief_group", period="2026-01", section=section,
+                group_key=group["group_key"], expected_version=brief["snapshot_version"],
+            ))
     add(
         "deferred_brief",
         "dashboard_brief",
@@ -263,10 +270,13 @@ def native_samples(root):
     display_profile(personnel.engine, "employee", "employee", employment_start="2025-12")
     display_profile(personnel.engine, "business", "january", display_name="合成工资业务")
     personnel_dashboard = Dashboard(personnel.engine)
-    add(
-        "brief_payroll_open_items", "dashboard_brief",
-        personnel_dashboard.brief("2026-01", section="open_items"),
-    )
+    payroll_brief = personnel_dashboard.brief("2026-01", section="open_items")
+    add("brief_payroll_open_items", "dashboard_brief", payroll_brief)
+    social_group = next(group for group in payroll_brief["data"]["collections"]["open_items"]["items"]
+                        if group["description"] == "社保与公积金")
+    add("brief_payroll_members", "dashboard_brief_group", personnel_dashboard.brief_group(
+        "2026-01", section="open_items", group_key=social_group["group_key"],
+    ))
     add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
     add(
         "employees_focused", "dashboard_employees",

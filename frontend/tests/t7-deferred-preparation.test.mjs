@@ -5,7 +5,6 @@ import * as Vue from "vue";
 import { parse, compileTemplate } from "@vue/compiler-sfc";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
-import { createBriefOpenItemGrouping } from "./helpers/briefOpenItemGrouping.mjs";
 import {
   validateDashboardBriefResponse,
   validateDashboardFundsResponse,
@@ -44,7 +43,7 @@ async function viewHarness(kind) {
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02", quarter: "2026-Q1" }, hash: "" });
   const capture = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const context = Vue.ref(null);
-  const environment = { Vue, route, trace, unmount, appendDashboardCollection, createBriefOpenItemGrouping,
+  const environment = { Vue, route, trace, unmount, appendDashboardCollection,
     nextTick: async () => { await Vue.nextTick(); trace.push("paint"); },
     router: { push() {}, replace() {} },
     contextState: { context, load: async () => ({ periods: [{ key: "2026-02", year: 2026, month: 2 }], quarters: [{ key: "2026-Q1", year: 2026, quarter: 1 }] }), refresh: () => capture(calls.context, []) },
@@ -59,7 +58,7 @@ async function viewHarness(kind) {
     : "report, loading, errorMessage, reportHeadline, preview, refresh, exportReport, invalidateRequests";
   const module = await compile(`export function instantiate() {
     const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
-    const { appendDashboardCollection, createBriefOpenItemGrouping } = environment;
+    const { appendDashboardCollection } = environment;
     const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
     const fetchCompleteBrief = fetchDeferredBrief;
     const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);

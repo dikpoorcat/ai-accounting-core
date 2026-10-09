@@ -18,7 +18,7 @@ function scenario(items = [obligation(), obligation({ key: "tax", name: "tax", s
   data.current_business_result = { amount_fen: "9999999", amount_label: "当前业务结果金额", posting_period: "2026-10" };
   data.settlements = { cutoff_period: "2026-09", status: "established", checking: false, obligations: items };
   data.current_followups.settlements = { ...data.settlements, cutoff_period: "2026-10", obligations: structuredClone(items) };
-  data.collections.settlement_events.items = [{ id: "tax-payment", name: "tax", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-12345" }];
+  data.collections.settlement_events.items = [{ id: "tax-payment", party: "", name: "tax", purpose_label: "个人所得税", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-12345" }];
   data.collections.settlement_events.page = { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null };
   return data;
 }
@@ -37,6 +37,30 @@ test("activity details only add information to the exact occurrence row", async 
       const app = createSSRApp(component, { subjectId: activityContext.subject_id, period: "2026-09", presentation: "brief", activityContext, expanded: true }); app.use(router);
       return renderToString(app);
     }
+    function relatedRows(html) {
+      const records = html.split("这笔业务的相关收付")[1].match(/<ul[^>]*>([\s\S]*?)<\/ul>/)[1];
+      return [...records.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map(match => match[1]);
+    }
+    await t.test("scoped reserve expense displays its signed amount without inventing absent settlement records", async () => {
+      const data = scenario([]);
+      data.identity.kind = "payroll_reserve_payment";
+      data.detail_scope = { voucher_version_id: "reserve-voucher", category: "expense_supplier", amount_fen: "-9007199254740993", amount_label: "费用金额" };
+      data.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+      const html = await render(data, activity({ detail_scope_category: "expense_supplier", voucher_version_id: "reserve-voucher", description: "费用", title: "费用" }));
+      assert.match(html, /费用金额[\s\S]*−¥90,071,992,547,409\.93/);
+      assert.doesNotMatch(html, /暂无相关收付记录|当前业务结果金额|本业务其他款项/);
+    });
+    await t.test("payment events display their exact server purpose instead of inferring from payment kind", async () => {
+      const data = scenario([]); data.identity.kind = "payment";
+      data.collections.settlement_events.items = ["实发工资", "实发奖金", "实发劳务款", "代收款", "代付款"].map((purpose_label, index) => ({
+        id: `purpose-${index}`, party: "同名对象", name: index < 3 ? "net" : index === 3 ? "collection" : "remittance", purpose_label,
+        mode: "payment", posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen: "100",
+      }));
+      data.collections.settlement_events.page = { total_count: 5, filtered_count: 5, returned_count: 5, has_more: false, next_cursor: null };
+      const rows = relatedRows(await render(data));
+      for (const [index, purpose] of ["实发工资", "实发奖金", "实发劳务款", "代收款", "代付款"].entries()) assert(rows[index].includes(purpose));
+      assert.doesNotMatch(rows.join(""), /个人实发款|remittance/);
+    });
     await t.test("salary, tax and current result never replace the clicked amount", async () => {
       const html = await render();
       const main = html.split("整笔业务的款项进度")[0];
@@ -62,6 +86,88 @@ test("activity details only add information to the exact occurrence row", async 
         assert(!html.split("这笔业务的相关收付")[0].includes(amount_label)); assert.doesNotMatch(html, /业务时间：2026-09-15/);
         assert.doesNotMatch(html, /整笔业务的款项进度|已结清|还需支付/);
       }
+    });
+    await t.test("mixed collection keeps the business payment and all three collected payments", async () => {
+      const data = scenario([]);
+      data.identity.kind = "payment";
+      data.display_profiles = {};
+      const amounts = ["11000", "2200", "3300", "4400"];
+      data.collections.settlement_events.items = amounts.map((signed_amount_fen, index) => ({
+        id: `synthetic-collection-${index}`, party: "合成收款对象", name: index === 0 ? "primary" : "collection", purpose_label: index === 0 ? "业务款项" : "代收款", mode: "payment",
+        posting_period: "2026-09", direction: 1, relation_state: "resolved", signed_amount_fen,
+      }));
+      data.collections.settlement_events.page = { total_count: 4, filtered_count: 4, returned_count: 4, has_more: false, next_cursor: null };
+      const context = activity({ subject_id: "synthetic-mixed-collection", group: "income_customer", party: "合成收款对象", title: "混合收款", description: "业务款及代收款", amount_label: "实际收付款", amount_fen: "20900" });
+      const html = await render(data, context);
+      const records = html.split("这笔业务的相关收付")[1].match(/<ul[^>]*>([\s\S]*?)<\/ul>/)[1];
+      const rows = [...records.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map(match => match[1]);
+      assert.equal(rows.length, 4);
+      assert.match(rows[0], /业务款项[\s\S]*¥110\.00/);
+      for (const [index, amount] of ["22", "33", "44"].entries()) {
+        assert.match(rows[index + 1], new RegExp(`代收款[\\s\\S]*¥${amount}\\.00`));
+      }
+      assert.doesNotMatch(records, /相关款项|synthetic-collection|primary|collection/);
+
+      data.collections.settlement_events.items[0].name = "synthetic-unknown-purpose";
+      data.collections.settlement_events.items[0].purpose_label = "相关款项";
+      const unknown = (await render(data, context)).split("这笔业务的相关收付")[1];
+      assert.match(unknown, /相关款项[\s\S]*¥110\.00/);
+      assert.doesNotMatch(unknown, /synthetic-unknown-purpose/);
+    });
+    await t.test("batch payroll payment relates each employee name to their own amount and purpose", async () => {
+      const data = scenario([]);
+      data.identity.kind = "payment";
+      const employees = [
+        { party: "测试员工甲", amount: "12001", displayed: "120.01" },
+        { party: "测试员工乙", amount: "23402", displayed: "234.02" },
+        { party: "测试员工丙", amount: "34503", displayed: "345.03" },
+        { party: "测试员工丁", amount: "45604", displayed: "456.04" },
+      ];
+      data.display_profiles.employees = employees.toReversed().map((employee, index) => ({ entity_id: `synthetic-profile-${index}`, values: { display_name: employee.party } }));
+      data.collections.settlement_events.items = employees.map((employee, index) => ({
+        id: `synthetic-payroll-event-${index}`, source_subject_id: `synthetic-payroll-source-${index}`,
+        party: employee.party, name: "net", purpose_label: "实发工资", mode: "payment", posting_period: "2026-09", direction: 1,
+        relation_state: "resolved", signed_amount_fen: employee.amount,
+      }));
+      data.collections.settlement_events.page = { total_count: 4, filtered_count: 4, returned_count: 4, has_more: false, next_cursor: null };
+      const context = activity({ subject_id: "synthetic-payroll-batch", party: employees.map(employee => employee.party).join("、"), title: "工资付款", description: "整批工资付款", amount_label: "实际收付款", amount_fen: "115510" });
+      const rows = relatedRows(await render(data, context));
+      assert.equal(rows.length, 4);
+      for (const [index, employee] of employees.entries()) {
+        assert(rows[index].includes(employee.party));
+        assert.match(rows[index], /实发工资[\s\S]*实际收付款/);
+        assert(rows[index].includes(`¥${employee.displayed}`));
+        for (const other of employees.filter(item => item !== employee)) assert(!rows[index].includes(other.party));
+      }
+      assert.doesNotMatch(rows.join(""), /synthetic-|net|payroll/);
+    });
+    await t.test("same employee names and same payment amounts still retain separate event rows", async () => {
+      const data = scenario([]);
+      data.collections.settlement_events.items = ["first", "second"].map(id => ({
+        id: `synthetic-same-name-${id}`, source_subject_id: `synthetic-distinct-source-${id}`,
+        party: "测试同名员工", name: "net", purpose_label: "实发工资", mode: "payment", posting_period: "2026-09", direction: 1,
+        relation_state: "resolved", signed_amount_fen: "8765",
+      }));
+      data.collections.settlement_events.page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
+      const rows = relatedRows(await render(data));
+      assert.equal(rows.length, 2);
+      for (const row of rows) assert.match(row, /测试同名员工[\s\S]*实发工资[\s\S]*¥87\.65/);
+      assert.doesNotMatch(rows.join(""), /synthetic-|first|second/);
+    });
+    await t.test("related payment names preserve corrections and explicit missing-name wording", async () => {
+      const data = scenario([]);
+      data.collections.settlement_events.items = [
+        { id: "synthetic-correction", party: "测试冲正员工", direction: -1, signed_amount_fen: "-5678" },
+        { id: "synthetic-missing-name", party: "员工姓名未提供", direction: 1, signed_amount_fen: "6789" },
+        { id: "synthetic-no-party", party: "", direction: 1, signed_amount_fen: "7890" },
+      ].map(item => ({ name: "net", mode: "payment", posting_period: "2026-09", relation_state: "resolved", ...item }));
+      data.collections.settlement_events.page = { total_count: 3, filtered_count: 3, returned_count: 3, has_more: false, next_cursor: null };
+      const rows = relatedRows(await render(data));
+      assert.equal(rows.length, 3);
+      assert.match(rows[0], /测试冲正员工[\s\S]*更正原实际收付款[\s\S]*−¥56\.78/);
+      assert.match(rows[1], /员工姓名未提供[\s\S]*¥67\.89/);
+      assert.match(rows[2], /对象未提供[\s\S]*¥78\.90/);
+      assert.doesNotMatch(rows.join(""), /synthetic-|重新付款|重新收款/);
     });
     await t.test("only exact duplicate purposes and unambiguous row objects disappear", async () => {
       const data = scenario(); const profile = name => ({ values: { display_name: name } });

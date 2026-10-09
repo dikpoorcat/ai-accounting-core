@@ -23,7 +23,7 @@ function scenario(items = [obligation()]) {
   data.current_business_result = { amount_fen: "9999999", amount_label: "当前业务结果金额", posting_period: "2026-10" };
   data.settlements = { cutoff_period: "2026-09", status: "established", checking: false, obligations: items };
   data.current_followups.settlements = { ...data.settlements, cutoff_period: "2026-10", obligations: structuredClone(items) };
-  data.collections.settlement_events.items = [{ id: "tax-correction", name: "tax", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-12345" }];
+  data.collections.settlement_events.items = [{ id: "tax-correction", name: "tax", purpose_label: "个人所得税", mode: "payment", posting_period: "2026-10", direction: -1, relation_state: "resolved", signed_amount_fen: "-12345" }];
   data.collections.settlement_events.page = { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null };
   return data;
 }

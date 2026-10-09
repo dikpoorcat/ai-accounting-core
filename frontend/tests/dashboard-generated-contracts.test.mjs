@@ -11,6 +11,7 @@ const validatorNames = {
   period_readiness: "validatePeriodReadinessResponse",
   dashboard_context: "validateDashboardContextResponse",
   dashboard_brief: "validateDashboardBriefResponse",
+  dashboard_brief_group: "validateDashboardBriefGroupResponse",
   dashboard_funds: "validateDashboardFundsResponse",
   dashboard_employees: "validateDashboardEmployeesResponse",
   dashboard_assets: "validateDashboardAssetsResponse",
@@ -40,7 +41,7 @@ test("generated validators accept all current synthetic backend response branche
 
 test("the explicit generated manifest covers every browser-visible response contract", () => {
   assert.deepEqual(Object.keys(schemas).sort(), [
-    "browser_security_status", "dashboard_assets", "dashboard_brief",
+    "browser_security_status", "dashboard_assets", "dashboard_brief", "dashboard_brief_group",
     "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
     "dashboard_quarterly_report", "delete_work_draft", "list_work_drafts", "period_readiness",
@@ -86,8 +87,8 @@ test("new page contracts keep detail rows only under collections", () => {
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
     workflow: 2, period_readiness: 1,
-    dashboard_context: 3, dashboard_brief: 15, dashboard_funds: 9,
-    dashboard_employees: 10, dashboard_assets: 10, dashboard_business_status: 7,
+    dashboard_context: 3, dashboard_brief: 17, dashboard_brief_group: 2, dashboard_funds: 9,
+    dashboard_employees: 10, dashboard_assets: 10, dashboard_business_status: 9,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {

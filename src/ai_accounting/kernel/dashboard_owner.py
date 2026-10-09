@@ -104,16 +104,17 @@ def owner_tasks(snapshot):
 
 
 def obligation_view(item):
-    from .settlement_freeze import obligation_category
+    from .obligation_classification import obligation_category
 
     direction = item.get("category")
     if direction not in {"receivable", "payable"}:
         direction = "unknown"
-    category = (
-        "unknown" if direction == "unknown" else obligation_category(
-            direction, item.get("account"), (item.get("source_business") or {}).get("kind")
+    category = item.get("category_key")
+    if category is None:
+        category = "unknown" if direction == "unknown" else obligation_category(
+            direction, item.get("account"), (item.get("source_business") or {}).get("kind"),
+            semantic=item.get("classification_semantic"),
         )
-    )
     return {
         "key": item["key"],
         "name": item["name"],
@@ -139,7 +140,22 @@ def settlement_view(value):
     }
 
 
-def settlement_event_view(item):
+def settlement_event_party_identity(item):
+    """Locate an event's saved recipient or creditor without re-reading facts."""
+    recipient = item.get("recipient_id")
+    if isinstance(recipient, str) and recipient:
+        return recipient, "收款人名称未提供"
+    creditor = item.get("creditor_id")
+    if isinstance(creditor, str) and creditor:
+        return creditor, "往来方名称未提供"
+    party_key = item.get("party_key")
+    if (isinstance(party_key, (tuple, list)) and len(party_key) == 2
+            and party_key[0] == "party" and isinstance(party_key[1], str) and party_key[1]):
+        return party_key[1], "往来方名称未提供"
+    return None, ""
+
+
+def settlement_event_view(item, *, party):
     return {
         "id": item["id"],
         "subject_id": item["settlement_business"]["subject_id"],
@@ -150,7 +166,62 @@ def settlement_event_view(item):
         "relation_state": item["relation_state"],
         "kind": item["settlement_business"]["kind"],
         "name": item["obligation_name"],
+        "purpose_label": settlement_purpose_label(item),
         "mode": item["mode"],
+        "party": party,
+    }
+
+
+def settlement_purpose_label(item):
+    """Name the exact adopted obligation, retaining its wire name separately."""
+    from .dashboard import _PAYROLL_COMPONENT_NAMES, _name
+
+    kind = item["source_business"]["kind"]
+    name = item.get("purpose_component", item["obligation_name"])
+    if kind == "pass_through":
+        return {"collection": "代收款", "remittance": "代付款"}.get(name, _name(kind))
+    if kind in {"refundable_deposit", "reimbursed_deposit"}:
+        return {"payment": "支付押金", "refund": "收回押金", "reimbursement": "报销押金"}.get(
+            name, _name(kind),
+        )
+    if kind in {"labor", "labor_accrual", "labor_project_cost"}:
+        if name in {"net", "primary"}:
+            return "实发劳务款"
+        return _PAYROLL_COMPONENT_NAMES.get(name, _name(kind))
+    if kind in {"payroll", "payroll_bounded", "annual_bonus", "opening_payroll_payable"}:
+        if kind == "annual_bonus" and name == "net":
+            return "实发奖金"
+        return {"net_salary": "实发工资", "salary": "实发工资", "bonus": "实发奖金"}.get(
+            name, _PAYROLL_COMPONENT_NAMES.get(name, "工资奖金"),
+        )
+    return _name(kind)
+
+
+def scope_business_status(value, component, row):
+    """Restrict owner presentation to the immutable selected payment part."""
+    keys = set(component["obligation_keys"])
+    for summary in (value["settlements"], value["current_followups"]["settlements"]):
+        summary["obligations"] = [item for item in summary["obligations"] if item["key"] in keys]
+    for field in ("current_business_result", "frozen_adoption"):
+        result = value[field]
+        if (row["sign"] < 0 or result is None
+                or result["calculation_id"] != row["basis_calculation_id"]
+                or result["result_digest"] != row["basis"]["result_digest"]):
+            value[field] = None
+        else:
+            value[field] = {**result, "amount_fen": component["amount_fen"],
+                            "amount_label": component["amount_label"]}
+    identities = set(component["identities"])
+    profiles = value["display_profiles"]
+    for group in ("employees", "counterparties", "assets"):
+        if group in profiles:
+            profiles[group] = [item for item in profiles[group] if item["entity_id"] in identities]
+    # These texts describe the whole bank document; they cannot describe one
+    # adopted category. Object profiles and the precise fund account remain.
+    profiles["business"] = {"entity_id": value["identity"]["subject_id"], "values": {}}
+    value["detail_scope"] = {
+        "voucher_version_id": row["id"], "category": component["source_category"],
+        "amount_fen": component["amount_fen"], "amount_label": component["amount_label"],
     }
 
 
@@ -240,6 +311,7 @@ def business_view(value):
             "settlements": settlement_view(value["current_followups"]["settlements"])
         },
         "display_profiles": _profile_view(value["display_profiles"]),
+        "detail_scope": value.get("detail_scope"),
     }
 
 

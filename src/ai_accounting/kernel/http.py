@@ -376,6 +376,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                 endpoints = {
                     "context",
                     "brief",
+                    "brief-group",
                     "funds",
                     "employees",
                     "assets",

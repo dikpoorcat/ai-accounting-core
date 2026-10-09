@@ -17,6 +17,7 @@ const check = process.argv.slice(2).includes("--check");
 const contracts = [
   ["workflow", "Workflow"], ["period_readiness", "PeriodReadiness"],
   ["dashboard_context", "DashboardContext"], ["dashboard_brief", "DashboardBrief"],
+  ["dashboard_brief_group", "DashboardBriefGroup"],
   ["dashboard_funds", "DashboardFunds"], ["dashboard_employees", "DashboardEmployees"],
   ["dashboard_assets", "DashboardAssets"], ["dashboard_business_status", "DashboardBusinessStatus"],
   ["dashboard_quarterly_report", "DashboardQuarterlyReport"],
