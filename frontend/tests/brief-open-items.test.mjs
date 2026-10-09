@@ -71,6 +71,8 @@ test("closed-period open items prefer each item's current settlement status", as
     app.use(router);
     const html = await renderToString(app);
 
+    assert.match(html, /id="open-items-title"[^>]*>\s*应收应付\s*<\/h2>/);
+    assert.match(html, /aria-label="应收应付分类"/);
     assert.match(html, /class="status business-list-state"[^>]*>当前待收<\/span>/);
     assert.match(html, /class="status business-list-state status-settled"[^>]*>当前已收回<\/span>/);
     assert.match(html, /class="status business-list-state status-historical"[^>]*>关账时待收<\/span>/);
@@ -81,6 +83,7 @@ test("closed-period open items prefer each item's current settlement status", as
     assert.doesNotMatch(html, /column-action|settlement-progress/);
     assert.doesNotMatch(html, /业务月份|业务月份未提供/);
     assert.doesNotMatch(html, /精确来源与候选依据/);
+    assert.doesNotMatch(html, /截至9月末|待收与待付/);
   } finally {
     await server.close();
   }
@@ -97,10 +100,10 @@ test("supplier advance rows label their historical balance as money awaiting off
       { key: "customer_receivables", label: "待收客户款", direction: "receivable", expected: { open: "待收", closed: "应收" } },
       { key: "supplier_payables", label: "待付供应商款", direction: "payable", expected: { open: "待付", closed: "应付" } },
     ];
-    for (const periodStatus of ["open", "closed"]) for (const scenario of categories) {
+    for (const periodStatus of ["open", "closed"]) for (const currentPeriod of ["2026-10", "2027-01"]) for (const scenario of categories) {
       const { expected, ...category } = scenario;
       const app = createSSRApp(component, {
-        openItems: { complete: true, cutoff_period: "2026-09", current_cutoff_period: "2026-10", receivable_count: category.direction === "receivable" ? 1 : 0, receivable_fen: category.direction === "receivable" ? "10000" : "0", payable_count: category.direction === "payable" ? 1 : 0, payable_fen: category.direction === "payable" ? "10000" : "0", total_count: 1, categories: [{ ...category, unit: "笔", count: 1, loaded_count: 1, outstanding_fen: "10000" }] },
+        openItems: { complete: true, cutoff_period: "2026-09", current_cutoff_period: currentPeriod, receivable_count: category.direction === "receivable" ? 1 : 0, receivable_fen: category.direction === "receivable" ? "10000" : "0", payable_count: category.direction === "payable" ? 1 : 0, payable_fen: category.direction === "payable" ? "10000" : "0", total_count: 1, categories: [{ ...category, unit: "笔", count: 1, loaded_count: 1, outstanding_fen: "10000" }] },
         items: [{ id: "selected", group_key: "selected", member_count: 1, category_key: category.key, party: "合成往来方", description: "合成款项", status: "open", source_amount_fen: "10000", paid_fen: "0", other_settled_fen: "0", outstanding_fen: "10000", current_status: "settled", current_outstanding_fen: "0", subject_id: null, contribution_group_key: null, contribution_component: null, payroll_period: null }],
         periodLabel: "2026年9月", period: "2026-09", periodStatus,
       });
@@ -110,13 +113,17 @@ test("supplier advance rows label their historical balance as money awaiting off
       const heading = html.match(/<span class="column-money"[^>]*>([^<]+)<\/span>/)[1];
       const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0];
       assert.equal(heading, `${label}金额`);
-      assert.match(money, new RegExp(`<small[^>]*>${label}</small>`));
+      assert.doesNotMatch(money, /<small\b|月末|待收|待付|应收|应付|待冲抵/);
       assert.match(money, /¥100\.00/);
       assert.doesNotMatch(money, /¥0\.00/);
       if (category.key === "supplier_advances") {
         assert.doesNotMatch(money, /待收|应收|待付|应付/);
-        assert.match(html, /当前已处理完毕/);
+        assert(html.includes("当前已处理完毕"));
+      } else {
+        assert(html.includes(category.direction === "receivable" ? "当前已收回" : "当前已支付"));
+        assert.doesNotMatch(html, /已结清/);
       }
+      assert.doesNotMatch(html, /截至10月末|截至2027年1月末/);
     }
   } finally { await server.close(); }
 });

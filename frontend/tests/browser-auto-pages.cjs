@@ -110,7 +110,7 @@ async function run(config) {
     }
     const cases = [
       ["brief", "本月发生", ["activity"], "#activity .event-row"],
-      ["brief", "待收待付", ["open_items"], "#open-items .open-event-row"],
+      ["brief", "应收应付", ["open_items"], "#open-items .open-event-row"],
       ["funds", "账户", ["accounts"], ".account-grid .account-card"],
       ["funds", "货币基金", ["investment_products", "investment_events"], ".investment-summary-table tbody tr"],
       ["funds", "资金明细", ["accounts", "movements"], ".book-activity-row"],

@@ -50,7 +50,7 @@ const sectionLinks = computed(() => data.value ? [
   ...(data.value.financial_position ? [{ id: "financial-overview", label: "资金与资产负债" }] : []),
   { id: "activity", label: "本月发生" },
   ...(data.value.workforce_cost?.has_activity ? [{ id: "workforce", label: "用工成本" }] : []),
-  { id: "open-items", label: "待收待付" },
+  { id: "open-items", label: "应收应付" },
   { id: "owner-tasks", label: "老板待办" },
 ] : []);
 const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "overview");

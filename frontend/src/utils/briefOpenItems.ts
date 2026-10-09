@@ -69,6 +69,7 @@ export function groupContributionMembers(items: BriefOpenItem[]): BriefOpenRow[]
 export interface ContributionProgressRow {
   component: ContributionComponent;
   label: string;
+  members: BriefOpenItem[];
   present: boolean;
   sourceAmountFen: string | null;
   paidFen: string | null;
@@ -87,7 +88,7 @@ export function contributionProgressRows(item: BriefOpenRow): ContributionProgre
     const members = item.contributionMembers?.filter(member => member.contribution_component === component.key) ?? [];
     const present = members.length > 0;
     const status = combinedStatus(members), currentStatus = combinedStatus(members, true);
-    return { component: component.key, label: component.label, present,
+    return { component: component.key, label: component.label, members, present,
       sourceAmountFen: present ? sum(members, "source_amount_fen") : null,
       paidFen: present ? sum(members, "paid_fen") : null,
       otherSettledFen: present ? sum(members, "other_settled_fen") : null,

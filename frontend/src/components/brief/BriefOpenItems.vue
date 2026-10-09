@@ -55,7 +55,7 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
     <div class="section-heading">
       <div>
         <h2 id="open-items-title">
-          待收与待付
+          应收应付
         </h2>
         <p>
           截至 {{ periodLabel }}末 · {{ openItems.group_count }} 项 · {{ openItems.total_count }} 笔记录 · {{ isClosed ? '关账时有余额' : '未完全结清' }}
@@ -75,7 +75,7 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
 
     <p v-if="openItems.complete === false" class="open-item-issues" role="status">AI 会计核对中，已知余额暂不能代表全部款项。</p>
     <div v-if="visibleCategories.length" class="open-workbench" data-section-focus tabindex="-1">
-      <nav class="open-index" aria-label="待收待付分类">
+      <nav class="open-index" aria-label="应收应付分类">
         <span class="category-heading">款项分类</span>
         <button
           v-for="category in visibleCategories"
@@ -97,7 +97,7 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
         <div class="list-columns business-list-columns" aria-hidden="true">
           <span>对象</span><span>事项</span><span>状态</span><span class="column-money">{{ outstandingLabel(selectedCategory.direction, selectedCategory.key) }}金额</span><span></span>
         </div>
-        <ul class="open-event-list" aria-label="待收待付明细">
+        <ul class="open-event-list" aria-label="应收应付明细">
           <li
             v-for="item in selectedCategory.items"
             :key="item.group_key"
@@ -116,7 +116,6 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
             </span>
             <span :class="['status', 'business-list-state', statusClass(item)]">{{ openStateLabel(selectedCategory.direction, item) }}</span>
             <span class="open-event-money business-list-money">
-              <small>{{ outstandingLabel(selectedCategory.direction, selectedCategory.key) }}</small>
               <b>{{ amountLabel(item.outstanding_fen) }}</b>
             </span>
             <svg v-if="canExpand(item)" class="row-chevron business-list-arrow" :class="{ expanded: expandedItemId === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
@@ -414,7 +413,8 @@ h3 {
   color: var(--brief-amber);
   font-size: 11px;
   font-weight: 750;
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 100%;
 }
 
 .status-historical {
@@ -451,17 +451,6 @@ h3 {
 }
 
 @media (max-width: 760px) {
-  .contribution-detail { padding: 12px; }
-  .contribution-detail table, .contribution-detail tbody, .contribution-detail tr { display: block; }
-  .contribution-detail thead { display: none; }
-  .contribution-detail tbody tr { padding: 10px 0; border-bottom: 1px solid var(--brief-line); }
-  .contribution-detail tbody tr:last-child { border-bottom: 0; }
-  .contribution-detail th, .contribution-detail td { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; }
-  .contribution-detail td[data-label]::before { content: attr(data-label); color: var(--brief-muted); text-align: left; flex-shrink: 0; }
-  .contribution-detail th { justify-content: flex-start; }
-  .contribution-detail .contribution-missing { display: block; }
-  .contribution-remaining { flex-wrap: wrap; }
-  .contribution-remaining .status { margin-top: 0; }
   .section-heading {
     align-items: flex-start;
     flex-direction: column;

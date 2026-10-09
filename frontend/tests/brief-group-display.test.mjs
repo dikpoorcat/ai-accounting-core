@@ -7,6 +7,61 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
+const contributionMember = (id, changes = {}) => ({ id, group_key: "employee", category_key: "payroll_payables", party: "甲员工", description: "个人社保", purpose: "社保缴费", date: null, recognition: { period: "2026-07", label: "2026-07 · 按月确认" }, subject_id: id, status: "open", current_status: "settled", source_amount_fen: "52500", paid_fen: "0", other_settled_fen: "0", outstanding_fen: "52500", current_outstanding_fen: "0", contribution_group_key: "employee-a", contribution_component: "employee_social", payroll_period: "2026-07", voucher_version_id: "exact-88", ...changes });
+async function renderMembers(server, members, { hasMore = false, expandedPart = "" } = {}) {
+  const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
+  const data = { section: "open_items", group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
+  const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; return state; } };
+  const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", lines: [] });
+  const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-07", openSummary: { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] }, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
+  return renderToString(app);
+}
+
+test("monthly contribution table owns single records and compresses missing and settled components", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const html = await renderMembers(server, [contributionMember("personal"), contributionMember("company", { description: "单位社保", contribution_component: "employer_social", purpose: "公司社保缴费", source_amount_fen: "132000", outstanding_fen: "132000" })]);
+    assert.equal((html.match(/class="contribution-row"/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /class="member-row"/);
+    assert.equal((html.match(/¥525\.00/g) ?? []).length, 2, "original and period-end amount stay distinct; no third duplicate member amount");
+    assert.equal((html.match(/社保缴费/g) ?? []).length, 2);
+    assert.equal((html.match(/凭证 88/g) ?? []).length, 2, "both component rows retain their exact voucher entrance");
+    assert.equal((html.match(/>业务进展<\/button>/g) ?? []).length, 2);
+    assert.match(html, /个人公积金、公司公积金：该月末未列待付款项/);
+    assert.match(html, /截至2026年9月末.*上述待付款项均已结清/);
+    assert.doesNotMatch(html, /class="contribution-part"/);
+    assert.doesNotMatch(html, /尚未结算|单位社保/);
+  } finally { await server.close(); }
+});
+
+test("multi-record components keep exact dates, purposes and vouchers while unmatched records stay visible", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const records = [contributionMember("first", { date: "2026-07-15", purpose: "第一笔补缴" }), contributionMember("second", { date: "2026-07-20", purpose: "第二笔补缴", voucher_version_id: "exact-89" }), contributionMember("no-identity", { contribution_group_key: null, purpose: "缺员工身份" }), contributionMember("no-period", { payroll_period: null, purpose: "缺工资月" }), contributionMember("no-component", { contribution_component: null, purpose: "缺分项" })];
+    const html = await renderMembers(server, records, { expandedPart: 'contribution:["employee-a","2026-07"]:employee_social' });
+    assert.match(html, /aria-expanded="true"[^>]*>共 2 笔/);
+    assert.match(html, /¥1,050\.00/);
+    for (const text of ["2026-07-15", "2026-07-20", "第一笔补缴", "第二笔补缴", "凭证 88", "凭证 89", "缺员工身份", "缺工资月", "缺分项"]) assert(html.includes(text), text);
+    assert.equal((html.match(/class="member-row"/g) ?? []).length, 5, "only multi-record children and unmatched ordinary records retain member rows");
+    const partial = await renderMembers(server, records, { hasMore: true });
+    assert.doesNotMatch(partial, /class="contribution-row"/);
+    assert.equal((partial.match(/class="member-row"/g) ?? []).length, 5, "incomplete grouping retains all already loaded records");
+  } finally { await server.close(); }
+});
+
+test("later mixed or unknown contribution states never collapse into a settled summary", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    for (const currentStatus of ["partial", "checking", "over_settled", "reversed", "withdrawn", null]) {
+      const html = await renderMembers(server, [contributionMember("settled"), contributionMember("other", { contribution_component: "employer_social", current_status: currentStatus, current_outstanding_fen: currentStatus === "over_settled" ? "-100" : currentStatus === "partial" ? "100" : currentStatus == null ? null : "0" })]);
+      assert.doesNotMatch(html, /上述待付款项均已结清/);
+      assert.match(html, /class="contribution-part"/);
+      if (currentStatus === "over_settled") assert.match(html, /−¥1\.00/);
+    }
+  } finally { await server.close(); }
+});
+
 test("group member lists preserve purposes, exact vouchers and monthly contribution breakdowns", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {

@@ -39,7 +39,7 @@ async function run(config) {
     const realContribution = real.data.collections.open_items.items.find(item => item.contribution_group_key && item.contribution_component && item.payroll_period);
     let realGroupDetail = false;
     if (realContribution) {
-      await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
+      await page.locator(".section-nav").getByRole("button", { name: "应收应付", exact: true }).click();
       const categories = real.data.open_items.categories.filter(category => category.count);
       await page.locator("#open-items .open-index button").nth(categories.findIndex(category => category.key === "payroll_payables")).click();
       const realGroup = page.locator("#open-items .open-event-row").filter({ hasText: realContribution.party }).filter({ has: page.locator(".open-event-matter", { hasText: "社保与公积金" }) }).first();
@@ -80,7 +80,7 @@ async function run(config) {
     assert.match(await group.locator(".open-event-money").textContent(), /等待读取/);
     const beforeExpand = details(); await group.focus();
     await bounded(started, "keyboard focus continuation start without navigation");
-    assert.equal(await page.locator('.section-nav [aria-current="location"]').textContent().then(text => text.trim()), "待收待付");
+    assert.equal(await page.locator('.section-nav [aria-current="location"]').textContent().then(text => text.trim()), "应收应付");
     assert.match(await group.textContent(), /正在汇总|尚未读全/);
     assert.doesNotMatch(await group.locator(".open-event-money").textContent(), /¥/);
     await group.press("Enter");
@@ -128,7 +128,7 @@ async function run(config) {
     Object.assign(source[24], { current_status: "settled", current_outstanding_fen: "0" });
     synthetic.snapshot_version = "social-browser-colors";
     await refresh();
-    await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
+    await page.locator(".section-nav").getByRole("button", { name: "应收应付", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#open-items .open-event-row .open-event-money")?.textContent.includes("¥400.00"));
     await group.focus(); await group.press("Enter"); await group.locator(".contribution-latest").waitFor();
     const latest = group.locator(".contribution-current"); assert.equal(await latest.count(), 3);
@@ -152,11 +152,11 @@ async function run(config) {
     hold = true; synthetic.snapshot_version = "social-browser-held-snapshot";
     const lateStarted = new Promise(resolve => { continuationStarted = resolve; });
     await refresh();
-    await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
+    await page.locator(".section-nav").getByRole("button", { name: "应收应付", exact: true }).click();
     await bounded(lateStarted, "held old-snapshot continuation start"); const releaseOldPage = releasePage;
     hold = false; synthetic.snapshot_version = "social-browser-replacement-snapshot";
     await refresh();
-    await page.locator(".section-nav").getByRole("button", { name: "待收待付", exact: true }).click();
+    await page.locator(".section-nav").getByRole("button", { name: "应收应付", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#open-items .open-event-row .open-event-money")?.textContent.includes("¥400.00")); await frames();
     const beforeLate = requests.length; releaseOldPage(); await frames();
     assert.equal(await rows.count(), 22); assert.equal(requests.length, beforeLate, "late old page triggered an extra refresh");

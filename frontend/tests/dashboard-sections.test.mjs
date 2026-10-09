@@ -148,7 +148,7 @@ test("navigation remeasures its height, follows user scrolling, and releases lis
 test("bottom scrolling selects the section at the viewport midpoint rather than the preceding or final section", async () => {
   const h = await harness({ links: [
     { id: "overview", label: "概览" }, { id: "workforce", label: "用工成本" },
-    { id: "open-items", label: "待收待付" }, { id: "owner-tasks", label: "老板待办" },
+    { id: "open-items", label: "应收应付" }, { id: "owner-tasks", label: "老板待办" },
   ] });
   try {
     h.add("overview", 80); h.add("workforce", 1280, { height: 258 });

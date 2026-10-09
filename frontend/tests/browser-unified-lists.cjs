@@ -246,7 +246,7 @@ async function run(config) {
     assert.equal(await page.locator(".voucher-card").count(), 30);
     assert.equal(voucherRequests().length, beforeDirectRefresh, "direct target reread a complete collection during refresh");
     phase = "open items layout and keyboard";
-    await nav("待收待付").click(); const open = page.locator(".open-event-row").first();
+    await nav("应收应付").click(); const open = page.locator(".open-event-row").first();
     const detailsBefore = requests.filter(url => url.pathname.endsWith("business-status")).length;
     await keyboard(open, open.locator(".contribution-detail"), open.locator(".business-list-arrow"));
     assert.equal(requests.filter(url => url.pathname.endsWith("business-status")).length, detailsBefore, "group expansion requested business status");

@@ -24,7 +24,7 @@ async function run(config) {
   const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const reply = action => page.waitForResponse(response => new URL(response.url()).pathname === `/api/dashboard/${action}`);
   const refresh = async () => { const pending = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await pending; await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames(); };
-  const finishMembers = async row => { await row.locator(".member-row").first().waitFor(); await row.locator(".group-members .dashboard-pagination").waitFor({ state: "hidden", timeout: 60000 }); await frames(); };
+  const finishMembers = async row => { await row.locator(".member-row, .contribution-row").first().waitFor(); await row.locator(".group-members .dashboard-pagination").waitFor({ state: "hidden", timeout: 60000 }); await frames(); };
   const money = value => { if (value == null) return "待核对"; const number = BigInt(value), absolute = number < 0n ? -number : number; return `${number < 0n ? "−" : ""}¥${new Intl.NumberFormat("zh-CN").format(absolute / 100n)}.${String(absolute % 100n).padStart(2, "0")}`; };
   const fulfill = async (route, payload, validator) => {
     try {

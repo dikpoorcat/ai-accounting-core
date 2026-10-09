@@ -21,11 +21,11 @@ const props = defineProps<{
 const emit = defineEmits<{ vouchers: [items: BriefVoucher[]]; requestVoucher: [id: string]; changed: [] }>();
 const route = useRoute();
 const data = shallowRef<BriefGroupResponse["data"] | null>(null);
-const loading = ref(false), error = ref(""), selected = ref(""), preview = ref("");
+const loading = ref(false), error = ref(""), selected = ref(""), preview = ref(""), expandedPart = ref("");
 let request: AbortController | null = null, generation = 0, mounted = true;
 function selection() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.refreshGeneration, props.section, props.groupKey, props.isBatch]); }
 function cancel() { generation++; request?.abort(); request = null; loading.value = false; }
-function invalidate() { cancel(); data.value = null; preview.value = ""; selected.value = ""; error.value = ""; }
+function invalidate() { cancel(); data.value = null; preview.value = ""; selected.value = ""; expandedPart.value = ""; error.value = ""; }
 async function loadMore() {
   if (!props.expanded || loading.value || !props.snapshotVersion || typeof route.query.company_id !== "string") return;
   const page = data.value?.collections.members.page;
@@ -60,11 +60,21 @@ const page = computed(() => data.value?.collections.members.page);
 const loaded = computed(() => data.value?.collections.members.items.length ?? 0);
 const contributions = computed(() => {
   if (!props.openSummary || page.value?.has_more || !openMembers.value.length) return [];
-  return groupContributionMembers(openMembers.value);
+  return groupContributionMembers(openMembers.value).map(row => {
+    const parts = contributionProgressRows(row);
+    return { ...row, parts: parts.filter(part => part.present), absentLabels: parts.filter(part => !part.present).map(part => part.label),
+      changedParts: parts.filter(part => part.changed),
+      allSettled: parts.filter(part => part.present).every(part => part.currentStatus === "settled" && part.currentOutstandingFen === "0" && !part.currentNotices.length) };
+  });
+});
+const ungroupedOpenMembers = computed(() => {
+  const grouped = new Set(contributions.value.flatMap(row => row.contributionMembers?.map(item => item.id) ?? []));
+  return openMembers.value.filter(item => !grouped.has(item.id));
 });
 function amount(value: string | null) { return value == null ? "待核对" : formatFen(value); }
 function itemKey(item: BriefOpenItem) { return item.id; }
 function toggle(key: string) { selected.value = selected.value === key ? "" : key; }
+function togglePart(key: string) { expandedPart.value = expandedPart.value === key ? "" : key; selected.value = ""; preview.value = ""; }
 function openContext(item: BriefOpenItem) {
   return { obligationKey: item.id, categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
     currentCutoffPeriod: props.openSummary?.current_cutoff_period ?? props.period, status: item.status, direction: props.direction ?? "payable",
@@ -78,7 +88,7 @@ watch(() => props.expanded, expanded => {
   if (expanded) {
     if (props.isBatch && data.value?.section === "activity") selected.value = data.value.collections.members.items[0]?.key ?? "";
     void loadMore();
-  } else { cancel(); selected.value = ""; }
+  } else { cancel(); selected.value = ""; expandedPart.value = ""; }
 }, { immediate: true });
 onBeforeUnmount(() => { mounted = false; cancel(); });
 </script>
@@ -88,15 +98,35 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
     <div v-for="row in contributions" :key="row.id" class="contribution-summary">
       <strong>{{ payrollMonthLabel(row.payroll_period!) }} · 社保与公积金</strong>
       <p>截至{{ payrollMonthLabel(openSummary!.cutoff_period) }}末{{ periodClosed ? '（关账时）' : '' }}</p>
-      <table><thead><tr><th>款项</th><th>原应付</th><th>实际已付</th><th>抵销／代付</th><th>月末待付</th></tr></thead>
-        <tbody><tr v-for="part in contributionProgressRows(row)" :key="part.component"><th>{{ part.label }}</th>
-          <template v-if="part.present"><td data-label="原应付">{{ amount(part.sourceAmountFen) }}</td><td data-label="实际已付">{{ amount(part.paidFen) }}</td><td data-label="抵销／代付">{{ amount(part.otherSettledFen) }}</td><td data-label="月末待付"><strong>{{ amount(part.outstandingFen) }}</strong><small v-for="notice in part.notices" :key="notice">{{ notice }}</small></td></template>
-          <td v-else colspan="4">该月末未列待付款项</td>
-        </tr></tbody>
+      <table><thead><tr><th>款项</th><th>原应付</th><th>实际已付</th><th>抵销／代付</th><th>月末待付</th><th>操作</th></tr></thead>
+        <tbody><template v-for="part in row.parts" :key="part.component">
+          <tr class="contribution-row"><th scope="row">{{ part.label }}
+            <template v-if="part.members.length === 1"><small v-if="part.members[0]!.date || part.members[0]!.recognition.period !== row.payroll_period">{{ part.members[0]!.date || part.members[0]!.recognition.label }}</small><small v-if="part.members[0]!.purpose">{{ part.members[0]!.purpose }}</small></template>
+          </th>
+            <td data-label="原应付">{{ amount(part.sourceAmountFen) }}</td><td data-label="实际已付">{{ amount(part.paidFen) }}</td><td data-label="抵销／代付">{{ amount(part.otherSettledFen) }}</td><td data-label="月末待付"><strong>{{ amount(part.outstandingFen) }}</strong><small v-for="notice in part.notices" :key="notice">{{ notice }}</small><small v-if="!['open', 'partial', 'settled'].includes(part.status)">{{ businessStateLabel(part.status) }}</small></td>
+            <td class="contribution-actions">
+              <template v-if="part.members.length === 1">
+                <BriefVoucherPreview :voucher="part.members[0]!.voucher_version_id ? voucherIndex?.get(part.members[0]!.voucher_version_id) : undefined" :active="preview === part.members[0]!.id" @preview="value => preview = value ? part.members[0]!.id : preview === part.members[0]!.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
+                <button v-if="part.members[0]!.subject_id" type="button" :aria-expanded="selected === part.members[0]!.id" @click="toggle(part.members[0]!.id)">业务进展</button>
+              </template>
+              <button v-else type="button" :aria-expanded="expandedPart === row.id + ':' + part.component" @click="togglePart(row.id + ':' + part.component)">共 {{ part.members.length }} 笔</button>
+            </td>
+          </tr>
+          <tr v-if="part.members.length === 1 && part.members[0]!.subject_id" v-show="selected === part.members[0]!.id" class="contribution-detail-row"><td colspan="6">
+            <BusinessStatusDetails :subject-id="part.members[0]!.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(part.members[0]!)" :expanded="expanded && selected === part.members[0]!.id" hide-summary presentation="brief" @changed="$emit('changed')" />
+          </td></tr>
+          <tr v-else-if="part.members.length > 1" v-show="expandedPart === row.id + ':' + part.component" class="contribution-detail-row"><td colspan="6"><ul class="contribution-records" :aria-label="part.label + '逐笔记录'">
+            <li v-for="item in part.members" :key="item.id"><div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.purpose || item.description }}</span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
+              <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
+              <button v-if="item.subject_id" type="button" :aria-expanded="selected === item.id" @click="toggle(item.id)">业务进展</button>
+            </div><BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && expandedPart === row.id + ':' + part.component && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" /></li>
+          </ul></td></tr>
+        </template></tbody>
       </table>
-      <template v-if="contributionProgressRows(row).some(part => part.changed)">
-        <p>后续进展 · 截至{{ payrollMonthLabel(openSummary!.current_cutoff_period) }}末</p>
-        <div v-for="part in contributionProgressRows(row).filter(part => part.changed)" :key="part.component" class="contribution-part"><span>{{ part.label }}</span><span>{{ businessStateLabel(part.currentStatus) }}</span><strong>{{ amount(part.currentOutstandingFen) }}</strong><small v-for="notice in part.currentNotices" :key="notice">{{ notice }}</small></div>
+      <p v-if="row.absentLabels.length" class="contribution-absent">{{ row.absentLabels.join('、') }}：该月末未列待付款项</p>
+      <template v-if="row.changedParts.length">
+        <p class="contribution-latest">后续进展 · 截至{{ payrollMonthLabel(openSummary!.current_cutoff_period) }}末<span v-if="row.allSettled" class="contribution-settled">：上述待付款项均已结清</span></p>
+        <div v-for="part in row.allSettled ? [] : row.changedParts" :key="part.component" class="contribution-part"><span>{{ part.label }}</span><span>{{ businessStateLabel(part.currentStatus) }}</span><strong>{{ amount(part.currentOutstandingFen) }}</strong><small v-for="notice in part.currentNotices" :key="notice">{{ notice }}</small></div>
       </template>
     </div>
     <ul>
@@ -107,7 +137,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
         </div>
         <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
-      <li v-for="item in openMembers" :key="item.id">
+      <li v-for="item in ungroupedOpenMembers" :key="item.id">
         <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}<small v-if="item.purpose" class="member-purpose">{{ item.purpose }}</small></span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id" type="button" :aria-expanded="selected === itemKey(item)" @click="toggle(itemKey(item))">业务进展</button>
@@ -130,11 +160,16 @@ button { border:0; background:transparent; color:var(--accent); font:inherit; pa
 .contribution-summary { margin-bottom:12px; font-size:12px; }
 .contribution-summary p { margin:10px 0; color:var(--muted); }
 .contribution-summary table { width:100%; border-collapse:collapse; }
+.contribution-summary th, .contribution-summary td { overflow-wrap:anywhere; }
 .contribution-summary th, .contribution-summary td { padding:8px 6px; text-align:right; border-bottom:1px solid var(--line); }
 .contribution-summary th:first-child { text-align:left; }
-.contribution-summary td small { display:block; }
+.contribution-summary td small, .contribution-summary th small { display:block; font-weight:normal; margin-top:3px; }
+.contribution-summary .contribution-actions { white-space:nowrap; }
+.contribution-detail-row > td { text-align:left; }
+.contribution-records { padding:0 6px; }
+.contribution-settled { color:var(--brief-green); }
 .contribution-part { display:flex; justify-content:space-between; gap:12px; padding:6px 0; }
 .highlighted { background:var(--accent-soft); }
 @media(max-width:1024px) { .member-row { grid-template-columns:minmax(0,1fr) auto auto; } .member-row > span:nth-child(2) { grid-column:1 / -1; grid-row:2; } .member-state { grid-column:1; } }
-@media(max-width:760px) { .contribution-summary table, .contribution-summary tbody, .contribution-summary tr { display:block; } .contribution-summary thead { display:none; } .contribution-summary tr { padding:8px 0; border-bottom:1px solid var(--line); } .contribution-summary th, .contribution-summary td { display:flex; justify-content:space-between; padding:4px 0; border:0; } .contribution-summary td[data-label]::before { content:attr(data-label); color:var(--muted); } }
+@media(max-width:760px) { .contribution-summary table, .contribution-summary tbody, .contribution-summary tr { display:block; } .contribution-summary thead { display:none; } .contribution-summary tr { padding:8px 0; border-bottom:1px solid var(--line); } .contribution-summary th, .contribution-summary td { display:flex; flex-wrap:wrap; gap:4px 12px; justify-content:space-between; padding:4px 0; border:0; } .contribution-summary th small, .contribution-summary td small { width:100%; } .contribution-summary td[data-label]::before { content:attr(data-label); color:var(--muted); } .contribution-summary .contribution-actions { justify-content:flex-end; } .contribution-summary .contribution-detail-row > td { display:block; } .contribution-actions button { min-height:44px; } .member-row { gap:6px; } .member-row > * { min-width:0; overflow-wrap:anywhere; } }
 </style>
