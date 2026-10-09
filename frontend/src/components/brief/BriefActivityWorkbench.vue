@@ -302,6 +302,9 @@ watch(() => [props.focusedVoucher, props.focusedVoucherSelection] as const, asyn
   if (typeof document !== "undefined") document.getElementById("selected-voucher")?.scrollIntoView({ block: "center" });
 }, { immediate: true });
 const selectedGroup = ref("");
+function groupTypeSummary(group: BriefActivityGroup) {
+  return group.type_counts.map(item => `${item.label} ${item.count}`).join(" · ");
+}
 const activeGroup = computed(() => props.groups.some(group => group.key === selectedGroup.value)
   ? selectedGroup.value : props.groups[0]?.key || "");
 const availableItems = computed(() => props.focusedActivityGroup && !props.items.some(item => item.group_key === props.focusedActivityGroup?.group_key)
@@ -339,7 +342,13 @@ watch(() => props.focusedActivity, async item => {
     <div v-if="mode === 'business'" class="workbench" data-section-focus tabindex="-1">
       <nav class="index" aria-label="业务分类">
         <span class="category-heading">业务分类</span>
-        <button v-for="group in groups" :key="group.key" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key"><strong>{{ group.label }}</strong><b>{{ group.group_count }} 项 · {{ group.event_count }} 笔</b></button>
+        <button v-for="group in groups" :key="group.key" :title="groupTypeSummary(group)" type="button" :aria-pressed="activeGroup === group.key" @click="selectedGroup = group.key">
+          <span class="category-copy">
+            <strong>{{ group.label }}</strong>
+            <small>{{ groupTypeSummary(group) }}</small>
+          </span>
+          <b>{{ group.group_count }} 项 · {{ group.event_count }} 笔</b>
+        </button>
       </nav>
       <div class="detail">
         <div class="list-columns business-list-columns" aria-hidden="true"><span>业务时间</span><span>对象</span><span>事项</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">凭证</span><span></span></div>
@@ -437,10 +446,13 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .index button:hover { background: var(--surface-soft); }
 .index button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 16%, transparent); background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface)); }
 .index button[aria-pressed="true"]::before { background: var(--accent); }
+.index button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .index button strong { min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .index button[aria-pressed="true"] strong { font-weight: 750; }
-.index button b { color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
-.index button[aria-pressed="true"] b { color: var(--accent); }
+.category-copy { display: grid; min-width: 0; gap: 3px; }
+.category-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.index button b { min-width: 22px; padding: 1px 5px; border-radius: 5px; color: var(--muted); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.index button[aria-pressed="true"] b { background: var(--surface); color: var(--accent); }
 .detail { min-width: 0; padding: 12px var(--dashboard-list-gutter); }
 .column-money, .column-action { text-align: right; }
 .event-list { margin: 0; padding: 0; list-style: none; }
@@ -460,6 +472,7 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
   .index { padding: 10px; border-right: 0; border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0; }
   .category-heading { width: 100%; }
   .index button { min-height: 44px; padding: 9px 12px; }
+  .category-copy small { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
   .detail { padding: 4px var(--dashboard-list-gutter); }
   .event-row :deep(.compact-status-panel) { grid-column: 1 / -1; }
 }

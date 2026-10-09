@@ -118,15 +118,30 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
     });
     await t.test("business rows keep their own exact occurrence amounts and neutral corrections", async () => {
       const items = ["0", null, "-800000", "600000", "9007199254740993"].map((amount_fen, index) => ({ ...activity(index + 1), subject_id: "same-business", amount_fen, state: index === 2 ? "更正原业务" : "已入账" }));
-      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 5 }], items }); app.use(await router());
+      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 5, group_count: 5, type_counts: [{ label: "实际收付款", count: 5 }] }], items }); app.use(await router());
       const html = await renderToString(app);
       for (const amount of ["¥0.00", "待核对", "−¥8,000.00", "¥6,000.00", "¥90,071,992,547,409.93"]) assert(html.includes(amount));
       assert.match(html, /class="state business-list-state correction"[^>]*>更正原业务/);
       assert.doesNotMatch(html, /owner-activity-summary/);
     });
+    await t.test("business categories show complete type counts independently of the loaded rows", async () => {
+      const groups = [{ key: "funds", label: "收入与客户", group_count: 2, event_count: 4,
+        type_counts: [{ label: "实际收付款", count: 2 }, { label: "服务收入", count: 2 }] }];
+      const app = createSSRApp(component, { ...baseProps(), groups, items: [activity(1)], activityCount: 4, groupCount: 2 });
+      app.use(await router());
+      const html = await renderToString(app);
+      const index = html.match(/<nav[^>]*aria-label="业务分类"[\s\S]*?<\/nav>/)?.[0];
+      assert.ok(index);
+      assert.match(index, /class="category-copy"[\s\S]*?<strong[^>]*>收入与客户<\/strong>[\s\S]*?<small[^>]*>实际收付款 2 · 服务收入 2<\/small>/);
+      assert.match(index, /title="实际收付款 2 · 服务收入 2"/);
+      assert.match(index, /<b[^>]*>2 项 · 4 笔<\/b>/);
+      assert.match(index, /aria-pressed="true"/);
+      assert.doesNotMatch(index, /¥/);
+      assert.equal((html.match(/class="event-row/g) ?? []).length, 1);
+    });
     await t.test("business rows render date, object and short matter in separate cells with a final arrow", async () => {
       const item = { ...activity(1), date_from: "2026-03-09", date_to: "2026-03-09", has_month_recognition: false, description: "已经记录的完整业务说明" };
-      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 1 }], items: [item] }); app.use(await router());
+      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 1, group_count: 1, type_counts: [{ label: "实际收付款", count: 1 }] }], items: [item] }); app.use(await router());
       const html = await renderToString(app);
       assert.match(html, /business-list-columns[^>]*>[\s\S]*?业务时间[\s\S]*?对象[\s\S]*?事项[\s\S]*?状态[\s\S]*?业务金额[\s\S]*?凭证/);
       assert.match(html, /event-date business-list-date[^>]*>3 月 9 日/);
