@@ -1,5 +1,6 @@
 // Read-only checks on an isolated service, plus browser-only validated synthetic responses.
-// JSON stdin: origin, ticket_url, playwright_module, channel, company_id, period.
+// JSON stdin: origin, ticket_url, playwright_module, channel, company_id, period,
+// optional synthetic_only (intercepts every API; requires no backend or ticket).
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -9,13 +10,14 @@ async function run(config) {
   const { chromium } = require(config.playwright_module);
   const { validateDashboardBriefResponse: validateBrief } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBrief.js")));
   const { validateDashboardBriefGroupResponse: validateGroup } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBriefGroup.js")));
+  const { validateDashboardBusinessStatusResponse: validateStatus } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBusinessStatus.js")));
   const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/dashboard-contracts.json"), "utf8"));
   const company = config.company_id ?? config.companies?.[0]?.id;
   const period = config.period ?? config.companies?.[0]?.period;
   const browser = await chromium.launch({ channel: config.channel ?? "msedge", headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const requests = [], errors = [], routeErrors = [], checks = [], growth = [], screenshots = [];
-  let phase = "real", base, synthetic = null, memberTotal = 24, groupTotal = 1;
+  let phase = "real", base, synthetic = null, memberTotal = 24, groupTotal = 1, batchMode = false;
   let holdFirst = false, holdContinuation = false, holdRootContinuation = false;
   const held = [], heldRoots = [];
   page.on("request", request => { const url = new URL(request.url()); if (url.pathname.startsWith("/api/dashboard/")) requests.push(url); });
@@ -47,6 +49,33 @@ async function run(config) {
     await page.screenshot({ path: target, fullPage: true }); screenshots.push(target);
   };
   try {
+    if (config.synthetic_only) {
+      // All API traffic is intercepted before navigation; this mode needs only
+      // an isolated Vite server and never connects to an accounting service.
+      await page.route(url => url.pathname.startsWith("/api/"), async route => {
+        const url = new URL(route.request().url()), pathname = url.pathname;
+        if (pathname === "/api/browser-ticket") return route.fulfill({ json: { url: `${config.origin ?? new URL(config.ticket_url).origin}/#ticket=synthetic-groups-ticket` } });
+        if (pathname === "/api/browser-session") return route.fulfill({ json: { status: "ok" } });
+        if (pathname === "/api/security-request") return route.fulfill({ json: { schema_version: 1, catalog_instance_id: "groups-synthetic-catalog", provisioned: true, login_name: "演示负责人", active: true, authenticated: true } });
+        if (pathname === "/api/dashboard/context") {
+          const payload = structuredClone(fixtures.company_with_period.response);
+          payload.companies = [{ ...payload.companies[0], company_id: company, name: "演示公司", taxpayer_id: null }];
+          payload.current_company = payload.companies[0]; payload.company = "演示公司";
+          payload.periods = payload.periods.filter(item => item.key === period); payload.default_period = period;
+          return route.fulfill({ json: payload });
+        }
+        if (pathname === "/api/dashboard/brief") {
+          const payload = structuredClone(fixtures.brief.response);
+          payload.read_context.company_id = company;
+          for (const key of ["activity", "open_items"]) payload.data.collections[key] = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+          payload.data.activity_groups = []; payload.data.activity_count = 0; payload.data.group_count = 0;
+          delete payload.data.collections.vouchers;
+          return fulfill(route, payload, validateBrief);
+        }
+        routeErrors.push({ phase, message: `unhandled isolated API: ${pathname}` });
+        return route.abort().catch(() => {});
+      });
+    }
     const address = new URL(config.ticket_url); address.searchParams.set("company_id", company); address.searchParams.set("period", period);
     const first = reply("brief"); await page.goto(address.href); base = await (await first).json(); assert(validateBrief(base), JSON.stringify(validateBrief.errors));
     await page.locator(".activity-section").waitFor(); await frames();
@@ -74,7 +103,7 @@ async function run(config) {
         assert.equal(count("business-status"), 0); checks.push("real keyboard expansion, local hover, precise voucher selection");
         await page.getByRole("button", { name: "按业务", exact: true }).click();
       } else checks.push("real keyboard expansion; this group has no voucher member");
-    } else checks.push("real activity empty; interactive coverage uses validated synthetic groups");
+    } else checks.push(config.synthetic_only ? "all APIs intercepted; real service checks skipped" : "real activity empty; interactive coverage uses validated synthetic groups");
     const openCandidates = [base.data.collections.open_items.items[0], base.data.collections.open_items.items.find(item => item.description.includes("社保"))].filter((item, index, all) => item && all.findIndex(other => other?.group_key === item.group_key) === index);
     for (const realOpen of openCandidates) {
       const category = base.data.open_items.categories.filter(item => item.count).findIndex(item => item.key === realOpen.category_key);
@@ -114,7 +143,7 @@ async function run(config) {
     const voucherSeed = memberSeed.data.collections.vouchers.items[0];
     assert(activitySeed && voucherSeed);
     function group(index) {
-      return { ...base.data.collections.activity.items[0] ?? fixtures.brief.response.data.collections.activity.items[0], key: `synthetic-group-${index}`, group_key: `synthetic-group-${index}`, group: "funds", kind: "collection", party: `同一对象 ${index}`, title: "代收代付", member_count: memberTotal, voucher_count: memberTotal, amount_fen: String(BigInt(memberTotal) * 100n), amount_label: "代收金额", state: "已入账", date_from: null, date_to: null, has_month_recognition: true };
+      return { ...base.data.collections.activity.items[0] ?? fixtures.brief.response.data.collections.activity.items[0], key: `synthetic-group-${index}`, group_key: `synthetic-group-${index}`, group: "funds", kind: "collection", party: `同一对象 ${index}`, title: "代收代付", is_batch: batchMode, member_count: memberTotal, voucher_count: memberTotal, amount_fen: String(BigInt(memberTotal) * 100n), amount_label: "代收金额", state: "已入账", date_from: null, date_to: null, has_month_recognition: true };
     }
     function rootPage(offset = 0) {
       const result = structuredClone(synthetic), items = Array.from({ length: Math.min(20, groupTotal - offset) }, (_, n) => group(offset + n));
@@ -128,7 +157,7 @@ async function run(config) {
       const length = Math.min(20, memberTotal - offset);
       result.data.collections.members.items = Array.from({ length }, (_, n) => {
         const index = offset + n;
-        return { ...activitySeed, key: `member-${key}-${index}`, group_key: key, subject_id: `subject-${key}-${index}`, voucher_version_id: `voucher-${key}-${index}`, voucher_number: index + 1, date: null, recognition: { ...activitySeed.recognition, period, date: null, precision: "month", label: `${period} · 按月确认` }, party: "同一对象", title: "代收代付", description: `每笔不同的真实用途 ${index + 1}`, state: "已入账", amount_fen: "100", amount_label: "代收金额", group: "funds" };
+        return { ...activitySeed, key: `member-${key}-${index}`, group_key: key, subject_id: `subject-${key}-${index}`, voucher_version_id: `voucher-${key}-${index}`, voucher_number: index + 1, detail_scope_category: null, date: null, recognition: { ...activitySeed.recognition, period, date: null, precision: "month", label: `${period} · 按月确认` }, party: "同一对象", title: "代收代付", description: `每笔不同的真实用途 ${index + 1}`, state: "已入账", amount_fen: "100", amount_label: "代收金额", group: "funds" };
       });
       result.data.collections.members.page = { total_count: memberTotal, filtered_count: memberTotal, returned_count: length, has_more: offset + length < memberTotal, next_cursor: offset + length < memberTotal ? `members:${offset + length}` : null };
       result.data.collections.vouchers.items = result.data.collections.members.items.map((item, index) => ({ ...voucherSeed, voucher_version_id: item.voucher_version_id, subject_id: item.subject_id, number: String(offset + index + 1), date: null, recognition: item.recognition, business_amount_fen: "100", business_amount_label: "代收金额", amount_fen: "100", list_summary: item.description, summary: item.description, has_business_progress: false,
@@ -162,6 +191,43 @@ async function run(config) {
       return fulfill(route, payload, validateGroup);
     });
 
+    await page.route("**/api/dashboard/business-status?*", route => {
+      const url = new URL(route.request().url()), payload = structuredClone(fixtures.business_status.response);
+      payload.read_context = structuredClone(base.read_context); payload.selected_period = structuredClone(base.selected_period); payload.snapshot_version = synthetic.snapshot_version;
+      payload.data.identity.company_id = company; payload.data.identity.subject_id = url.searchParams.get("subject_id");
+      payload.data.detail_scope = null; payload.data.settlement_view = "current";
+      for (const collection of Object.values(payload.data.collections)) collection.page = { total_count: collection.items.length, filtered_count: collection.items.length, returned_count: collection.items.length, has_more: false, next_cursor: null };
+      return fulfill(route, payload, validateStatus);
+    });
+    const assertClosedProgress = async row => {
+      await frames();
+      assert(await row.getByRole("button", { name: "业务进展", exact: true }).evaluateAll(buttons => buttons.length > 0 && buttons.every(button => button.getAttribute("aria-expanded") === "false")), "all member progress buttons start collapsed");
+      assert.equal(await row.locator("details[open], .business-detail-panel").count(), 0, "no member progress details are open");
+    };
+    for (const [batch, records] of [[false, 24], [true, 1], [true, 24]]) {
+      batchMode = batch; prepare(1, records); synthetic.snapshot_version += `-batch-${batch}`;
+      const before = count("business-status"); await refresh();
+      const row = page.locator(".activity-section .event-row").first();
+      await row.focus(); await row.press("Enter"); await finishMembers(row); await assertClosedProgress(row);
+      assert.equal(count("business-status"), before, "first group expansion never reads progress");
+      const selectedIndex = records > 1 ? 1 : 0;
+      const buttons = row.getByRole("button", { name: "业务进展", exact: true });
+      await buttons.nth(selectedIndex).click(); await row.locator(".business-detail-panel").waitFor(); await frames();
+      assert.equal(count("business-status"), before + 1, "manual progress click reads only the chosen member");
+      assert.deepEqual(await buttons.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-expanded"))), Array.from({ length: records }, (_, index) => index === selectedIndex ? "true" : "false"));
+      assert.equal(await row.locator("details[open]").count(), 1);
+      await row.focus(); await row.press("Space"); await row.locator(".group-members").waitFor({ state: "hidden" });
+      const memberRequests = count("brief-group"); await row.press("Enter"); await finishMembers(row); await assertClosedProgress(row);
+      assert.equal(count("brief-group"), memberRequests, "reopening reuses loaded members");
+      assert.equal(count("business-status"), before + 1, "cached reopening does not read progress");
+      await refresh(); assert.equal(await page.locator(".group-members").count(), 0); assert.equal(count("business-status"), before + 1, "refresh does not reopen progress");
+      await row.focus(); await row.press("Enter"); await finishMembers(row); await assertClosedProgress(row);
+      assert.equal(count("business-status"), before + 1, "expanding after refresh keeps progress collapsed");
+      await row.press("Space");
+      checks.push(`${batch ? "batch" : "ordinary"} ${records} members: first expansion, cached reopening and refresh keep every progress detail collapsed; manual click opens one member`);
+    }
+    batchMode = false;
+
     for (const records of [24, 2400]) {
       prepare(1, records);
       const progressBefore = count("business-status"), groupBefore = count("brief-group"), start = Date.now();
@@ -182,9 +248,10 @@ async function run(config) {
     holdContinuation = true; const row = rows.first(); await row.focus(); await row.press("Enter");
     await row.locator(".member-row").first().waitFor(); await page.waitForFunction(() => document.querySelectorAll(".group-members .member-row").length === 20);
     await page.evaluate(() => { window.__firstBriefMember = document.querySelector(".group-members li"); });
-    assert.equal(await row.locator(".member-row").count(), 20); assert.equal(count("business-status"), 0);
+    assert.equal(await row.locator(".member-row").count(), 20); const beforeContinuationProgress = count("business-status"); await assertClosedProgress(row);
     await waitHeld(); holdContinuation = false; await held.shift()(); await finishMembers(row);
     assert.equal(await row.locator(".member-row").count(), 40);
+    await assertClosedProgress(row); assert.equal(count("business-status"), beforeContinuationProgress, "member continuation never selects another progress detail");
     assert(await page.evaluate(() => window.__firstBriefMember === document.querySelector(".group-members li")), "continuation preserves earlier member DOM nodes");
     checks.push("more than twenty groups stay bounded; group continuation appends forty members incrementally");
     await row.press("Space");

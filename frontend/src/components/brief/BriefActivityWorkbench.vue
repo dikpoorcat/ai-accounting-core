@@ -361,7 +361,7 @@ watch(() => props.focusedActivity, async item => {
             <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? '待核对' : formatFen(item.amount_fen) }}</b></span>
             <span class="event-voucher-link business-list-voucher">{{ item.voucher_count }} 张</span>
             <svg class="row-chevron business-list-arrow" :class="{ expanded: expandedBusinessKey === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
-            <BriefGroupMembers section="activity" :group-key="item.group_key" :is-batch="item.is_batch" :expanded="expandedBusinessKey === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :focused-activity="focusedActivity" :voucher-index="voucherPreviewIndex" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
+            <BriefGroupMembers section="activity" :group-key="item.group_key" :expanded="expandedBusinessKey === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :focused-activity="focusedActivity" :voucher-index="voucherPreviewIndex" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
           </li>
         </ul>
         <p v-if="!visibleItems.length" class="empty">当前已加载记录中没有此类业务。</p>

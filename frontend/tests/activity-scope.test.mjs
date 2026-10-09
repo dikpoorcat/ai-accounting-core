@@ -27,34 +27,47 @@ async function harness(component, suppliedProps, exported) {
 const tick = async () => { await Vue.nextTick(); await Promise.resolve(); };
 const page = (cursor = null) => ({ total_count: cursor ? 2 : 1, filtered_count: cursor ? 2 : 1, returned_count: 1, has_more: Boolean(cursor), next_cursor: cursor });
 const member = { key: "part-key", group_key: "batch-group", subject_id: "payment", voucher_version_id: "voucher-a", detail_scope_category: "payroll" };
-const groupResult = () => ({ data: { section: "activity", group_key: "batch-group", collections: { members: { items: [member], page: page() }, vouchers: { items: [], page: page() } } } });
+const groupResult = (keys = [member.key]) => ({ data: { section: "activity", group_key: "batch-group", collections: { members: { items: keys.map(key => ({ ...member, key })), page: page() }, vouchers: { items: [], page: page() } } } });
 const statusResult = () => ({ snapshot_version: "snapshot", data: { detail_scope: { category: "payroll", voucher_version_id: "voucher-a", amount_fen: "100", amount_label: "实际付款" }, collections: { settlement_events: { items: [{ id: "first" }], page: page("next") } } } });
 
-test("batch member details become selected only after explicit expansion and accepted member read", async () => {
-  for (const isBatch of [true, false]) {
-    const view = await harness("brief/BriefGroupMembers", { section: "activity", groupKey: "batch-group", period: "2026-09", snapshotVersion: "snapshot", refreshGeneration: 0, expanded: false, isBatch }, "data, selected");
+test("ordinary, single-member batch and multi-member batch progress requires a separate click after first read, cached reopen and refresh", async () => {
+  for (const keys of [["ordinary"], ["single-batch"], ["batch-one", "batch-two"]]) {
+    const view = await harness("brief/BriefGroupMembers", { section: "activity", groupKey: "batch-group", period: "2026-09", snapshotVersion: "snapshot", refreshGeneration: 0, expanded: false }, "data, selected, toggle");
     try {
       assert.equal(view.calls.length, 0); assert.equal(view.selected.value, "");
       view.props.expanded = true; await tick(); assert.equal(view.calls.length, 1);
-      assert.equal(view.selected.value, ""); view.calls[0].resolve(groupResult()); await tick();
-      assert.equal(view.selected.value, isBatch ? "part-key" : "");
+      assert.equal(view.selected.value, ""); view.calls[0].resolve(groupResult(keys)); await tick();
+      assert.equal(view.selected.value, "");
+      view.toggle(keys.at(-1)); assert.equal(view.selected.value, keys.at(-1));
+      assert.equal(view.calls.length, 1, "member selection does not reread group members");
       view.props.expanded = false; await tick(); assert.equal(view.selected.value, "");
       view.props.expanded = true; await tick(); assert.equal(view.calls.length, 1);
-      assert.equal(view.selected.value, isBatch ? "part-key" : "");
+      assert.equal(view.selected.value, "");
+      view.toggle(keys[0]); assert.equal(view.selected.value, keys[0]);
+      view.toggle(keys[0]); assert.equal(view.selected.value, "");
+      view.toggle(keys.at(-1));
+      view.props.refreshGeneration++; await tick();
+      assert.equal(view.selected.value, ""); assert.equal(view.calls.length, 2);
+      view.calls[1].resolve(groupResult(keys)); await tick();
+      assert.equal(view.selected.value, "");
     } finally { view.unmount(); }
   }
 });
 
-test("late batch member responses after collapse, refresh or group changes never select details", async () => {
-  for (const field of ["expanded", "refreshGeneration", "groupKey"]) {
-    const view = await harness("brief/BriefGroupMembers", { section: "activity", groupKey: "batch-group", period: "2026-09", snapshotVersion: "snapshot", refreshGeneration: 0, expanded: true, isBatch: true }, "data, selected");
+test("late member responses after collapse or any scope change never select details or emit vouchers", async () => {
+  for (const field of ["expanded", "refreshGeneration", "groupKey", "company_id", "period", "snapshotVersion"]) {
+    const view = await harness("brief/BriefGroupMembers", { section: "activity", groupKey: "batch-group", period: "2026-09", snapshotVersion: "snapshot", refreshGeneration: 0, expanded: true }, "data, selected");
     try {
       if (field === "expanded") view.props.expanded = false;
       if (field === "refreshGeneration") view.props.refreshGeneration++;
       if (field === "groupKey") view.props.groupKey = "another-group";
+      if (field === "company_id") view.route.query.company_id = "company-b";
+      if (field === "period") view.props.period = "2026-10";
+      if (field === "snapshotVersion") view.props.snapshotVersion = "next-snapshot";
       await tick(); assert.equal(view.calls[0].args[5].aborted, true);
       view.calls[0].resolve(groupResult()); await tick();
       assert.equal(view.data.value, null); assert.equal(view.selected.value, "");
+      assert.deepEqual(view.events, []);
     } finally { view.unmount(); }
   }
 });
@@ -71,12 +84,15 @@ test("scoped detail initial and subsequent reads carry exact category, voucher a
   } finally { view.unmount(); }
 });
 
-test("scoped first responses cannot write back after collapse, category, voucher or refresh changes", async () => {
-  for (const field of ["expanded", "detail_scope_category", "voucher_version_id", "refreshGeneration"]) {
+test("scoped first responses cannot write back after collapse or any detail scope change", async () => {
+  for (const field of ["expanded", "detail_scope_category", "voucher_version_id", "refreshGeneration", "company_id", "period", "snapshotVersion"]) {
     const view = await harness("BusinessStatusDetails", { subjectId: "payment", period: "2026-09", snapshotVersion: "snapshot", settlementView: "current", presentation: "brief", expanded: true, activityContext: { ...member }, refreshGeneration: 0 }, "data");
     try {
       if (field === "expanded") view.props.expanded = false;
       else if (field === "refreshGeneration") view.props.refreshGeneration++;
+      else if (field === "company_id") view.route.query.company_id = "company-b";
+      else if (field === "period") view.props.period = "2026-10";
+      else if (field === "snapshotVersion") view.props.snapshotVersion = "next-snapshot";
       else view.props.activityContext[field] = "changed";
       await tick(); assert.equal(view.calls[0].args[2].aborted, true);
       view.calls[0].resolve(statusResult()); await tick(); assert.equal(view.data.value, null);

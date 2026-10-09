@@ -13,7 +13,7 @@ import DashboardPagination from "../DashboardPagination.vue";
 import BriefVoucherPreview from "./BriefVoucherPreview.vue";
 
 const props = defineProps<{
-  section: BriefGroupSection; groupKey: string; expanded: boolean; period: string; isBatch?: boolean;
+  section: BriefGroupSection; groupKey: string; expanded: boolean; period: string;
   snapshotVersion?: string | null; refreshGeneration?: number; focusedActivity?: BriefActivityRow | null;
   voucherIndex?: ReadonlyMap<string, BriefVoucher>; openSummary?: BriefOpenItems;
   direction?: "receivable" | "payable"; periodClosed?: boolean;
@@ -23,7 +23,7 @@ const route = useRoute();
 const data = shallowRef<BriefGroupResponse["data"] | null>(null);
 const loading = ref(false), error = ref(""), selected = ref(""), preview = ref(""), expandedPart = ref("");
 let request: AbortController | null = null, generation = 0, mounted = true;
-function selection() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.refreshGeneration, props.section, props.groupKey, props.isBatch]); }
+function selection() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.refreshGeneration, props.section, props.groupKey]); }
 function cancel() { generation++; request?.abort(); request = null; loading.value = false; }
 function invalidate() { cancel(); data.value = null; preview.value = ""; selected.value = ""; expandedPart.value = ""; error.value = ""; }
 async function loadMore() {
@@ -44,7 +44,6 @@ async function loadMore() {
       if (previous.section === "open_items" && incoming.section === "open_items") incoming.collections.members = appendDashboardCollection(previous.collections.members, incoming.collections.members);
     } else incoming.collections.members.items = shallowReactive(incoming.collections.members.items);
     data.value = incoming;
-    if (!previous && props.isBatch && incoming.section === "activity" && props.expanded) selected.value = incoming.collections.members.items[0]?.key ?? "";
     emit("vouchers", incoming.collections.vouchers.items);
   } catch (caught) {
     if (valid()) { if (isDashboardSnapshotChanged(caught)) { invalidate(); emit("changed"); } else error.value = dashboardErrorMessage(caught); }
@@ -86,7 +85,6 @@ watch(selection, () => { invalidate(); if (props.expanded) void loadMore(); }, {
 watch(() => props.expanded, expanded => {
   preview.value = "";
   if (expanded) {
-    if (props.isBatch && data.value?.section === "activity") selected.value = data.value.collections.members.items[0]?.key ?? "";
     void loadMore();
   } else { cancel(); selected.value = ""; expandedPart.value = ""; }
 }, { immediate: true });

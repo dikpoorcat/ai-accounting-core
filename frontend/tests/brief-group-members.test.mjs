@@ -20,7 +20,7 @@ async function harness(section = "activity") {
     const appendDashboardCollection = env.appendDashboardCollection;
     const { groupContributionMembers, contributionProgressRows } = env;
     ${source}
-    return { data, loading, error, selected, preview, expandedPart, loadMore, cancel, activityMembers, openMembers, contributions, ungroupedOpenMembers, togglePart };
+    return { data, loading, error, selected, preview, expandedPart, loadMore, cancel, activityMembers, openMembers, contributions, ungroupedOpenMembers, toggle, togglePart };
   }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   environment.appendDashboardCollection = appendDashboardCollection;
   environment.groupContributionMembers = groupContributionMembers;
@@ -43,10 +43,18 @@ test("groups read only on expansion and append bounded members without opening p
       state.requests[0].resolve(response(section, ["one"], true)); await tick();
       const items = state.data.value.collections.members.items;
       assert.equal(state.selected.value, ""); assert.deepEqual(state.events.map(event => event[0]), ["vouchers"]);
+      state.toggle("one"); assert.equal(state.selected.value, "one");
       const next = state.loadMore(); assert.equal(state.requests[1].args[6].cursor, "next");
       state.requests[1].resolve(response(section, ["two"])); await next;
       assert.equal(state.data.value.collections.members.items, items); assert.equal(items.length, 2);
-      state.selected.value = section === "activity" ? "one" : "one";
+      assert.equal(state.selected.value, "one", "member continuation preserves the explicitly selected progress");
+      state.toggle("two"); assert.equal(state.selected.value, "two", "only the requested member is selected");
+      state.toggle("two"); assert.equal(state.selected.value, "");
+      state.toggle("one");
+      state.props.expanded = false; await tick(); assert.equal(state.selected.value, "");
+      state.props.expanded = true; await tick();
+      assert.equal(state.selected.value, ""); assert.equal(state.requests.length, 2, "cached reopening does not reread members");
+      state.toggle("one");
       state.props.refreshGeneration++; await tick();
       assert.equal(state.selected.value, "", "refresh clears the prior member detail selection");
     } finally { state.close(); }
