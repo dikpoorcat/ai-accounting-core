@@ -33,6 +33,7 @@ _PROFILE_FIELDS = (
     "employment_start",
     "employment_end",
     "employment_status",
+    "employment_state",
     "active",
     "category_label",
     "rights_description",

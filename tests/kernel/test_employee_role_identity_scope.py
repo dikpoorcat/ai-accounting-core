@@ -63,12 +63,12 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
     company.close("2026-01")
     company.close("2026-02")
     dashboard = Dashboard(company.engine)
-    baseline = dashboard.employees("2026-02", preparation="deferred")
+    baseline = dashboard.employees("2026-02", preparation="deferred", employee_filter="all")
     employees = baseline["data"]["collections"]["employees"]["items"]
     assert {row["employee_id"] for row in employees} == {"employee", "employee-a"}
     baseline_a = dashboard.employees(
         "2026-02", section="employees", employee_id="employee-a", preparation="deferred"
-    )["data"]["collections"]["employees"]["items"]
+    , employee_filter="all")["data"]["collections"]["employees"]["items"]
     assert len(baseline_a) == 1
     with company.engine.store.connection() as connection:
         row = connection.execute(
@@ -101,12 +101,13 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
             if subject == "january-a":
                 # Neither list nor focused card adopts this unused historical
                 # role. Frozen money comes from its independently sealed basis.
-                assert dashboard.employees("2026-02", preparation="deferred")["data"][
+                assert dashboard.employees("2026-02", preparation="deferred", employee_filter="all")["data"][
                     "employees"
                 ] == baseline["data"]["employees"]
                 assert dashboard.employees(
                     "2026-02", section="employees", employee_id="employee-a",
                     preparation="deferred",
+                    employee_filter="all",
                 )["data"]["collections"]["employees"]["items"] == baseline_a
                 with pytest.raises(KernelError) as failure:
                     verify(company.engine)
@@ -118,7 +119,7 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
                 # card, and cannot be skipped just because history UI is gone.
                 for kwargs in ({}, {"section": "employees", "employee_id": "employee-a"}):
                     with pytest.raises(KernelError) as failure:
-                        dashboard.employees("2026-02", preparation="deferred", **kwargs)
+                        dashboard.employees("2026-02", preparation="deferred", **kwargs, employee_filter="all")
                     assert failure.value.code == "entity_reference_corrupt"
         finally:
             with company.engine.store.connection() as connection:
@@ -129,5 +130,5 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
                 )
     restored_a = dashboard.employees(
         "2026-02", section="employees", employee_id="employee-a", preparation="deferred"
-    )["data"]["collections"]["employees"]["items"]
+    , employee_filter="all")["data"]["collections"]["employees"]["items"]
     assert restored_a == baseline_a

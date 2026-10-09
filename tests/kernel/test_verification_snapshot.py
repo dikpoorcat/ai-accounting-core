@@ -137,7 +137,7 @@ def test_five_page_consumers_and_close_preview_do_not_enter_full_snapshot_wrappe
     assert dashboard.funds(
         "2026-01", movement_account_type="cash", movement_account_id="cash", limit=20,
     )["selected_period"]["key"] == "2026-01"
-    assert dashboard.employees("2026-01", limit=20)["selected_period"]["key"] == "2026-01"
+    assert dashboard.employees("2026-01", limit=20, employee_filter="all")["selected_period"]["key"] == "2026-01"
     assert dashboard.assets("2026-01", limit=20)["selected_period"]["key"] == "2026-01"
     dashboard.quarterly_report(2026, 1, preparation="deferred")
     assert CloseReview(None, company).read("2026-01")["state"] == "closed"

@@ -78,6 +78,7 @@ export namespace DashboardBusinessStatusContract {
   export type EmploymentStart = string | null;
   export type EmploymentEnd = string | null;
   export type EmploymentStatus = string | null;
+  export type EmploymentState = string | null;
   export type Active = boolean | null;
   export type CategoryLabel = string | null;
   export type RightsDescription = string | null;
@@ -224,6 +225,7 @@ export namespace DashboardBusinessStatusContract {
     employment_start: EmploymentStart;
     employment_end: EmploymentEnd;
     employment_status: EmploymentStatus;
+    employment_state: EmploymentState;
     active: Active;
     category_label: CategoryLabel;
     rights_description: RightsDescription;

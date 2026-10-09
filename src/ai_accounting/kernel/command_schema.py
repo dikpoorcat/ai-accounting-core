@@ -306,6 +306,11 @@ def validate_command(models, command, payload, *, registry=None):
             # The model checks the document structure, but a candidate is not
             # yet a complete business input. Never fill omitted draft fields.
             result["draft"] = payload["draft"]
+        elif command in {"register_entity", "update_entity_profile"}:
+            # Omission preserves the historical personnel facts; an explicitly
+            # supplied unknown is a different management confirmation.
+            if "employment_state" not in value.data.model_fields_set:
+                result["data"].pop("employment_state")
         return result
     except ValidationError as exc:
         errors = exc.errors(include_input=False, include_url=False, include_context=False)

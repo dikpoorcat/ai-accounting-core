@@ -329,6 +329,7 @@ def _profile_view(profiles):
                     "employment_start",
                     "employment_end",
                     "employment_status",
+                    "employment_state",
                     "active",
                     "category_label",
                     "rights_description",

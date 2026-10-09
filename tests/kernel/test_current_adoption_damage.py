@@ -114,12 +114,12 @@ def test_assets_rejects_missing_current_publication(bank_book):
 def test_employees_rejects_missing_current_publication(payroll_company):
     company = payroll_company
     company.publish("january")
-    assert Dashboard(company.engine).employees("2026-01")["data"] is not None
+    assert Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"] is not None
     _assert_current_publication(company.engine, "january")
     _delete_current_publication(company.engine, "january")
     _assert_missing_current_publication(company.engine, "january")
     with pytest.raises(KernelError, match="发布|采用|来源"):
-        Dashboard(company.engine).employees("2026-01")
+        Dashboard(company.engine).employees("2026-01", employee_filter="all")
 
 
 def test_employees_rejects_missing_no_impact_review_publication(payroll_company):
@@ -129,12 +129,12 @@ def test_employees_rejects_missing_no_impact_review_publication(payroll_company)
     company.confirm_payroll("january")
     preview, _ = company.publish("january")
     assert preview["results"][0]["impact"] == "review_no_impact"
-    assert Dashboard(company.engine).employees("2026-01")["data"] is not None
+    assert Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"] is not None
     _assert_current_publication(company.engine, "january")
     _delete_current_publication(company.engine, "january")
     _assert_missing_current_publication(company.engine, "january")
     with pytest.raises(KernelError) as failure:
-        Dashboard(company.engine).employees("2026-01")
+        Dashboard(company.engine).employees("2026-01", employee_filter="all")
     assert failure.value.code == "content_integrity_failed"
 
 

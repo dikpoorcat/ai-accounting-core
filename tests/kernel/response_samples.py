@@ -150,7 +150,7 @@ def native_samples(root):
             limit=1,
         ),
     )
-    add("employees", "dashboard_employees", call("dashboard_employees", period="2026-01"))
+    add("employees", "dashboard_employees", call("dashboard_employees", period="2026-01", employee_filter="all"))
     add("assets", "dashboard_assets", call("dashboard_assets", period="2026-01"))
     add(
         "business_status",
@@ -277,17 +277,17 @@ def native_samples(root):
     add("brief_payroll_members", "dashboard_brief_group", personnel_dashboard.brief_group(
         "2026-01", section="open_items", group_key=social_group["group_key"],
     ))
-    add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
     add(
         "employees_focused", "dashboard_employees",
-        personnel_dashboard.employees("2026-01", employee_id="employee", section="employees"),
+        personnel_dashboard.employees("2026-01", employee_id="employee", section="employees", employee_filter="all"),
     )
     personnel.close("2026-01")
     display_profile(
         personnel.engine, "employee", "employee", 1,
         employment_start="2025-11", employment_end="2026-04-20",
     )
-    add("employees_mixed_dates", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    add("employees_mixed_dates", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
     add(
         "business_month_dates", "dashboard_business_status",
         personnel_dashboard.business_status("2026-01", "january"),
@@ -296,7 +296,7 @@ def native_samples(root):
         personnel.engine, "employee", "employee", 2,
         employment_start="2025-10", employment_end="2025-11-01",
     )
-    add("employees_date_conflict", "dashboard_employees", personnel_dashboard.employees("2026-01"))
+    add("employees_date_conflict", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
 
     labor_path = root / "labor"
     labor_path.mkdir()
@@ -312,7 +312,7 @@ def native_samples(root):
     display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
     add(
         "employees_labor_sources", "dashboard_employees",
-        Dashboard(labor.engine).employees("2026-01", section="labor_sources"),
+        Dashboard(labor.engine).employees("2026-01", section="labor_sources", employee_filter="all"),
     )
     from test_workflow import (
         completion_from_basis,

@@ -123,10 +123,10 @@ def test_actual_employee_routes_reject_changed_posted_kind(company, section):
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
     options = {"section": section, "employee_id": "employee"} if section else {}
-    dashboard.employees("2026-01", **options)
+    dashboard.employees("2026-01", **options, employee_filter="all")
     change_kind(company.engine, "january", "income")
     with pytest.raises(KernelError) as failure:
-        dashboard.employees("2026-01", **options)
+        dashboard.employees("2026-01", **options, employee_filter="all")
     assert failure.value.code == "content_integrity_failed"
 
 

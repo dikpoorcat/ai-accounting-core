@@ -110,6 +110,27 @@ function employeeOverviewResponse(summary = {}, remuneration = Object.hasOwn(sum
   return response;
 }
 
+test("employee API defaults to employed and rejects a response from another filter", async () => withServer(async server => {
+  const response = structuredClone(samples.employees_focused.response);
+  response.data.employee_id = null;
+  response.data.employee_filter = "employment_active";
+  window.location.search = `?company_id=${response.read_context.company_id}`;
+  const requests = [];
+  globalThis.fetch = async path => {
+    requests.push(new URL(path, window.location.origin));
+    return new Response(JSON.stringify(response));
+  };
+  const { fetchEmployeesDashboard } = await server.ssrLoadModule("/src/api/employees.ts");
+  const result = await fetchEmployeesDashboard(response.selected_period.key);
+  assert.equal(result.data.employee_filter, "employment_active");
+  assert.equal(requests[0].searchParams.get("employee_filter"), null, "omitting the filter uses the server default");
+  response.data.employee_filter = "all";
+  await assert.rejects(fetchEmployeesDashboard(response.selected_period.key), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+  const explicit = await fetchEmployeesDashboard(response.selected_period.key, undefined, { employee_filter: "all" });
+  assert.equal(explicit.data.employee_filter, "all");
+  assert.equal(requests.at(-1).searchParams.get("employee_filter"), "all");
+}));
+
 test("employee overview shows six company values and keeps wage payments distinct from cost and unpaid wages", async () => withServer(async server => {
   const { overview } = await renderEmployeeOverview(server, employeeOverviewResponse());
   assertEmployeeOverviewValues(overview, overviewValues);
@@ -204,7 +225,7 @@ test("employee overview retains zero and contribution-only months and signed cor
 }));
 
 test("employee overview remains company-wide under filters and exact focus while employee and personal labor details stay available", async () => withServer(async server => {
-  for (const query of [{ employee_filter: "payroll" }, { employee_filter: "all", employee_id: "employee" }]) {
+  for (const query of [{ employee_filter: "employment_active" }, { employee_filter: "all", employee_id: "employee" }]) {
     const response = structuredClone(samples.employees_focused.response);
     Object.assign(response.data.employees, overviewSummary);
     response.data.outstanding_remuneration_fen = overviewSummary.outstanding_net_fen;
@@ -216,7 +237,7 @@ test("employee overview remains company-wide under filters and exact focus while
     assert.match(overview, /全公司/);
     assert.match(overview, /本月有薪酬记录 4 人/);
     assert.match(html, /已加载 1 人/);
-    assert.match(html, query.employee_id ? /已定位员工/ : /本月有工资记录/);
+    assert.match(html, query.employee_id ? /已定位员工/ : /在职员工/);
     const [employee] = response.data.collections.employees.items;
     assert(html.includes(employee.name));
     assert.match(html, /应发工资[\s\S]*¥10,000\.00/);
@@ -563,6 +584,30 @@ test("nonempty focused employee renders current month money without historical w
   assert.doesNotMatch(html, /各月份工资与付款|查看工资与付款事项|正在读取工资与付款|继续查看工资来源/);
 }));
 
+test("employee cards and lists distinguish current employment from historical monthly roster status", async () => {
+  for (const displayMode of ["cards", "list"]) {
+    await withServer(async server => {
+      const response = structuredClone(samples.employees_focused.response);
+      const [template] = response.data.collections.employees.items;
+      const states = [["regular", "在职"], ["unpaid_leave", "停薪留职"], ["departed", "已离职"], ["unknown", "用工状态未确认"]];
+      const employees = states.map(([state], index) => ({ ...template, employee_id: `employment-${index}`, name: `合成状态员工${index}`,
+        employment_state: state, period_state: "in_period", period_state_label: "已确认在册", in_period: true }));
+      response.data.employee_id = null;
+      response.data.employee_filter = "all";
+      response.data.collections.employees.items = employees;
+      response.data.collections.employees.page = { total_count: 4, filtered_count: 4, returned_count: 4, has_more: false, next_cursor: null };
+      const { html } = await renderEmployeeOverview(server, response, { employee_filter: "all" });
+      const rows = [...html.matchAll(/<summary\b[^>]*>([\s\S]*?)<\/summary>/g)].map(match => match[1]);
+      for (const [index, [, label]] of states.entries()) {
+        const row = rows.find(value => value.includes(employees[index].name));
+        assert(row, `${displayMode}: ${label}`);
+        assert(row.includes(label), `${displayMode}: current state is visible`);
+        assert(row.includes("已确认在册"), `${displayMode}: historical monthly membership remains visible`);
+      }
+    }, { displayMode });
+  }
+});
+
 test("personal labor sources render the projected person name", async () => withServer(async server => {
   const response = samples.employees_labor_sources.response;
   globalThis.stage7RenderResponses = { ...responses, employees: response };
@@ -593,7 +638,7 @@ test("employee and personal labor list rows align each complete column with its 
     personal_deduction_fen: "100490", net_salary_fen: "900719925473998855",
   });
   const unknown = {
-    employee_id: "unestablished-employee", name: "待确认员工", selection_status: "unestablished",
+    employee_id: "unestablished-employee", name: "待确认员工", selection_status: "unestablished", employment_state: "unknown",
     ...Object.fromEntries(Object.keys(employee).filter(key => key.endsWith("_fen")).map(key => [key, null])),
   };
   response.data.collections.employees.items.push(unknown);
@@ -766,7 +811,7 @@ test("employee list status dots follow salary business scope rather than the sha
   const scopes = [["wage_income", "工资薪金"], ["contributions_only", "仅确认社保公积金"], ["mixed", "包含不同核算情形"], ["none", "本月无工资核算"]];
   const employees = scopes.map(([scope, label], index) => ({ ...template, employee_id: `employee-scope-${index}`, name: `在册员工${index + 1}`,
     period_state: "in_period", period_state_label: "已确认在册", in_period: true, wage_tax_scope: scope, wage_tax_scope_label: label }));
-  const unknown = { employee_id: "unestablished-scope", name: "核对中员工", selection_status: "unestablished",
+  const unknown = { employee_id: "unestablished-scope", name: "核对中员工", selection_status: "unestablished", employment_state: "unknown",
     ...Object.fromEntries(Object.keys(template).filter(key => key.endsWith("_fen")).map(key => [key, null])) };
   response.data.collections.employees.items = [...employees, unknown];
   response.data.collections.employees.page = { total_count: 5, filtered_count: 5, returned_count: 5, has_more: false, next_cursor: null };

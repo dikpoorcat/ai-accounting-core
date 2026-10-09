@@ -8,7 +8,9 @@ import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 let sequence = 0;
 const flush = async () => { for (let index = 0; index < 4; index++) { await Vue.nextTick(); } };
 const page = { total_count: 50, filtered_count: 50, returned_count: 1, has_more: true, next_cursor: "next" };
-function response(filter = "in_period", employee = "first") {
+const employmentFilters = ["employment_active", "employment_unpaid_leave", "employment_departed", "employment_unknown"];
+const employeeFilters = ["all", "in_period", "ended", "unknown", ...employmentFilters];
+function response(filter = "employment_active", employee = "first") {
   return { snapshot_version: "version", selected_period: { key: "2026-09" }, data: {
     employee_filter: filter, employee_id: null, employees: { registered_count: 50 }, workforce_cost: { total_fen: "1234" },
     collections: { employees: { items: [{ employee_id: employee }], page: { ...page } },
@@ -44,11 +46,15 @@ async function harness(query = {}) {
   return { ...view, route, calls, close() { scope.stop(); delete globalThis[key]; } };
 }
 
-test("employee filters default to the current roster while preserving valid explicit selections", async () => {
+test("employee filters default to currently employed while preserving valid explicit selections", async () => {
   const cases = [
-    [{}, "in_period"],
-    [{ employee_filter: "invalid" }, "in_period"],
-    ...["all", "in_period", "payroll", "no_payroll", "ended", "unknown"].map(value => [{ employee_filter: value }, value]),
+    [{}, "employment_active"],
+    [{ employee_filter: "invalid" }, "employment_active"],
+    [{ employee_filter: "payroll" }, "employment_active"],
+    [{ employee_filter: "no_payroll" }, "employment_active"],
+    [{ employee_filter: "employment_inactive" }, "employment_active"],
+    [{ employee_filter: "employment_regular" }, "employment_active"],
+    ...employeeFilters.map(value => [{ employee_filter: value }, value]),
   ];
   for (const [query, expected] of cases) {
     const h = await harness(query);
@@ -63,7 +69,7 @@ test("employee filters default to the current roster while preserving valid expl
   }
 });
 
-test("selecting all employees remains explicit and returning to the roster restores the default", async () => {
+test("all and monthly roster filters stay explicit while currently employed restores the default", async () => {
   const h = await harness();
   try {
     h.filter.value = "all"; await flush();
@@ -73,29 +79,34 @@ test("selecting all employees remains explicit and returning to the roster resto
     assert.equal(h.calls[0].query.employee_filter, "all");
     h.calls[0].resolve(response("all")); await flush();
     h.filter.value = "in_period"; await flush();
-    assert.equal(h.route.query.employee_filter, undefined);
+    assert.equal(h.route.query.employee_filter, "in_period");
     assert.equal(h.filter.value, "in_period");
     assert.equal(h.calls.length, 2);
     assert.equal(h.calls[1].query.employee_filter, "in_period");
-    h.calls[1].resolve(response()); await flush();
+    h.calls[1].resolve(response("in_period")); await flush();
+    h.filter.value = "employment_active"; await flush();
+    assert.equal(h.route.query.employee_filter, undefined);
+    assert.equal(h.filter.value, "employment_active");
+    assert.equal(h.calls[2].query.employee_filter, "employment_active");
+    h.calls[2].resolve(response()); await flush();
   } finally { h.close(); }
 });
 
 test("the employee month picker retains each filter and drops old exact targets and cursors", async () => {
-  for (const selected of [undefined, "all", "in_period", "payroll", "no_payroll", "ended", "unknown"]) {
+  for (const selected of [undefined, ...employeeFilters]) {
     const h = await harness({ employee_filter: selected, employee_id: "old-target", cursor: "old-cursor", expected_version: "old-version" });
     try {
       h.displayMode.value = "list";
       h.selectPeriod("2026-10"); await flush();
       assert.equal(h.route.query.period, "2026-10");
       assert.equal(h.route.query.employee_filter, selected);
-      assert.equal(h.filter.value, selected ?? "in_period");
+      assert.equal(h.filter.value, selected ?? "employment_active");
       for (const key of ["employee_id", "cursor", "expected_version"]) assert.equal(h.route.query[key], undefined, key);
       assert.equal(h.calls.length, 1, "month changes issue one new page request");
       assert.equal(h.calls[0].period, "2026-10");
-      assert.equal(h.calls[0].query.employee_filter, selected ?? "in_period");
+      assert.equal(h.calls[0].query.employee_filter, selected ?? "employment_active");
       assert.equal(h.calls[0].query.employee_id, undefined);
-      const next = response(selected ?? "in_period", "new-month");
+      const next = response(selected ?? "employment_active", "new-month");
       next.selected_period.key = "2026-10";
       h.calls[0].resolve(next); await flush();
       assert.equal(h.response.value.data.collections.employees.items[0].employee_id, "new-month");
@@ -105,10 +116,10 @@ test("the employee month picker retains each filter and drops old exact targets 
 });
 
 test("an exact employee link requests all employees independently of the roster filter", async () => {
-  for (const employeeFilter of [undefined, "ended"]) {
+  for (const employeeFilter of [undefined, "ended", ...employmentFilters]) {
     const h = await harness({ employee_id: "target", employee_filter: employeeFilter });
     try {
-      assert.equal(h.filter.value, employeeFilter ?? "in_period");
+      assert.equal(h.filter.value, employeeFilter ?? "employment_active");
       const pending = h.loadPeriod("2026-09");
       assert.equal(h.calls[0].query.employee_filter, "all");
       assert.equal(h.calls[0].query.employee_id, "target");
@@ -144,8 +155,8 @@ test("shared employee and labor display mode preserves loaded data, filter and p
       assert.equal(request.signal.aborted, false);
       assert.equal(request.query.cursor, "next");
       assert.equal(request.query.expected_version, "version");
-      assert.equal(request.query.employee_filter, "in_period");
-      const next = response("in_period", "next-employee");
+      assert.equal(request.query.employee_filter, "employment_active");
+      const next = response("employment_active", "next-employee");
       next.data.collections.labor_sources.items = [{ source_id: "next-labor" }];
       next.data.collections[request.query.section].page.next_cursor = "following";
       request.resolve(next);
@@ -161,17 +172,18 @@ test("shared employee and labor display mode preserves loaded data, filter and p
   } finally { h.close(); }
 });
 
-test("employee filters retain overview and labor while replacing only the server-filtered list", async () => {
-  const h = await harness();
+for (const selectedFilter of employmentFilters) {
+test(`employee filter ${selectedFilter} retains overview and labor while replacing only the server-filtered list`, async () => {
+  const h = await harness({ employee_filter: "all" });
   try {
     const summary = h.response.value.data.employees, labor = h.response.value.data.collections.labor_sources;
-    h.filter.value = "payroll"; await flush();
+    h.filter.value = selectedFilter; await flush();
     assert.equal(h.loading.value, false);
     assert.equal(h.response.value.data.employees, summary);
     assert.equal(h.response.value.data.collections.labor_sources, labor);
     assert.equal(h.calls.length, 1);
-    assert.deepEqual(h.calls[0].query, { section: "employees", employee_filter: "payroll", expected_version: "version" });
-    const filtered = response("payroll", "matching"); filtered.data.collections.employees.page.filtered_count = 27;
+    assert.deepEqual(h.calls[0].query, { section: "employees", employee_filter: selectedFilter, expected_version: "version" });
+    const filtered = response(selectedFilter, "matching"); filtered.data.collections.employees.page.filtered_count = 27;
     h.calls[0].resolve(filtered); await flush();
     assert.equal(h.response.value.data.collections.employees.page.filtered_count, 27);
     assert.equal(h.response.value.data.collections.employees.items[0].employee_id, "matching");
@@ -179,14 +191,15 @@ test("employee filters retain overview and labor while replacing only the server
     assert.equal(h.response.value.data.collections.labor_sources, labor);
   } finally { h.close(); }
 });
+}
 
 test("employee filter retries stay local and company changes discard all old results", async () => {
   const h = await harness();
   try {
-    h.filter.value = "payroll"; await flush();
+    h.filter.value = "employment_unpaid_leave"; await flush();
     h.filter.value = "ended"; await flush();
     assert.equal(h.calls[0].signal.aborted, true);
-    h.calls[0].resolve(response("payroll", "old")); await flush();
+    h.calls[0].resolve(response("employment_unpaid_leave", "old")); await flush();
     assert.deepEqual(h.response.value.data.collections.employees.items, []);
     h.calls[1].reject(new Error("名单暂不可用")); await flush();
     assert.equal(h.pageErrors.value["employees:"], "名单暂不可用");
@@ -205,13 +218,13 @@ test("employee filter retries stay local and company changes discard all old res
 test("an expired employee-list snapshot refreshes the full page before continuing", async () => {
   const h = await harness();
   try {
-    h.filter.value = "payroll"; await flush();
+    h.filter.value = "employment_unpaid_leave"; await flush();
     h.calls[0].reject(Object.assign(new Error("changed"), { code: "dashboard_snapshot_changed" })); await flush();
     assert.equal(h.response.value, null);
     assert.equal(h.loading.value, true);
     assert.equal(h.calls[1].query.section, undefined);
-    assert.equal(h.calls[1].query.employee_filter, "payroll");
-    const fresh = response("payroll", "fresh"); fresh.snapshot_version = "fresh-version";
+    assert.equal(h.calls[1].query.employee_filter, "employment_unpaid_leave");
+    const fresh = response("employment_unpaid_leave", "fresh"); fresh.snapshot_version = "fresh-version";
     h.calls[1].resolve(fresh); await flush();
     assert.equal(h.response.value.snapshot_version, "fresh-version");
     assert.equal(h.loading.value, false);
@@ -234,7 +247,7 @@ test("employee and labor continuations retain reactive arrays and discard late p
       assert.equal(renderedCount.value, 2);
       assert.equal(h.response.value.data.collections[section].page.next_cursor, "following");
       const late = h.loadMore(section), request = h.calls.at(-1);
-      h.filter.value = section === "employees" ? "payroll" : "ended"; await flush();
+      h.filter.value = section === "employees" ? "employment_unpaid_leave" : "employment_departed"; await flush();
       assert.equal(request.signal.aborted, true);
       request.resolve(response(request.query.employee_filter, "late")); await late;
       assert.equal(original.length, 2);

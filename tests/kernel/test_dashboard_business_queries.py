@@ -117,7 +117,7 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         company.publish("batch")
         payment_id = "batch"
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-02")
+    response = dashboard.employees("2026-02", employee_filter="all")
     employees = response["data"]["collections"]["employees"]["items"]
     for employee in employees:
         person = employee["employee_id"]
@@ -126,6 +126,7 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
             section="employees",
             employee_id=person,
             expected_version=response["snapshot_version"],
+            employee_filter="all",
         )["data"]["collections"]["employees"]["items"]
         assert focused == [employee]
         collection = dashboard.business_status(
@@ -162,7 +163,7 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         )
         assert identity["profile"]["display_name"] == employee["name"]
         assert identity["profile"]["source"] == "合成人员身份资料"
-    earlier_response = dashboard.employees("2026-01")
+    earlier_response = dashboard.employees("2026-01", employee_filter="all")
     earlier = earlier_response["data"]["collections"]["employees"]["items"]
     for employee in earlier:
         focused = dashboard.employees(
@@ -170,6 +171,7 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
             section="employees",
             employee_id=employee["employee_id"],
             expected_version=earlier_response["snapshot_version"],
+            employee_filter="all",
         )["data"]["collections"]["employees"]["items"]
         assert focused == [employee]
         assert employee["direct_net_payments_fen"] == 0

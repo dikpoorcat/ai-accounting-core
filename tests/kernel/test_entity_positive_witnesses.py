@@ -45,7 +45,7 @@ def test_forged_employee_role_rejected_by_page_and_close_snapshot_then_repaired(
     def people():
         return dashboard.employees(
             "2026-01", preparation="deferred"
-        )["data"]["collections"]["employees"]["items"]
+        , employee_filter="all")["data"]["collections"]["employees"]["items"]
 
     assert people() == []
     with engine.store.connection() as connection:

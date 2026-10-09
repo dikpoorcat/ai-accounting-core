@@ -50,6 +50,14 @@ class EntityProfile(BaseModel):
     employment_start: DisplayDate | None = None
     employment_end: DisplayDate | None = None
     employment_status: Literal["active", "inactive", "unknown"] = "unknown"
+    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"] = Field(
+        default="unknown",
+        description="负责人确认或任职资料明确登记的当前管理状态；不改变工资核算，不从工资或备注推断。历史未记录该字段时沿用已登记的就业状态及明确离职日期。",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "management", "meaning": "explicit_current_employment_state",
+            "reusable_sources": ["owner_confirmation", "employment_document"],
+        }},
+    )
     category_label: str | None = None
     rights_description: str | None = None
     useful_life_basis: str | None = None
@@ -139,6 +147,7 @@ def display_profile(profile, kind):
             "employment_start",
             "employment_end",
             "employment_status",
+            "employment_state",
             "active",
             "category_label",
             "rights_description",
@@ -222,6 +231,7 @@ def employee_entities(connection, period, *, registry):
             not profile["resolved"]
             and (
                 content["employment_start"] is not None or content["employment_status"] != "unknown"
+                or content.get("employment_state", "unknown") != "unknown"
             )
         ):
             selected.append(profile)
@@ -299,7 +309,10 @@ class Entities:
 
     @staticmethod
     def _profile(data, source, evidence_digest):
-        profile = EntityProfile.model_validate_json(canonical(data)).model_dump(mode="json")
+        selected = EntityProfile.model_validate_json(canonical(data))
+        profile = selected.model_dump(mode="json")
+        if "employment_state" not in selected.model_fields_set:
+            profile.pop("employment_state")
         if not isinstance(source, str) or not source.strip() or len(source) > 2000:
             raise ValueError("source must describe the explicit source of the profile")
         evidence = None if evidence_digest is None else evidence_digest_bytes(evidence_digest)

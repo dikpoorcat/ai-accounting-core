@@ -21,6 +21,7 @@ payroll_company = payroll_company_fixture
 
 
 def employee_data(engine, period, **options):
+    options.setdefault("employee_filter", "all")
     response = Dashboard(engine).employees(period, **options)
     validate_response("dashboard_employees", response)
     return response["data"]
@@ -89,7 +90,7 @@ def test_unpaid_remuneration_covers_prior_labor_beyond_current_page_and_employee
         {"prior-labor", "future-labor"}
     )
     for options in (
-        {"employee_filter": "payroll"},
+        {"employee_filter": "employment_unknown"},
         {"employee_filter": "ended"},
         {"employee_id": "employee"},
         {"section": "employees"},

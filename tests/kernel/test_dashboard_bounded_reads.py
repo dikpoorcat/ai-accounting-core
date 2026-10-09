@@ -493,7 +493,7 @@ def test_default_employee_list_does_not_build_discarded_payroll_history(layered_
 
     monkeypatch.setattr(dashboard_module.Calculations, "selected", scoped)
     dashboard = Dashboard(layered_book["engine"])
-    default = dashboard.employees("2026-01", preparation="deferred")
+    default = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
     assert default["data"]["collections"]["employees"]["page"]["total_count"] == 5
     assert "payroll_sources" not in default["data"]["collections"]
     assert wage_sources == []
@@ -503,6 +503,7 @@ def test_default_employee_list_does_not_build_discarded_payroll_history(layered_
         employee_id="employee-0",
         section="employees",
         preparation="deferred",
+        employee_filter="all",
     )
     focused_items = focused["data"]["collections"]["employees"]["items"]
     assert [item["employee_id"] for item in focused_items] == ["employee-0"]
@@ -530,7 +531,7 @@ def test_employee_list_rejects_damaged_wage_identity_source(layered_book, tmp_pa
         )
         connection.execute(trigger)
     with pytest.raises(KernelError) as failure:
-        Dashboard(engine).employees("2026-01", preparation="deferred")
+        Dashboard(engine).employees("2026-01", preparation="deferred", employee_filter="all")
     assert failure.value.code == "content_integrity_failed"
 
 
@@ -549,7 +550,7 @@ def test_employee_list_uses_verified_roles_before_loading_wage_scalars(layered_b
 
     monkeypatch.setattr(dashboard_module, "scalar_facts", measured_scalar)
     dashboard = Dashboard(engine)
-    ordinary = dashboard.employees("2026-01", preparation="deferred")
+    ordinary = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
     assert ordinary["data"]["collections"]["employees"]["page"]["total_count"] == 5
     all_wage_facts = {layered_book["facts"][f"wage-{index}"] for index in range(4)}
     all_wage_facts.add(layered_book["facts"]["legacy-wage"])
@@ -568,7 +569,7 @@ def test_employee_list_uses_verified_roles_before_loading_wage_scalars(layered_b
         return result
 
     monkeypatch.setattr(references, "current_role_matches", roles_without_one)
-    fallback = dashboard.employees("2026-01", preparation="deferred")
+    fallback = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
     assert fallback == ordinary
     assert any(layered_book["facts"]["legacy-wage"] in call for call in scalar_calls)
 
@@ -593,7 +594,7 @@ def test_employee_list_rejects_damaged_wage_role_instead_of_scalar_fallback(
         (fact_id,),
     )
     with pytest.raises(KernelError) as failure:
-        Dashboard(engine).employees("2026-01", preparation="deferred")
+        Dashboard(engine).employees("2026-01", preparation="deferred", employee_filter="all")
     assert failure.value.code == "entity_reference_corrupt"
 
 

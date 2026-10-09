@@ -88,7 +88,7 @@ test("all non-context dashboards carry required read context and current schema 
   const versions = {
     workflow: 2, period_readiness: 1,
     dashboard_context: 3, dashboard_brief: 17, dashboard_brief_group: 2, dashboard_funds: 9,
-    dashboard_employees: 10, dashboard_assets: 10, dashboard_business_status: 9,
+    dashboard_employees: 11, dashboard_assets: 10, dashboard_business_status: 9,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {
@@ -163,6 +163,32 @@ test("owner employee responses reject provenance and conflict diagnostics", () =
     const changed = structuredClone(original);
     changed.data.collections.employees.items[0][key] = [];
     assert.equal(validate(changed), false, key);
+  }
+});
+
+test("employee contracts distinguish the four employment states", () => {
+  const validate = validators.validateDashboardEmployeesResponse;
+  for (const [filter, state] of [
+    ["employment_active", "regular"],
+    ["employment_unpaid_leave", "unpaid_leave"],
+    ["employment_departed", "departed"],
+    ["employment_unknown", "unknown"],
+  ]) {
+    const response = structuredClone(samples.employees_focused.response);
+    response.data.employee_filter = filter;
+    response.data.collections.employees.items[0].employment_state = state;
+    assert(validate(response), JSON.stringify(validate.errors));
+  }
+  for (const state of [undefined, null, "in_period", true]) {
+    const response = structuredClone(samples.employees_focused.response);
+    if (state === undefined) delete response.data.collections.employees.items[0].employment_state;
+    else response.data.collections.employees.items[0].employment_state = state;
+    assert.equal(validate(response), false, String(state));
+  }
+  for (const removedFilter of ["payroll", "no_payroll", "employment_inactive", "employment_regular"]) {
+    const response = structuredClone(samples.employees_focused.response);
+    response.data.employee_filter = removedFilter;
+    assert.equal(validate(response), false, removedFilter);
   }
 });
 

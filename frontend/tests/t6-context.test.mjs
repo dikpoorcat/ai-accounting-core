@@ -287,13 +287,13 @@ test("T6 new company context keeps a supported month, falls back explicitly, and
     ["default month", ["2026-03"], "2026-03"],
     ["no months", [], undefined],
   ]) await t.test(label, async () => {
-    const h = await harness({ company_id: "b", period: "2026-01", employee_filter: "payroll" });
+    const h = await harness({ company_id: "b", period: "2026-01", employee_filter: "employment_active" });
     try {
       h.setAuthenticated(true);
       h.calls.at(-1).resolve(context("b", periods)); await flush();
       assert.equal(h.route.query.company_id, "b");
       assert.equal(h.route.query.period, expected);
-      assert.equal(h.route.query.employee_filter, "payroll", "explicit route selection is not page data or a cursor");
+      assert.equal(h.route.query.employee_filter, "employment_active", "explicit route selection is not page data or a cursor");
       if (label === "default month") assert.match(h.state.selectionNotice.value, /2026-03/);
       if (label === "no months") assert.match(h.state.selectionNotice.value, /没有可查看的月份/);
     } finally { h.close(); }
@@ -364,12 +364,12 @@ test("T6 month changes while refresh waits cannot be overwritten by an older sel
     const pending = h.state.refresh();
     assert.equal(h.calls.length, 2);
     const refreshed = h.calls[1];
-    h.navigate({ query: { company_id: "a", period: "2026-02", employee_filter: "payroll" } });
+    h.navigate({ query: { company_id: "a", period: "2026-02", employee_filter: "employment_active" } });
     assert.equal(h.calls.length, 2, "a month change with existing context does not start another refresh");
     assert.equal(refreshed.signal.aborted, false);
     refreshed.resolve(context("a", ["2026-01", "2026-02"])); await pending; await flush();
     assert.equal(h.route.query.period, "2026-02");
-    assert.equal(h.route.query.employee_filter, "payroll");
+    assert.equal(h.route.query.employee_filter, "employment_active");
     assert.equal(h.calls.length, 2);
   } finally { h.close(); }
 });
@@ -449,7 +449,7 @@ test("sidebar calendar month changes retain employee filters, clear detail targe
   const h = await harness({
     company_id: "a",
     period: "2026-01",
-    employee_filter: "payroll",
+    employee_filter: "employment_active",
     employee_id: "old-employee",
     cursor: "old-cursor",
     voucher: "7",
@@ -461,10 +461,10 @@ test("sidebar calendar month changes retain employee filters, clear detail targe
     h.route.hash = "#old-detail";
     await h.selectPeriod("2026-04");
     assert.deepEqual(h.pushes.at(-1), {
-      query: { company_id: "a", period: "2026-04", quarter: undefined, employee_filter: "payroll" },
+      query: { company_id: "a", period: "2026-04", quarter: undefined, employee_filter: "employment_active" },
       hash: "",
     });
-    assert.deepEqual(h.route.query, { company_id: "a", period: "2026-04", employee_filter: "payroll" });
+    assert.deepEqual(h.route.query, { company_id: "a", period: "2026-04", employee_filter: "employment_active" });
 
     h.route.name = "reports";
     h.navigate({
@@ -490,7 +490,7 @@ test("sidebar calendar month changes retain employee filters, clear detail targe
 });
 
 test("the sidebar month picker preserves all employee selections including the default", async () => {
-  for (const selected of [undefined, "all", "in_period", "payroll", "no_payroll", "ended", "unknown"]) {
+  for (const selected of [undefined, "all", "in_period", "ended", "unknown", "employment_active", "employment_unpaid_leave", "employment_departed", "employment_unknown"]) {
     const h = await harness({ company_id: "a", period: "2026-01", employee_filter: selected });
     try {
       h.setAuthenticated(true);
@@ -548,7 +548,7 @@ test("T6 report company switch validates the shared month before choosing the ne
 });
 
 test("T6 sidebar changes company with shared selection only and clears page-specific state", async () => {
-  const h = await harness({ company_id: "a", period: "2026-01", employee_filter: "payroll", cursor: "never-transfer", voucher: "7" });
+  const h = await harness({ company_id: "a", period: "2026-01", employee_filter: "employment_active", cursor: "never-transfer", voucher: "7" });
   try {
     await h.selectCompany("b");
     assert.deepEqual(h.pushes[0], { query: { company_id: "b", period: "2026-01" }, hash: "" });

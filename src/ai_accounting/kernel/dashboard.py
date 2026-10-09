@@ -15,7 +15,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cached_property
-from typing import Literal
+from typing import Literal, get_args
 
 from .account_definitions import (
     ACCOUNT_NAMES,
@@ -56,6 +56,12 @@ from .query_reads import QueryReads
 from .query_semantics import classify_financial_position, report_party_splits
 from .reports import Reports, _workbook_name
 from .types import ActualDate, YearMonth, canonical, digest
+
+EmployeeFilter = Literal[
+    "all", "in_period", "unknown", "ended",
+    "employment_active", "employment_unpaid_leave",
+    "employment_departed", "employment_unknown",
+]
 
 KIND_NAMES = {
     "external_completion": "外部办理完成依据",
@@ -549,6 +555,7 @@ class _Snapshot:
             "employment_start",
             "employment_end",
             "employment_status",
+            "employment_state",
             "active",
             "category_label",
             "rights_description",
@@ -2073,7 +2080,7 @@ class Dashboard:
         cursor: str | None = None,
         limit: int = 20,
         expected_version: str | None = None,
-        employee_filter: str = "all",
+        employee_filter: EmployeeFilter = "employment_active",
         employee_id: str | None = None,
         preparation: Literal["complete", "deferred"] = "deferred",
     ):
@@ -2082,12 +2089,12 @@ class Dashboard:
             raise KernelError("invalid_command", "不支持的准备检查投影")
         if employee_id == "":
             raise KernelError("invalid_command", "须指定有效 employee_id")
-        if employee_filter not in {"all", "in_period", "payroll", "no_payroll", "unknown", "ended"}:
+        if employee_filter not in get_args(EmployeeFilter):
             raise KernelError("invalid_command", "不支持的员工筛选")
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 10}
+                return {**self._response(None, None), "schema_version": 11}
             self._check_page_version(snap, cursor, expected_version)
             after = decode_cursor(snap, "employees", section, cursor, filters)
             data = _employees(
@@ -2101,7 +2108,7 @@ class Dashboard:
             if section:
                 data["collections"] = {section: data["collections"][section]}
             return {**self._response(snap, seal_collections(snap, "employees", data, filters)),
-                    "schema_version": 10}
+                    "schema_version": 11}
 
     def assets(
         self,
@@ -3694,7 +3701,7 @@ def _employees(
     sections=None,
     cursors=None,
     limit=20,
-    employee_filter="all",
+    employee_filter="employment_active",
     employee_id=None,
     summary_only=False,
     _full_wage_scope=False,
@@ -3806,8 +3813,28 @@ def _employees(
     known.update(unestablished_employees)
     if hasattr(snap, "metadata"):
         snap.metadata.prime_profiles("employee", known)
-    employee_states = {}
+    employee_states, current_employment_states = {}, {}
     for ident in sorted(known):
+        # Current personnel status is independent of the selected month's frozen
+        # profile and employment interval. The metadata uses this read transaction.
+        current = snap.current_profiles.get("employee", {}).get(ident, {})
+        employment_state = current.get("employment_state")
+        if employment_state is None:
+            # Preserve already registered employment without inventing a more
+            # precise personnel fact. An explicit new unknown never falls back.
+            employment_state = "unknown"
+            start, end = current.get("employment_start"), current.get("employment_end")
+            conflict = start and end and (
+                start[:7] > end[:7] or len(start) == len(end) == 10 and start > end
+            )
+            ended = end and (end <= snap.as_of if len(end) == 10 else end < snap.as_of[:7])
+            if not conflict:
+                if ended:
+                    if current.get("employment_status") != "active":
+                        employment_state = "departed"
+                elif current.get("employment_status") == "active":
+                    employment_state = "regular"
+        current_employment_states[ident] = employment_state
         info = snap.profile("employee", ident)
         start, end = info.get("employment_start"), info.get("employment_end")
         if info["field_conflicts"]:
@@ -3828,15 +3855,15 @@ def _employees(
             employee_filter == "all"
             or employee_filter == "in_period"
             and employee_states[ident][1] is True
-            or employee_filter == "payroll"
-            and bool(aggregates.get(ident, {}).get("batches"))
-            or employee_filter == "no_payroll"
-            and employee_states[ident][1] is True
-            and not aggregates.get(ident, {}).get("batches")
             or employee_filter == "unknown"
             and (employee_states[ident][0] == "unknown" or ident in unestablished_employees)
             or employee_filter == "ended"
             and employee_states[ident][0] == "ended"
+            or employee_filter == "employment_active"
+            and current_employment_states[ident] == "regular"
+            or employee_filter.startswith("employment_")
+            and employee_filter != "employment_active"
+            and current_employment_states[ident] == employee_filter.removeprefix("employment_")
         )
         and (employee_id is None or ident == employee_id)
     ]
@@ -4000,6 +4027,7 @@ def _employees(
                 "selection_status": "established",
                 "name": person["name"],
                 "period_state": state,
+                "employment_state": current_employment_states[ident],
                 "period_state_label": {
                     "unknown": "未确认人员在册状态",
                     "not_started": "本月早于已提供的开始日期",
@@ -4043,6 +4071,7 @@ def _employees(
                 "employee_id": ident,
                 "name": snap.party(ident),
                 "selection_status": "unestablished",
+                "employment_state": current_employment_states[ident],
                 **dict.fromkeys(
                     (
                         *money_keys,

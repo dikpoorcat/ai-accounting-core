@@ -9666,6 +9666,16 @@
             ],
             "title": "In Period"
           },
+          "employment_state": {
+            "enum": [
+              "regular",
+              "unpaid_leave",
+              "departed",
+              "unknown"
+            ],
+            "title": "Employment State",
+            "type": "string"
+          },
           "employment_start_date": {
             "anyOf": [
               {
@@ -9847,6 +9857,7 @@
           "period_state",
           "period_state_label",
           "in_period",
+          "employment_state",
           "employment_start_date",
           "employment_end_date",
           "has_payroll_activity",
@@ -10122,10 +10133,12 @@
             "enum": [
               "all",
               "in_period",
-              "payroll",
-              "no_payroll",
               "unknown",
-              "ended"
+              "ended",
+              "employment_active",
+              "employment_unpaid_leave",
+              "employment_departed",
+              "employment_unknown"
             ],
             "title": "Employee Filter",
             "type": "string"
@@ -10478,6 +10491,16 @@
             "title": "Selection Status",
             "type": "string"
           },
+          "employment_state": {
+            "enum": [
+              "regular",
+              "unpaid_leave",
+              "departed",
+              "unknown"
+            ],
+            "title": "Employment State",
+            "type": "string"
+          },
           "gross_salary_fen": {
             "title": "Gross Salary Fen",
             "type": "null"
@@ -10539,6 +10562,7 @@
           "employee_id",
           "name",
           "selection_status",
+          "employment_state",
           "gross_salary_fen",
           "annual_bonus_fen",
           "employer_social_insurance_fen",
@@ -10561,7 +10585,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 10,
+        "const": 11,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -12937,6 +12961,17 @@
             ],
             "title": "Employment Status"
           },
+          "employment_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Employment State"
+          },
           "active": {
             "anyOf": [
               {
@@ -12979,6 +13014,7 @@
           "employment_start",
           "employment_end",
           "employment_status",
+          "employment_state",
           "active",
           "category_label",
           "rights_description"

@@ -26,7 +26,7 @@ identity_engine = identity_engine_fixture
 
 
 def response(engine, period, **kwargs):
-    result = Dashboard(engine).employees(period, **kwargs)
+    result = Dashboard(engine).employees(period, **kwargs, employee_filter="all")
     result.pop("generated_at", None)
     result["data"].pop("generated_at", None)
     return result
@@ -101,7 +101,7 @@ def test_actual_multi_period_identity_correction_keeps_complete_employee_respons
             self.engine = engine
 
         def employees(self, period, **kwargs):
-            new = Dashboard(self.engine).employees(period, **kwargs)
+            new = Dashboard(self.engine).employees(period, **kwargs, employee_filter="all")
             expected = full_response(self.engine, monkeypatch, period, **kwargs)
             actual = copy.deepcopy(new)
             actual.pop("generated_at", None)
@@ -116,7 +116,7 @@ def test_actual_multi_period_identity_correction_keeps_complete_employee_respons
     compared = ComparedDashboard(engine)
     focused = compared.employees(
         "2026-02", employee_id=identity_engine[3], section="employees", preparation="deferred"
-    )
+    , employee_filter="all")
     assert len(focused["data"]["collections"]["employees"]["items"]) == 1
     assert len(comparisons) == 2
 

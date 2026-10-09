@@ -362,7 +362,7 @@ def test_tax_identity_name_and_employee_code_are_reused(tmp_path):
     company = payroll_company(tmp_path)
     original = company.current("january")
     complete_details(company)
-    item = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+    item = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
         "items"
     ][0]
     assert item["name"] == "测试员工"

@@ -27,7 +27,7 @@ def test_verified_wage_heads_match_full_selection_after_multiple_late_reviews(
     tmp_path, monkeypatch, zero
 ):
     company = prepared(tmp_path, zero=zero)
-    original = Dashboard(company.engine).employees("2026-01")
+    original = Dashboard(company.engine).employees("2026-01", employee_filter="all")
     review(company, monkeypatch, 1)
     review(company, monkeypatch, 2)
     company.save(
@@ -42,7 +42,7 @@ def test_verified_wage_heads_match_full_selection_after_multiple_late_reviews(
     company.publish("february")
     company.close("2026-02")
     # The frozen month remains an original adoption despite newer current heads.
-    later = Dashboard(company.engine).employees("2026-01")
+    later = Dashboard(company.engine).employees("2026-01", employee_filter="all")
     assert later["data"]["employees"] == original["data"]["employees"]
     with Dashboard(company.engine)._snapshot("2026-02") as snap:
         selected_heads = heads(snap)
@@ -71,7 +71,7 @@ def test_frozen_wage_head_bytes_require_authenticated_adoption(tmp_path, change)
     company.save(payroll(period="2026-02"), "february")
     company.confirm_payroll("february")
     company.publish("february")
-    baseline = Dashboard(company.engine).employees("2026-02", preparation="deferred")
+    baseline = Dashboard(company.engine).employees("2026-02", preparation="deferred", employee_filter="all")
     with company.engine.store.connection(read_only=True) as connection:
         saved = connection.execute(
             "SELECT c.id,c.outcome,c.digest FROM calculation c JOIN calculation_current h "
@@ -122,7 +122,7 @@ def test_frozen_wage_head_bytes_require_authenticated_adoption(tmp_path, change)
         for kwargs in ({}, {"employee_id": "employee", "section": "employees"}):
             assert Dashboard(company.engine).employees(
                 "2026-02", preparation="deferred", **kwargs
-            )["data"]["employees"] == baseline["data"]["employees"]
+            , employee_filter="all")["data"]["employees"] == baseline["data"]["employees"]
         with pytest.raises(KernelError):
             verify(company.engine)
         from ai_accounting.kernel.backup import BackupError, verify_file
@@ -138,7 +138,7 @@ def test_employee_default_matches_full_head_selection(company, monkeypatch, clos
     if closed_correction:
         company.save(actual(), "actual")
         company.publish("actual", posting_period="2026-02")
-    original = Dashboard(company.engine).employees("2026-02")
+    original = Dashboard(company.engine).employees("2026-02", employee_filter="all")
 
     def full_identity(snap, candidates):
         return snap.calculations.selected(
@@ -149,7 +149,7 @@ def test_employee_default_matches_full_head_selection(company, monkeypatch, clos
     import ai_accounting.kernel.dashboard as dashboard_module
 
     monkeypatch.setattr(dashboard_module, "verified_payroll_heads", full_identity)
-    full = Dashboard(company.engine).employees("2026-02")
+    full = Dashboard(company.engine).employees("2026-02", employee_filter="all")
     assert original == full
 
 
@@ -319,7 +319,7 @@ def test_identity_authenticates_normal_and_damaged_terminal_withdrawals(
 def test_public_employees_reject_damaged_open_historical_wage_identity(company, change):
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
-    normal = dashboard.employees("2026-02")
+    normal = dashboard.employees("2026-02", employee_filter="all")
     totals = normal["data"]["employees"]
     assert totals["gross_salary_fen"] == 1_000_000
     assert normal["data"]["collections"]["employees"]["page"]["total_count"] == 1
@@ -377,5 +377,5 @@ def test_public_employees_reject_damaged_open_historical_wage_identity(company, 
     # The current month's public page must authenticate older open wage heads,
     # even though it only displays February's cost and one employee card.
     with pytest.raises(KernelError) as failure:
-        dashboard.employees("2026-02")
+        dashboard.employees("2026-02", employee_filter="all")
     assert failure.value.code == "content_integrity_failed"

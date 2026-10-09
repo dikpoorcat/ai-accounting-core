@@ -71,7 +71,7 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
         return original(connection, references)
 
     monkeypatch.setattr(dashboard, "recorded_times", counted)
-    response = Dashboard(company.engine).employees("2026-01")
+    response = Dashboard(company.engine).employees("2026-01", employee_filter="all")
     assert validate_response("dashboard_employees", response) == response
     wire = http_response("dashboard_employees", response)
     assert wire["data"]["collections"]["employees"]["items"][0]["employment_end_date"] == "2026-04"
@@ -170,7 +170,7 @@ def test_date_conflict_cannot_claim_a_historical_employee_is_in_period(company):
         employment_start="2025-12",
         employment_end="2026-01-05",
     )
-    response = Dashboard(company.engine).employees("2026-01")
+    response = Dashboard(company.engine).employees("2026-01", employee_filter="all")
     validate_response("dashboard_employees", response)
     wire = http_response("dashboard_employees", response)
     employee = response["data"]["collections"]["employees"]["items"][0]
@@ -259,7 +259,7 @@ def test_payee_and_tax_identity_fallbacks_keep_exact_sources(company):
         assert party["id"] == payee["payee_revision_id"]
         assert party["field_sources"]["name"]["basis"] == "frozen"
         assert party["field_sources"]["name"]["recorded_at"]
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
         "items"
     ][0]
     assert employee["name"] == "申报姓名"
@@ -277,7 +277,7 @@ def test_declaration_recording_time_is_separate_from_business_month_and_actual_d
     company.close("2026-01")
     frozen = frozen_rows(company.engine)
     _, saved = declare(company, period="2026-02", declaration_date="2026-02-06")
-    response = Dashboard(company.engine).employees("2026-01")
+    response = Dashboard(company.engine).employees("2026-01", employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     assert {"payroll_sources", "settlement_events"}.isdisjoint(response["data"]["collections"])
     assert "declared_tax_fen" not in employee

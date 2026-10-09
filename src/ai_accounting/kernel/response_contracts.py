@@ -37,6 +37,7 @@ from .response_types import (
     Version5,
     Version9,
     Version10,
+    Version11,
     Version17,
     WireFen,
 )
@@ -1623,6 +1624,7 @@ class EmployeeItem(ResponseObject):
     period_state: str
     period_state_label: str
     in_period: bool | None
+    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"]
     employment_start_date: MonthOrDay | None
     employment_end_date: MonthOrDay | None
     has_payroll_activity: bool
@@ -1651,6 +1653,7 @@ class UnestablishedEmployee(ResponseObject):
     employee_id: str
     name: str
     selection_status: Literal["unestablished"]
+    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"]
     gross_salary_fen: None
     annual_bonus_fen: None
     employer_social_insurance_fen: None
@@ -1736,7 +1739,11 @@ class OwnerWorkforceCost(ResponseObject):
 
 class EmployeesData(ResponseObject):
     employee_id: str | None
-    employee_filter: Literal["all", "in_period", "payroll", "no_payroll", "unknown", "ended"]
+    employee_filter: Literal[
+        "all", "in_period", "unknown", "ended",
+        "employment_active", "employment_unpaid_leave",
+        "employment_departed", "employment_unknown",
+    ]
     employees: EmployeeSummary
     collections: EmployeeCollections
     workforce_cost: OwnerWorkforceCost
@@ -1744,7 +1751,7 @@ class EmployeesData(ResponseObject):
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version10
+    schema_version: Version11
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -2047,6 +2054,7 @@ class DisplayProfileValues(ResponseObject):
     employment_start: MonthOrDay | None
     employment_end: MonthOrDay | None
     employment_status: str | None
+    employment_state: str | None
     active: bool | None
     category_label: str | None
     rights_description: str | None
@@ -2224,6 +2232,7 @@ class OwnerProfileValues(ResponseObject):
     employment_start: MonthOrDay | None
     employment_end: MonthOrDay | None
     employment_status: str | None
+    employment_state: str | None
     active: bool | None
     category_label: str | None
     rights_description: str | None

@@ -295,6 +295,56 @@ def test_employment_dates_describe_management_precision_in_typed_schema():
     assert start["anyOf"][0]["x-accounting-fact"]["allowed_precision"] == ["month", "day"]
 
 
+@pytest.mark.parametrize("state", ["regular", "unpaid_leave", "departed"])
+def test_explicit_employment_state_alone_registers_employee_without_accounting_change(book, state):
+    from ai_accounting.kernel.entities import employee_entities
+
+    engine, *_ = book
+    before = database_state(engine)
+    registered = Entities(engine).register_entity(
+        "person", {"employment_state": state}, source="负责人明确确认合成任职状态",
+        request_id="state-only-" + state,
+    )
+    with engine.store.connection(read_only=True) as connection:
+        assert registered["entity_id"] in employee_entities(
+            connection, "2026-01", registry=engine.store.registry
+        )
+    after = database_state(engine)
+    assert after["epochs"]["accounting"] == before["epochs"]["accounting"]
+    assert (
+        after["fact_revision"] == before["fact_revision"]
+        and after["voucher_version"] == before["voucher_version"]
+    )
+    profile = Entities(engine).find_entities(kind="person")["items"][0]["profile"]
+    assert profile["employment_state"] == state and profile["employment_status"] == "unknown"
+    with engine.store.connection(read_only=True) as connection:
+        assert (
+            Display.profiles(connection)["employee"][registered["entity_id"]]["employment_state"]
+            == state
+        )
+
+
+def test_historical_profile_missing_employment_state_keeps_original_digest():
+    from ai_accounting.kernel.entities import _profile_record, display_profile
+    from ai_accounting.kernel.types import canonical, digest
+
+    content = EntityProfile().model_dump(mode="json")
+    content.pop("employment_state")
+    row = {"id": "synthetic-old", "entity_id": "person", "revision": 1,
+           "content": canonical(content), "source": "原始合成档案", "evidence_digest": None,
+           "digest": digest(["person", 1, content, "原始合成档案", None])}
+    selected = _profile_record(row)
+    assert "employment_state" not in selected
+    assert selected["digest"] == row["digest"].hex()
+    assert display_profile(selected, "employee")["employment_state"] is None
+    schema = EntityProfile.model_json_schema()["properties"]["employment_state"]
+    assert schema["x-accounting-fact"]["role"] == "management"
+    assert schema["x-accounting-fact"]["reusable_sources"] == [
+        "owner_confirmation",
+        "employment_document",
+    ]
+
+
 @pytest.mark.parametrize(
     "data",
     [

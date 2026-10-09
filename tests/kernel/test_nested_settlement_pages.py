@@ -63,7 +63,7 @@ def test_employee_month_totals_and_exact_historical_business_payment_pages(
 
     monkeypatch.setattr(BusinessQueries, "settlement_summary", watched)
     dashboard = Dashboard(engine)
-    response = dashboard.employees("2026-01", limit=2)
+    response = dashboard.employees("2026-01", limit=2, employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     assert {"payroll_sources", "settlement_events"}.isdisjoint(response["data"]["collections"])
     assert employee["direct_net_payments_fen"] == 600

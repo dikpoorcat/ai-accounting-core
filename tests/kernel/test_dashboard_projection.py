@@ -399,7 +399,7 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
         expected_revision=0,
         request_id="person-profile",
     )
-    data = Dashboard(company.engine).employees("2026-08")["data"]
+    data = Dashboard(company.engine).employees("2026-08", employee_filter="all")["data"]
     employee = data["collections"]["employees"]["items"][0]
     assert employee["name"] == "测试人员"
     assert employee["gross_salary_fen"] == 4000000
@@ -480,7 +480,7 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
     company.publish("bonus")
-    employee = Dashboard(company.engine).employees("2026-01")["data"]["collections"]["employees"][
+    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
         "items"
     ][0]
     assert employee["annual_bonus_fen"] == 3000000
@@ -554,7 +554,7 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
     company.save(payment(), "salary-payment")
     company.publish("salary-payment")
-    february = dashboard.employees("2026-02")["data"]["collections"]["employees"]["items"][0]
+    february = dashboard.employees("2026-02", employee_filter="all")["data"]["collections"]["employees"]["items"][0]
     assert february["recorded_net_payments_fen"] == 907400
     assert dashboard.funds("2026-02")["data"]["outflow_fen"] == 907400
     january = dashboard.brief("2026-01")["data"]["open_items"]
@@ -906,7 +906,7 @@ def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book)
         },
     )
     commit("old-wage-payment")
-    data = Dashboard(book).employees("2026-01")["data"]["collections"]["employees"]
+    data = Dashboard(book).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"]
     assert data["items"][0]["recorded_net_payments_fen"] == 50000
     assert not data["items"][0]["has_payroll_activity"]
     assert data["items"][0]["gross_salary_fen"] == 0

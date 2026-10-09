@@ -9,6 +9,7 @@ import {
   type EmployeesDashboardResponse,
   type EmployeesSummary,
   type EmployeesQuery,
+  type EmployeeFilter,
   type PersonalLaborItem,
 } from "../api/employees";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
@@ -21,21 +22,21 @@ import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
-type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
-
 const employeeFilterGroups: {
   label: string;
   options: { value: EmployeeFilter; label: string; description: string }[];
 }[] = [
   { label: "", options: [{ value: "all", label: "全部员工", description: "查看所有已登记人员" }] },
+  { label: "用工状态", options: [
+    { value: "employment_active", label: "在职", description: "当前在职，停薪留职单独列示" },
+    { value: "employment_unpaid_leave", label: "停薪留职", description: "当前停薪留职，仍保留劳动关系" },
+    { value: "employment_departed", label: "已离职", description: "当前已明确离职" },
+    { value: "employment_unknown", label: "未确认", description: "当前用工状态尚未明确" },
+  ] },
   { label: "在册状态", options: [
-    { value: "in_period", label: "已确认在册", description: "所选月份在职，按员工档案判断" },
+    { value: "in_period", label: "已确认在册", description: "所选月份在册，按员工档案判断" },
     { value: "ended", label: "已确认不在册", description: "离职月份早于所选月份" },
     { value: "unknown", label: "在册状态未确认", description: "人员资料缺失或有冲突，需核对" },
-  ] },
-  { label: "工资记录", options: [
-    { value: "payroll", label: "本月有工资", description: "所选月份有工资核算记录" },
-    { value: "no_payroll", label: "本月暂无工资", description: "本月在册，尚无工资核算记录" },
   ] },
 ];
 const employeeFilterOptions = employeeFilterGroups.flatMap(group => group.options);
@@ -48,8 +49,8 @@ const loading = ref(false);
 const error = ref("");
 const displayMode = ref<"cards" | "list">("cards");
 const filter = computed<EmployeeFilter>({
-  get: () => employeeFilterOptions.find(option => option.value === route.query.employee_filter)?.value ?? "in_period",
-  set: value => { void router.push({ query: { ...route.query, employee_filter: value === "in_period" ? undefined : value, employee_id: undefined } }); },
+  get: () => employeeFilterOptions.find(option => option.value === route.query.employee_filter)?.value ?? "employment_active",
+  set: value => { void router.push({ query: { ...route.query, employee_filter: value === "employment_active" ? undefined : value, employee_id: undefined } }); },
 });
 const focusedEmployeeId = computed(() => typeof route.query.employee_id === "string" ? route.query.employee_id : "");
 let controller: AbortController | null = null;
@@ -117,13 +118,19 @@ const filterLabel = computed(
   () => focusedEmployeeId.value ? "已定位员工" :
     ({
       all: "全部已登记员工",
+      employment_active: "在职员工",
+      employment_unpaid_leave: "停薪留职员工",
+      employment_departed: "已离职员工",
+      employment_unknown: "用工状态未确认",
       in_period: "已确认在册",
-      payroll: "本月有工资记录",
-      no_payroll: "本月暂无工资记录",
       ended: "已确认不在册",
       unknown: "在册状态未确认",
     })[filter.value],
 );
+
+function currentEmploymentLabel(item: EstablishedEmployeeItem) {
+  return { regular: "在职", unpaid_leave: "停薪留职", departed: "已离职", unknown: "用工状态未确认" }[item.employment_state];
+}
 
 function selectEmployeeFilter(value: string) {
   const option = employeeFilterOptions.find(item => item.value === value);
@@ -403,13 +410,13 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
                 <summary class="employee-card-summary dashboard-record-card-summary">
                   <div v-if="displayMode === 'list'" class="employee-list-summary">
-                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ item.period_state_label }}</p></div></div>
+                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}</p></div></div>
                     <strong v-for="column in employeeListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': ['gross', 'bonus', 'employer-social', 'employer-housing'].includes(column.key) }" :data-label="column.label" :aria-labelledby="`employee-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
                     <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                   </div>
                   <template v-else>
                     <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><span>{{ item.name }}</span></h3><strong class="cost-amount">{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
-                    <p class="muted">{{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
+                    <p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
                     <div class="amount-grid"><div><span>本月应付净薪</span><strong class="payable-amount">{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong :class="cashFlowClass(item.direct_net_payments_fen, 'outflow')">{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong class="payable-amount">{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
                     <p class="muted">{{ item.has_payroll_activity ? item.payroll_periods.join('、') + ' 工资' : '本月暂无工资记录' }} · 展开查看本月薪酬</p>
                   </template>

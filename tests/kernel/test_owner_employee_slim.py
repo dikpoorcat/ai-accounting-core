@@ -61,9 +61,9 @@ def test_focused_employee_keeps_month_money_without_history_reads_or_preloading(
     monkeypatch.setattr(_Snapshot, "settlement_summary", watched_summary)
     dashboard = Dashboard(engine)
     for period, paid, remaining in (("2026-01", 600, 1400), ("2026-02", 50, 1350)):
-        response = dashboard.employees(period, employee_id="employee")
+        response = dashboard.employees(period, employee_id="employee", employee_filter="all")
         validate_response("dashboard_employees", response)
-        assert response["schema_version"] == 10
+        assert response["schema_version"] == 11
         data = response["data"]
         assert set(data["collections"]) == {"employees", "labor_sources"}
         item = data["collections"]["employees"]["items"][0]
@@ -80,7 +80,7 @@ def test_focused_employee_keeps_month_money_without_history_reads_or_preloading(
 @pytest.mark.parametrize("section", ["payroll_sources", "settlement_events"])
 def test_employee_dashboard_rejects_removed_collections(employee_money, section):
     with pytest.raises(KernelError) as failure:
-        Dashboard(employee_money).employees("2026-01", employee_id="employee", section=section)
+        Dashboard(employee_money).employees("2026-01", employee_id="employee", section=section, employee_filter="all")
     assert failure.value.code == "invalid_command"
 
 
@@ -90,7 +90,7 @@ def test_focused_employee_still_rejects_damaged_monthly_wage_source(company):
            "UPDATE calculation SET outcome=json_set(outcome,'$.values.gross_fen',1) "
            "WHERE subject_id='february'")
     with pytest.raises(KernelError) as failure:
-        Dashboard(company.engine).employees("2026-02", employee_id="employee")
+        Dashboard(company.engine).employees("2026-02", employee_id="employee", employee_filter="all")
     assert failure.value.code == "content_integrity_failed"
 
 

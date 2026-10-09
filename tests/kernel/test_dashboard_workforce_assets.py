@@ -1,5 +1,6 @@
 """Dashboard semantics follow existing published payroll, obligations and asset sources."""
 
+import json
 from typing import get_args
 
 import pytest
@@ -57,7 +58,7 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
         monkeypatch.setattr(dashboard_module, "payroll_list_head_metadata", scoped)
         response = dashboard.employees(
             period, employee_id="employee", section="employees", preparation="deferred"
-        )
+        , employee_filter="all")
         assert observed[-1][1] == period
         assert all(
             head["line_count"] is None
@@ -81,7 +82,7 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
         )
         complete = dashboard.employees(
             period, employee_id="employee", section="employees", preparation="deferred"
-        )
+        , employee_filter="all")
         assert response == complete
 
 
@@ -143,7 +144,7 @@ def test_opening_payroll_keeps_source_period_components_and_later_payment(openin
     publish("prior-net-payment")
     ledger = engine.ledger("2026-01")
     dashboard = Dashboard(engine)
-    response = dashboard.employees("2026-01")
+    response = dashboard.employees("2026-01", employee_filter="all")
     assert (
         response["data"]["workforce_cost"]["total_fen"]
         == response["data"]["employees"]["ledger_cost_fen"]
@@ -206,7 +207,7 @@ def test_explicit_employment_interval_precedes_current_inactive_status(
         expected_revision=0,
         request_id="employment-interval",
     )
-    data = Dashboard(company.engine).employees("2026-02")["data"]
+    data = Dashboard(company.engine).employees("2026-02", employee_filter="all")["data"]
     employees = data["employees"]
     person = data["collections"]["employees"]["items"][0]
     assert person["period_state"] == expected_state
@@ -233,11 +234,314 @@ def test_later_exit_record_preserves_explicit_employment_in_closed_month(company
         expected_revision=0,
         request_id="later-employment-record",
     )
-    data = Dashboard(company.engine).employees("2026-01")["data"]
+    data = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]
     employees = data["employees"]
     assert data["collections"]["employees"]["items"][0]["in_period"] is True
     assert employees["in_period_count"] == 1
     assert company.engine.ledger("2026-01") == before
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_current_employment_states_and_default_filter_preserve_month_scope(company, closed):
+    company.publish("january", "february")
+    definitions = [
+        ("employee", "unpaid_leave", "active"),
+        ("regular", "regular", "unknown"),
+        ("departed", "departed", "active"),
+        ("old-active", "unknown", "active"),
+        ("old-inactive", "unknown", "inactive"),
+        ("unknown", "unknown", "unknown"),
+    ]
+    for ident, state, old_status in definitions:
+        save_entity_display_profile(company.engine, {
+            "kind": "employee", "entity_id": ident, "employment_state": state,
+            "employment_status": old_status, "employment_start": "2025-01",
+            "employment_end": "2027-01", "active": False,
+            "source": "明确的合成任职状态",
+        }, expected_revision=0, request_id="state-" + ident)
+    if closed:
+        company.close("2026-01")
+    before = company.engine.ledger("2026-01")
+    dashboard = Dashboard(company.engine)
+    all_response = dashboard.employees("2026-01", employee_filter="all")
+    all_data = all_response["data"]
+    items = {item["employee_id"]: item for item in all_data["collections"]["employees"]["items"]}
+    assert {ident: item["employment_state"] for ident, item in items.items()} == {
+        ident: state for ident, state, _old in definitions
+    }
+    assert all(item["in_period"] is True for item in items.values())
+    expected = {
+        "employment_active": {"regular"},
+        "employment_unpaid_leave": {"employee"},
+        "employment_departed": {"departed"},
+        "employment_unknown": {"old-active", "old-inactive", "unknown"},
+    }
+    for employee_filter, expected_ids in expected.items():
+        response = dashboard.employees("2026-01", employee_filter=employee_filter, limit=1)
+        validate_response("dashboard_employees", response)
+        assert response["data"]["employees"] == all_data["employees"]
+        assert response["data"]["workforce_cost"] == all_data["workforce_cost"]
+        assert (
+            response["data"]["collections"]["labor_sources"]
+            == all_data["collections"]["labor_sources"]
+        )
+        found = []
+        while True:
+            collection = response["data"]["collections"]["employees"]
+            assert collection["page"]["total_count"] == 6
+            assert collection["page"]["filtered_count"] == len(expected_ids)
+            found.extend(item["employee_id"] for item in collection["items"])
+            if not collection["page"]["has_more"]:
+                break
+            cursor = collection["page"]["next_cursor"]
+            with pytest.raises(KernelError) as failure:
+                dashboard.employees("2026-01", section="employees", cursor=cursor,
+                    employee_filter="all", expected_version=response["snapshot_version"])
+            assert failure.value.code == "dashboard_snapshot_changed"
+            response = dashboard.employees(
+                "2026-01",
+                section="employees",
+                cursor=cursor,
+                employee_filter=employee_filter,
+                expected_version=response["snapshot_version"],
+                limit=1,
+            )
+        assert set(found) == expected_ids
+    default = dashboard.employees("2026-01")
+    assert default["data"]["employee_filter"] == "employment_active"
+    assert {
+        item["employee_id"] for item in default["data"]["collections"]["employees"]["items"]
+    } == expected["employment_active"]
+    assert company.engine.ledger("2026-01") == before
+
+
+@pytest.mark.parametrize("frozen_state,current_state", [
+    ("regular", "departed"), ("unknown", "unpaid_leave"),
+])
+def test_closed_month_current_state_uses_latest_profile_and_invalidates_cursor(
+    company, frozen_state, current_state,
+):
+    company.publish("january", "february")
+    for ident in ("employee", "second"):
+        save_entity_display_profile(company.engine, {
+            "kind": "employee", "entity_id": ident, "employment_state": frozen_state,
+            "employment_start": "2025-01", "employment_status": "active",
+            "source": "明确的合成任职资料",
+        }, expected_revision=0, request_id="frozen-" + ident)
+    company.close("2026-01")
+    before = company.engine.ledger("2026-01")
+    dashboard = Dashboard(company.engine)
+    first_filter = "employment_active" if frozen_state == "regular" else "employment_unknown"
+    first = dashboard.employees("2026-01", employee_filter=first_filter, limit=1)
+    cursor = first["data"]["collections"]["employees"]["page"]["next_cursor"]
+    from ai_accounting.kernel.entities import Entities
+
+    Entities(company.engine).update_entity_profile("employee", {
+        "employment_state": current_state, "employment_status": "active",
+        "employment_start": "2025-01",
+    }, source="明确的合成任职状态确认", expected_revision=2, request_id="latest-state")
+    with pytest.raises(KernelError) as failure:
+        dashboard.employees("2026-01", section="employees", cursor=cursor,
+            expected_version=first["snapshot_version"], employee_filter=first_filter, limit=1)
+    assert failure.value.code == "dashboard_snapshot_changed"
+    item = dashboard.employees("2026-01", employee_filter="employment_" + current_state)[
+        "data"]["collections"]["employees"]["items"][0]
+    assert item["employment_state"] == current_state
+    assert item["in_period"] is True
+    assert company.engine.ledger("2026-01") == before
+
+
+def test_employee_filter_request_schema_declares_current_employment_values(company):
+    from ai_accounting.kernel.command_schema import command_models
+
+    field = command_models(company.engine.store.registry)["dashboard_employees"].json_schema()[
+        "properties"
+    ]["employee_filter"]
+    assert field["default"] == "employment_active"
+    assert {
+        "employment_active",
+        "employment_unpaid_leave",
+        "employment_departed",
+        "employment_unknown",
+    } <= set(field["enum"])
+    assert not {"payroll", "no_payroll", "employment_inactive", "employment_regular"} & set(
+        field["enum"]
+    )
+
+
+@pytest.mark.parametrize(
+    "employee_filter", ["payroll", "no_payroll", "employment_inactive", "employment_regular"]
+)
+def test_removed_employment_filters_are_rejected(company, employee_filter):
+    with pytest.raises(KernelError) as failure:
+        Dashboard(company.engine).employees("2026-01", employee_filter=employee_filter)
+    assert failure.value.code == "invalid_command"
+
+
+def test_payroll_and_default_object_active_do_not_establish_current_employment(company):
+    company.publish("january")
+    dashboard = Dashboard(company.engine)
+    item = dashboard.employees("2026-01", employee_filter="employment_unknown")[
+        "data"]["collections"]["employees"]["items"][0]
+    assert item["employment_state"] == "unknown"
+    assert item["has_payroll_activity"] is True
+    assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
+
+
+def test_omitted_employment_state_survives_typed_registration_and_profile_update(company):
+    from ai_accounting.kernel.command_schema import command_models, validate_command
+    from ai_accounting.kernel.entities import Entities
+
+    company.publish("january")
+    models = command_models(company.engine.store.registry)
+    payload = validate_command(models, "register_entity", {
+        "company_id": company.engine.store.company_id, "kind": "person",
+        "data": {"display_name": "合成在职对象", "employment_status": "active"},
+        "source": "明确的合成在职资料", "request_id": "omitted-state-register",
+    })
+    assert "employment_state" not in payload["data"]
+    payload.pop("company_id")
+    entity_id = Entities(company.engine).register_entity(**payload)["entity_id"]
+    dashboard = Dashboard(company.engine)
+
+    def current():
+        return dashboard.employees("2026-01", employee_id=entity_id)["data"]["collections"][
+            "employees"
+        ]["items"]
+
+    assert current()[0]["employment_state"] == "regular"
+    payload = validate_command(
+        models,
+        "update_entity_profile",
+        {
+            "company_id": company.engine.store.company_id,
+            "entity_id": entity_id,
+            "data": {"display_name": "合成更新姓名", "employment_status": "active"},
+            "source": "明确的合成档案更新",
+            "expected_revision": 1,
+            "request_id": "omitted-state-update",
+        },
+    )
+    assert "employment_state" not in payload["data"]
+    payload.pop("company_id")
+    Entities(company.engine).update_entity_profile(**payload)
+    assert current()[0]["employment_state"] == "regular"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert all("employment_state" not in json.loads(row[0]) for row in connection.execute(
+            "SELECT content FROM entity_profile_revision WHERE entity_id=?", (entity_id,)))
+    payload = validate_command(
+        models,
+        "update_entity_profile",
+        {
+            "company_id": company.engine.store.company_id,
+            "entity_id": entity_id,
+            "data": {
+                "display_name": "合成更新姓名",
+                "employment_status": "active",
+                "employment_state": "unknown",
+            },
+            "source": "明确的合成未确认状态",
+            "expected_revision": 2,
+            "request_id": "explicit-unknown-update",
+        },
+    )
+    assert payload["data"]["employment_state"] == "unknown"
+    payload.pop("company_id")
+    Entities(company.engine).update_entity_profile(**payload)
+    assert current() == []
+    item = dashboard.employees(
+        "2026-01", employee_id=entity_id, employee_filter="employment_unknown"
+    )["data"]["collections"]["employees"]["items"][0]
+    assert item["employment_state"] == "unknown"
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_historical_missing_state_reuses_registered_status_without_rewriting(
+    company, monkeypatch, closed
+):
+    from ai_accounting.kernel.entities import Entities
+    from ai_accounting.kernel.types import canonical, digest
+
+    monkeypatch.setattr("ai_accounting.kernel.business_queries._today_china", lambda: "2026-10-10")
+    company.publish("january", "february")
+    definitions = [
+        ("employee", "active", None, "regular"),
+        ("old-ended", "inactive", "2026-09", "departed"),
+        ("old-day-ended", "inactive", "2026-10-09", "departed"),
+        ("old-month-end", "inactive", "2026-10", "unknown"),
+        ("old-future-end", "inactive", "2026-10-11", "unknown"),
+        ("old-no-date", "inactive", None, "unknown"),
+        ("old-unknown-ended", "unknown", "2026-09", "departed"),
+        ("old-active-ended", "active", "2026-09", "unknown"),
+    ]
+    for ident, status, end, _expected in definitions:
+        save_entity_display_profile(company.engine, {
+            "kind": "employee", "entity_id": ident, "employment_status": status,
+            "employment_start": "2025-01", "employment_end": end,
+            "source": "已有明确合成任职资料",
+        }, expected_revision=0, request_id="legacy-" + ident)
+    # Append synthetic historical-format JSON from before this optional
+    # management field existed, retaining all immutable earlier revisions.
+    with company.engine.store.connection() as connection:
+        for ident, *_ in definitions:
+            row = connection.execute(
+                "SELECT * FROM entity_profile_revision WHERE entity_id=? AND revision=2", (ident,)
+            ).fetchone()
+            content = json.loads(row["content"])
+            content.pop("employment_state", None)
+            proof = row["evidence_digest"].hex() if row["evidence_digest"] else None
+            connection.execute(
+                "INSERT INTO entity_profile_revision"
+                "(id,entity_id,revision,content,source,evidence_digest,digest) "
+                "VALUES(?,?,3,?,?,?,?)",
+                (
+                    "historical-state-" + ident,
+                    ident,
+                    canonical(content),
+                    row["source"],
+                    row["evidence_digest"],
+                    digest([ident, 3, content, row["source"], proof]),
+                ),
+            )
+        connection.commit()
+    if closed:
+        company.close("2026-01")
+    before = company.engine.ledger("2026-01")
+    with company.engine.store.connection(read_only=True) as connection:
+        original = [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM entity_profile_revision ORDER BY id")
+        ]
+    dashboard = Dashboard(company.engine)
+    items = dashboard.employees("2026-01", employee_filter="all")["data"]["collections"][
+        "employees"
+    ]["items"]
+    assert {item["employee_id"]: item["employment_state"] for item in items} == {
+        ident: expected for ident, _status, _end, expected in definitions
+    }
+    assert [
+        item["employee_id"]
+        for item in dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"]
+    ] == ["employee"]
+    with company.engine.store.connection(read_only=True) as connection:
+        assert original == [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM entity_profile_revision ORDER BY id")
+        ]
+    assert company.engine.ledger("2026-01") == before
+    Entities(company.engine).update_entity_profile("employee", {
+        "employment_status": "active", "employment_state": "unknown", "employment_start": "2025-01",
+    }, source="明确未知分类的合成确认", expected_revision=3, request_id="explicit-unknown")
+    assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
+    unknown_items = dashboard.employees("2026-01", employee_filter="employment_unknown")["data"][
+        "collections"
+    ]["employees"]["items"]
+    assert any(
+        item["employee_id"] == "employee" and item["employment_state"] == "unknown"
+        for item in unknown_items
+    )
+
+
 
 
 def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company):
@@ -266,6 +570,7 @@ def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company
             employee_id="employee",
             section="employees",
             preparation="deferred",
+            employee_filter="all",
         )
     assert failure.value.code == "content_integrity_failed"
     with pytest.raises(KernelError) as business_failure:
@@ -277,7 +582,7 @@ def test_next_month_declaration_does_not_expand_owner_wage_payload(company):
     company.publish("january", "february")
     declare(company, period="2026-02", declaration_date="2026-02-06")
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-01")
+    response = dashboard.employees("2026-01", employee_filter="all")
     data = response["data"]["employees"]
     employee = response["data"]["collections"]["employees"]["items"][0]
     assert "declared_tax_fen" not in employee and "tax_details" not in employee
@@ -291,7 +596,7 @@ def test_retained_disbursement_difference_and_payment_keep_source_period(company
     adopt(company, declared)
     pay(company, 847400)
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-02")
+    response = dashboard.employees("2026-02", employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     january = source_status(dashboard, "january", "2026-02")
     net = next(item for item in january["settlements"]["obligations"] if item["name"] == "net")
@@ -318,7 +623,7 @@ def test_later_disbursement_basis_does_not_change_owner_payment_amounts(company)
     _, declared = declare(company, period="2026-02")
     adopt(company, declared, period="2026-02")
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-01")
+    response = dashboard.employees("2026-01", employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     source = source_status(dashboard, "january", "2026-01")
     assert employee["direct_net_payments_fen"] == 0
@@ -345,7 +650,7 @@ def test_personal_advance_is_clearing_without_company_cash(company):
     )
     company.publish("owner-paid")
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-02")
+    response = dashboard.employees("2026-02", employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     assert employee["recorded_net_payments_fen"] == 907400
     assert employee["direct_net_payments_fen"] == 0
@@ -376,7 +681,7 @@ def test_bonus_is_separate_but_included_in_workforce_breakdown(tmp_path, monkeyp
     company.save(bonus(), "bonus")
     company.publish("bonus")
     dashboard = Dashboard(company.engine)
-    data = dashboard.employees("2026-01")["data"]
+    data = dashboard.employees("2026-01", employee_filter="all")["data"]
     cost = data["employees"]
     assert (
         cost["annual_bonus_fen"]
@@ -425,7 +730,9 @@ def test_brief_workforce_cost_rejects_changed_calculation_body(tmp_path):
         Dashboard(company.engine).brief("2026-01", preparation="deferred")
     assert failure.value.code == "content_integrity_failed"
     with pytest.raises(KernelError) as detail_failure:
-        Dashboard(company.engine).employees("2026-01", preparation="deferred")
+        Dashboard(company.engine).employees(
+            "2026-01", preparation="deferred", employee_filter="all"
+        )
     assert detail_failure.value.code == "content_integrity_failed"
 
 
@@ -435,8 +742,8 @@ def test_brief_workforce_cost_matches_closed_month_and_later_reversal(company):
     company.save(actual(), "actual")
     company.publish("actual", posting_period="2026-03")
     dashboard = Dashboard(company.engine)
-    january = dashboard.employees("2026-01")["data"]
-    march = dashboard.employees("2026-03")["data"]
+    january = dashboard.employees("2026-01", employee_filter="all")["data"]
+    march = dashboard.employees("2026-03", employee_filter="all")["data"]
     assert january["workforce_cost"]["total_fen"] == january["employees"]["ledger_cost_fen"]
     assert march["workforce_cost"]["total_fen"] == march["employees"]["ledger_cost_fen"]
     assert january["employees"]["gross_salary_fen"] == 1000000
@@ -464,10 +771,10 @@ def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_p
     )
     company.publish("labor")
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-01")
+    response = dashboard.employees("2026-01", employee_filter="all")
     validate_response("dashboard_employees", response)
     labor = response["data"]["workforce_cost"]
-    source_response = dashboard.employees("2026-01", section="labor_sources")
+    source_response = dashboard.employees("2026-01", section="labor_sources", employee_filter="all")
     wire = http_response("dashboard_employees", source_response)
     labor_items = source_response["data"]["collections"]["labor_sources"]["items"]
     assert labor_items[0]["name"] == "未提供姓名或名称"
@@ -517,7 +824,7 @@ def test_personal_labor_items_only_include_selected_posting_month(tmp_path):
     )
     company.publish("february-labor")
 
-    data = Dashboard(company.engine).employees("2026-02")["data"]
+    data = Dashboard(company.engine).employees("2026-02", employee_filter="all")["data"]
     labor = data["workforce_cost"]
 
     assert labor["personal_labor_fen"] == 700000
@@ -567,16 +874,16 @@ def test_capitalized_labor_and_pending_intangible_are_visible_without_double_cos
         )
     dashboard = Dashboard(engine)
     assets = dashboard.assets("2026-11")["data"]
-    workforce = dashboard.employees("2026-11")["data"]["workforce_cost"]
+    workforce = dashboard.employees("2026-11", employee_filter="all")["data"]["workforce_cost"]
     assert workforce["total_fen"] == 0
     assert workforce["capitalized_labor_fen"] == 1600000
     brief_cost = dashboard.brief("2026-11")["data"]["workforce_cost"]
     assert brief_cost["total_fen"] == 0
     assert brief_cost["capitalized_labor_fen"] == 1600000
     assert brief_cost["personal_labor"]["total_fen"] == 0
-    labor = dashboard.employees("2026-11", section="labor_sources")["data"]["collections"][
-        "labor_sources"
-    ]["items"][0]
+    labor = dashboard.employees("2026-11", section="labor_sources", employee_filter="all")["data"][
+        "collections"
+    ]["labor_sources"]["items"][0]
     assert labor["capitalized"]
     labor_movements = source_status(dashboard, labor["subject_id"], "2026-11")["settlements"][
         "movements"
@@ -717,7 +1024,7 @@ def test_disbursement_pending_change_is_not_presented_as_current_confirmation(co
     fact, _ = adopt(company, declaration)
     company.save(fact, "basis", revision=1)
     dashboard = Dashboard(company.engine)
-    response = dashboard.employees("2026-01")
+    response = dashboard.employees("2026-01", employee_filter="all")
     employee = response["data"]["collections"]["employees"]["items"][0]
     source = source_status(dashboard, "january", "2026-01")
     assert employee["direct_net_payments_fen"] == 0
@@ -808,7 +1115,7 @@ def test_employee_page_keeps_complete_month_end_payment_totals_and_exact_target(
 
     monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", checked_summary)
     dashboard = Dashboard(engine)
-    first = dashboard.employees("2026-02")
+    first = dashboard.employees("2026-02", employee_filter="all")
     RESPONSE_ADAPTERS["dashboard_employees"].validate_python(first)
     data = first["data"]
     collection = data["collections"]["employees"]
@@ -826,7 +1133,9 @@ def test_employee_page_keeps_complete_month_end_payment_totals_and_exact_target(
     assert data["employees"]["outstanding_net_fen"] == (
         None if unknown else 0 if no_obligations else 1085000
     )
-    focused = dashboard.employees("2026-02", employee_id="employee-21")["data"]
+    focused = dashboard.employees("2026-02", employee_id="employee-21", employee_filter="all")[
+        "data"
+    ]
     assert focused["employee_id"] == "employee-21"
     assert [item["employee_id"] for item in focused["collections"]["employees"]["items"]] == [
         "employee-21"
@@ -863,7 +1172,7 @@ def test_employee_empty_collection_has_known_zero_amounts_without_checking(
         pytest.fail("An empty wage scope must not request a settlement summary")
 
     monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", no_obligations_read)
-    response = Dashboard(engine).employees("2026-01")
+    response = Dashboard(engine).employees("2026-01", employee_filter="all")
     RESPONSE_ADAPTERS["dashboard_employees"].validate_python(response)
     data = response["data"]
     assert not data["employees"]["checking"]
@@ -940,7 +1249,9 @@ def test_employee_owner_projection_skips_removed_declaration_disbursement_and_cu
     monkeypatch.setattr(dashboard_module._Snapshot, "by_kind", scoped_facts)
     monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", historical_summary)
     monkeypatch.setattr(dashboard_module._Snapshot, "calculation", calculation_without_disbursement)
-    response = Dashboard(company.engine).employees("2026-01", employee_id="employee")
+    response = Dashboard(company.engine).employees(
+        "2026-01", employee_id="employee", employee_filter="all"
+    )
     RESPONSE_ADAPTERS["dashboard_employees"].validate_python(response)
     person = response["data"]["collections"]["employees"]["items"][0]
     assert (

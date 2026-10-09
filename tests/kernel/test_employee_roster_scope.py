@@ -24,7 +24,7 @@ identity_engine = identity_engine_fixture
 
 
 def result(engine, period, **kwargs):
-    response = Dashboard(engine).employees(period, preparation="deferred", **kwargs)
+    response = Dashboard(engine).employees(period, preparation="deferred", **kwargs, employee_filter="all")
     response.pop("generated_at", None)
     response["data"].pop("generated_at", None)
     return response

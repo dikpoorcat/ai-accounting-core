@@ -668,7 +668,7 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     assert jan["values"]["actual_withholding"]["withheld_tax_fen"] == 12345
     from ai_accounting.kernel.dashboard import Dashboard
 
-    employees = Dashboard(engine).employees("2026-02", preparation="deferred")["data"]
+    employees = Dashboard(engine).employees("2026-02", preparation="deferred", employee_filter="all")["data"]
     assert second in {
         row["employee_id"] for row in employees["collections"]["employees"]["items"]
     }

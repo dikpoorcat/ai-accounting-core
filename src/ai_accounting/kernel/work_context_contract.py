@@ -150,6 +150,7 @@ class ContextEntityProfile(ContextObject):
     employment_start: NotRequired[DisplayDate | None]
     employment_end: NotRequired[DisplayDate | None]
     employment_status: NotRequired[Literal["active", "inactive", "unknown"]]
+    employment_state: NotRequired[Literal["regular", "unpaid_leave", "departed", "unknown"]]
     category_label: NotRequired[str | None]
     rights_description: NotRequired[str | None]
     useful_life_basis: NotRequired[str | None]
