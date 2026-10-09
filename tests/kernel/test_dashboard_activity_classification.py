@@ -195,7 +195,7 @@ def _loaded_members(engine, data):
 
 
 def _category(item):
-    return item["detail_scope_category"] or item["group"]
+    return item["group"]
 
 
 def _assert_groups(engine, data, expected, *, complete=True):

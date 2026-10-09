@@ -25,6 +25,7 @@ from .runtime import (
 )
 from .schema_bundle import production_bundle
 from .storage import Store
+from .text_sort import pinyin_key
 from .types import canonical
 from .versions import (
     HISTORY_DDL,
@@ -459,9 +460,10 @@ class Catalog:
 
     def companies(self):
         with self.connection(read_only=True) as connection:
-            return [
-                dict(row) for row in connection.execute("SELECT * FROM company ORDER BY name,id")
-            ]
+            return sorted(
+                (dict(row) for row in connection.execute("SELECT * FROM company")),
+                key=lambda row: (pinyin_key(row["name"]), row["id"]),
+            )
 
     def bind(self, company_id: str, *, read_pool=None):
         with self.connection(read_only=True) as connection:

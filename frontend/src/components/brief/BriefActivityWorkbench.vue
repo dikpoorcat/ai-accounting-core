@@ -310,6 +310,7 @@ const activeGroup = computed(() => props.groups.some(group => group.key === sele
 const availableItems = computed(() => props.focusedActivityGroup && !props.items.some(item => item.group_key === props.focusedActivityGroup?.group_key)
   ? [props.focusedActivityGroup, ...props.items] : props.items);
 const visibleItems = computed(() => availableItems.value.filter(item => item.group === activeGroup.value));
+const categoryNeedsMore = computed(() => new Set(visibleItems.value.map(item => item.group_key)).size < (props.groups.find(group => group.key === activeGroup.value)?.group_count ?? 0));
 watch(activeGroup, () => { expandedBusinessKey.value = ""; });
 watch(() => props.focusedActivity, async item => {
   if (!item) return;
@@ -365,7 +366,7 @@ watch(() => props.focusedActivity, async item => {
           </li>
         </ul>
         <p v-if="!visibleItems.length" class="empty">当前已加载记录中没有此类业务。</p>
-        <slot name="pagination" />
+        <slot name="pagination" :needs-more="categoryNeedsMore" />
       </div>
     </div>
     <div v-else class="voucher-view" :aria-busy="vouchersLoading || false">

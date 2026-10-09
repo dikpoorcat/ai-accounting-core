@@ -58,7 +58,7 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 17
+    assert response["schema_version"] == 18
     assert data["month_state"] == "open"
     assert data["owner_review_request"] is None
     assert data["activity_count"] == 31
@@ -72,7 +72,9 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     assert data["financial_position"]["liabilities_fen"] == 0
     assert data["financial_position"]["equity_fen"] == 31
     assert data["financial_position"]["bank_calculation"] == {
-        "opening_fen": 0, "inflow_fen": 31, "outflow_fen": 0,
+        "opening_fen": 0,
+        "inflow_fen": 31,
+        "outflow_fen": 0,
     }
     assert data["workforce_cost"]["total_fen"] == 0
     assert summary_reads == {"position": 1, "workforce": 1}
@@ -286,9 +288,14 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
     dashboard = Dashboard(engine)
     first = dashboard.brief("2026-09")
     assert len(first["data"]["collections"]["activity"]["items"]) == 20
-    loaded = {item["subject_id"] for item in dashboard.brief(
-        "2026-09", section="vouchers", expected_version=first["snapshot_version"],
-    )["data"]["collections"]["vouchers"]["items"]}
+    loaded = {
+        item["subject_id"]
+        for item in dashboard.brief(
+            "2026-09",
+            section="vouchers",
+            expected_version=first["snapshot_version"],
+        )["data"]["collections"]["vouchers"]["items"]
+    }
     subject = next(
         f"filter-2026-09-{index:04}"
         for index in range(31)

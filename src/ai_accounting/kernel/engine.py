@@ -299,6 +299,7 @@ class Engine:
                 "业务事实校验失败",
                 fact_issues=json.loads(exc.json(include_url=False)),
             ) from exc
+        fact.validate_registration()
         if not evidence:
             raise NeedsInformation("evidence", "已确认事实必须引用不可变依据")
         validate_evidence_digests(evidence)
@@ -363,7 +364,7 @@ class Engine:
             from .duplicates import DuplicateCandidates
             from .entity_references import references_for, validate_entity_references
 
-            references = validate_entity_references(connection, fact, subject_id)
+            references = validate_entity_references(connection, fact, subject_id, store=self.store)
             if old:
                 previous_entities = {
                     item["path"]: item["entity_id"]
@@ -655,6 +656,10 @@ class Engine:
             facts = {
                 sid: v for sid, v in facts.items() if v.fact.kind in self.store.registry.evaluators
             }
+            from .entity_references import validate_registration_entities
+
+            for version in facts.values():
+                validate_registration_entities(connection, version.fact, store=self.store)
             from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
 
             if not self._allows_asset_graph and any(

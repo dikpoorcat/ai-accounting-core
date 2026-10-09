@@ -1,7 +1,7 @@
 import type { BriefOpenItem } from "../api/brief";
 
 export type ContributionComponent = NonNullable<BriefOpenItem["contribution_component"]>;
-export type BriefOpenRow = BriefOpenItem & { contributionMembers?: BriefOpenItem[]; contributionNotices?: string[] };
+export type BriefOpenRow = BriefOpenItem & { contributionMembers?: BriefOpenItem[]; contributionNotices?: string[]; contributionMatter: "social" | "housing" };
 type OpenStatus = BriefOpenItem["status"];
 
 export const contributionComponents: { key: ContributionComponent; label: string }[] = [
@@ -51,17 +51,18 @@ export function payrollMonthLabel(period: string) {
   return `${year}年${Number(month)}月`;
 }
 
-// This only prepares the four contribution components within an already read group.
+// This prepares the two components of each contribution matter within an already read group.
 // Root display groups and their totals always come from the server.
 export function groupContributionMembers(items: BriefOpenItem[]): BriefOpenRow[] {
   const groups = new Map<string, BriefOpenRow>();
   for (const item of items) {
     if (item.category_key !== "payroll_payables" || !item.contribution_group_key || !item.payroll_period
       || !contributionComponents.some(component => component.key === item.contribution_component)) continue;
-    const key = JSON.stringify([item.contribution_group_key, item.payroll_period]);
+    const matter = item.contribution_component!.endsWith("_social") ? "social" : "housing";
+    const key = JSON.stringify([item.contribution_group_key, item.payroll_period, matter]);
     const group = groups.get(key);
     if (group) group.contributionMembers!.push(item);
-    else groups.set(key, { ...item, id: `contribution:${key}`, subject_id: null, contributionMembers: [item] });
+    else groups.set(key, { ...item, id: `contribution:${key}`, subject_id: null, contributionMatter: matter, contributionMembers: [item] });
   }
   return [...groups.values()];
 }
@@ -84,7 +85,7 @@ export interface ContributionProgressRow {
 }
 
 export function contributionProgressRows(item: BriefOpenRow): ContributionProgressRow[] {
-  return contributionComponents.map(component => {
+  return contributionComponents.filter(component => component.key.endsWith(`_${item.contributionMatter}`)).map(component => {
     const members = item.contributionMembers?.filter(member => member.contribution_component === component.key) ?? [];
     const present = members.length > 0;
     const status = combinedStatus(members), currentStatus = combinedStatus(members, true);

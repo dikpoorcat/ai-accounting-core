@@ -38,7 +38,7 @@ from .response_types import (
     Version9,
     Version10,
     Version11,
-    Version17,
+    Version18,
     WireFen,
 )
 from .work_draft_contract import WorkDraft
@@ -850,7 +850,7 @@ class BriefActivityRow(ResponseObject):
     group_key: str
     subject_id: str
     voucher_version_id: str
-    detail_scope_category: str | None
+    detail_scope_key: str | None
     voucher_number: Count
     date: Day | None
     recognition: Recognition
@@ -1351,7 +1351,7 @@ class BriefData(ResponseObject):
 
 
 class DashboardBriefResponse(ResponseObject):
-    schema_version: Version17
+    schema_version: Version18
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -1382,7 +1382,7 @@ class BriefOpenMemberData(ResponseObject):
 
 
 class DashboardBriefGroupResponse(ResponseObject):
-    schema_version: Version2
+    schema_version: Version3
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -2263,6 +2263,7 @@ class BusinessIdentityDetails(ResponseObject):
 
 
 class BusinessDetailScope(ResponseObject):
+    key: str
     voucher_version_id: str
     category: str
     amount_fen: WireFen | None
@@ -2287,7 +2288,7 @@ class BusinessStatusData(ResponseObject):
 
 
 class DashboardBusinessStatusResponse(ResponseObject):
-    schema_version: Version9
+    schema_version: Version10
     snapshot_version: str
     selected_period: DashboardPeriod
     read_semantics: ReadSemantics

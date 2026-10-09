@@ -120,8 +120,23 @@ class Claim:
             raise ValueError("an obligation claim must be positive")
 
 
+def _fact_registration_schema(schema):
+    """Publish current input requirements while retaining historical storage types."""
+    for field in schema.get("properties", {}).values():
+        metadata = field.get("x-accounting-fact", {})
+        if not metadata.get("required_for_registration"):
+            continue
+        alternatives = field.get("anyOf", [])
+        non_null = [item for item in alternatives if item.get("type") != "null"]
+        if len(non_null) == 1 and len(non_null) != len(alternatives):
+            field.pop("anyOf")
+            field.update(non_null[0])
+
+
 class Fact(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, json_schema_extra=_fact_registration_schema
+    )
     kind: ClassVar[str]
     lane: ClassVar[Literal["accounting", "material", "management"]] = "accounting"
     immutable: ClassVar[bool] = False
@@ -140,6 +155,23 @@ class Fact(BaseModel):
     business_activity: ClassVar[bool] = True
     activity_count_field: ClassVar[str | None] = None
     period: YearMonth
+
+    def validate_registration(self) -> None:
+        """Block missing current requirements without invalidating saved history."""
+        issues = []
+        for name, info in type(self).model_fields.items():
+            extra = info.json_schema_extra
+            metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
+            if metadata.get("required_for_registration") and getattr(self, name) is None:
+                issues.append({
+                    "field": name,
+                    "message": metadata["constraint"],
+                    "semantics": metadata["role"],
+                    "reusable_sources": metadata.get("reusable_sources", []),
+                    "allowed_precision": [],
+                })
+        if issues:
+            raise NeedsInformation(issues)
 
     def scopes(self) -> tuple[str, ...]:
         return (str(self.period),)

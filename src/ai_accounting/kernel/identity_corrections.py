@@ -801,7 +801,9 @@ class IdentityCorrections:
                             "identity_correction_shape", "身份重指须提供完整的已确认事实"
                         )
                     fact = type(source.fact).model_validate_json(canonical(change.data))
-                    validate_entity_references(connection, fact, change.subject_id)
+                    validate_entity_references(
+                        connection, fact, change.subject_id, store=self.store
+                    )
                     refs = [
                         r
                         for r in references_for(source.fact, change.subject_id)

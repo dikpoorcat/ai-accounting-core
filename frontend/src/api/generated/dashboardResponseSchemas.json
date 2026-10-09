@@ -4517,7 +4517,7 @@
             "title": "Voucher Version Id",
             "type": "string"
           },
-          "detail_scope_category": {
+          "detail_scope_key": {
             "anyOf": [
               {
                 "type": "string"
@@ -4526,7 +4526,7 @@
                 "type": "null"
               }
             ],
-            "title": "Detail Scope Category"
+            "title": "Detail Scope Key"
           },
           "voucher_number": {
             "minimum": 0,
@@ -4591,7 +4591,7 @@
           "group_key",
           "subject_id",
           "voucher_version_id",
-          "detail_scope_category",
+          "detail_scope_key",
           "voucher_number",
           "date",
           "recognition",
@@ -6740,7 +6740,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 17,
+        "const": 18,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -6855,7 +6855,7 @@
             "title": "Voucher Version Id",
             "type": "string"
           },
-          "detail_scope_category": {
+          "detail_scope_key": {
             "anyOf": [
               {
                 "type": "string"
@@ -6864,7 +6864,7 @@
                 "type": "null"
               }
             ],
-            "title": "Detail Scope Category"
+            "title": "Detail Scope Key"
           },
           "voucher_number": {
             "minimum": 0,
@@ -6929,7 +6929,7 @@
           "group_key",
           "subject_id",
           "voucher_version_id",
-          "detail_scope_category",
+          "detail_scope_key",
           "voucher_number",
           "date",
           "recognition",
@@ -7924,7 +7924,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 2,
+        "const": 3,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -12216,6 +12216,10 @@
       "BusinessDetailScope": {
         "additionalProperties": false,
         "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
           "voucher_version_id": {
             "title": "Voucher Version Id",
             "type": "string"
@@ -12243,6 +12247,7 @@
           }
         },
         "required": [
+          "key",
           "voucher_version_id",
           "category",
           "amount_fen",
@@ -13168,7 +13173,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 9,
+        "const": 10,
         "title": "Schema Version",
         "type": "integer"
       },

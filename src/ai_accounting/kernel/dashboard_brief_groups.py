@@ -6,6 +6,7 @@ from collections import defaultdict
 
 from .business_queries import business_amount_field, business_display_amount
 from .contracts import KernelError
+from .dashboard_matters import activity_matter
 from .dashboard_reads import page_keys
 from .dashboard_sort import business_sort_metadata, calculation_headers, date_object_key
 from .schema import table_name
@@ -18,6 +19,10 @@ GROUP_PROPERTIES = (
     "income_kind",
     "disposal_kind",
     "payer_kind",
+    "nature",
+    "component",
+    "tax_kind",
+    "expense_class",
 )
 
 
@@ -160,17 +165,20 @@ def activity_groups(snap):
         candidates = components if components is not None else [None]
         by_version[row["id"]] = {}
         for part in candidates:
-            classification = part["group"] if part else classifications[ident, reversal]
-            category = part["source_category"] if part else classification
+            matter = (None if part else activity_matter(
+                kind, data, direction=values.get("direction"),
+            ))
+            matter_key = part["matter_key"] if part else matter.key if matter else None
+            classification = (part["group"] if part else "correction" if reversal
+                              else matter.category if matter else classifications[ident, reversal])
             display = ({**full_display, "identities": part["identities"], "party": part["party"]}
                        if part else full_display)
             batch = bool(part and part["is_batch"])
             member_key = part["key"] if part else row["id"]
             key = digest([
-                snap.store.company_id, snap.period, kind, display["identities"],
-                classification, category, reversal, values.get("direction"),
-                [(name, data[name]) for name in GROUP_PROPERTIES if name in data],
-                row["id"] if batch or not display["identities"] else None,
+                "business-matter-group/1", snap.store.company_id, snap.period,
+                matter_key, display["identities"], reversal, values.get("direction"),
+                member_key if batch or not display["identities"] or matter_key is None else None,
             ]).hex()
             by_version[row["id"]][member_key] = key
             members.setdefault(key, []).append({
@@ -185,8 +193,8 @@ def activity_groups(snap):
                     "outcome": outcomes[ident],
                 })
                 amount = -amount if reversal and amount is not None else amount
-                title = ("冲正·" if reversal else "") + _group_title(
-                    kind, data, values.get("direction")
+                title = ("冲正·" if reversal else "") + (
+                    matter.title if matter else _group_title(kind, data, values.get("direction"))
                 )
             if key not in summaries:
                 summaries[key] = {

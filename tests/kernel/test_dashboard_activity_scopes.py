@@ -54,12 +54,15 @@ def mixed_payment(book, *, same_supplier=False):
     dashboard = Dashboard(engine)
     with dashboard._snapshot(PERIOD) as snap:
         voucher = next(row for row in snap.month_journal if row["basis"]["subject_id"] == "mixed")
-    return dashboard, voucher["id"], "expense_supplier", data
+    with dashboard._snapshot(PERIOD) as snap:
+        scope = next(part["key"] for part in snap.activity_components[voucher["id"]]
+                     if part["source_category"] == "expense_supplier")
+    return dashboard, voucher["id"], scope, data
 
 
 def scoped(dashboard, voucher, category, **kwargs):
     return dashboard.business_status(PERIOD, "mixed", voucher_version_id=voucher,
-                                     detail_scope_category=category, **kwargs)
+                                     detail_scope_key=category, **kwargs)
 
 
 def test_scope_selects_slots_before_pagination_and_filters_profiles(book):
@@ -67,7 +70,8 @@ def test_scope_selects_slots_before_pagination_and_filters_profiles(book):
     result = scoped(dashboard, voucher, category, limit=1)
     validate_response("dashboard_business_status", result)
     data = result["data"]
-    assert result["schema_version"] == 9
+    assert result["schema_version"] == 10
+    assert data["detail_scope"]["key"] == category
     assert data["detail_scope"]["amount_fen"] == 16000
     assert data["current_business_result"]["amount_fen"] == 16000
     for summary in (data["settlements"], data["current_followups"]["settlements"]):
@@ -96,8 +100,8 @@ def test_scope_cursor_rejects_another_category_and_half_scope(book):
     dashboard, voucher, category, _ = mixed_payment(book)
     result = scoped(dashboard, voucher, category, limit=1)
     with dashboard._snapshot(PERIOD) as snap:
-        other = next(part["source_category"] for part in snap.activity_components[voucher]
-                     if part["source_category"] != category)
+        other = next(part["key"] for part in snap.activity_components[voucher]
+                     if part["key"] != category)
     with pytest.raises(KernelError) as error:
         scoped(dashboard, voucher, other, section="settlement_events", limit=1,
                cursor=result["data"]["collections"]["settlement_events"]["page"]["next_cursor"])
@@ -107,7 +111,7 @@ def test_scope_cursor_rejects_another_category_and_half_scope(book):
     assert error.value.code == "invalid_command"
     with pytest.raises(KernelError):
         dashboard.business_status(PERIOD, "supplier-a", voucher_version_id=voucher,
-                                  detail_scope_category=category)
+                                  detail_scope_key=category)
 
 
 def test_unscoped_status_retains_whole_payment_semantics(book):
@@ -164,8 +168,10 @@ def test_frozen_part_and_later_reversal_keep_exact_money_and_basis(book):
     assert result["data"]["current_followups"]["settlements"]["cutoff_period"] == "2026-10"
     with dashboard._snapshot("2026-10") as snap:
         reversal = next(row for row in snap.month_journal if row["reverses_id"] == voucher)
+        reversal_scope = next(part["key"] for part in snap.activity_components[reversal["id"]]
+                              if part["source_category"] == "expense_supplier")
     reversed_result = dashboard.business_status(
-        "2026-10", "mixed", voucher_version_id=reversal["id"], detail_scope_category=category,
+        "2026-10", "mixed", voucher_version_id=reversal["id"], detail_scope_key=reversal_scope,
     )
     validate_response("dashboard_business_status", reversed_result)
     data = reversed_result["data"]
@@ -212,8 +218,9 @@ def test_scope_uses_the_exact_frozen_opening_identity_binding(identity_engine):
     dashboard = Dashboard(engine)
     with dashboard._snapshot("2026-02") as snap:
         voucher = next(row for row in snap.month_journal if row["basis"]["subject_id"] == "receipt")
+        scope = snap.activity_components[voucher["id"]][0]["key"]
     response = dashboard.business_status("2026-02", "receipt", voucher_version_id=voucher["id"],
-                                         detail_scope_category="income_customer")
+                                         detail_scope_key=scope)
     validate_response("dashboard_business_status", response)
     data = response["data"]
     assert data["detail_scope"]["amount_fen"] == 12000

@@ -76,7 +76,7 @@ def test_complete_group_amount_and_two_bounded_member_pages(book, monkeypatch):
 
     monkeypatch.setattr(QueryReads, "facts", facts)
     first = dashboard.brief_group("2026-09", section="activity", group_key=group["group_key"])
-    assert first["schema_version"] == 2
+    assert first["schema_version"] == 3
     validate_response("dashboard_brief_group", first)
     members = first["data"]["collections"]["members"]
     assert len(members["items"]) == 20
@@ -159,7 +159,8 @@ def test_formal_individual_payments_for_one_object_and_category_keep_bounded_mem
     )
     member = second["data"]["collections"]["members"]["items"][0]
     assert collection["items"][0]["key"] != member["key"]
-    assert member["detail_scope_category"] == "employee_reimbursement"
+    assert member["detail_scope_key"] == member["key"]
+    assert member["group"] == "employee_reimbursement"
     assert data["activity_count"] == data["voucher_count"] == 3 and data["group_count"] == 2
 
 
@@ -169,7 +170,7 @@ def test_default_group_summary_keeps_counts_and_independent_vouchers(book):
     dashboard = Dashboard(book[0])
     brief = dashboard.brief("2026-09")
     validate_response("dashboard_brief", brief)
-    assert brief["schema_version"] == 17
+    assert brief["schema_version"] == 18
     assert brief["data"]["activity_count"] == brief["data"]["voucher_count"] == 22
     assert brief["data"]["group_count"] == 1
     assert "vouchers" not in brief["data"]["collections"]

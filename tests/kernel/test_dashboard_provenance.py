@@ -117,7 +117,8 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert group["title"] == "工资计提"
     assert "vouchers" not in brief["collections"]
     activity = activity_members(company.engine, "2026-01")[0]
-    assert activity["title"] == voucher["list_summary"] == "原业务"
+    assert activity["title"] == group["title"] == "工资计提"
+    assert voucher["list_summary"] == "原业务"
     assert activity["party"] == "原姓名"
     assert activity["description"] == "原业务（2026-01）；后来补齐备注"
     assert voucher["display_summary"] == "原业务（2026-01） · 原姓名；后来补齐备注"
@@ -259,7 +260,9 @@ def test_payee_and_tax_identity_fallbacks_keep_exact_sources(company):
         assert party["id"] == payee["payee_revision_id"]
         assert party["field_sources"]["name"]["basis"] == "frozen"
         assert party["field_sources"]["name"]["recorded_at"]
-    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
+    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")[
+        "data"
+    ]["collections"]["employees"][
         "items"
     ][0]
     assert employee["name"] == "申报姓名"

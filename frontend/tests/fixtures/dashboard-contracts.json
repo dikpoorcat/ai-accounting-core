@@ -16,8 +16,8 @@
     "command": "workflow",
     "response": {
       "schema_version": 2,
-      "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-      "database_id": "776a257dad014b218e0b22396048381f",
+      "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+      "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
       "as_of": "2026-02-25",
       "as_of_semantics": "current_knowledge",
       "period": null,
@@ -157,8 +157,8 @@
     "command": "period_readiness",
     "response": {
       "schema_version": 1,
-      "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-      "database_id": "776a257dad014b218e0b22396048381f",
+      "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+      "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
       "period": "2026-01",
       "as_of": "2026-02-25",
       "as_of_semantics": "current_knowledge",
@@ -426,14 +426,14 @@
       "company": "合成合同测试公司",
       "companies": [
         {
-          "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
+          "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
           "name": "合成合同测试公司",
           "taxpayer_id": "91310000123456789A",
           "status": "active"
         }
       ],
       "current_company": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
         "name": "合成合同测试公司",
         "taxpayer_id": "91310000123456789A",
         "status": "active"
@@ -442,7 +442,7 @@
       "quarters": [],
       "default_period": null,
       "default_quarter": null,
-      "generated_at": "2026-10-09T18:57:31.440390+00:00",
+      "generated_at": "2026-10-09T18:45:31.983370+00:00",
       "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
     }
   },
@@ -463,10 +463,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "91ee62a1964c450da8a60a0013beb3bc74f4e8f509434f809baf25524a5b4953"
+        "read_version": "41ff8c5e89c6605e071300eed92c9f986fd691934f6261b729687b8974dcb7c3"
       },
       "data": null
     }
@@ -488,10 +488,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "91ee62a1964c450da8a60a0013beb3bc74f4e8f509434f809baf25524a5b4953"
+        "read_version": "41ff8c5e89c6605e071300eed92c9f986fd691934f6261b729687b8974dcb7c3"
       },
       "data": null
     }
@@ -500,8 +500,8 @@
     "command": "workflow",
     "response": {
       "schema_version": 2,
-      "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-      "database_id": "776a257dad014b218e0b22396048381f",
+      "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+      "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
       "as_of": "2026-02-25",
       "as_of_semantics": "current_knowledge",
       "period": "2026-01",
@@ -573,8 +573,8 @@
               {
                 "subject_id": "contract-expense",
                 "kind": "expense",
-                "fact_id": "61f60538ab20443d92fa8559e73f9fca",
-                "calculation_id": "c_8433c78efe562149410ad5743380df8a818b17f7085b6dd2f735891b040c9860",
+                "fact_id": "a3f65cd7a69c472d816c7ad000a896e7",
+                "calculation_id": "c_129fe4b7f556ef8418dc9d8591155962582787dd50135678b9d1a1b225e8ec72",
                 "pending": false,
                 "work_area": "transactions",
                 "lane": "accounting"
@@ -582,8 +582,8 @@
               {
                 "subject_id": "contract-funding",
                 "kind": "cash_funding",
-                "fact_id": "b5854b6ca0cb4bf999c6ad183b13f427",
-                "calculation_id": "c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178",
+                "fact_id": "5f9b57b23fce43438205efa05a160c20",
+                "calculation_id": "c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324",
                 "pending": false,
                 "work_area": "transactions",
                 "lane": "accounting"
@@ -591,8 +591,8 @@
               {
                 "subject_id": "contract-payment",
                 "kind": "cash_payment",
-                "fact_id": "9abca5d8e6f546c38f925d24a738c4f6",
-                "calculation_id": "c_21ea3ee305ea2e3e981bc17d7b4aade7b78df7f2a1ca95ac4f13c684eab22883",
+                "fact_id": "f45fc9fd27bc4caa9898a372110a3b7d",
+                "calculation_id": "c_51c7640462cc3d651b8fc7b9c29ce986a6030a1ddac8412eb37fb5b78b9edfaa",
                 "pending": false,
                 "work_area": "transactions",
                 "lane": "accounting"
@@ -746,8 +746,8 @@
     "command": "period_readiness",
     "response": {
       "schema_version": 1,
-      "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-      "database_id": "776a257dad014b218e0b22396048381f",
+      "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+      "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
       "period": "2026-01",
       "as_of": "2026-02-25",
       "as_of_semantics": "current_knowledge",
@@ -1015,14 +1015,14 @@
       "company": "合成合同测试公司",
       "companies": [
         {
-          "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
+          "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
           "name": "合成合同测试公司",
           "taxpayer_id": "91310000123456789A",
           "status": "active"
         }
       ],
       "current_company": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
         "name": "合成合同测试公司",
         "taxpayer_id": "91310000123456789A",
         "status": "active"
@@ -1050,15 +1050,15 @@
       ],
       "default_period": "2026-01",
       "default_quarter": "2026-Q1",
-      "generated_at": "2026-10-09T18:57:33.939904+00:00",
+      "generated_at": "2026-10-09T18:45:34.638475+00:00",
       "disclaimer": "用于负责人内部管理，不作为法定账簿、纳税申报或报税系统。"
     }
   },
   "brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 17,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 18,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1081,24 +1081,24 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
-        "generated_at": "2026-10-09T18:57:34.066251+00:00",
+        "generated_at": "2026-10-09T18:45:34.741497+00:00",
         "month_state": "open",
         "owner_review_request": null,
         "management_commentary_details": {
           "status": "current",
           "current": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
           "latest": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
@@ -1233,8 +1233,8 @@
           "activity": {
             "items": [
               {
-                "key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
-                "group_key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
+                "key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
+                "group_key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
                 "group": "financing_owner",
                 "kind": "cash_funding",
                 "party": "甲出资人",
@@ -1250,12 +1250,12 @@
                 "is_batch": false
               },
               {
-                "key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
-                "group_key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
+                "key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
+                "group_key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
                 "group": "expense_supplier",
                 "kind": "cash_payment",
                 "party": "合成办公用品商店",
-                "title": "付款",
+                "title": "支付管理费用",
                 "member_count": 1,
                 "voucher_count": 1,
                 "amount_fen": "12500",
@@ -1267,12 +1267,12 @@
                 "is_batch": false
               },
               {
-                "key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
-                "group_key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
+                "key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
+                "group_key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
                 "group": "expense_supplier",
                 "kind": "expense",
                 "party": "合成办公用品商店",
-                "title": "费用",
+                "title": "管理费用确认",
                 "member_count": 1,
                 "voucher_count": 1,
                 "amount_fen": "12500",
@@ -1309,8 +1309,8 @@
   "brief_vouchers": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 17,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 18,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1333,24 +1333,24 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
-        "generated_at": "2026-10-09T18:57:34.167251+00:00",
+        "generated_at": "2026-10-09T18:45:35.086075+00:00",
         "month_state": "open",
         "owner_review_request": null,
         "management_commentary_details": {
           "status": "current",
           "current": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
           "latest": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
@@ -1427,7 +1427,7 @@
             "items": [
               {
                 "number": "1",
-                "voucher_version_id": "v_0b3f1836f817e8d8780301a6a34536ab6652e8006cff1a499350de90dc915a7e",
+                "voucher_version_id": "v_dd3fca9bf1c90bc4840138225486640eea3720c80959d8057885282e64f5d0b3",
                 "subject_id": "contract-expense",
                 "reverses_version_id": null,
                 "date": null,
@@ -1471,7 +1471,7 @@
                     "source_label": "2026-01 · 费用",
                     "parties": [
                       {
-                        "id": "entity_eb8179140bf345b0b54627a31ed01b98",
+                        "id": "entity_74429f7c20d6447481cc7e42661af25e",
                         "name": "合成办公用品商店",
                         "amount_fen": "12500"
                       }
@@ -1482,7 +1482,7 @@
               },
               {
                 "number": "2",
-                "voucher_version_id": "v_12959ffb76ab65dfb072a59f11140c40631fd562f01be011a19f9c3e0132570b",
+                "voucher_version_id": "v_dfb574c77389eb5d36e3ba08a982ecdb81e3caa75c77cc21742292bb0ee8c51e",
                 "subject_id": "contract-funding",
                 "reverses_version_id": null,
                 "date": "2026-01-02",
@@ -1526,7 +1526,7 @@
                     "source_label": "",
                     "parties": [
                       {
-                        "id": "entity_f5b78f8e251242f588118ed2e323104c",
+                        "id": "entity_6a78ea46fef54854bd7e83f7c47e861f",
                         "name": "甲出资人",
                         "amount_fen": "100000"
                       }
@@ -1537,7 +1537,7 @@
               },
               {
                 "number": "3",
-                "voucher_version_id": "v_3dd33408664840b386ec9cc251276c0401eec1af9fa64ff62ab1685d03b8f33d",
+                "voucher_version_id": "v_8bcfe60db9d16ea6cae984de725b99ee2ca00f6cb89faf95618c199452ef1bc0",
                 "subject_id": "contract-payment",
                 "reverses_version_id": null,
                 "date": "2026-01-08",
@@ -1570,7 +1570,7 @@
                     "source_label": "2026-01 · 费用",
                     "parties": [
                       {
-                        "id": "entity_eb8179140bf345b0b54627a31ed01b98",
+                        "id": "entity_74429f7c20d6447481cc7e42661af25e",
                         "name": "合成办公用品商店",
                         "amount_fen": "12500"
                       }
@@ -1606,8 +1606,8 @@
   "brief_activity_members_0": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 3,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1630,23 +1630,23 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "section": "activity",
-        "group_key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
+        "group_key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
         "collections": {
           "members": {
             "items": [
               {
-                "key": "v_12959ffb76ab65dfb072a59f11140c40631fd562f01be011a19f9c3e0132570b",
-                "group_key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
+                "key": "v_dfb574c77389eb5d36e3ba08a982ecdb81e3caa75c77cc21742292bb0ee8c51e",
+                "group_key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
                 "subject_id": "contract-funding",
-                "voucher_version_id": "v_12959ffb76ab65dfb072a59f11140c40631fd562f01be011a19f9c3e0132570b",
-                "detail_scope_category": null,
+                "voucher_version_id": "v_dfb574c77389eb5d36e3ba08a982ecdb81e3caa75c77cc21742292bb0ee8c51e",
+                "detail_scope_key": null,
                 "voucher_number": 2,
                 "date": "2026-01-02",
                 "recognition": {
@@ -1676,7 +1676,7 @@
             "items": [
               {
                 "number": "2",
-                "voucher_version_id": "v_12959ffb76ab65dfb072a59f11140c40631fd562f01be011a19f9c3e0132570b",
+                "voucher_version_id": "v_dfb574c77389eb5d36e3ba08a982ecdb81e3caa75c77cc21742292bb0ee8c51e",
                 "subject_id": "contract-funding",
                 "reverses_version_id": null,
                 "date": "2026-01-02",
@@ -1720,7 +1720,7 @@
                     "source_label": "",
                     "parties": [
                       {
-                        "id": "entity_f5b78f8e251242f588118ed2e323104c",
+                        "id": "entity_6a78ea46fef54854bd7e83f7c47e861f",
                         "name": "甲出资人",
                         "amount_fen": "100000"
                       }
@@ -1745,8 +1745,8 @@
   "brief_activity_members_1": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 3,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1769,23 +1769,23 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "section": "activity",
-        "group_key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
+        "group_key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
         "collections": {
           "members": {
             "items": [
               {
-                "key": "155e05d300961df6eb9ebdac1e8f3a0e53327d35f801db1affd07ef7d59fa25a",
-                "group_key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
+                "key": "894077e16e8689be1fffae928d5da2e1f4d6648661bd5588de7788c63e772d4d",
+                "group_key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
                 "subject_id": "contract-payment",
-                "voucher_version_id": "v_3dd33408664840b386ec9cc251276c0401eec1af9fa64ff62ab1685d03b8f33d",
-                "detail_scope_category": "expense_supplier",
+                "voucher_version_id": "v_8bcfe60db9d16ea6cae984de725b99ee2ca00f6cb89faf95618c199452ef1bc0",
+                "detail_scope_key": "894077e16e8689be1fffae928d5da2e1f4d6648661bd5588de7788c63e772d4d",
                 "voucher_number": 3,
                 "date": "2026-01-08",
                 "recognition": {
@@ -1794,8 +1794,8 @@
                   "date": "2026-01-08",
                   "label": "2026-01-08"
                 },
-                "title": "付款",
-                "description": "付款（2026-01）",
+                "title": "支付管理费用",
+                "description": "支付管理费用（2026-01）",
                 "amount_fen": "12500",
                 "amount_label": "实际收付款",
                 "state": "已入账",
@@ -1815,7 +1815,7 @@
             "items": [
               {
                 "number": "3",
-                "voucher_version_id": "v_3dd33408664840b386ec9cc251276c0401eec1af9fa64ff62ab1685d03b8f33d",
+                "voucher_version_id": "v_8bcfe60db9d16ea6cae984de725b99ee2ca00f6cb89faf95618c199452ef1bc0",
                 "subject_id": "contract-payment",
                 "reverses_version_id": null,
                 "date": "2026-01-08",
@@ -1848,7 +1848,7 @@
                     "source_label": "2026-01 · 费用",
                     "parties": [
                       {
-                        "id": "entity_eb8179140bf345b0b54627a31ed01b98",
+                        "id": "entity_74429f7c20d6447481cc7e42661af25e",
                         "name": "合成办公用品商店",
                         "amount_fen": "12500"
                       }
@@ -1884,8 +1884,8 @@
   "brief_activity_members_2": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 2,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 3,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -1908,23 +1908,23 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "section": "activity",
-        "group_key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
+        "group_key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
         "collections": {
           "members": {
             "items": [
               {
-                "key": "v_0b3f1836f817e8d8780301a6a34536ab6652e8006cff1a499350de90dc915a7e",
-                "group_key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
+                "key": "v_dd3fca9bf1c90bc4840138225486640eea3720c80959d8057885282e64f5d0b3",
+                "group_key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
                 "subject_id": "contract-expense",
-                "voucher_version_id": "v_0b3f1836f817e8d8780301a6a34536ab6652e8006cff1a499350de90dc915a7e",
-                "detail_scope_category": null,
+                "voucher_version_id": "v_dd3fca9bf1c90bc4840138225486640eea3720c80959d8057885282e64f5d0b3",
+                "detail_scope_key": null,
                 "voucher_number": 1,
                 "date": null,
                 "recognition": {
@@ -1933,7 +1933,7 @@
                   "date": null,
                   "label": "2026-01"
                 },
-                "title": "一月办公支出",
+                "title": "管理费用确认",
                 "description": "一月办公支出（2026-01）；日常办公；原件明确为一月办公支出",
                 "amount_fen": "12500",
                 "amount_label": "业务确认金额",
@@ -1954,7 +1954,7 @@
             "items": [
               {
                 "number": "1",
-                "voucher_version_id": "v_0b3f1836f817e8d8780301a6a34536ab6652e8006cff1a499350de90dc915a7e",
+                "voucher_version_id": "v_dd3fca9bf1c90bc4840138225486640eea3720c80959d8057885282e64f5d0b3",
                 "subject_id": "contract-expense",
                 "reverses_version_id": null,
                 "date": null,
@@ -1998,7 +1998,7 @@
                     "source_label": "2026-01 · 费用",
                     "parties": [
                       {
-                        "id": "entity_eb8179140bf345b0b54627a31ed01b98",
+                        "id": "entity_74429f7c20d6447481cc7e42661af25e",
                         "name": "合成办公用品商店",
                         "amount_fen": "12500"
                       }
@@ -2023,8 +2023,8 @@
   "deferred_brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 17,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 18,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2047,24 +2047,24 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
-        "generated_at": "2026-10-09T18:57:34.608184+00:00",
+        "generated_at": "2026-10-09T18:45:35.670459+00:00",
         "month_state": "open",
         "owner_review_request": null,
         "management_commentary_details": {
           "status": "current",
           "current": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
           "latest": {
-            "id": "bb16a4c5e5f4460ba9349a0aa4713994",
+            "id": "c6988bc0bc144da6b3f249ed4bb9b818",
             "text": "本月收到出资 1000 元，确认办公费用 125 元；支出已支付，期末现金 875 元。",
             "status": "current"
           },
@@ -2199,8 +2199,8 @@
           "activity": {
             "items": [
               {
-                "key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
-                "group_key": "4db3cfe0bd487668e3bc96a9b4c94bea3aa0460b276dd1abaeb4f99c2519af7c",
+                "key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
+                "group_key": "77d93a8797c166b9e46c9eba8ee341ef5fcc18e04ef249a26bfad547a4ac1457",
                 "group": "financing_owner",
                 "kind": "cash_funding",
                 "party": "甲出资人",
@@ -2216,12 +2216,12 @@
                 "is_batch": false
               },
               {
-                "key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
-                "group_key": "256e60089405170c856e51dc14aba5aeef6f3d3eaf0ec2447700a3ecfd96de62",
+                "key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
+                "group_key": "69b3f9b41dad419bcfbbd4b1378eee1841ab6c1f9085d960cc9d6b1fd0c10690",
                 "group": "expense_supplier",
                 "kind": "cash_payment",
                 "party": "合成办公用品商店",
-                "title": "付款",
+                "title": "支付管理费用",
                 "member_count": 1,
                 "voucher_count": 1,
                 "amount_fen": "12500",
@@ -2233,12 +2233,12 @@
                 "is_batch": false
               },
               {
-                "key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
-                "group_key": "016225a86a20ac6155f16a9b253c727093f4e7e09aad180814bd51655aba8295",
+                "key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
+                "group_key": "6a09880788309206fa02af09695e492f78f9b8511235550c21a118c122189cdb",
                 "group": "expense_supplier",
                 "kind": "expense",
                 "party": "合成办公用品商店",
-                "title": "费用",
+                "title": "管理费用确认",
                 "member_count": 1,
                 "voucher_count": 1,
                 "amount_fen": "12500",
@@ -2276,7 +2276,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2299,10 +2299,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -2349,7 +2349,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "type": "cash",
                 "opening_fen": "0",
                 "inflow_fen": "100000",
@@ -2389,10 +2389,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178:000000",
+                "id": "000000000002:c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324:000000",
                 "subject_id": "contract-funding",
                 "date": "2026-01-02",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2407,10 +2407,10 @@
                 "internal_transfer": false
               },
               {
-                "id": "000000000003:c_21ea3ee305ea2e3e981bc17d7b4aade7b78df7f2a1ca95ac4f13c684eab22883:000000",
+                "id": "000000000003:c_51c7640462cc3d651b8fc7b9c29ce986a6030a1ddac8412eb37fb5b78b9edfaa:000000",
                 "subject_id": "contract-payment",
                 "date": "2026-01-08",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2471,7 +2471,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2494,15 +2494,15 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": {
           "type": "cash",
-          "account_id": "entity_71af080ac661427d875f0872a8aeaf47"
+          "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37"
         },
         "opening_fen": "0",
         "net_change_fen": "87500",
@@ -2547,7 +2547,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "type": "cash",
                 "opening_fen": "0",
                 "inflow_fen": "100000",
@@ -2587,10 +2587,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178:000000",
+                "id": "000000000002:c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324:000000",
                 "subject_id": "contract-funding",
                 "date": "2026-01-02",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2605,10 +2605,10 @@
                 "internal_transfer": false
               },
               {
-                "id": "000000000003:c_21ea3ee305ea2e3e981bc17d7b4aade7b78df7f2a1ca95ac4f13c684eab22883:000000",
+                "id": "000000000003:c_51c7640462cc3d651b8fc7b9c29ce986a6030a1ddac8412eb37fb5b78b9edfaa:000000",
                 "subject_id": "contract-payment",
                 "date": "2026-01-08",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2669,7 +2669,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2692,10 +2692,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -2742,7 +2742,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "type": "cash",
                 "opening_fen": "0",
                 "inflow_fen": "100000",
@@ -2782,10 +2782,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178:000000",
+                "id": "000000000002:c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324:000000",
                 "subject_id": "contract-funding",
                 "date": "2026-01-02",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2800,10 +2800,10 @@
                 "internal_transfer": false
               },
               {
-                "id": "000000000003:c_21ea3ee305ea2e3e981bc17d7b4aade7b78df7f2a1ca95ac4f13c684eab22883:000000",
+                "id": "000000000003:c_51c7640462cc3d651b8fc7b9c29ce986a6030a1ddac8412eb37fb5b78b9edfaa:000000",
                 "subject_id": "contract-payment",
                 "date": "2026-01-08",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -2864,7 +2864,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -2887,10 +2887,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -2937,7 +2937,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "type": "cash",
                 "opening_fen": "0",
                 "inflow_fen": "100000",
@@ -2982,7 +2982,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3005,10 +3005,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -3055,10 +3055,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178:000000",
+                "id": "000000000002:c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324:000000",
                 "subject_id": "contract-funding",
                 "date": "2026-01-02",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -3078,7 +3078,7 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y180YzFmMzkxYjBkMTY0YzU4MzFlZWZkMDgyMTIxZTY1ZTI3MGZkY2Q1MTJiNjg2OWU1YmJhZmMxMjVjNjY0MTc4OjAwMDAwMCIsInNjb3BlIjoiMGFlOTViZDE4NjU2OTI5MGI4YTRjM2VhZDQzYzBkMDFhM2QxMjQ0NjYwZTU4MGVlMjc3MGQ3Njc3ZjEzOTNjYiIsInNvcnQiOiJidXNpbmVzcy1kYXRlLW9iamVjdC8xIn0="
+              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y185MWM2MWJjODY2ZDI4NjVmNDE2ZDJkOTRlOWYzYTI1NDExZmI4YTEyZGNmZjYyNjZiNjk3NDQ3NjQxODMxMzI0OjAwMDAwMCIsInNjb3BlIjoiOWFlZmViYzU4OTgzNTFjMTI2Yjg5M2JjMzhmYmM2OGFkZTBmMmUwNzUyNjIzOTRmOGQxOTAxNmUwMzEyYzY2YiIsInNvcnQiOiJidXNpbmVzcy1kYXRlLW9iamVjdC8yIn0="
             }
           }
         }
@@ -3089,7 +3089,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3112,10 +3112,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -3177,7 +3177,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3200,10 +3200,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -3265,7 +3265,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3288,10 +3288,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": null,
@@ -3353,7 +3353,7 @@
     "command": "dashboard_funds",
     "response": {
       "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3376,15 +3376,15 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "selected_movement_account": {
           "type": "cash",
-          "account_id": "entity_71af080ac661427d875f0872a8aeaf47"
+          "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37"
         },
         "opening_fen": "0",
         "net_change_fen": "87500",
@@ -3429,7 +3429,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "type": "cash",
                 "opening_fen": "0",
                 "inflow_fen": "100000",
@@ -3469,10 +3469,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_4c1f391b0d164c5831eefd082121e65e270fdcd512b6869e5bbafc125c664178:000000",
+                "id": "000000000002:c_91c61bc866d2865f416d2d94e9f3a25411fb8a12dcff6266b697447641831324:000000",
                 "subject_id": "contract-funding",
                 "date": "2026-01-02",
-                "account_id": "entity_71af080ac661427d875f0872a8aeaf47",
+                "account_id": "entity_0d2861cc79f64b98b0e535e7651b6b37",
                 "account_code": "账户 1",
                 "account_name": "办公室现金",
                 "account_type": "cash",
@@ -3492,7 +3492,7 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y180YzFmMzkxYjBkMTY0YzU4MzFlZWZkMDgyMTIxZTY1ZTI3MGZkY2Q1MTJiNjg2OWU1YmJhZmMxMjVjNjY0MTc4OjAwMDAwMCIsInNjb3BlIjoiNzQxYmRkZjE0ZGM3ZTkyZjU4ODdkNjM4M2NiYzcyMGE0ZDI4ODE5YTVjMjQ2YTFiN2NlZTg1MjI1YjJjNWQyNyIsInNvcnQiOiJidXNpbmVzcy1kYXRlLW9iamVjdC8xIn0="
+              "next_cursor": "eyJrZXkiOiIwMDAwMDAwMDAwMDI6Y185MWM2MWJjODY2ZDI4NjVmNDE2ZDJkOTRlOWYzYTI1NDExZmI4YTEyZGNmZjYyNjZiNjk3NDQ3NjQxODMxMzI0OjAwMDAwMCIsInNjb3BlIjoiMDIwOTQwNmExMmU0M2Y0MjE0ZGQyNDhhYWUwZmNlN2U5YmZlZjkwMWE1ZTU1MmQ4YTdhNjBiNjQzNjZkNzExNiIsInNvcnQiOiJidXNpbmVzcy1kYXRlLW9iamVjdC8yIn0="
             }
           },
           "statements": {
@@ -3533,7 +3533,7 @@
     "command": "dashboard_employees",
     "response": {
       "schema_version": 11,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3556,10 +3556,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "employee_id": null,
@@ -3622,7 +3622,7 @@
     "command": "dashboard_assets",
     "response": {
       "schema_version": 10,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3645,10 +3645,10 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "asset_id": null,
@@ -3741,8 +3741,8 @@
   "business_status": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 9,
-      "snapshot_version": "3a8a2f3bfbf520ea46de72569e3931510b540e9dbe4c4dca97eff44f53cda6bc",
+      "schema_version": 10,
+      "snapshot_version": "e4278b07bc0b5afd9a3482bf97e82426a85acf41b0ecea0d3be28275c66a5069",
       "selected_period": {
         "key": "2026-01",
         "year": 2026,
@@ -3765,15 +3765,15 @@
         "recorded_later": "business_recording_period_after_selected_period"
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "data": {
         "identity": {
-          "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-          "database_id": "776a257dad014b218e0b22396048381f",
+          "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+          "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
           "subject_id": "contract-expense",
           "kind": "expense"
         },
@@ -3833,7 +3833,7 @@
           },
           "counterparties": [
             {
-              "entity_id": "entity_eb8179140bf345b0b54627a31ed01b98",
+              "entity_id": "entity_74429f7c20d6447481cc7e42661af25e",
               "values": {
                 "display_name": "合成办公用品商店",
                 "display_number": null,
@@ -3876,7 +3876,7 @@
           "settlement_events": {
             "items": [
               {
-                "id": "[\"v_3dd33408664840b386ec9cc251276c0401eec1af9fa64ff62ab1685d03b8f33d\",0]",
+                "id": "[\"v_8bcfe60db9d16ea6cae984de725b99ee2ca00f6cb89faf95618c199452ef1bc0\",0]",
                 "subject_id": "contract-payment",
                 "source_subject_id": "contract-expense",
                 "posting_period": "2026-01",
@@ -3916,7 +3916,7 @@
       "status_label": "AI 会计核对中",
       "headline": "季度财务报表",
       "message": "AI 会计正在核对报表资料，如需您补充资料会另列待办。",
-      "checked_at": "2026-10-09T18:57:36.086821+00:00",
+      "checked_at": "2026-10-09T18:45:37.059493+00:00",
       "organization": {
         "name": "",
         "taxpayer_identification_number": "91310000123456789A"
@@ -5065,10 +5065,10 @@
         "epochs": null
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       }
     }
   },
@@ -5082,7 +5082,7 @@
       "status_label": "AI 会计核对中",
       "headline": "季度财务报表",
       "message": "AI 会计正在核对报表资料，如需您补充资料会另列待办。",
-      "checked_at": "2026-10-09T18:57:36.174378+00:00",
+      "checked_at": "2026-10-09T18:45:37.151460+00:00",
       "organization": {
         "name": "",
         "taxpayer_identification_number": "91310000123456789A"
@@ -6231,10 +6231,10 @@
         "epochs": null
       },
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "projection": "dashboard_quarterly_report_deferred"
     }
@@ -6245,16 +6245,16 @@
       "schema_version": 4,
       "projection": "dashboard_period_preparation_result",
       "read_context": {
-        "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-        "database_id": "776a257dad014b218e0b22396048381f",
+        "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+        "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
         "as_of": "2026-10-10",
-        "read_version": "eedd491d656e9ae09a8fc11d40754c5f634be4c57db1c44a13ee797026f4179d"
+        "read_version": "9056336ec5a78b60e0d984e090a8079d3340c7dd8397dc8e5acbbf681151d81b"
       },
       "period": "2026-01",
       "data": {
         "period_preparation": {
-          "company_id": "50f1342295d34db2aa2ad28f16b13a2a",
-          "database_id": "776a257dad014b218e0b22396048381f",
+          "company_id": "59b43a2dcd674b8fa9ecb5a45df6ad80",
+          "database_id": "733d7c6d7fcf413b821a32299eb8b39e",
           "period": "2026-01",
           "as_of": "2026-10-10",
           "as_of_semantics": "current_knowledge",
@@ -6494,7 +6494,7 @@
         "company_id": "company",
         "database_id": "database",
         "as_of": "2026-10-10",
-        "read_version": "09e47bc3354a2e8900be02f8fd61e3bafeab93ce89f82ce5f380932821fb6d15"
+        "read_version": "48fe9df90aefc02ae5cae1c9f5c7c5ddcaf9251b2b38272185a00c0ff19a9812"
       },
       "data": {
         "selected_movement_account": null,
@@ -6541,14 +6541,14 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_4385f8e7fb6d47d8819eea6be7371d90",
+                "account_id": "entity_1f626ff900f74064a7f4c42e50657d16",
                 "type": "bank",
                 "opening_fen": "0",
-                "inflow_fen": "1000",
+                "inflow_fen": "500",
                 "outflow_fen": "0",
-                "net_change_fen": "1000",
+                "net_change_fen": "500",
                 "attribution_adjustment_fen": "0",
-                "closing_fen": "1000",
+                "closing_fen": "500",
                 "movement_count": 1,
                 "last_activity_date": "2026-09-01",
                 "negative_balance": false,
@@ -6556,7 +6556,7 @@
                 "name": "未提供账户名称",
                 "active": true,
                 "statement": {
-                  "inflow_fen": "1000",
+                  "inflow_fen": "500",
                   "outflow_fen": "0",
                   "transaction_count": 1,
                   "coverage_state": "complete",
@@ -6571,14 +6571,14 @@
                 }
               },
               {
-                "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233",
+                "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888",
                 "type": "bank",
                 "opening_fen": "0",
-                "inflow_fen": "500",
+                "inflow_fen": "1000",
                 "outflow_fen": "0",
-                "net_change_fen": "500",
+                "net_change_fen": "1000",
                 "attribution_adjustment_fen": "0",
-                "closing_fen": "500",
+                "closing_fen": "1000",
                 "movement_count": 1,
                 "last_activity_date": "2026-09-01",
                 "negative_balance": false,
@@ -6586,7 +6586,7 @@
                 "name": "未提供账户名称",
                 "active": true,
                 "statement": {
-                  "inflow_fen": "500",
+                  "inflow_fen": "1000",
                   "outflow_fen": "0",
                   "transaction_count": 1,
                   "coverage_state": "complete",
@@ -6612,11 +6612,11 @@
           "movements": {
             "items": [
               {
-                "id": "000000000001:c_e874065d1c7643d06bf85220e2218444b5f4ef6cd9a52d7a2173eeba15dd24e9:000000",
+                "id": "000000000001:c_de66fa5e42b30ce6fa13aceba0cb5acda580524a132a0e1214de8097ae96ea98:000000",
                 "subject_id": "funding",
                 "date": "2026-09-01",
-                "account_id": "entity_4385f8e7fb6d47d8819eea6be7371d90",
-                "account_code": "账户 1",
+                "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888",
+                "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
                 "direction": "inflow",
@@ -6630,11 +6630,11 @@
                 "internal_transfer": false
               },
               {
-                "id": "000000000002:c_400552af041f9802996644ee1a2a1466c56aad0740f5546bd98777b157b9412a:000000",
+                "id": "000000000002:c_f712c90401b18f3bc2321b662110386b08aa461dc98c0d62af64e334313feeb5:000000",
                 "subject_id": "other-funding",
                 "date": "2026-09-01",
-                "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233",
-                "account_code": "账户 2",
+                "account_id": "entity_1f626ff900f74064a7f4c42e50657d16",
+                "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
                 "direction": "inflow",
@@ -6661,8 +6661,8 @@
               {
                 "id": "other-statement:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233",
-                "account_code": "账户 2",
+                "account_id": "entity_1f626ff900f74064a7f4c42e50657d16",
+                "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
                 "amount_fen": "500",
@@ -6673,8 +6673,8 @@
               {
                 "id": "statement:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_4385f8e7fb6d47d8819eea6be7371d90",
-                "account_code": "账户 1",
+                "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888",
+                "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
                 "amount_fen": "1000",
@@ -6745,12 +6745,12 @@
         "company_id": "company",
         "database_id": "database",
         "as_of": "2026-10-10",
-        "read_version": "09e47bc3354a2e8900be02f8fd61e3bafeab93ce89f82ce5f380932821fb6d15"
+        "read_version": "48fe9df90aefc02ae5cae1c9f5c7c5ddcaf9251b2b38272185a00c0ff19a9812"
       },
       "data": {
         "selected_movement_account": {
           "type": "bank",
-          "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233"
+          "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888"
         },
         "opening_fen": "0",
         "net_change_fen": "1500",
@@ -6795,14 +6795,14 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_4385f8e7fb6d47d8819eea6be7371d90",
+                "account_id": "entity_1f626ff900f74064a7f4c42e50657d16",
                 "type": "bank",
                 "opening_fen": "0",
-                "inflow_fen": "1000",
+                "inflow_fen": "500",
                 "outflow_fen": "0",
-                "net_change_fen": "1000",
+                "net_change_fen": "500",
                 "attribution_adjustment_fen": "0",
-                "closing_fen": "1000",
+                "closing_fen": "500",
                 "movement_count": 1,
                 "last_activity_date": "2026-09-01",
                 "negative_balance": false,
@@ -6810,7 +6810,7 @@
                 "name": "未提供账户名称",
                 "active": true,
                 "statement": {
-                  "inflow_fen": "1000",
+                  "inflow_fen": "500",
                   "outflow_fen": "0",
                   "transaction_count": 1,
                   "coverage_state": "complete",
@@ -6830,23 +6830,23 @@
               "filtered_count": 2,
               "returned_count": 1,
               "has_more": true,
-              "next_cursor": "eyJrZXkiOiJiYW5rOmVudGl0eV80Mzg1ZjhlN2ZiNmQ0N2Q4ODE5ZWVhNmJlNzM3MWQ5MCIsInNjb3BlIjoiMjUxZWI5OTdkYTdkNDc0NWUyNmIyMjhhMDhmZjk4MjNiNWRlODY0MGFiYTIyNjQxNWI3NWQ2MDdiYTE4YmJhYiIsInNvcnQiOm51bGx9"
+              "next_cursor": "eyJrZXkiOiJiYW5rOmVudGl0eV8xZjYyNmZmOTAwZjc0MDY0YTdmNGM0MmU1MDY1N2QxNiIsInNjb3BlIjoiNzM0NjU5NzFjNmUwZjAyZTE0M2Y1MjExNjBiYTQ5ZjAxMGRkN2U3Njk0YTdmYmM5Nzg5ZGRiMmNhNTY0NzYzOSIsInNvcnQiOiJhY2NvdW50LW5hbWUtcGlueWluLzEifQ=="
             }
           },
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_400552af041f9802996644ee1a2a1466c56aad0740f5546bd98777b157b9412a:000000",
-                "subject_id": "other-funding",
+                "id": "000000000001:c_de66fa5e42b30ce6fa13aceba0cb5acda580524a132a0e1214de8097ae96ea98:000000",
+                "subject_id": "funding",
                 "date": "2026-09-01",
-                "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233",
+                "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
                 "direction": "inflow",
                 "correction": false,
-                "amount_fen": "500",
-                "signed_amount_fen": "500",
+                "amount_fen": "1000",
+                "signed_amount_fen": "1000",
                 "type": "股东投入或借款",
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
@@ -6865,14 +6865,14 @@
           "statements": {
             "items": [
               {
-                "id": "other-statement:000000000000",
+                "id": "statement:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_8c7729eb2da642e09b9e3ae1fc2f6233",
+                "account_id": "entity_f6ed9dcf204949f0b70c7bfc11c9e888",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
-                "amount_fen": "500",
-                "signed_amount_fen": "500",
+                "amount_fen": "1000",
+                "signed_amount_fen": "1000",
                 "party": "未提供",
                 "memo": ""
               }
@@ -6939,7 +6939,7 @@
         "company_id": "company",
         "database_id": "database",
         "as_of": "2026-10-10",
-        "read_version": "efad076571919778a1f8b7e7071f888794bacfaa2a5c406c3c58df344119558b"
+        "read_version": "039a123eaad4a5cc6c28ff322444b943fbedee96516542724b7233ffc72893ec"
       },
       "data": {
         "selected_movement_account": null,
@@ -6986,7 +6986,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "type": "bank",
                 "opening_fen": "0",
                 "inflow_fen": "500",
@@ -7016,7 +7016,7 @@
                 }
               },
               {
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "type": "bank",
                 "opening_fen": "0",
                 "inflow_fen": "1000",
@@ -7057,10 +7057,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000001:c_0193f47f563a45c090c1483690644d17f384f10380abe2f1c8adce14c2665d42:000000",
+                "id": "000000000001:c_da88d569a1ae32c60eca67dc8a772bddac03f7f66bc6c91d75d16018bf3917f7:000000",
                 "subject_id": "funding-bank-a",
                 "date": "2026-09-01",
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
@@ -7075,10 +7075,10 @@
                 "internal_transfer": false
               },
               {
-                "id": "000000000002:c_fe048883432208d39789656963ec697144898c514a6d881a7dbf698ad300dc88:000000",
+                "id": "000000000002:c_25482826f686ad1a22d7d894c68ad078b16a33c0486c6322938a66981f9c5487:000000",
                 "subject_id": "funding-bank-b",
                 "date": "2026-09-01",
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
@@ -7106,7 +7106,7 @@
               {
                 "id": "statement-bank-a:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7118,7 +7118,7 @@
               {
                 "id": "statement-bank-a:000000000001",
                 "date": "2026-09-01",
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7130,7 +7130,7 @@
               {
                 "id": "statement-bank-b:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7202,12 +7202,12 @@
         "company_id": "company",
         "database_id": "database",
         "as_of": "2026-10-10",
-        "read_version": "efad076571919778a1f8b7e7071f888794bacfaa2a5c406c3c58df344119558b"
+        "read_version": "039a123eaad4a5cc6c28ff322444b943fbedee96516542724b7233ffc72893ec"
       },
       "data": {
         "selected_movement_account": {
           "type": "bank",
-          "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8"
+          "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7"
         },
         "opening_fen": "0",
         "net_change_fen": "1500",
@@ -7252,7 +7252,7 @@
           "accounts": {
             "items": [
               {
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "type": "bank",
                 "opening_fen": "0",
                 "inflow_fen": "500",
@@ -7282,7 +7282,7 @@
                 }
               },
               {
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "type": "bank",
                 "opening_fen": "0",
                 "inflow_fen": "1000",
@@ -7323,10 +7323,10 @@
           "movements": {
             "items": [
               {
-                "id": "000000000002:c_fe048883432208d39789656963ec697144898c514a6d881a7dbf698ad300dc88:000000",
+                "id": "000000000002:c_25482826f686ad1a22d7d894c68ad078b16a33c0486c6322938a66981f9c5487:000000",
                 "subject_id": "funding-bank-b",
                 "date": "2026-09-01",
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "account_type": "bank",
@@ -7354,7 +7354,7 @@
               {
                 "id": "statement-bank-a:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7366,7 +7366,7 @@
               {
                 "id": "statement-bank-a:000000000001",
                 "date": "2026-09-01",
-                "account_id": "entity_dd1317f3f4654e2fa44aa88d57bc38ae",
+                "account_id": "entity_ffdf8a0d698c49e0bc4cc4779d385c56",
                 "account_code": "账户 2",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7378,7 +7378,7 @@
               {
                 "id": "statement-bank-b:000000000000",
                 "date": "2026-09-01",
-                "account_id": "entity_88a2689e2a7546f3ad60e6ffa0b948b8",
+                "account_id": "entity_b1bc5383fcac4def9f42e19bd9d703a7",
                 "account_code": "账户 1",
                 "account_name": "未提供账户名称",
                 "direction": "inflow",
@@ -7431,7 +7431,7 @@
       "as_of_semantics": "current_knowledge",
       "closure": {
         "state": "exact_close",
-        "digest": "7bffc7ce09e48d0b9af64a66c1d5d9deb8827312845a36e543a7edff8acdfe9b"
+        "digest": "822ea78264d311c6fa96eb1909821b42aba920e5b3eb99ddbf007d9b7c6f0160"
       },
       "frozen_readiness": {
         "status": "ready",
@@ -7445,20 +7445,20 @@
             },
             "bank_accounts": {
               "facts": [
-                "1fda34fe922146b284aeabd414260b8e",
-                "5e71e3e3b25745f182a7785e2f718d9a",
-                "6da58b8514aa472b88dd720bd0f2c731",
-                "b02b52ae47d243048d1bfb4c06442bdc",
-                "b8fdda84eba14966a1c7bf68dbf85876",
-                "d77444d4a8a546a9892a65e18d779c38"
+                "18df4f085a644482b76c6853a9d6d47a",
+                "59cbf6529a664b0eb304fd32788724a5",
+                "ac19d752a28e4302943cc989b3f8ba20",
+                "b87b8c371d5849798a994865c192abf5",
+                "df62e3197b6040e0b9f14264679fb8e4",
+                "eb52f5b7590d4f65b29f67ae47713154"
               ],
               "calculations": [
-                "c_242261c712d99ed0306dc2c7fc995e5fc461cfdcca4762d7864c1641a1c6364b",
-                "c_2ce7481f97ecac25e666db0f3ec911a1429560ba22b573ed2a59b698eb4f8b05",
-                "c_4358f117790b06991767ef619da3b8cd278fce7751d2e43ca55035fcfff434be",
-                "c_57be71fc9361e73b7360ea72f21409473dc06b7bc009c7f1ddb5a5499e619800",
-                "c_7da86221c8919cf995cf4d7e253fff7319096b62fa8802620923d22cd03cae4d",
-                "c_9e4d00f38fa2e826a24c0b1b1933d434da7da3859f5c73b8637b7f323d940f4b"
+                "c_1d505b1158e6056b8cbac73261486c8efa3c83a48e34642240d48661d5476546",
+                "c_48d20a0b034b2dbaecf44b63a141f7db826607b306fa6caa94bfd4f58d190e7a",
+                "c_609f61343de0a56534b4fa7211d1a4b9f78c96675f951736bd3e77da57f489ec",
+                "c_7dd388fc58136915764ec3a3a9c550e19fbb76bf0ad176e4708d840e6aaa402e",
+                "c_91bddb5e665fb009c9fdf8feac252276b39c09aaa5e29095fcb76f9743ce07d4",
+                "c_f0caf30ea17e338589d2b86bdfd3444bf06d8fd8d4bf11b5fb317ef06d9a8e9a"
               ]
             },
             "financial_reports": {
@@ -7493,14 +7493,14 @@
             "closed_through": null,
             "coverage": [],
             "source_versions": [
-              "1a00c079beef4a99b1e0187281dd26ad"
+              "35f42758664b422a850a40d4fcfd2df9"
             ],
             "resolution_versions": [
-              "bf7d63ba878745ff973a8f5a42967a3f"
+              "387633ab5bc9430487d3600d8b160956"
             ],
             "group_versions": [],
             "allocation_versions": [
-              "ac6acfcb59b240edb97f31302809b73e"
+              "2b35f7b397c64201bf724095403935f6"
             ],
             "inventory_versions": [
               {
@@ -7543,7 +7543,7 @@
             "file_summaries": [
               {
                 "source_id": "synthetic-support:c55ba83d04e7f31d74e0abe794be3918fd4bbeb33af142d078bad6189257f8fb",
-                "source_fact_id": "1a00c079beef4a99b1e0187281dd26ad",
+                "source_fact_id": "35f42758664b422a850a40d4fcfd2df9",
                 "item_count": 1,
                 "unprocessed_count": 0,
                 "unknown_period_count": 0,
@@ -7553,12 +7553,12 @@
             ],
             "file_status": "complete",
             "fact_ids": [
-              "1a00c079beef4a99b1e0187281dd26ad",
-              "ac6acfcb59b240edb97f31302809b73e",
-              "bf7d63ba878745ff973a8f5a42967a3f"
+              "2b35f7b397c64201bf724095403935f6",
+              "35f42758664b422a850a40d4fcfd2df9",
+              "387633ab5bc9430487d3600d8b160956"
             ],
             "status": "complete",
-            "coverage_digest": "38d9baa295f7460304c3ff39e51a9f675141322775158b0cace93a06cedca68f"
+            "coverage_digest": "caf96acc9bd9e344a3c876ef5da8e7039729fa80f4be29347cab86ee2d0e6bd7"
           }
         },
         "previous_close_digest": {
@@ -7634,14 +7634,14 @@
             "closed_through": "2026-09",
             "coverage": [],
             "source_versions": [
-              "1a00c079beef4a99b1e0187281dd26ad"
+              "35f42758664b422a850a40d4fcfd2df9"
             ],
             "resolution_versions": [
-              "bf7d63ba878745ff973a8f5a42967a3f"
+              "387633ab5bc9430487d3600d8b160956"
             ],
             "group_versions": [],
             "allocation_versions": [
-              "ac6acfcb59b240edb97f31302809b73e"
+              "2b35f7b397c64201bf724095403935f6"
             ],
             "inventory_versions": [
               {
@@ -7684,7 +7684,7 @@
             "file_summaries": [
               {
                 "source_id": "synthetic-support:c55ba83d04e7f31d74e0abe794be3918fd4bbeb33af142d078bad6189257f8fb",
-                "source_fact_id": "1a00c079beef4a99b1e0187281dd26ad",
+                "source_fact_id": "35f42758664b422a850a40d4fcfd2df9",
                 "item_count": 1,
                 "unprocessed_count": 0,
                 "unknown_period_count": 0,
@@ -7694,12 +7694,12 @@
             ],
             "file_status": "complete",
             "fact_ids": [
-              "1a00c079beef4a99b1e0187281dd26ad",
-              "ac6acfcb59b240edb97f31302809b73e",
-              "bf7d63ba878745ff973a8f5a42967a3f"
+              "2b35f7b397c64201bf724095403935f6",
+              "35f42758664b422a850a40d4fcfd2df9",
+              "387633ab5bc9430487d3600d8b160956"
             ],
             "status": "complete",
-            "coverage_digest": "550a6871560ad52b6f06b2d631afa9bed8beb4c4c50560a1f42e261b5e26f3e0",
+            "coverage_digest": "e6f0368b29b3e20804b429741eab5d9760ec537af3f08dd349699d3a61bc8f55",
             "issues": []
           }
         },
@@ -7719,20 +7719,20 @@
             },
             "bank_accounts": {
               "facts": [
-                "1fda34fe922146b284aeabd414260b8e",
-                "5e71e3e3b25745f182a7785e2f718d9a",
-                "6da58b8514aa472b88dd720bd0f2c731",
-                "b02b52ae47d243048d1bfb4c06442bdc",
-                "b8fdda84eba14966a1c7bf68dbf85876",
-                "d77444d4a8a546a9892a65e18d779c38"
+                "18df4f085a644482b76c6853a9d6d47a",
+                "59cbf6529a664b0eb304fd32788724a5",
+                "ac19d752a28e4302943cc989b3f8ba20",
+                "b87b8c371d5849798a994865c192abf5",
+                "df62e3197b6040e0b9f14264679fb8e4",
+                "eb52f5b7590d4f65b29f67ae47713154"
               ],
               "calculations": [
-                "c_242261c712d99ed0306dc2c7fc995e5fc461cfdcca4762d7864c1641a1c6364b",
-                "c_2ce7481f97ecac25e666db0f3ec911a1429560ba22b573ed2a59b698eb4f8b05",
-                "c_4358f117790b06991767ef619da3b8cd278fce7751d2e43ca55035fcfff434be",
-                "c_57be71fc9361e73b7360ea72f21409473dc06b7bc009c7f1ddb5a5499e619800",
-                "c_7da86221c8919cf995cf4d7e253fff7319096b62fa8802620923d22cd03cae4d",
-                "c_9e4d00f38fa2e826a24c0b1b1933d434da7da3859f5c73b8637b7f323d940f4b"
+                "c_1d505b1158e6056b8cbac73261486c8efa3c83a48e34642240d48661d5476546",
+                "c_48d20a0b034b2dbaecf44b63a141f7db826607b306fa6caa94bfd4f58d190e7a",
+                "c_609f61343de0a56534b4fa7211d1a4b9f78c96675f951736bd3e77da57f489ec",
+                "c_7dd388fc58136915764ec3a3a9c550e19fbb76bf0ad176e4708d840e6aaa402e",
+                "c_91bddb5e665fb009c9fdf8feac252276b39c09aaa5e29095fcb76f9743ce07d4",
+                "c_f0caf30ea17e338589d2b86bdfd3444bf06d8fd8d4bf11b5fb317ef06d9a8e9a"
               ]
             },
             "financial_reports": {
@@ -7817,7 +7817,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "3ce3a9bd931419ecd644605823a1b1635a8d8cf2c9f82139a98e2a9fc1abb6bb"
+        "read_version": "7189c3867055e565e0b4a0cbc19c7bd9391c33726979d270acc00a54d3ce9812"
       },
       "data": {
         "selected_movement_account": null,
@@ -7945,7 +7945,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "b990a61c2fa14504b27e9752c7ad46311a4b8b66b0afe65b8a047a0916068e52"
+        "read_version": "1a34c85d0131e2726b70f69f86563a9087684a844ffdaf0e3a50b0969779d5ff"
       },
       "data": {
         "selected_movement_account": null,
@@ -8073,7 +8073,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "36a5e44b4c430d99c105e37b37726bc568fff366dcb1a5d6579dfb839f6a2304"
+        "read_version": "a543dce46aac7f7428dc21925228b64537dce971bf12187ba0ac5d310d2f2d29"
       },
       "data": {
         "selected_movement_account": null,
@@ -8174,7 +8174,7 @@
   "brief_payroll_open_items": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 17,
+      "schema_version": 18,
       "snapshot_version": "b1ac628265fb718973b75d22049b1a8fb5796b02fe6953220c6f2706862c5766",
       "selected_period": {
         "key": "2026-01",
@@ -8201,10 +8201,10 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "d1629914900d7cd6bc719194776788b204d17fef37ca9463f68e5e653a2d45ba"
+        "read_version": "a71fe38b723f65b0aa51e13c00ffca20a29dfc038894d44edb6c6e71f3a816e8"
       },
       "data": {
-        "generated_at": "2026-10-09T18:57:47.938606+00:00",
+        "generated_at": "2026-10-09T18:45:49.640899+00:00",
         "month_state": "open",
         "owner_review_request": null,
         "management_commentary_details": {
@@ -8260,13 +8260,23 @@
           "categories": [
             {
               "key": "payroll_payables",
-              "label": "待付工资、社保与个税",
+              "label": "待付工资与社保公积金",
               "direction": "payable",
               "unit": "笔",
-              "count": 4,
-              "group_count": 3,
-              "loaded_count": 4,
-              "outstanding_fen": "1160000"
+              "count": 3,
+              "group_count": 2,
+              "loaded_count": 3,
+              "outstanding_fen": "1147400"
+            },
+            {
+              "key": "tax_payables",
+              "label": "待缴税费",
+              "direction": "payable",
+              "unit": "笔",
+              "count": 1,
+              "group_count": 1,
+              "loaded_count": 1,
+              "outstanding_fen": "12600"
             }
           ],
           "cutoff_period": "2026-01",
@@ -8278,11 +8288,11 @@
           "open_items": {
             "items": [
               {
-                "id": "042efa86ce75f2cbf7c28ee486e25ab105c02c0d39a61b6189198a6bed1d0f04",
-                "group_key": "042efa86ce75f2cbf7c28ee486e25ab105c02c0d39a61b6189198a6bed1d0f04",
-                "category_key": "payroll_payables",
+                "id": "fdbb0ca1524e1c8b940f8b2253d915c72144adb95fd82d2660249a491fd52ec0",
+                "group_key": "fdbb0ca1524e1c8b940f8b2253d915c72144adb95fd82d2660249a491fd52ec0",
+                "category_key": "tax_payables",
                 "party": "未提供姓名或名称",
-                "description": "代扣个人所得税",
+                "description": "个人所得税",
                 "member_count": 1,
                 "source_amount_fen": "12600",
                 "paid_fen": "0",
@@ -8293,8 +8303,23 @@
                 "current_status": "open"
               },
               {
-                "id": "9d60671e8d1d594ba8c0bd9afc7beef36e77c0cd96e8be3ba070cba90bf2a7ed",
-                "group_key": "9d60671e8d1d594ba8c0bd9afc7beef36e77c0cd96e8be3ba070cba90bf2a7ed",
+                "id": "40be8d13137239f29df104bf9fce08f7c5595cf7d50e1b89cd7205286a50097c",
+                "group_key": "40be8d13137239f29df104bf9fce08f7c5595cf7d50e1b89cd7205286a50097c",
+                "category_key": "payroll_payables",
+                "party": "未提供姓名或名称",
+                "description": "社保",
+                "member_count": 2,
+                "source_amount_fen": "240000",
+                "paid_fen": "0",
+                "other_settled_fen": "0",
+                "outstanding_fen": "240000",
+                "current_outstanding_fen": "240000",
+                "status": "open",
+                "current_status": "open"
+              },
+              {
+                "id": "fb5395d20b2d074f115190ee1d018e1995b18883dd6a8fc7845ce1df3cdb5d01",
+                "group_key": "fb5395d20b2d074f115190ee1d018e1995b18883dd6a8fc7845ce1df3cdb5d01",
                 "category_key": "payroll_payables",
                 "party": "未提供姓名或名称",
                 "description": "实发工资",
@@ -8304,21 +8329,6 @@
                 "other_settled_fen": "0",
                 "outstanding_fen": "907400",
                 "current_outstanding_fen": "907400",
-                "status": "open",
-                "current_status": "open"
-              },
-              {
-                "id": "fd9d159d3cac71133d26061fa1cc9de24655cab37121da394a08bf3a88ba4cfd",
-                "group_key": "fd9d159d3cac71133d26061fa1cc9de24655cab37121da394a08bf3a88ba4cfd",
-                "category_key": "payroll_payables",
-                "party": "未提供姓名或名称",
-                "description": "社保与公积金",
-                "member_count": 2,
-                "source_amount_fen": "240000",
-                "paid_fen": "0",
-                "other_settled_fen": "0",
-                "outstanding_fen": "240000",
-                "current_outstanding_fen": "240000",
                 "status": "open",
                 "current_status": "open"
               }
@@ -8338,7 +8348,7 @@
   "brief_payroll_members": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 2,
+      "schema_version": 3,
       "snapshot_version": "b1ac628265fb718973b75d22049b1a8fb5796b02fe6953220c6f2706862c5766",
       "selected_period": {
         "key": "2026-01",
@@ -8365,17 +8375,17 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "d1629914900d7cd6bc719194776788b204d17fef37ca9463f68e5e653a2d45ba"
+        "read_version": "a71fe38b723f65b0aa51e13c00ffca20a29dfc038894d44edb6c6e71f3a816e8"
       },
       "data": {
         "section": "open_items",
-        "group_key": "fd9d159d3cac71133d26061fa1cc9de24655cab37121da394a08bf3a88ba4cfd",
+        "group_key": "40be8d13137239f29df104bf9fce08f7c5595cf7d50e1b89cd7205286a50097c",
         "collections": {
           "members": {
             "items": [
               {
                 "id": "payroll:january:employee_social",
-                "group_key": "fd9d159d3cac71133d26061fa1cc9de24655cab37121da394a08bf3a88ba4cfd",
+                "group_key": "40be8d13137239f29df104bf9fce08f7c5595cf7d50e1b89cd7205286a50097c",
                 "date": null,
                 "recognition": {
                   "precision": "month",
@@ -8384,7 +8394,7 @@
                   "label": "2026-01"
                 },
                 "source_period": "2026-01",
-                "voucher_version_id": "v_0e479dcb1bbda275a32d0743fb6d167bc4c7909800ac35d4fb6525dedb355621",
+                "voucher_version_id": "v_f2b93bb117cac3969d526d9499495c1e8d96350cb8659ad10c3cd927132da55e",
                 "voucher_number": 1,
                 "category_key": "payroll_payables",
                 "party": "未提供姓名或名称",
@@ -8404,7 +8414,7 @@
               },
               {
                 "id": "payroll:january:employer_social",
-                "group_key": "fd9d159d3cac71133d26061fa1cc9de24655cab37121da394a08bf3a88ba4cfd",
+                "group_key": "40be8d13137239f29df104bf9fce08f7c5595cf7d50e1b89cd7205286a50097c",
                 "date": null,
                 "recognition": {
                   "precision": "month",
@@ -8413,7 +8423,7 @@
                   "label": "2026-01"
                 },
                 "source_period": "2026-01",
-                "voucher_version_id": "v_0e479dcb1bbda275a32d0743fb6d167bc4c7909800ac35d4fb6525dedb355621",
+                "voucher_version_id": "v_f2b93bb117cac3969d526d9499495c1e8d96350cb8659ad10c3cd927132da55e",
                 "voucher_number": 1,
                 "category_key": "payroll_payables",
                 "party": "未提供姓名或名称",
@@ -8444,7 +8454,7 @@
             "items": [
               {
                 "number": "1",
-                "voucher_version_id": "v_0e479dcb1bbda275a32d0743fb6d167bc4c7909800ac35d4fb6525dedb355621",
+                "voucher_version_id": "v_f2b93bb117cac3969d526d9499495c1e8d96350cb8659ad10c3cd927132da55e",
                 "subject_id": "january",
                 "reverses_version_id": null,
                 "date": null,
@@ -8573,7 +8583,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "d1629914900d7cd6bc719194776788b204d17fef37ca9463f68e5e653a2d45ba"
+        "read_version": "a71fe38b723f65b0aa51e13c00ffca20a29dfc038894d44edb6c6e71f3a816e8"
       },
       "data": {
         "employee_id": null,
@@ -8696,7 +8706,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "d1629914900d7cd6bc719194776788b204d17fef37ca9463f68e5e653a2d45ba"
+        "read_version": "a71fe38b723f65b0aa51e13c00ffca20a29dfc038894d44edb6c6e71f3a816e8"
       },
       "data": {
         "employee_id": "employee",
@@ -8809,7 +8819,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "834b7cfa7e3edfba65aff88e0d77e16b87fe7e283af1c0c9f65fa0da8b436da5"
+        "read_version": "16fc775e23518f9278b8476e33433eb455d753e9b5031867c792ef72065d7ba6"
       },
       "data": {
         "employee_id": null,
@@ -8905,7 +8915,7 @@
   "business_month_dates": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "de3815e26c5efec458197a848e9326c8c67b636eb48dcb4f2433c5241f791274",
       "selected_period": {
         "key": "2026-01",
@@ -8932,7 +8942,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "834b7cfa7e3edfba65aff88e0d77e16b87fe7e283af1c0c9f65fa0da8b436da5"
+        "read_version": "16fc775e23518f9278b8476e33433eb455d753e9b5031867c792ef72065d7ba6"
       },
       "data": {
         "identity": {
@@ -8949,7 +8959,7 @@
         },
         "closure": {
           "state": "exact_close",
-          "digest": "7d2684743b673698181e4ef78410e10417d5e714cd176b7bd1a6c348ef561f37"
+          "digest": "3a7401100aeeb754e323c0407be236c3f9e43764fece3378ddf6835a24f8895d"
         },
         "current_business_result": {
           "amount_fen": "1000000",
@@ -9210,7 +9220,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "64f6e21b329ee952b94d231abd4a3588122f5f69b405c1457ab22e0b7093fbe1"
+        "read_version": "ff6e6417e62989337d1cb68bac096118798e713e76c8c7e234a4ba3369e1938c"
       },
       "data": {
         "employee_id": null,
@@ -9333,7 +9343,7 @@
         "company_id": "payroll-company",
         "database_id": "payroll-db",
         "as_of": "2026-10-10",
-        "read_version": "e274420856807555cf4ece96cd208089c88a6a1c885dff3d31f463c617b7406a"
+        "read_version": "b42d7c5f39b25fd618eed347aac5d55ff69c9478b77e361146aba0d93fd14afe"
       },
       "data": {
         "employee_id": null,
@@ -9568,7 +9578,7 @@
           "obligations": [
             {
               "id": "obligation",
-              "obligation_fact_id": "9c9c1a3b54d942baaaff5c4f68c9f90e",
+              "obligation_fact_id": "ee1be5ec073a47fd96c3aecc67cb7811",
               "kind": "quarterly_tax",
               "start_period": "2026-01",
               "end_period": "2026-01",
@@ -9581,8 +9591,8 @@
               "recorded_completions": [
                 {
                   "subject_id": "completion",
-                  "calculation_id": "c_bb743bf4627e3ab61d1186bcec744b77859df9ec40740d45800e90fe0725e632",
-                  "fact_id": "335ef299c54b4bd29203287672382bbb",
+                  "calculation_id": "c_adaa0558bf24d6a93903915225bf26cf8e5d65430ce1a7186728fa8efcb0812d",
+                  "fact_id": "13b3b52764344e54a5697fa0d038732f",
                   "completion_status": "confirmed_complete",
                   "completion_date": "2026-02-10",
                   "source_facts": [],
@@ -9591,7 +9601,7 @@
                   "previous_completion_fact_id": null,
                   "known_as_of": true,
                   "current_fact": true,
-                  "confirmation_recorded_at": "2026-10-09T18:57:50.138Z",
+                  "confirmation_recorded_at": "2026-10-09T18:45:51.855Z",
                   "completion_time_basis": "actual_date"
                 }
               ]
@@ -9663,7 +9673,7 @@
   "external_brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 17,
+      "schema_version": 18,
       "snapshot_version": "9afe6adbf0e6fbaa9eb6f75e43567466b2bd5a9770b37c23ca111f7875680db9",
       "selected_period": {
         "key": "2026-01",
@@ -9690,10 +9700,10 @@
         "company_id": "company",
         "database_id": "database",
         "as_of": "2026-10-10",
-        "read_version": "b029bb19d598f3c001c36be37e048bc5c9fd0a54c9a749f28230df85e321bca8"
+        "read_version": "e47b486695dfe578488f524199f6347b45f81a35be311bc8b2797638955ff3cb"
       },
       "data": {
-        "generated_at": "2026-10-09T18:57:50.331967+00:00",
+        "generated_at": "2026-10-09T18:45:52.074026+00:00",
         "month_state": "open",
         "owner_review_request": null,
         "management_commentary_details": {
@@ -10056,7 +10066,7 @@
           "obligations": [
             {
               "id": "obligation",
-              "obligation_fact_id": "9c9c1a3b54d942baaaff5c4f68c9f90e",
+              "obligation_fact_id": "ee1be5ec073a47fd96c3aecc67cb7811",
               "kind": "quarterly_tax",
               "start_period": "2026-01",
               "end_period": "2026-01",
@@ -10069,8 +10079,8 @@
               "recorded_completions": [
                 {
                   "subject_id": "completion",
-                  "calculation_id": "c_bb743bf4627e3ab61d1186bcec744b77859df9ec40740d45800e90fe0725e632",
-                  "fact_id": "335ef299c54b4bd29203287672382bbb",
+                  "calculation_id": "c_adaa0558bf24d6a93903915225bf26cf8e5d65430ce1a7186728fa8efcb0812d",
+                  "fact_id": "13b3b52764344e54a5697fa0d038732f",
                   "completion_status": "confirmed_complete",
                   "completion_date": "2026-02-10",
                   "source_facts": [],
@@ -10079,7 +10089,7 @@
                   "previous_completion_fact_id": null,
                   "known_as_of": true,
                   "current_fact": true,
-                  "confirmation_recorded_at": "2026-10-09T18:57:50.138Z",
+                  "confirmation_recorded_at": "2026-10-09T18:45:51.855Z",
                   "completion_time_basis": "actual_date"
                 }
               ]
@@ -10287,7 +10297,7 @@
           "obligations": [
             {
               "id": "obligation",
-              "obligation_fact_id": "9c9c1a3b54d942baaaff5c4f68c9f90e",
+              "obligation_fact_id": "ee1be5ec073a47fd96c3aecc67cb7811",
               "kind": "quarterly_tax",
               "start_period": "2026-01",
               "end_period": "2026-01",
@@ -10295,13 +10305,13 @@
               "status": "completed",
               "actual_completion_status": "completed",
               "basis_review_status": "reviewed",
-              "basis_review_calculation_id": "c_5f632be8c63d885319fd7ac17f40065ce0ce01f51b6f42d015c399426d49862e",
+              "basis_review_calculation_id": "c_a925c52e37f8886cbb858f1f5cba02f84e244bad75f029d16266d0752b8f6496",
               "basis_issue_refs": [],
               "recorded_completions": [
                 {
                   "subject_id": "completion",
-                  "calculation_id": "c_bb743bf4627e3ab61d1186bcec744b77859df9ec40740d45800e90fe0725e632",
-                  "fact_id": "335ef299c54b4bd29203287672382bbb",
+                  "calculation_id": "c_adaa0558bf24d6a93903915225bf26cf8e5d65430ce1a7186728fa8efcb0812d",
+                  "fact_id": "13b3b52764344e54a5697fa0d038732f",
                   "completion_status": "confirmed_complete",
                   "completion_date": "2026-02-10",
                   "source_facts": [],
@@ -10310,7 +10320,7 @@
                   "previous_completion_fact_id": null,
                   "known_as_of": true,
                   "current_fact": true,
-                  "confirmation_recorded_at": "2026-10-09T18:57:50.138Z",
+                  "confirmation_recorded_at": "2026-10-09T18:45:51.855Z",
                   "completion_time_basis": "actual_date"
                 }
               ]
@@ -10409,7 +10419,7 @@
         "company_id": "co",
         "database_id": "db",
         "as_of": "2026-10-10",
-        "read_version": "bdb9dbd47215adfea08d8113c66c8e796a34ed0037f65bb67eb9b1bf4aef6aad"
+        "read_version": "21c961ad40230fc41991c74b8aaa24d2412f52ac5086707e1d1aee6869ab36cc"
       },
       "data": {
         "asset_id": null,
@@ -10527,6 +10537,2055 @@
               "next_cursor": null
             }
           }
+        }
+      }
+    }
+  },
+  "brief_matter_scopes": {
+    "command": "dashboard_brief",
+    "response": {
+      "schema_version": 18,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "generated_at": "2026-10-09T18:45:54.119641+00:00",
+        "month_state": "open",
+        "owner_review_request": null,
+        "management_commentary_details": {
+          "status": "not_provided",
+          "current": null,
+          "latest": null,
+          "supplements": []
+        },
+        "activity_count": 3,
+        "group_count": 3,
+        "focused_activity": null,
+        "focused_activity_group": null,
+        "voucher_count": 1,
+        "focused_voucher": null,
+        "activity_groups": [
+          {
+            "key": "payroll",
+            "label": "工资与社保",
+            "event_count": 2,
+            "group_count": 2,
+            "type_counts": [
+              {
+                "label": "实际收付款",
+                "count": 2
+              }
+            ]
+          },
+          {
+            "key": "tax",
+            "label": "税费事项",
+            "event_count": 1,
+            "group_count": 1,
+            "type_counts": [
+              {
+                "label": "实际收付款",
+                "count": 1
+              }
+            ]
+          }
+        ],
+        "position": {
+          "month_revenue_fen": "0",
+          "month_expense_fen": "0",
+          "month_result_fen": "0",
+          "complete": true
+        },
+        "financial_position": {
+          "assets_fen": "0",
+          "liabilities_fen": "0",
+          "capital_fen": "0",
+          "equity_fen": "0",
+          "bank_fen": "0",
+          "fixed_asset_cost_fen": "0",
+          "accumulated_depreciation_fen": "0",
+          "fixed_asset_net_fen": "0",
+          "intangible_asset_cost_fen": "0",
+          "accumulated_amortization_fen": "0",
+          "intangible_asset_net_fen": "0",
+          "other_assets_fen": "0",
+          "cumulative_result_fen": "0",
+          "equation_valid": true,
+          "complete": true,
+          "issues": [],
+          "bank_calculation": {
+            "opening_fen": "809307",
+            "inflow_fen": "0",
+            "outflow_fen": "809307"
+          },
+          "liability_calculation": {
+            "current_fen": "0",
+            "non_current_fen": "0"
+          }
+        },
+        "workforce_cost": {
+          "has_activity": false,
+          "total_fen": "0",
+          "capitalized_labor_fen": "0",
+          "employee": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "controlled_total_fen": "0",
+            "settlement_adjustment_fen": "0",
+            "gross_salary_fen": "0",
+            "annual_bonus_fen": "0",
+            "employer_social_insurance_fen": "0",
+            "employer_housing_fund_fen": "0",
+            "employee_social_insurance_fen": "0",
+            "employee_housing_fund_fen": "0"
+          },
+          "personal_labor": {
+            "has_activity": false,
+            "breakdown_available": true,
+            "reason": null,
+            "total_fen": "0",
+            "gross_remuneration_fen": "0",
+            "withholding_note": "本月无个人劳务费用。"
+          }
+        },
+        "long_term_assets": {
+          "net_fen": "0",
+          "fixed_active_count": 0,
+          "intangible_active_count": 0
+        },
+        "funds_overview": {
+          "total_fen": "0",
+          "bank_fen": "0",
+          "cash_fen": "0",
+          "payment_platform_fen": "0",
+          "inflow_fen": "0",
+          "outflow_fen": "809307",
+          "net_change_fen": "-809307",
+          "internal_transfer_fen": "0"
+        },
+        "open_items": {
+          "group_count": 0,
+          "receivable_count": 0,
+          "receivable_fen": "0",
+          "payable_count": 0,
+          "payable_fen": "0",
+          "total_count": 0,
+          "complete": true,
+          "categories": [],
+          "cutoff_period": "2026-01",
+          "current_cutoff_period": "2026-01"
+        },
+        "risks": [],
+        "owner_tasks": [],
+        "collections": {
+          "activity": {
+            "items": [
+              {
+                "key": "1f02e3a217eaf316f4c8d60827dfb380a6333c51763599e9706afe6a790eacf9",
+                "group_key": "1f02e3a217eaf316f4c8d60827dfb380a6333c51763599e9706afe6a790eacf9",
+                "group": "payroll",
+                "kind": "payment",
+                "party": "未提供姓名或名称",
+                "title": "缴纳公积金",
+                "member_count": 1,
+                "voucher_count": 1,
+                "amount_fen": "50000",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "date_from": "2026-01-10",
+                "date_to": "2026-01-10",
+                "has_month_recognition": false,
+                "is_batch": false
+              },
+              {
+                "key": "9660808dd0b6673acd8eeab63864539575443024fada356c41bc360a1dfda3ad",
+                "group_key": "9660808dd0b6673acd8eeab63864539575443024fada356c41bc360a1dfda3ad",
+                "group": "tax",
+                "kind": "payment",
+                "party": "未提供姓名或名称",
+                "title": "缴纳个税",
+                "member_count": 1,
+                "voucher_count": 1,
+                "amount_fen": "140307",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "date_from": "2026-01-10",
+                "date_to": "2026-01-10",
+                "has_month_recognition": false,
+                "is_batch": false
+              },
+              {
+                "key": "9e0fdfc35628bbbf5eda123d73d9171233bd77977037ba29bbed3839f237e169",
+                "group_key": "9e0fdfc35628bbbf5eda123d73d9171233bd77977037ba29bbed3839f237e169",
+                "group": "payroll",
+                "kind": "payment",
+                "party": "未提供姓名或名称",
+                "title": "缴纳社保",
+                "member_count": 1,
+                "voucher_count": 1,
+                "amount_fen": "619000",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "date_from": "2026-01-10",
+                "date_to": "2026-01-10",
+                "has_month_recognition": false,
+                "is_batch": false
+              }
+            ],
+            "page": {
+              "total_count": 3,
+              "filtered_count": 3,
+              "returned_count": 3,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "open_items": {
+            "items": [],
+            "page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "brief_matter_members_0": {
+    "command": "dashboard_brief_group",
+    "response": {
+      "schema_version": 3,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "section": "activity",
+        "group_key": "1f02e3a217eaf316f4c8d60827dfb380a6333c51763599e9706afe6a790eacf9",
+        "collections": {
+          "members": {
+            "items": [
+              {
+                "key": "ca8373efbb2e0584fdb2a898b7eb36887041a1cb7f815516ebacb79f3b5a784c",
+                "group_key": "1f02e3a217eaf316f4c8d60827dfb380a6333c51763599e9706afe6a790eacf9",
+                "subject_id": "combined",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "detail_scope_key": "ca8373efbb2e0584fdb2a898b7eb36887041a1cb7f815516ebacb79f3b5a784c",
+                "voucher_number": 1,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "title": "缴纳公积金",
+                "description": "缴纳公积金（2025-12）；整单说明：原单事项说明；原单保留备注",
+                "amount_fen": "50000",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "party": "未提供姓名或名称",
+                "group": "payroll"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "vouchers": {
+            "items": [
+              {
+                "number": "1",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "subject_id": "combined",
+                "reverses_version_id": null,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "type": "实际收付款",
+                "kind": "payment",
+                "state": "已入账",
+                "group": "payroll",
+                "summary": "付款（2025-12）；原单事项说明；原单保留备注",
+                "list_summary": "付款",
+                "amount_fen": "809307",
+                "business_amount_fen": "809307",
+                "business_amount_label": "实际收付款",
+                "has_business_progress": true,
+                "asset": null,
+                "asset_members": [],
+                "lines": [
+                  {
+                    "line_number": 1,
+                    "code": "222103",
+                    "account": "应付个人所得税",
+                    "debit_fen": "140307",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "140307"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 2,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "140307",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 3,
+                    "code": "224102",
+                    "account": "代扣个人社保",
+                    "debit_fen": "300000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "300000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 4,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "300000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 5,
+                    "code": "221102",
+                    "account": "应付单位社保",
+                    "debit_fen": "319000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "319000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 6,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "319000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 7,
+                    "code": "224103",
+                    "account": "代扣个人公积金",
+                    "debit_fen": "20000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "20000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 8,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "20000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 9,
+                    "code": "221103",
+                    "account": "应付单位公积金",
+                    "debit_fen": "30000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "30000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 10,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "30000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  }
+                ]
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "business_matter_scope_0": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 10,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "identity": {
+          "company_id": "co",
+          "database_id": "db",
+          "subject_id": "combined",
+          "kind": "payment"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-10",
+        "latest_source": {
+          "period": "2026-01",
+          "deleted": false
+        },
+        "closure": {
+          "state": "open"
+        },
+        "current_business_result": {
+          "amount_fen": "50000",
+          "amount_label": "实际收付款",
+          "posting_period": "2026-01"
+        },
+        "frozen_adoption": null,
+        "review": {
+          "status": "current"
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "checking": false,
+          "obligations": [
+            {
+              "key": "opening_payroll_payable:employee_housing:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "20000",
+              "paid_fen": "20000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            },
+            {
+              "key": "opening_payroll_payable:employer_housing:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "30000",
+              "paid_fen": "30000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            }
+          ]
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "combined",
+            "values": {
+              "display_name": null,
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "employment_state": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null
+            }
+          },
+          "counterparties": [
+            {
+              "entity_id": "authority",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ],
+          "fund_accounts": [
+            {
+              "entity_id": "bank",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ]
+        },
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "checking": false,
+            "obligations": [
+              {
+                "key": "opening_payroll_payable:employee_housing:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "20000",
+                "paid_fen": "20000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              },
+              {
+                "key": "opening_payroll_payable:employer_housing:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "30000",
+                "paid_fen": "30000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              }
+            ]
+          }
+        },
+        "settlement_view": "current",
+        "collections": {
+          "settlement_events": {
+            "items": [
+              {
+                "id": "[\"v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f\",3]",
+                "subject_id": "combined",
+                "source_subject_id": "employee_housing",
+                "posting_period": "2026-01",
+                "direction": 1,
+                "signed_amount_fen": 20000,
+                "relation_state": "resolved",
+                "kind": "payment",
+                "name": "primary",
+                "purpose_label": "个人公积金",
+                "mode": "payment",
+                "party": "收款人名称未提供"
+              }
+            ],
+            "page": {
+              "total_count": 2,
+              "filtered_count": 2,
+              "returned_count": 1,
+              "has_more": true,
+              "next_cursor": "eyJrZXkiOiJbXCJ2XzUyYjZjOTY1ZGM4NTY4ZmU2YWVjY2NjZjdjMWU1ODRlMDAwMTdjZGE2ZGRiMzY2MWNlNDhhYzY4MDhkYWMyMmZcIiwzXSIsInNjb3BlIjoiNTgxYTRkZGE1YWFlMmU2OTM3ZmQyMTIzNjQzMDJlMTVhOWYzOGU1NDVmYmQwZGQyN2QwZjY2NjZmN2ZlMjNiOSIsInNvcnQiOm51bGx9"
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "detail_scope": {
+          "key": "ca8373efbb2e0584fdb2a898b7eb36887041a1cb7f815516ebacb79f3b5a784c",
+          "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+          "category": "payroll",
+          "amount_fen": "50000",
+          "amount_label": "实际收付款"
+        }
+      }
+    }
+  },
+  "business_matter_scope_page_0": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 10,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "identity": {
+          "company_id": "co",
+          "database_id": "db",
+          "subject_id": "combined",
+          "kind": "payment"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-10",
+        "latest_source": {
+          "period": "2026-01",
+          "deleted": false
+        },
+        "closure": {
+          "state": "open"
+        },
+        "current_business_result": {
+          "amount_fen": "50000",
+          "amount_label": "实际收付款",
+          "posting_period": "2026-01"
+        },
+        "frozen_adoption": null,
+        "review": {
+          "status": "current"
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "checking": false,
+          "obligations": [
+            {
+              "key": "opening_payroll_payable:employee_housing:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "20000",
+              "paid_fen": "20000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            },
+            {
+              "key": "opening_payroll_payable:employer_housing:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "30000",
+              "paid_fen": "30000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            }
+          ]
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "combined",
+            "values": {
+              "display_name": null,
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "employment_state": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null
+            }
+          },
+          "counterparties": [
+            {
+              "entity_id": "authority",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ],
+          "fund_accounts": [
+            {
+              "entity_id": "bank",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ]
+        },
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "checking": false,
+            "obligations": [
+              {
+                "key": "opening_payroll_payable:employee_housing:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "20000",
+                "paid_fen": "20000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              },
+              {
+                "key": "opening_payroll_payable:employer_housing:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "30000",
+                "paid_fen": "30000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              }
+            ]
+          }
+        },
+        "settlement_view": "current",
+        "collections": {
+          "settlement_events": {
+            "items": [
+              {
+                "id": "[\"v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f\",4]",
+                "subject_id": "combined",
+                "source_subject_id": "employer_housing",
+                "posting_period": "2026-01",
+                "direction": 1,
+                "signed_amount_fen": 30000,
+                "relation_state": "resolved",
+                "kind": "payment",
+                "name": "primary",
+                "purpose_label": "单位公积金",
+                "mode": "payment",
+                "party": "收款人名称未提供"
+              }
+            ],
+            "page": {
+              "total_count": 2,
+              "filtered_count": 2,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "detail_scope": {
+          "key": "ca8373efbb2e0584fdb2a898b7eb36887041a1cb7f815516ebacb79f3b5a784c",
+          "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+          "category": "payroll",
+          "amount_fen": "50000",
+          "amount_label": "实际收付款"
+        }
+      }
+    }
+  },
+  "brief_matter_members_1": {
+    "command": "dashboard_brief_group",
+    "response": {
+      "schema_version": 3,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "section": "activity",
+        "group_key": "9660808dd0b6673acd8eeab63864539575443024fada356c41bc360a1dfda3ad",
+        "collections": {
+          "members": {
+            "items": [
+              {
+                "key": "9b2d05c3dbe91c587d6caabebf12c684d95e897956c306d7ac51412a7b187e9b",
+                "group_key": "9660808dd0b6673acd8eeab63864539575443024fada356c41bc360a1dfda3ad",
+                "subject_id": "combined",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "detail_scope_key": "9b2d05c3dbe91c587d6caabebf12c684d95e897956c306d7ac51412a7b187e9b",
+                "voucher_number": 1,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "title": "缴纳个税",
+                "description": "缴纳个税（2025-12）；整单说明：原单事项说明；原单保留备注",
+                "amount_fen": "140307",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "party": "未提供姓名或名称",
+                "group": "tax"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "vouchers": {
+            "items": [
+              {
+                "number": "1",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "subject_id": "combined",
+                "reverses_version_id": null,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "type": "实际收付款",
+                "kind": "payment",
+                "state": "已入账",
+                "group": "payroll",
+                "summary": "付款（2025-12）；原单事项说明；原单保留备注",
+                "list_summary": "付款",
+                "amount_fen": "809307",
+                "business_amount_fen": "809307",
+                "business_amount_label": "实际收付款",
+                "has_business_progress": true,
+                "asset": null,
+                "asset_members": [],
+                "lines": [
+                  {
+                    "line_number": 1,
+                    "code": "222103",
+                    "account": "应付个人所得税",
+                    "debit_fen": "140307",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "140307"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 2,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "140307",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 3,
+                    "code": "224102",
+                    "account": "代扣个人社保",
+                    "debit_fen": "300000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "300000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 4,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "300000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 5,
+                    "code": "221102",
+                    "account": "应付单位社保",
+                    "debit_fen": "319000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "319000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 6,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "319000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 7,
+                    "code": "224103",
+                    "account": "代扣个人公积金",
+                    "debit_fen": "20000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "20000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 8,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "20000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 9,
+                    "code": "221103",
+                    "account": "应付单位公积金",
+                    "debit_fen": "30000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "30000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 10,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "30000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  }
+                ]
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "business_matter_scope_1": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 10,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "identity": {
+          "company_id": "co",
+          "database_id": "db",
+          "subject_id": "combined",
+          "kind": "payment"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-10",
+        "latest_source": {
+          "period": "2026-01",
+          "deleted": false
+        },
+        "closure": {
+          "state": "open"
+        },
+        "current_business_result": {
+          "amount_fen": "140307",
+          "amount_label": "实际收付款",
+          "posting_period": "2026-01"
+        },
+        "frozen_adoption": null,
+        "review": {
+          "status": "current"
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "checking": false,
+          "obligations": [
+            {
+              "key": "opening_payroll_payable:withheld_tax:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "140307",
+              "paid_fen": "140307",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            }
+          ]
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "combined",
+            "values": {
+              "display_name": null,
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "employment_state": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null
+            }
+          },
+          "counterparties": [
+            {
+              "entity_id": "authority",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ],
+          "fund_accounts": [
+            {
+              "entity_id": "bank",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ]
+        },
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "checking": false,
+            "obligations": [
+              {
+                "key": "opening_payroll_payable:withheld_tax:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "140307",
+                "paid_fen": "140307",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              }
+            ]
+          }
+        },
+        "settlement_view": "current",
+        "collections": {
+          "settlement_events": {
+            "items": [
+              {
+                "id": "[\"v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f\",0]",
+                "subject_id": "combined",
+                "source_subject_id": "withheld_tax",
+                "posting_period": "2026-01",
+                "direction": 1,
+                "signed_amount_fen": 140307,
+                "relation_state": "resolved",
+                "kind": "payment",
+                "name": "primary",
+                "purpose_label": "代扣个人所得税",
+                "mode": "payment",
+                "party": "收款人名称未提供"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "detail_scope": {
+          "key": "9b2d05c3dbe91c587d6caabebf12c684d95e897956c306d7ac51412a7b187e9b",
+          "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+          "category": "tax",
+          "amount_fen": "140307",
+          "amount_label": "实际收付款"
+        }
+      }
+    }
+  },
+  "brief_matter_members_2": {
+    "command": "dashboard_brief_group",
+    "response": {
+      "schema_version": 3,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "section": "activity",
+        "group_key": "9e0fdfc35628bbbf5eda123d73d9171233bd77977037ba29bbed3839f237e169",
+        "collections": {
+          "members": {
+            "items": [
+              {
+                "key": "c7e00ebd3d416f2044eb68b9d488553198fddaf44ee2c9fc6411aa912562cfbb",
+                "group_key": "9e0fdfc35628bbbf5eda123d73d9171233bd77977037ba29bbed3839f237e169",
+                "subject_id": "combined",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "detail_scope_key": "c7e00ebd3d416f2044eb68b9d488553198fddaf44ee2c9fc6411aa912562cfbb",
+                "voucher_number": 1,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "title": "缴纳社保",
+                "description": "缴纳社保（2025-12）；整单说明：原单事项说明；原单保留备注",
+                "amount_fen": "619000",
+                "amount_label": "实际收付款",
+                "state": "已入账",
+                "party": "未提供姓名或名称",
+                "group": "payroll"
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          },
+          "vouchers": {
+            "items": [
+              {
+                "number": "1",
+                "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+                "subject_id": "combined",
+                "reverses_version_id": null,
+                "date": "2026-01-10",
+                "recognition": {
+                  "precision": "day",
+                  "period": "2026-01",
+                  "date": "2026-01-10",
+                  "label": "2026-01-10"
+                },
+                "type": "实际收付款",
+                "kind": "payment",
+                "state": "已入账",
+                "group": "payroll",
+                "summary": "付款（2025-12）；原单事项说明；原单保留备注",
+                "list_summary": "付款",
+                "amount_fen": "809307",
+                "business_amount_fen": "809307",
+                "business_amount_label": "实际收付款",
+                "has_business_progress": true,
+                "asset": null,
+                "asset_members": [],
+                "lines": [
+                  {
+                    "line_number": 1,
+                    "code": "222103",
+                    "account": "应付个人所得税",
+                    "debit_fen": "140307",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "140307"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 2,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "140307",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 3,
+                    "code": "224102",
+                    "account": "代扣个人社保",
+                    "debit_fen": "300000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "300000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 4,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "300000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 5,
+                    "code": "221102",
+                    "account": "应付单位社保",
+                    "debit_fen": "319000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "319000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 6,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "319000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 7,
+                    "code": "224103",
+                    "account": "代扣个人公积金",
+                    "debit_fen": "20000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "20000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 8,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "20000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  },
+                  {
+                    "line_number": 9,
+                    "code": "221103",
+                    "account": "应付单位公积金",
+                    "debit_fen": "30000",
+                    "credit_fen": "0",
+                    "party": "未提供姓名或名称",
+                    "source_label": "2025-12 · 薪酬未付明细期初 · 未提供姓名或名称",
+                    "parties": [
+                      {
+                        "id": "authority",
+                        "name": "未提供姓名或名称",
+                        "amount_fen": "30000"
+                      }
+                    ],
+                    "party_state": "name_missing"
+                  },
+                  {
+                    "line_number": 10,
+                    "code": "1002",
+                    "account": "银行存款",
+                    "debit_fen": "0",
+                    "credit_fen": "30000",
+                    "party": "",
+                    "source_label": "",
+                    "parties": [],
+                    "party_state": "not_applicable"
+                  }
+                ]
+              }
+            ],
+            "page": {
+              "total_count": 1,
+              "filtered_count": 1,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "business_matter_scope_2": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 10,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "identity": {
+          "company_id": "co",
+          "database_id": "db",
+          "subject_id": "combined",
+          "kind": "payment"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-10",
+        "latest_source": {
+          "period": "2026-01",
+          "deleted": false
+        },
+        "closure": {
+          "state": "open"
+        },
+        "current_business_result": {
+          "amount_fen": "619000",
+          "amount_label": "实际收付款",
+          "posting_period": "2026-01"
+        },
+        "frozen_adoption": null,
+        "review": {
+          "status": "current"
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "checking": false,
+          "obligations": [
+            {
+              "key": "opening_payroll_payable:employee_social:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "300000",
+              "paid_fen": "300000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            },
+            {
+              "key": "opening_payroll_payable:employer_social:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "319000",
+              "paid_fen": "319000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            }
+          ]
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "combined",
+            "values": {
+              "display_name": null,
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "employment_state": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null
+            }
+          },
+          "counterparties": [
+            {
+              "entity_id": "authority",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ],
+          "fund_accounts": [
+            {
+              "entity_id": "bank",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ]
+        },
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "checking": false,
+            "obligations": [
+              {
+                "key": "opening_payroll_payable:employee_social:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "300000",
+                "paid_fen": "300000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              },
+              {
+                "key": "opening_payroll_payable:employer_social:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "319000",
+                "paid_fen": "319000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              }
+            ]
+          }
+        },
+        "settlement_view": "current",
+        "collections": {
+          "settlement_events": {
+            "items": [
+              {
+                "id": "[\"v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f\",1]",
+                "subject_id": "combined",
+                "source_subject_id": "employee_social",
+                "posting_period": "2026-01",
+                "direction": 1,
+                "signed_amount_fen": 300000,
+                "relation_state": "resolved",
+                "kind": "payment",
+                "name": "primary",
+                "purpose_label": "个人社保",
+                "mode": "payment",
+                "party": "收款人名称未提供"
+              }
+            ],
+            "page": {
+              "total_count": 2,
+              "filtered_count": 2,
+              "returned_count": 1,
+              "has_more": true,
+              "next_cursor": "eyJrZXkiOiJbXCJ2XzUyYjZjOTY1ZGM4NTY4ZmU2YWVjY2NjZjdjMWU1ODRlMDAwMTdjZGE2ZGRiMzY2MWNlNDhhYzY4MDhkYWMyMmZcIiwxXSIsInNjb3BlIjoiNWIxZTA3ZjZjOWFjYjExMWM2NmJlMDAxMzM2N2FhN2QyOGIxOGU3YjUyYzA5YjRiMTk1Zjk3ZGQwZWRhYTk3YSIsInNvcnQiOm51bGx9"
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "detail_scope": {
+          "key": "c7e00ebd3d416f2044eb68b9d488553198fddaf44ee2c9fc6411aa912562cfbb",
+          "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+          "category": "payroll",
+          "amount_fen": "619000",
+          "amount_label": "实际收付款"
+        }
+      }
+    }
+  },
+  "business_matter_scope_page_2": {
+    "command": "dashboard_business_status",
+    "response": {
+      "schema_version": 10,
+      "snapshot_version": "4e9645d6599d34dd96df970b0d244f3aea457c14d13c1ec7b0ab5b8677c1f9ae",
+      "selected_period": {
+        "key": "2026-01",
+        "year": 2026,
+        "month": 1,
+        "label": "2026 年 1 月",
+        "short_label": "1 月",
+        "status": "open",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "closed_at": null
+      },
+      "read_semantics": {
+        "knowledge": "current_knowledge",
+        "accounting": "as_posted",
+        "business_basis": "current_known",
+        "display": "current",
+        "system_time_replay": false,
+        "recorded_at": "system_recording_time",
+        "recording_period": "business_recording_period",
+        "recorded_later": "business_recording_period_after_selected_period"
+      },
+      "read_context": {
+        "company_id": "co",
+        "database_id": "db",
+        "as_of": "2026-10-10",
+        "read_version": "cb9a152766edb271f6e78e8d35f323e60ca1d62ea273f9900f87b9ad7df30afb"
+      },
+      "data": {
+        "identity": {
+          "company_id": "co",
+          "database_id": "db",
+          "subject_id": "combined",
+          "kind": "payment"
+        },
+        "period": "2026-01",
+        "as_of": "2026-10-10",
+        "latest_source": {
+          "period": "2026-01",
+          "deleted": false
+        },
+        "closure": {
+          "state": "open"
+        },
+        "current_business_result": {
+          "amount_fen": "619000",
+          "amount_label": "实际收付款",
+          "posting_period": "2026-01"
+        },
+        "frozen_adoption": null,
+        "review": {
+          "status": "current"
+        },
+        "settlements": {
+          "cutoff_period": "2026-01",
+          "status": "established",
+          "checking": false,
+          "obligations": [
+            {
+              "key": "opening_payroll_payable:employee_social:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "300000",
+              "paid_fen": "300000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            },
+            {
+              "key": "opening_payroll_payable:employer_social:primary",
+              "name": "primary",
+              "direction": "payable",
+              "category_key": "payroll_payables",
+              "source_period": null,
+              "source_amount_fen": "319000",
+              "paid_fen": "319000",
+              "other_settled_fen": "0",
+              "remaining_fen": "0",
+              "settlement_status": "settled"
+            }
+          ]
+        },
+        "display_profiles": {
+          "business": {
+            "entity_id": "combined",
+            "values": {
+              "display_name": null,
+              "display_number": null,
+              "purpose": null,
+              "note": null,
+              "employment_start": null,
+              "employment_end": null,
+              "employment_status": null,
+              "employment_state": null,
+              "active": null,
+              "category_label": null,
+              "rights_description": null
+            }
+          },
+          "counterparties": [
+            {
+              "entity_id": "authority",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ],
+          "fund_accounts": [
+            {
+              "entity_id": "bank",
+              "values": {
+                "display_name": null,
+                "display_number": null,
+                "purpose": null,
+                "note": null,
+                "employment_start": null,
+                "employment_end": null,
+                "employment_status": "unknown",
+                "employment_state": "unknown",
+                "active": true,
+                "category_label": null,
+                "rights_description": null
+              }
+            }
+          ]
+        },
+        "current_followups": {
+          "settlements": {
+            "cutoff_period": "2026-01",
+            "status": "established",
+            "checking": false,
+            "obligations": [
+              {
+                "key": "opening_payroll_payable:employee_social:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "300000",
+                "paid_fen": "300000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              },
+              {
+                "key": "opening_payroll_payable:employer_social:primary",
+                "name": "primary",
+                "direction": "payable",
+                "category_key": "payroll_payables",
+                "source_period": null,
+                "source_amount_fen": "319000",
+                "paid_fen": "319000",
+                "other_settled_fen": "0",
+                "remaining_fen": "0",
+                "settlement_status": "settled"
+              }
+            ]
+          }
+        },
+        "settlement_view": "current",
+        "collections": {
+          "settlement_events": {
+            "items": [
+              {
+                "id": "[\"v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f\",2]",
+                "subject_id": "combined",
+                "source_subject_id": "employer_social",
+                "posting_period": "2026-01",
+                "direction": 1,
+                "signed_amount_fen": 319000,
+                "relation_state": "resolved",
+                "kind": "payment",
+                "name": "primary",
+                "purpose_label": "单位社保",
+                "mode": "payment",
+                "party": "收款人名称未提供"
+              }
+            ],
+            "page": {
+              "total_count": 2,
+              "filtered_count": 2,
+              "returned_count": 1,
+              "has_more": false,
+              "next_cursor": null
+            },
+            "scope_period": "2026-01",
+            "current_cutoff_period": "2026-01",
+            "cutoff_semantics": "current_published_relations_independent_of_as_of"
+          }
+        },
+        "detail_scope": {
+          "key": "c7e00ebd3d416f2044eb68b9d488553198fddaf44ee2c9fc6411aa912562cfbb",
+          "voucher_version_id": "v_52b6c965dc8568fe6aeccccf7c1e584e00017cda6ddb3661ce48ac6808dac22f",
+          "category": "payroll",
+          "amount_fen": "619000",
+          "amount_label": "实际收付款"
         }
       }
     }

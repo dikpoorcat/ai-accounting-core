@@ -25,6 +25,7 @@ from .contracts import KernelError, NeedsInformation
 from .domains.payroll import PAYROLL_KINDS
 from .payroll_tax_declarations import PayrollDisbursementBasis, export_disbursement
 from .periods import Periods
+from .text_sort import pinyin_key
 from .types import EvidenceDigest, YearMonth, canonical, digest, evidence_digest_bytes, sum_fen
 
 WORKBOOK_NAME = "银行批量代发.xlsx"
@@ -390,7 +391,10 @@ class Exports:
                 } | {"amount_fen": 0, "sources": []}
             grouped[key]["amount_fen"] = sum_fen((grouped[key]["amount_fen"], source["amount_fen"]))
             grouped[key]["sources"].append(source)
-        rows = [grouped[key] for key in sorted(grouped)]
+        rows = sorted(
+            grouped.values(),
+            key=lambda row: (pinyin_key(row["name"]), pinyin_key(row["category"]), row["party_id"]),
+        )
         if len(rows) > 2000:
             raise KernelError("payment_export_too_large", "银行每个文件最多支持2000条代发记录")
         result = {

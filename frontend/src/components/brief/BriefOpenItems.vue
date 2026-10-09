@@ -11,13 +11,14 @@ const route = useRoute(), expandedItemId = ref(""), selectedCategoryKey = ref(""
 const isClosed = computed(() => props.periodStatus === "closed");
 const visibleCategories = computed(() => props.openItems.categories.filter(category => category.count).map(category => ({ ...category, items: props.items.filter(item => item.category_key === category.key) })));
 const selectedCategory = computed(() => visibleCategories.value.find(category => category.key === selectedCategoryKey.value) ?? null);
+const categoryNeedsMore = computed(() => !!selectedCategory.value && new Set(selectedCategory.value.items.map(item => item.group_key)).size < selectedCategory.value.group_count);
 function canExpand(_item: BriefOpenDisplayGroup) { return true; }
 function toggleItem(item: BriefOpenDisplayGroup, event: Event) {
   if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("button, a, .group-members")) return;
   expandedItemId.value = expandedItemId.value === item.group_key ? "" : item.group_key;
 }
 function itemKeydown(item: BriefOpenDisplayGroup, event: KeyboardEvent) { if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) { event.preventDefault(); toggleItem(item, event); } }
-function categoryLabel(label: string) { return isClosed.value ? label.replace(/^待收回/, "应收").replace(/^待收/, "应收").replace(/^待付/, "应付") : label; }
+function categoryLabel(label: string) { return isClosed.value ? label.replace(/^待缴税费/, "应付税费").replace(/^待收回/, "应收").replace(/^待收/, "应收").replace(/^待付/, "应付") : label; }
 function outstandingLabel(direction: "receivable" | "payable", key?: string) { if (key === "supplier_advances") return isClosed.value ? "关账时待冲抵" : "待冲抵"; return isClosed.value ? direction === "receivable" ? "应收" : "应付" : direction === "receivable" ? "待收" : "待付"; }
 function openStateLabel(direction: "receivable" | "payable", item: BriefOpenDisplayGroup) {
   const status = item.current_status || item.status, prefix = item.current_status ? "当前" : isClosed.value ? "关账时" : "";
@@ -122,6 +123,7 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
             <BriefGroupMembers section="open_items" :group-key="item.group_key" :expanded="expandedItemId === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :voucher-index="voucherIndex" :open-summary="openItems" :direction="selectedCategory.direction" :period-closed="isClosed" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
           </li>
         </ul>
+        <slot name="pagination" :needs-more="categoryNeedsMore" />
       </section>
     </div>
     <p v-else-if="openItems.complete !== false" class="empty">

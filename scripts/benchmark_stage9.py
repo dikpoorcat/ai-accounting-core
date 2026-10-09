@@ -140,7 +140,7 @@ def main():
         # It holds no transaction and avoids repeatedly rebuilding the WAL index
         # between independent production write commands during sample creation.
         connections = ExitStack()
-        connections.enter_context(engine.store.connection(read_only=True))
+        connections.enter_context(book.construction_wal_keeper())
         atexit.register(connections.close)
         report.update(book.describe())
         if args.defer_historical_verification:

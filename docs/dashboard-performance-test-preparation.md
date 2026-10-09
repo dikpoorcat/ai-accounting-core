@@ -1,51 +1,107 @@
-# 看板规模与压力测试准备
+<!-- @format -->
 
-准备入口为 `scripts/prepare_stage9_suite.py`。它构造可复用的合成样本，分别保存构造、复制、独立完整核验及浏览器烟雾检查结果；不运行正式30次热刷新，不作500ms达标结论。验收方法与完成边界以[看板性能优化规范](performance-optimization.md)为准。
+# 看板性能测量样本准备
 
-## 样本矩阵
+本文记录可复用的合成规模样本、构造来源和后续浏览器测量方式。样本用于隔离性能观察，不代表真实企业账簿，也不构成正式性能验收结果。
 
-| 样本 | 人员或登记对象 | 每月业务 | 月数 | 用途 |
-| --- | ---: | ---: | --- | --- |
-| 累计依赖与独立业务混合 | 50名员工 | 1,000笔 | 12／48／120 | 主规模验收 |
-| 当月独立业务配对 | 50个登记对象 | 1,000笔 | 12／48／120 | 独立分布对照 |
-| 累计依赖压力 | 200名员工 | 5,000笔 | 12 | 压力诊断 |
+## 本轮准备结果
 
-混合样本通过内核登记工资、税务、资金、资产、借款、跨月清偿、开放期替换与闭期更正，保全原件、逐行资料处置、月度清单、采用及冻结历史。独立对照也通过实际登记、发布、银行核对和资料处置构造。每库只含一家合成公司，最后一个月开放、此前月份关闭。
+本轮构造 ledger 为 `.tmp/stage9-preparation-20261009-recovery2-preparation.json`，状态为 `ready`，七个样本均为 `verified`。实际 Python 进程退出回执为 `.tmp/stage9-preparation-20261009-recovery2-process-exit.json`，退出码为 0。各样本的核验报告按 `.tmp/stage9-preparation-20261009-recovery2-{key}-verified.json` 命名。
 
-12→48→120个月递增构造，在12与48个月边界复制独立样本；最终120个月本体保留，避免再保存两份相同的大库。复制只改变目标目录与checkpoint中的公司数据库位置，逐表核对原始行和实际SQL；不重算业务，不修改源，不继承核验资格。200人压力样本独立构造。所有根、报告和日志都是仓库 `.tmp` 的 `stage9-` 直属路径，与当前资料库及5173服务隔离。
+固定源码快照位于 `.tmp/stage9-preparation-source-20261008-ready`，共 807 个文件，完整源码指纹为 `6cb3baa880427973d5d8e90f533cd9ab401158acfeb3ef51b9637e3b53800afb`。本轮最终交付审计报告为 `.tmp/stage9-recovery2-delivery-evidence-20261009-r2.json`，真实进程退出回执为 `.tmp/stage9-recovery2-delivery-evidence-20261009-r2.json.actual-exit.json`；审计退出码为 0。该审计核对已保存的报告、来源、退出回执、源码及兼容性链，没有重跑完整核验，报告字段 `qualification_database_rows_rescanned` 为 `false`。
 
-## 准备命令
+准备格式 watcher 基线为 revision 15，215 个文件，guard 为 0。该状态只记录格式检查，不代替样本核验或交付审计。最后一处多分项说明前缀变化仅做精确静态差异桥，没有重复动态读取；各批次的测试范围在交付证据中分别保留。
 
-使用仓库 `.tmp-kernel-venv/Scripts/python.exe`。Node和Playwright路径使用本机已安装或工作区依赖提供的实际路径，不安装新依赖。下面的源码快照与run-id必须是本轮新的名字；已有产物不能覆盖。
+| Sample key | 样本根目录 | 核验报告 | 规模与用途 |
+|---|---|---|---|
+| `main12` | `.tmp/stage9-preparation-20261008-ready-main12` | `.tmp/stage9-preparation-20261009-recovery2-main12-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
+| `main48` | `.tmp/stage9-preparation-20261008-ready-main48` | `.tmp/stage9-preparation-20261009-recovery2-main48-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
+| `main120` | `.tmp/stage9-preparation-20261008-ready-main120` | `.tmp/stage9-preparation-20261009-recovery2-main120-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
+| `independent12` | `.tmp/stage9-preparation-20261008-ready-independent12` | `.tmp/stage9-preparation-20261009-recovery2-independent12-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
+| `independent48` | `.tmp/stage9-preparation-20261008-ready-independent48` | `.tmp/stage9-preparation-20261009-recovery2-independent48-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
+| `independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
+| `pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12-verified.json` | 200 人、每月 5,000 笔；压力诊断样本 |
+
+上述样本根目录和核验报告路径均来自 ready ledger。旧的 101 月和 62 月中断现场保留作历史排查，不属于完整样本，不纳入本矩阵。
+
+准备入口为 `scripts/prepare_stage9_suite.py`，构造、复制、独立核验和浏览器烟雾分别保存报告及日志。主库和独立业务库按 12→48→120 月递增，在完整月份检查点保存边界副本，随后分别独立完整核验。压力样本单独构造。每库只含一家合成公司，最后一个月开放、此前月份关闭。复制时只调整目标位置及 checkpoint 中的数据库位置，并逐表比对原始行和 SQL；不重算业务，也不继承核验资格。续建副本先通过标准连接初始化 WAL，再持有无事务的只读保活连接；核验进程继续只读。样本根、报告和日志位于仓库 `.tmp` 下，与当前资料库及 5173 服务隔离。
+
+准备入口的 `all` 阶段先对两个两月小库进行构造、复制、独立完整核验和五页默认刷新烟雾，再准备七个完整样本并完成各库核验及开放月预览。烟雾使用 3 次 warmup 和 1 次诊断，不作为正式性能达标结论。`plan`、`smoke`、`build`、`verify` 可分阶段运行。成功阶段可在同一固定源码快照下续做；失败产物和日志保留，不自动删除、覆盖或修补部分月份。源码变化时应另存完整快照，不回写旧快照或旧资格报告。验收口径见[看板性能优化规范](performance-optimization.md)。
+
+## 已有浏览器烟雾与适用范围
+
+双小库两个月、五页面烟雾测量已技术完成，使用 3 次 warmup 和 1 次诊断；报告分别为 `.tmp/stage9-preparation-20261008-ready-smoke-main-browser.json` 与 `.tmp/stage9-preparation-20261008-ready-smoke-independent-browser.json`。已声明的 `over_target` 退出1仅表示诊断超500ms，五页完整且无技术失败才算烟雾完成；不能把它称为性能通过。七个完整规模样本均由本轮独立新进程完成注册完整核验及开放月预览。
+
+正式 30 次刷新测量和 500 ms 验收尚未执行。当前工作区兼容性证据覆盖215个相关文件的精确审查、30项持久依赖原字节对照、双小库预览和指定分组读取及费用标题检查；批量付款、单凭证多事项、期初工资付款等分支未动态覆盖，不能据此声称最新源码已完成七库完整核验或所有入口验证。测量最新代码时，先保存新的 release/source，再用已有 `--book-report` 指向这些库，配合新 `--source` 和新 `--qualify-output`，让测量入口先核验、后计时。不得改写旧资格报告。
+
+## 新一轮样本准备
+
+需要新的业务分布或重新构造整组样本时，使用新的 run-id 和源码目录，不覆盖现有产物。本机依赖路径沿用下方已验证的 Node 与 Playwright 路径。
 
 ```powershell
-# 正式静态构建包含合同检查和类型检查。
 npm --prefix frontend run build:release
-
-# 固定当前源码、合成构造器、测量工具、生成合同和正式静态资源。
-$testRun = 'preparation-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+if ($LASTEXITCODE -ne 0) { throw 'release 构建失败' }
+$testRun = 'preparation-' + (Get-Date -Format 'yyyyMMdd-HHmmssfff')
 $testSource = '.tmp/stage9-' + $testRun + '-source'
-& '.tmp-kernel-venv/Scripts/python.exe' 'scripts/snapshot_stage9_source.py' `
-  --target $testSource
-
-# 替换为已验证的本机实际路径。
-$testNode = 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
-$testPlaywright = 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'
+& '.tmp-kernel-venv/Scripts/python.exe' 'scripts/snapshot_stage9_source.py' --target $testSource
+if ($LASTEXITCODE -ne 0) { throw '源码快照失败' }
 & '.tmp-kernel-venv/Scripts/python.exe' 'scripts/prepare_stage9_suite.py' `
-  --source $testSource --run-id $testRun `
-  --node $testNode --playwright-module $testPlaywright --phase all
+  --source $testSource --run-id $testRun --phase all `
+  --node 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe' `
+  --playwright-module 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'
 ```
 
-`all`先对两个2月小库执行构造、复制、独立完整核验和五页默认刷新烟雾检查，再构造七个完整样本，最后逐库运行注册完整核验与真实开放月预览。烟雾每页预热3次、诊断刷新1次，保留逐次记录及超500ms结果；这不作性能达标结论，已声明的`over_target`退出1只算技术完成，其他失败或不完整五页不能通过。移动布局、展开交互与正式30次计时分别执行。也可顺序使用 `plan`、`smoke`、`build`、`verify` 分开执行。准备报告保存每个子进程的日志路径、实际退出码、耗时和失败原因。构造使用测试专用的历史核验延后机制；其输出始终为 `built_not_verified`，只有后续独立进程的完整核验及预览成功才标为 `verified`。双分布烟雾与七库核验全部成功才为 `ready`；仅七库核验完成为`samples_verified`。
+## 后续单样本 30 次测量
 
-成功步骤可以在同一固定源码下继续使用。失败的输出与日志保留；不自动删除、覆盖或修复部分月份。若中途失败，先检查保存的报告、stderr与完整月份checkpoint，再明确恢复范围或选择新的run-id。源码变化时重新保存完整快照，不回写原快照或旧资格。
+下面命令只供后续复制执行。本次准备没有运行它。将 `$sampleKey` 设为表中的一个键；命令从 ledger 读取对应的核验报告和固定源码快照，并为输出、标准输出、标准错误及真实进程退出码生成新的时间戳文件。
 
-## 后续测量与复用
+```powershell
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+$workspace = 'D:/GitHub/ai-accounting-core'
+$ledgerPath = Join-Path $workspace '.tmp/stage9-preparation-20261009-recovery2-preparation.json'
+$ledger = Get-Content -Raw $ledgerPath | ConvertFrom-Json
+$sampleKey = 'main12' # 改为 main48、main120、independent12、independent48、independent120 或 pressure12
+$sample = $ledger.samples.$sampleKey
+if ($null -eq $sample -or $sample.status -ne 'verified') { throw "样本不可用或未核验：$sampleKey" }
 
-准备报告的 `samples.<样本>.book_report` 指向已完成独立核验的报告，`source`指向该次固定实现。正式浏览器入口为 `scripts/benchmark_stage9_browser.py`，默认使用release静态资源并绑定随机端口隔离常驻服务；不会重启当前服务。对每个样本传入其 `--book-report`、`--source`、新 `--output`、实际Node与Playwright路径，使用 `--warmups 3 --repeats 30`。
+$source = [string]$ledger.source
+$bookReport = [string]$sample.book_report
+$python = Join-Path $workspace '.tmp-kernel-venv/Scripts/python.exe'
+$browserScript = Join-Path $source 'scripts/benchmark_stage9_browser.py'
+$node = 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
+$playwright = 'C:/Users/MD01/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'
 
-建库、核验、构建和插桩结束后才进入纯计时窗口。默认五页主数字、20条明细及默认附属内容连续两帧稳定才算热刷新完成；已选模块、展开详情、筛选、直跳、续页、冷启动和公司切换分别记录。逐次成功、失败、超时、慢样本及实际退出保留，P50/P95采用nearest-rank。压力档超500ms保留为诊断，不能混入主规模承诺。
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmssfff'
+$stem = ".tmp/stage9-browser-$sampleKey-$stamp"
+$output = Join-Path $workspace "$stem.json"
+$stdout = Join-Path $workspace "$stem.stdout.txt"
+$stderr = Join-Path $workspace "$stem.stderr.txt"
+$receipt = Join-Path $workspace "$stem-process-exit.json"
+foreach ($path in @($output, $stdout, $stderr, $receipt)) {
+  if (Test-Path -LiteralPath $path) { throw "输出已存在：$path" }
+}
 
-构造期间对照固定源码与正在开发的代码，关注实际数据库结构、业务事实和结果合同、冻结历史解码、检查点与恢复格式。发现新变化使既有样本无法读取或核验时，立即停止构造、保留现场并报告具体差异，不改写指纹或旧记录。仅页面响应版本变化时，检查新前后端是否配套，并验证旧业务库可读；不因此重建样本。
+& $python $browserScript `
+  --workspace $workspace `
+  --source $source `
+  --book-report $bookReport `
+  --output $output `
+  --node $node `
+  --playwright-module $playwright `
+  --static-build release `
+  --warmups 3 `
+  --repeats 30 `
+  1> $stdout 2> $stderr
+$actualExitCode = $LASTEXITCODE
+[ordered]@{
+  sample_key = $sampleKey
+  output = $output
+  stdout = $stdout
+  stderr = $stderr
+  actual_process_exit_code = $actualExitCode
+} | ConvertTo-Json | Set-Content -Encoding utf8 $receipt
+if ($actualExitCode -ne 0) { throw "浏览器测量进程退出码为 $actualExitCode；回执：$receipt" }
+```
 
-业务或测量实现变化时，旧 `ready` 只证明准备时的源码与样本。采用新固定源码测量已有样本，应使用浏览器入口的 `--qualify-output` 产生新的独立核验报告；不得仅修改旧报告的source、状态或指纹。需要构造新分布时用新根，不向既有资格样本写入。保留源码、样本与原始结果供后续对照，清理只按实际授权处理。
+该命令使用本轮固定 source 和对应核验样本，结果只说明该快照的测量。若目标改为最新代码，使用新 release/source 内的浏览器脚本及已有样本的 `--book-report`，并加入 `--qualify-output <新的资格结果路径>`；不能把旧快照结果标记为最新源码的核验结果。

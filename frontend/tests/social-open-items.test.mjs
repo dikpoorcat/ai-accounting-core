@@ -11,8 +11,8 @@ test("contribution details separate formal employee identities and payroll month
   assert.equal(groups.length, 3); assert.deepEqual(raw, before, "detail grouping never rewrites formal source records");
   assert.equal(groups[0].contributionMembers[0], raw[0]); assert.equal(groups[2].payroll_period, "2026-08");
 });
-test("four fixed components leave missing original and paid amounts unknown", () => {
-  const rows = progress([item("only")]); assert.equal(rows.length, 4);
+test("two fixed components per matter leave missing original and paid amounts unknown", () => {
+  const rows = progress([item("only")]); assert.equal(rows.length, 2);
   assert.equal(rows[0].present, true); assert.equal(rows[0].sourceAmountFen, "10000");
   for (const row of rows.filter(row => !row.present)) {
     assert.equal(row.sourceAmountFen, null); assert.equal(row.paidFen, null); assert.equal(row.otherSettledFen, null); assert.equal(row.outstandingFen, null); assert.equal(row.currentOutstandingFen, null); assert.equal(row.changed, false);
@@ -37,4 +37,14 @@ test("latest progress detects each obligation's change even when component total
   const changed = rows.filter(row => row.changed); assert.equal(changed.length, 1); assert.equal(changed[0].outstandingFen, changed[0].currentOutstandingFen); assert.equal(changed[0].currentStatus, "over_settled");
   assert.equal(rows.find(row => row.component === "employer_social").changed, false);
   assert.equal(progress([item("missing-current", { current_status: null, current_outstanding_fen: null })])[0].changed, false);
+});
+
+
+test("social and housing stay separate for the same employee and payroll month", () => {
+  const groups = groupContributionMembers([item("social"), item("housing", { contribution_component: "employee_housing" })]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.map(group => group.contributionMatter), ["social", "housing"]);
+  assert.deepEqual(contributionProgressRows(groups[0]).map(row => row.component), ["employee_social", "employer_social"]);
+  assert.deepEqual(contributionProgressRows(groups[1]).map(row => row.component), ["employee_housing", "employer_housing"]);
+  assert.notEqual(groups[0].id, groups[1].id);
 });

@@ -211,14 +211,19 @@ def test_owner_default_activity_page_keeps_complete_monthly_expense(bank_book):
     assert groups[0]["member_count"] == groups[0]["amount_fen"] == 21
     assert result["activity_count"] == 21
     members = dashboard.brief_group(
-        "2026-09", section="activity", group_key=groups[0]["group_key"],
+        "2026-09",
+        section="activity",
+        group_key=groups[0]["group_key"],
         expected_version=response["snapshot_version"],
     )["data"]["collections"]["members"]
     assert len(members["items"]) == 20
     assert members["page"]["total_count"] == 21 and members["page"]["has_more"]
     following = dashboard.brief_group(
-        "2026-09", section="activity", group_key=groups[0]["group_key"],
-        expected_version=response["snapshot_version"], cursor=members["page"]["next_cursor"],
+        "2026-09",
+        section="activity",
+        group_key=groups[0]["group_key"],
+        expected_version=response["snapshot_version"],
+        cursor=members["page"]["next_cursor"],
     )["data"]["collections"]["members"]
     assert len(following["items"]) == 1 and not following["page"]["has_more"]
     assert result["position"]["month_revenue_fen"] == 0
@@ -305,7 +310,9 @@ def test_unpublished_or_missing_inventory_is_not_complete(bank_book):
     assert group["date_from"] is group["date_to"] is None
     assert group["has_month_recognition"]
     member = dashboard.brief_group(
-        "2026-09", section="activity", group_key=group["group_key"],
+        "2026-09",
+        section="activity",
+        group_key=group["group_key"],
     )["data"]["collections"]["members"]["items"][0]
     assert member["date"] is None
     assert member["recognition"]["precision"] == "month"
@@ -373,7 +380,9 @@ def test_reviewed_no_impact_source_keeps_number_and_displays_new_evidence(engine
     assert diagnostic["evidence"] == [proof]
     group = data["collections"]["activity"]["items"][0]
     member = dashboard.brief_group(
-        "2026-01", section="activity", group_key=group["group_key"],
+        "2026-01",
+        section="activity",
+        group_key=group["group_key"],
     )["data"]["collections"]["members"]["items"][0]
     assert member["voucher_version_id"] == diagnostic["voucher_version_id"]
 
@@ -460,13 +469,16 @@ def test_payroll_open_items_show_the_employee_for_every_payroll_component(payrol
     }
     assert by_component["employee_social"]["creditor_id"] is None
     assert by_component["employee_social"]["field_sources"]["party"]["id"] == profile["id"]
-    social = next(item for item in payroll_items if item["description"] == "社保与公积金")
+    social = next(item for item in payroll_items if item["description"] == "社保")
     assert social["member_count"] == 2
     contributions = Dashboard(company.engine).brief_group(
-        "2026-01", section="open_items", group_key=social["group_key"],
+        "2026-01",
+        section="open_items",
+        group_key=social["group_key"],
     )["data"]["collections"]["members"]["items"]
     assert {item["contribution_component"] for item in contributions} == {
-        "employee_social", "employer_social"
+        "employee_social",
+        "employer_social",
     }
     assert {item["payroll_period"] for item in contributions} == {"2026-01"}
     assert len({item["contribution_group_key"] for item in contributions}) == 1
@@ -480,7 +492,9 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
     company.publish("bonus")
-    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
+    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")[
+        "data"
+    ]["collections"]["employees"][
         "items"
     ][0]
     assert employee["annual_bonus_fen"] == 3000000
@@ -490,16 +504,18 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
     assert employee["has_annual_bonus"]
 
 
-def test_opening_contributions_keep_four_obligations_and_form_one_prior_month_group(opening_book):
+def test_opening_contributions_keep_four_obligations_and_form_two_prior_month_matters(opening_book):
     engine, save, _, package, _ = opening_book
     members = complete_members(save)
     wage = next(fields for kind, _, fields in members if kind == "opening_payroll_payable")
     members = [member for member in members if member[0] != "opening_payroll_payable"]
     components = ("employee_social", "employer_social", "employee_housing", "employer_housing")
     members.extend(
-        ("opening_payroll_payable", component, {
-            **wage, "component": component, "outstanding_fen": 12_500
-        })
+        (
+            "opening_payroll_payable",
+            component,
+            {**wage, "component": component, "outstanding_fen": 12_500},
+        )
         for component in components
     )
     package(members)
@@ -509,26 +525,41 @@ def test_opening_contributions_keep_four_obligations_and_form_one_prior_month_gr
     items = list(collection["items"])
     while collection["page"]["has_more"]:
         collection = Dashboard(engine).brief(
-            "2026-01", section="open_items", limit=2, cursor=collection["page"]["next_cursor"],
+            "2026-01",
+            section="open_items",
+            limit=2,
+            cursor=collection["page"]["next_cursor"],
             expected_version=response["snapshot_version"],
         )["data"]["collections"]["open_items"]
         items.extend(collection["items"])
-    social_groups = [item for item in items if item["description"] == "社保与公积金"]
-    assert len(social_groups) == 1 and social_groups[0]["member_count"] == 4
-    group_key = social_groups[0]["group_key"]
-    member_collection = Dashboard(engine).brief_group(
-        "2026-01", section="open_items", group_key=group_key, limit=2,
-        expected_version=response["snapshot_version"],
-    )["data"]["collections"]["members"]
-    contributions = list(member_collection["items"])
-    assert len(contributions) == 2 and member_collection["page"]["has_more"]
-    following = Dashboard(engine).brief_group(
-        "2026-01", section="open_items", group_key=group_key, limit=2,
-        cursor=member_collection["page"]["next_cursor"],
-        expected_version=response["snapshot_version"],
-    )["data"]["collections"]["members"]
-    contributions.extend(following["items"])
-    assert not following["page"]["has_more"]
+    contribution_groups = [item for item in items if item["description"] in {"社保", "公积金"}]
+    assert {item["description"] for item in contribution_groups} == {"社保", "公积金"}
+    assert all(item["member_count"] == 2 for item in contribution_groups)
+    contributions = []
+    for group in contribution_groups:
+        member_collection = Dashboard(engine).brief_group(
+            "2026-01",
+            section="open_items",
+            group_key=group["group_key"],
+            limit=1,
+            expected_version=response["snapshot_version"],
+        )["data"]["collections"]["members"]
+        members = list(member_collection["items"])
+        assert len(members) == 1 and member_collection["page"]["has_more"]
+        following = Dashboard(engine).brief_group(
+            "2026-01",
+            section="open_items",
+            group_key=group["group_key"],
+            limit=1,
+            cursor=member_collection["page"]["next_cursor"],
+            expected_version=response["snapshot_version"],
+        )["data"]["collections"]["members"]
+        members.extend(following["items"])
+        assert not following["page"]["has_more"]
+        family = "social" if group["description"] == "社保" else "housing"
+        assert all(item["contribution_component"].endswith(family) for item in members)
+        assert sum(item["outstanding_fen"] for item in members) == group["outstanding_fen"]
+        contributions.extend(members)
     assert len(contributions) == 4
     assert {item["contribution_component"] for item in contributions} == set(components)
     assert {item["payroll_period"] for item in contributions} == {"2025-12"}
@@ -554,7 +585,9 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
     company.save(payment(), "salary-payment")
     company.publish("salary-payment")
-    february = dashboard.employees("2026-02", employee_filter="all")["data"]["collections"]["employees"]["items"][0]
+    february = dashboard.employees("2026-02", employee_filter="all")["data"][
+        "collections"
+    ]["employees"]["items"][0]
     assert february["recorded_net_payments_fen"] == 907400
     assert dashboard.funds("2026-02")["data"]["outflow_fen"] == 907400
     january = dashboard.brief("2026-01")["data"]["open_items"]
@@ -637,7 +670,12 @@ def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_compa
         "open_items"
     ]["items"]
     fields = (
-        "group_key", "outstanding_fen", "source_amount_fen", "member_count", "party", "description",
+        "group_key",
+        "outstanding_fen",
+        "source_amount_fen",
+        "member_count",
+        "party",
+        "description",
     )
     assert [tuple(item[field] for field in fields) for item in corrected_items] == [
         tuple(item[field] for field in fields) for item in frozen_items
@@ -798,11 +836,18 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
     ]["collections"]["assets"]["items"]
     assert all(item["acquisition_date"] is None for item in february_assets)
     assert all(item["settlement_scope"] == "本验收批次结算" for item in february_assets)
-    assert all(item["payment_summary"] == {
-        "obligation_count": 2, "checking": False,
-        "amount_fen": 150000, "paid_fen": 0,
-        "other_settled_fen": 0, "remaining_fen": 150000,
-    } for item in february_assets)
+    assert all(
+        item["payment_summary"]
+        == {
+            "obligation_count": 2,
+            "checking": False,
+            "amount_fen": 150000,
+            "paid_fen": 0,
+            "other_settled_fen": 0,
+            "remaining_fen": 150000,
+        }
+        for item in february_assets
+    )
     preview = batches.prepare_consumption_month("2026-03", **options)
     batches.confirm_consumption_month(
         "2026-03",
@@ -906,7 +951,9 @@ def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book)
         },
     )
     commit("old-wage-payment")
-    data = Dashboard(book).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"]
+    data = Dashboard(book).employees("2026-01", employee_filter="all")["data"][
+        "collections"
+    ]["employees"]
     assert data["items"][0]["recorded_net_payments_fen"] == 50000
     assert not data["items"][0]["has_payroll_activity"]
     assert data["items"][0]["gross_salary_fen"] == 0

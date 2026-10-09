@@ -55,6 +55,7 @@ from .provenance import recorded_times
 from .query_reads import QueryReads
 from .query_semantics import classify_financial_position, report_party_splits
 from .reports import Reports, _workbook_name
+from .text_sort import pinyin_key
 from .types import ActualDate, YearMonth, canonical, digest
 
 EmployeeFilter = Literal[
@@ -235,6 +236,12 @@ def _group(kind, reversal=False, *, creditor_kind=None, settlement_sources=(), d
 
 def _settlement_group(kind, *, creditor_kind=None, obligation_name=None, nature=None,
                       payer_kind=None):
+    if kind in PAYROLL_KINDS | LABOR_KINDS | {"labor_project_cost", "opening_payroll_payable"}:
+        from .dashboard_matters import obligation_matter
+
+        matter = obligation_matter(kind, obligation_name)
+        if matter is not None and matter.category == "tax":
+            return "tax"
     # Acceptance records describe an asset/deposit; paying their personal
     # creditor is reimbursement. A deposit refund retains its deposit meaning.
     if kind in {"reimbursed_asset", "reimbursed_asset_batch"} or (
@@ -711,7 +718,7 @@ class _Snapshot:
             }
         if ident in self.tax_identities:
             candidates = self.tax_identity_candidates[ident]
-            names = sorted({fact["data"]["name"] for fact in candidates})
+            names = sorted({fact["data"]["name"] for fact in candidates}, key=pinyin_key)
             if len(names) > 1:
                 return {
                     "name": "、".join(names) + "（姓名资料待核对）",
@@ -963,7 +970,7 @@ class _Snapshot:
             )
         return sorted(
             (self.evidence_cache[p] for p in set(proofs) if p in self.evidence_cache),
-            key=lambda item: (item["name"], item["digest"]),
+            key=lambda item: (pinyin_key(item["name"]), item["digest"]),
         )
 
     @staticmethod
@@ -1165,7 +1172,7 @@ class _Snapshot:
             if include_parties and i and i != "payroll-group"
             and self.party_details(i).get("source")
         ]
-        names = [party["name"] for party in named_parties]
+        names = sorted((party["name"] for party in named_parties), key=pinyin_key)
         # Preserve different identities even when their display names happen to be equal.
         who = "、".join(names[:3]) + (f"等{len(names)}个对象" if len(names) > 3 else "")
         when = "、".join(sorted(periods)) if periods else period
@@ -1414,7 +1421,10 @@ class _Snapshot:
                 item["recipient_id"] for item in data.get(field, ()) if item.get("recipient_id")
             )
         party_ids.discard("payroll-group")
-        parties = list(dict.fromkeys(self.party(ident) for ident in sorted(party_ids)))
+        ordered_parties = sorted(
+            party_ids, key=lambda ident: (pinyin_key(self.party(ident)), ident)
+        )
+        parties = list(dict.fromkeys(self.party(ident) for ident in ordered_parties))
         amount, amount_label = self.business_amount(calc)
         funds = []
         for index, effect in enumerate(calc["outcome"].get("balances", ())):
@@ -1465,7 +1475,7 @@ class _Snapshot:
             },
             "recognition": recognition,
             "party_sources": [
-                {"party_id": ident, **self.party_details(ident)} for ident in sorted(party_ids)
+                {"party_id": ident, **self.party_details(ident)} for ident in ordered_parties
             ],
             "source_references": [
                 {"type": "evidence", "value": proof} for proof in fact["evidence"]
@@ -1795,7 +1805,7 @@ class Dashboard:
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 17}
+                return {**self._response(None, None), "schema_version": 18}
             self._check_page_version(snap, cursor, expected_version)
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
@@ -1811,7 +1821,7 @@ class Dashboard:
             grouped_activity = activity_group_page(
                 snap, after=after if section == "activity" else None, limit=limit,
             ) if section in {None, "activity"} else None
-            summaries, _, _ = activity_groups(snap)
+            summaries, group_members, _ = activity_groups(snap)
             if section == "vouchers":
                 rows, page = snap.month_journal.page(after or 0, limit, include_lines=True)
             else:
@@ -1839,7 +1849,10 @@ class Dashboard:
                  if item["voucher_version_id"] == focused_row["id"]), None,
             ) if focused_row else None
             vouchers = displayed_vouchers[:len(rows)]
-            _, counts = snap.activity_classification
+            counts = defaultdict(int)
+            for key, entries in group_members.items():
+                for entry in entries:
+                    counts[summaries[key]["group"], entry["row"]["basis_kind"]] += 1
             groups = [
                 {"key": key, "label": label,
                  "event_count": sum(count for (group, _), count in counts.items() if group == key),
@@ -1954,7 +1967,7 @@ class Dashboard:
             return {**self._response(snap, seal_collections(
                 snap, "brief", data, {}, sort_profiles={"vouchers": voucher_sort}
             )),
-                    "schema_version": 17}
+                    "schema_version": 18}
 
     def brief_group(
         self, period: str | None = None, *, section: Literal["activity", "open_items"],
@@ -2001,7 +2014,7 @@ class Dashboard:
                     "vouchers": {"items": vouchers, "page": voucher_page},
                 },
             }
-            return {**self._response(snap, data), "schema_version": 2}
+            return {**self._response(snap, data), "schema_version": 3}
 
     def funds(
         self,
@@ -2288,15 +2301,15 @@ class Dashboard:
         as_of: str | None = None,
         settlement_view: Literal["historical", "current"] = "current",
         voucher_version_id: str | None = None,
-        detail_scope_category: str | None = None,
+        detail_scope_key: str | None = None,
     ):
         validate_page("business-status", section, cursor, limit)
         if settlement_view not in {"historical", "current"}:
             raise KernelError("invalid_command", "清偿口径须为 historical 或 current")
-        if (voucher_version_id is None) != (detail_scope_category is None):
-            raise KernelError("invalid_command", "分类明细须同时提供精确凭证和业务类别")
-        if voucher_version_id == "" or detail_scope_category == "":
-            raise KernelError("invalid_command", "分类明细身份不能为空")
+        if (voucher_version_id is None) != (detail_scope_key is None):
+            raise KernelError("invalid_command", "事项明细须同时提供精确凭证和分项身份")
+        if voucher_version_id == "" or detail_scope_key == "":
+            raise KernelError("invalid_command", "事项明细身份不能为空")
         with self._snapshot(period) as snap:
             self._check_page_version(snap, cursor, expected_version)
             component, scoped_row = None, None
@@ -2309,10 +2322,10 @@ class Dashboard:
                 scoped_row = rows[0]
                 component = next((
                     item for item in snap.activity_components.get(voucher_version_id, ())
-                    if item["source_category"] == detail_scope_category
+                    if item["key"] == detail_scope_key
                 ), None)
                 if component is None:
-                    raise KernelError("invalid_command", "所选精确凭证没有该业务类别")
+                    raise KernelError("invalid_command", "所选精确凭证没有该事项分项")
             data = snap.queries._business_status(
                 snap.connection,
                 subject_id,
@@ -2329,7 +2342,7 @@ class Dashboard:
             }
             if component is not None:
                 filters.update(voucher_version_id=voucher_version_id,
-                               detail_scope_category=detail_scope_category)
+                               detail_scope_key=detail_scope_key)
             from .dashboard_owner import business_profiles, business_view, scope_business_status
             from .obligation_classification import classify_obligations
 
@@ -2376,7 +2389,7 @@ class Dashboard:
             response = self._response(
                 snap, seal_collections(snap, "business-status", projected, filters)
             )
-            response["schema_version"] = 9
+            response["schema_version"] = 10
             return response
 
     def quarterly_report(
@@ -2603,14 +2616,16 @@ def _brief_activity_row(snap, row):
         data = row["basis"]["fact"]["data"]
         recognition = _recognition(data, str(YearMonth.from_ordinal(row["period"])))
         description = component["description"]
-        if len(parts) == 1:
-            profile = snap.profile("business", row["basis"]["subject_id"])
-            supplied = list(dict.fromkeys(
-                value.strip() for value in (profile.get("purpose"), profile.get("note"))
-                if value and value.strip()
-            ))
-            if supplied:
-                description += "；" + "；".join(supplied)
+        profile = snap.profile("business", row["basis"]["subject_id"])
+        supplied = list(dict.fromkeys(
+            value.strip() for value in (
+                profile.get("purpose"), profile.get("note"),
+                (snap.management.get(row["basis"]["subject_id"]) or {}).get("note"),
+            )
+            if value and value.strip()
+        ))
+        if supplied:
+            description += "；" + ("整单说明：" if len(parts) > 1 else "") + "；".join(supplied)
         return {
             "key": component["key"],
             "group_key": activity_groups(snap)[2][row["id"]][component["key"]],
@@ -2621,7 +2636,7 @@ def _brief_activity_row(snap, row):
             "amount_label": component["amount_label"],
             "state": "更正原业务" if row["sign"] < 0 else "已入账",
             "party": component["party"], "group": component["group"],
-            "detail_scope_category": component["source_category"],
+            "detail_scope_key": component["key"],
         }
     calc = row["basis"]
     relations = snap.voucher_relations(calc, row["sign"])
@@ -2633,6 +2648,13 @@ def _brief_activity_row(snap, row):
         calc, row["sign"], relations, asset_references=assets, include_parties=False
     )
     data = calc["fact"]["data"]
+    from .dashboard_matters import activity_matter
+
+    matter = activity_matter(
+        calc["kind"], data, direction=calc["outcome"]["values"].get("direction"),
+    )
+    if matter is not None:
+        title = ("冲正·" if row["sign"] < 0 else "") + matter.title
     parties = {
         data[field] for field in (
             "employee_id", "person_id", "counterparty_id", "customer_id", "supplier_id",
@@ -2653,15 +2675,16 @@ def _brief_activity_row(snap, row):
 
     group_key = activity_groups(snap)[2][row["id"]][row["id"]]
     return {
-        "key": row["id"], "group_key": group_key, "detail_scope_category": None,
+        "key": row["id"], "group_key": group_key, "detail_scope_key": None,
         "voucher_number": row["number"], "subject_id": calc["subject_id"],
         "voucher_version_id": row["id"],
         "date": recognition["date"], "recognition": recognition,
         "title": title, "description": description,
         "amount_fen": row["sign"] * amount if amount is not None else None,
         "amount_label": label, "state": "更正原业务" if row["sign"] < 0 else "已入账",
-        "party": "、".join(snap.party(ident) for ident in sorted(parties)),
-        "group": snap.activity_classification[0][calc["id"], row["sign"] < 0],
+        "party": "、".join(sorted((snap.party(ident) for ident in parties), key=pinyin_key)),
+        "group": ("correction" if row["sign"] < 0 else matter.category if matter is not None
+                  else snap.activity_classification[0][calc["id"], False]),
     }
 
 
@@ -3867,9 +3890,28 @@ def _employees(
         )
         and (employee_id is None or ident == employee_id)
     ]
+    if not summary_only and "employees" in requested:
+        from .dashboard_sort import _prime_party_metadata, date_object_key
+
+        _prime_party_metadata(snap, filtered_ids)
+
+        def employee_sort_key(ident):
+            start = snap.profile("employee", ident).get("employment_start")
+            return date_object_key(
+                {
+                    "date": start if start and len(start) == 10 else None,
+                    "party": snap.party(ident),
+                    "identities": (ident,),
+                },
+                start[:7] if start else None,
+                ident,
+            )
+
+        filtered_ids.sort(key=employee_sort_key)
     selected_ids, employee_page = page_keys(
         filtered_ids, cursors.get("employees"), limit, total_count=len(known)
     )
+    employee_order = {ident: position for position, ident in enumerate(selected_ids)}
     selected_ids = set(selected_ids) if not summary_only else set()
     if "employees" not in requested:
         selected_ids = set()
@@ -4086,7 +4128,7 @@ def _employees(
                 ),
             }
         )
-    items.sort(key=lambda item: item["employee_id"])
+    items.sort(key=lambda item: employee_order[item["employee_id"]])
     unknown = sum(item["in_period"] is None for item in all_items)
     sums, controlled, ledger, adjustment = _workforce_employee_amounts(snap, aggregates)
     labor_rows, capital_rows, labor_cost, capitalized_labor = _workforce_labor_amounts(snap, rows)
@@ -4094,11 +4136,27 @@ def _employees(
     labor_heads = adopted_head_metadata(
         snap, LABOR_KINDS | {"labor_project_cost"}, posting_period=snap.period
     )
-    labor_identities = verified_scalar_facts(snap, labor_heads) if employee_id is not None else {}
+    order_labor = "labor_sources" in requested and not summary_only
+    labor_identities = (
+        verified_scalar_facts(snap, labor_heads) if employee_id is not None or order_labor else {}
+    )
+    if order_labor:
+        from .dashboard_sort import _prime_party_metadata
+
+        _prime_party_metadata(snap, {data["person_id"] for data in labor_identities.values()})
+    ordered_labor = sorted(
+        labor_heads,
+        key=lambda row: (
+            row["period"],
+            pinyin_key(snap.party(labor_identities[row["fact_id"]]["person_id"]))
+            if order_labor else (),
+            row["subject_id"],
+        ),
+    )
     labor_keys, labor_page = page_keys(
         [
             head["id"]
-            for head in sorted(labor_heads, key=lambda row: (row["period"], row["subject_id"]))
+            for head in ordered_labor
             if employee_id is None or labor_identities[head["fact_id"]]["person_id"] == employee_id
         ],
         cursors.get("labor_sources"),
@@ -4142,7 +4200,10 @@ def _employees(
                 **_people_asset_settlement(snap, calc),
             }
         )
-    labor_items = sorted(labor_items, key=lambda item: (item["period"], item["source_id"]))
+    labor_items = sorted(
+        labor_items,
+        key=lambda item: (item["period"], pinyin_key(item["name"]), item["source_id"]),
+    )
     from .settlement_projection import settlement_labor_outstanding_net
 
     outstanding_wages = None if unestablished_employees else _nullable_sum(
@@ -4664,9 +4725,16 @@ def _assets(
         )
         and (asset_id is None or row["asset_id"] == asset_id)
     ]
+    if not summary_only and "assets" in requested:
+        snap.metadata.prime_profiles("asset", filtered)
+        filtered.sort(key=lambda ident: (
+            pinyin_key(snap.profile("asset", ident).get("display_name") or "未提供资产名称"),
+            ident,
+        ))
     selected, asset_page = page_keys(
         filtered, cursors.get("assets"), limit, total_count=len(all_items)
     )
+    asset_order = {ident: position for position, ident in enumerate(selected)}
     selected = set(selected) if not summary_only and "assets" in requested else set()
     page_calculations = [calc for ident, calc in acquisitions.items() if ident in selected]
     page_calculations.extend(
@@ -4801,7 +4869,7 @@ def _assets(
                 )
             item["disposal" if fixed else "retirement"] = detail
         items.append(item)
-    items.sort(key=lambda item: item["asset_id"])
+    items.sort(key=lambda item: asset_order[item["asset_id"]])
     fixed_items = [item for item in all_items if item["asset_type"] == "fixed"]
     intangible_items = [item for item in all_items if item["asset_type"] == "intangible"]
 

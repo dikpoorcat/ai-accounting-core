@@ -10,6 +10,8 @@ import hashlib
 from collections import defaultdict
 
 from .contracts import KernelError
+from .dashboard_matters import obligation_matter
+from .text_sort import pinyin_key
 from .types import YearMonth, canonical, checked
 
 CONFIGURATIONS = {
@@ -19,19 +21,11 @@ CONFIGURATIONS = {
     "other_receivables": ("其他应收事项", "receivable"),
     "supplier_payables": ("待付供应商款", "payable"),
     "employee_payables": ("待付员工报销款", "payable"),
-    "payroll_payables": ("待付工资、社保与个税", "payable"),
-    "labor_payables": ("待付个人劳务及个税", "payable"),
+    "payroll_payables": ("待付工资与社保公积金", "payable"),
+    "labor_payables": ("待付个人劳务", "payable"),
+    "tax_payables": ("待缴税费", "payable"),
     "other_payables": ("其他应付事项", "payable"),
 }
-CONTRIBUTIONS = frozenset(
-    {
-        "employee_social",
-        "employer_social",
-        "employee_housing",
-        "employer_housing",
-    }
-)
-PAYROLL_MATTER_KINDS = frozenset({"payroll", "payroll_bounded", "opening_payroll_payable"})
 
 
 def _sum(values):
@@ -102,16 +96,9 @@ def _source_headers(snap, sources):
 
 
 def _locators(snap, sources):
-    from .dashboard import LABOR_KINDS, PAYROLL_KINDS
     from .dashboard_sort import fact_sort_scalars
 
-    selected = [
-        row
-        for row in sources
-        if (row.get("source_business") or {}).get("kind")
-        in PAYROLL_KINDS | LABOR_KINDS | {"opening_payroll_payable", "labor_project_cost"}
-    ]
-    headers = _source_headers(snap, selected)
+    headers = _source_headers(snap, sources)
     scalars = fact_sort_scalars(snap, headers.values()) if headers else {}
     return headers, scalars
 
@@ -132,16 +119,13 @@ def _identity(snap, source, scalars, supplements=None):
     supplement = (supplements or {}).get(source["key"])
     if not party_id and supplement is not None:
         party_id = supplement["party_id"]
-    # Payroll source representations refer to the same formal payment matters.
-    # The four contribution components form one employee group across months;
-    # their exact month/component remain on each expanded member.
-    if kind in PAYROLL_MATTER_KINDS:
-        payment_matter = "tax" if component == "withheld_tax" else component
-        if component in CONTRIBUTIONS:
-            payment_matter, description = "contributions", "社保与公积金"
-        matter = ("payroll", payment_matter)
-    else:
-        matter = (kind, component)
+    matter = obligation_matter(kind, component, data=data)
+    if matter is not None:
+        description = matter.title
+    category_key = source["category_key"]
+    if (matter is not None and matter.open_category is not None
+            and CONFIGURATIONS[matter.open_category][1] == source.get("category")):
+        category_key = matter.open_category
     # An obligation with no formal displayed object never borrows a display name
     # or the agency creditor of another employee's contribution as its identity.
     identity = party_id or source["key"]
@@ -149,10 +133,10 @@ def _identity(snap, source, scalars, supplements=None):
         canonical(
             [
                 snap.store.company_id,
-                source["category_key"],
                 source.get("category"),
                 identity,
-                matter,
+                matter.key if matter is not None else None,
+                source["key"] if matter is None or not party_id else None,
             ]
         ).encode("utf-8")
     ).hexdigest()
@@ -163,7 +147,24 @@ def _identity(snap, source, scalars, supplements=None):
         "description": description,
         "component": component,
         "fact_data": data,
+        "category_key": category_key,
     }
+
+
+def _display_categories(value, identities):
+    """Project navigation without rewriting the authenticated source or freeze."""
+    obligations, categories = [], {}
+    for source in value["obligations"]:
+        identity = identities.get(source["key"])
+        key = identity["category_key"] if identity is not None else source["category_key"]
+        source = {**source, "category_key": key}
+        obligations.append(source)
+        if source["remaining_fen"] == 0:
+            continue
+        category = categories.setdefault(key, {"count": 0, "amount": 0})
+        category["count"] += 1
+        category["amount"] = _sum((category["amount"], source["remaining_fen"]))
+    return {**value, "obligations": obligations, "categories": categories}
 
 
 def _data(snap):
@@ -185,6 +186,9 @@ def _data(snap):
     _, scalars = _locators(snap, sources)
     supplements = pass_through_party_supplements(snap, sources)
     identities = {row["key"]: _identity(snap, row, scalars, supplements) for row in sources}
+    historical = _display_categories(historical, identities)
+    current = _display_categories(current, identities)
+    sources = historical["obligations"]
     parties = {value["party_id"] for value in identities.values() if value["party_id"]}
     _prime_party_metadata(snap, parties)
     grouped = defaultdict(list)
@@ -193,10 +197,12 @@ def _data(snap):
     ordered = sorted(
         grouped,
         key=lambda key: (
-            snap.party(identities[grouped[key][0]["key"]]["party_id"])
-            if identities[grouped[key][0]["key"]]["party_id"]
-            else identities[grouped[key][0]["key"]]["missing_party"],
-            identities[grouped[key][0]["key"]]["description"],
+            pinyin_key(
+                snap.party(identities[grouped[key][0]["key"]]["party_id"])
+                if identities[grouped[key][0]["key"]]["party_id"]
+                else identities[grouped[key][0]["key"]]["missing_party"]
+            ),
+            pinyin_key(identities[grouped[key][0]["key"]]["description"]),
             key,
         ),
     )
@@ -375,6 +381,10 @@ def open_group_members(snap, group_key, *, after=None, limit=20):
             fact_data,
             source.get("counterparty_id"),
         )
+        if identity["component"] not in {
+            "employee_social", "employer_social", "employee_housing", "employer_housing",
+        }:
+            description = identity["description"]
         profile = snap.profile("business", business.get("subject_id"))
         supplied = dict.fromkeys(
             value.strip()

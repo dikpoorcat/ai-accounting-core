@@ -2797,7 +2797,7 @@ class Duplicates:
                 )
             from .entity_references import validate_entity_references
 
-            validate_entity_references(connection, fact, subject_id)
+            validate_entity_references(connection, fact, subject_id, store=self.store)
             prepared = DuplicateCandidates(self.store).prepare(
                 connection,
                 subject_id=subject_id,

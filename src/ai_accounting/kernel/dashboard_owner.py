@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from .payroll_confirmation import NO_CHANGE_KIND, PAYROLL_KINDS, PLAN_KINDS
+from .text_sort import pinyin_key
 
 MATERIAL_LABELS = {
     "bank": "银行资料",
@@ -220,6 +221,7 @@ def scope_business_status(value, component, row):
     # adopted category. Object profiles and the precise fund account remain.
     profiles["business"] = {"entity_id": value["identity"]["subject_id"], "values": {}}
     value["detail_scope"] = {
+        "key": component["key"],
         "voucher_version_id": row["id"], "category": component["source_category"],
         "amount_fen": component["amount_fen"], "amount_label": component["amount_label"],
     }
@@ -284,6 +286,9 @@ def business_profiles(snapshot, value, *, fact=None, entity_kinds=None):
                         ident, exact_identity=True
                     )[0]
             result[group].append({"entity_id": ident, "values": profile})
+        result[group].sort(key=lambda item: (
+            pinyin_key(item["values"].get("display_name") or ""), item["entity_id"],
+        ))
     return result
 
 

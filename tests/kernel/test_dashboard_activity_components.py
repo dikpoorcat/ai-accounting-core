@@ -79,7 +79,7 @@ def test_mixed_batch_objects_belong_only_to_their_own_exact_category(book):
     assert all(item["is_batch"] for item in parts)
     response = dashboard.brief(PERIOD, voucher_number=3)
     validate_response("dashboard_brief", response)
-    assert response["schema_version"] == 17
+    assert response["schema_version"] == 18
     data = response["data"]
     assert data["focused_activity"] is None
     assert data["focused_activity_group"] is None
@@ -96,6 +96,8 @@ def test_mixed_batch_objects_belong_only_to_their_own_exact_category(book):
 
 def test_same_people_in_different_bank_batches_keep_independent_display_groups(book):
     engine, save, publish, _ = book
+    profile(engine, "counterparty", "alice", display_name="张三")
+    profile(engine, "counterparty", "bob", display_name="李四")
     for person, amount in (("alice", 1000), ("bob", 2000)):
         _expense(save, publish, "cost-" + person, person, amount, "employee")
     allocations = [
@@ -112,11 +114,13 @@ def test_same_people_in_different_bank_batches_keep_independent_display_groups(b
     assert len({item["group_key"] for item in payment_groups}) == 2
     assert all(item["member_count"] == item["voucher_count"] == 1 for item in payment_groups)
     assert [item["amount_fen"] for item in payment_groups] == [1500, 1500]
+    assert [item["party"] for item in payment_groups] == ["李四、张三", "李四、张三"]
     for subject in ("first-batch", "second-batch"):
         parts = _parts_for(dashboard, subject)
         assert len(parts) == 1
         assert parts[0]["source_category"] == "employee_reimbursement"
-        assert set(parts[0]["identities"]) == {"alice", "bob"}
+        assert parts[0]["identities"] == ("alice", "bob")
+        assert parts[0]["party"] == "李四、张三"
         assert set(parts[0]["slots"]) == {0, 1}
 
 
@@ -158,7 +162,7 @@ def test_explicit_reserve_expense_is_a_separate_component_without_employee_alloc
     data = dashboard.brief("2026-02")["data"]
     assert data["activity_count"] == 2 and data["voucher_count"] == 1
     scopes = {
-        item["detail_scope_category"]
+        item["group"]
         for group in data["collections"]["activity"]["items"]
         for item in dashboard.brief_group(
             "2026-02", section="activity", group_key=group["group_key"],
@@ -263,7 +267,9 @@ def test_closed_mixed_payment_reversal_keeps_original_categories_and_exact_negat
             "2026-10", section="activity", group_key=group["group_key"],
         )["data"]["collections"]["members"]["items"]
     ]
-    assert {_category(item): item["amount_fen"] for item in corrections} == {
+    original_categories = {part["key"]: part["source_category"]
+                           for part in _parts_for(dashboard, "mixed", "2026-10")}
+    assert {original_categories[item["key"]]: item["amount_fen"] for item in corrections} == {
         "expense_supplier": -100, "employee_reimbursement": -100,
     }
     assert data["activity_count"] == 4 and data["voucher_count"] == 2

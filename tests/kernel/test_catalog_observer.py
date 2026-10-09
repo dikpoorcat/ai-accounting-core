@@ -18,6 +18,30 @@ from ai_accounting.kernel.security import IdentityError
 from ai_accounting.kernel.service import LocalService
 
 
+@pytest.mark.parametrize("resident", [False, True])
+def test_company_directory_and_default_context_use_complete_pinyin_order(tmp_path, resident):
+    service = LocalService(tmp_path / "companies", enable_read_pool=resident)
+    try:
+        registered = [
+            service.catalog.create_company(taxpayer_id, name)
+            for taxpayer_id, name in (
+                ("91310000123456789A", "张三公司"),
+                ("91310000123456789B", "王五公司"),
+                ("91310000123456789C", "李四公司"),
+            )
+        ]
+        expected = ["李四公司", "王五公司", "张三公司"]
+        assert [row["name"] for row in service.catalog.companies()] == expected
+        context = service.dashboard_context()
+        assert [row["name"] for row in context["companies"]] == expected
+        assert context["company"] == "李四公司"
+        explicit = service.dashboard_context(registered[0]["id"])
+        assert [row["name"] for row in explicit["companies"]] == expected
+        assert explicit["company"] == "张三公司"
+    finally:
+        service.close()
+
+
 def test_catalog_observer_only_for_resident_and_closes(tmp_path):
     ordinary = LocalService(tmp_path / "ordinary")
     assert ordinary._catalog_observer is None

@@ -332,8 +332,8 @@ function movementPurpose(name: string) {
 }
 function detailScope() {
   const item = props.activityContext;
-  return isActivity.value && item?.detail_scope_category
-    ? { detail_scope_category: item.detail_scope_category, voucher_version_id: item.voucher_version_id } : {};
+  return isActivity.value && item?.detail_scope_key
+    ? { detail_scope_key: item.detail_scope_key, voucher_version_id: item.voucher_version_id } : {};
 }
 function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.refreshGeneration, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, detailScope(), props.fundsContext?.id, props.fundsContext?.account_id, props.voucherContext?.voucher_version_id]); }
 function cacheKey() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.subjectId, props.settlementView ?? "current", detailScope()]); }

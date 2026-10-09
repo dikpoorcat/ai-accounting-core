@@ -11,8 +11,8 @@ import json
 from .content_history_context import source_canonical as canonical
 from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
-from .contracts import KernelError
-from .entities import require_entity
+from .contracts import KernelError, NeedsInformation
+from .entities import profiles_for_entities, require_entity
 
 DECLARATIONS: dict[str, list[dict]] = {}
 
@@ -402,7 +402,8 @@ def verify_fact_entity_types(connection, facts, *, registry):
             )
 
 
-def validate_entity_references(connection, fact, subject_id):
+def validate_entity_references(connection, fact, subject_id, *, store):
+    fact.validate_registration()
     references = references_for(fact, subject_id)
     for item in references:
         if item["reference_type"] == "entity":
@@ -412,7 +413,95 @@ def validate_entity_references(connection, fact, subject_id):
                 kinds=item["kinds"],
                 account_type=item["account_type"],
             )
+    validate_registration_entities(connection, fact, store=store)
     return references
+
+
+def validate_registration_entities(connection, fact, *, store):
+    """Apply current object requirements only to facts being newly adopted."""
+    fact.validate_registration()
+    named_fields = {
+        name: getattr(fact, name)
+        for name, field in type(fact).model_fields.items()
+        if isinstance(field.json_schema_extra, dict)
+        and field.json_schema_extra.get("x-accounting-fact", {}).get("requires_named_entity")
+        and getattr(fact, name) is not None
+    }
+    if named_fields:
+        named_ids, conflicts = _named_entities(connection, set(named_fields.values()), store=store)
+        issues = []
+        for name, entity_id in named_fields.items():
+            if entity_id in named_ids:
+                continue
+            metadata = type(fact).model_fields[name].json_schema_extra["x-accounting-fact"]
+            issues.append({
+                "field": name,
+                "message": (
+                    "最终权利人姓名或名称资料冲突，请核对已有身份来源"
+                    if entity_id in conflicts else
+                    "最终权利人尚未具名，请复用已有姓名或名称来源，或补充对象档案"
+                ),
+                "semantics": metadata.get("role", "accounting"),
+                "reusable_sources": [
+                    entity_id, "original_document", "owner_confirmation",
+                    *conflicts.get(entity_id, ()),
+                ],
+                "allowed_precision": [],
+            })
+        if issues:
+            raise NeedsInformation(issues)
+
+
+def _named_entities(connection, entity_ids, *, store):
+    """Reuse authenticated profiles and exact existing party-name sources."""
+    profiles = profiles_for_entities(connection, entity_ids)
+    named = {
+        ident for ident, profile in profiles.items()
+        if isinstance(profile.get("display_name"), str) and profile["display_name"].strip()
+    }
+    missing = entity_ids - named
+    if not missing:
+        return named, {}
+    named.update(
+        row["party_id"] for row in connection.execute(
+            "SELECT p.party_id,p.name FROM json_each(?) ids "
+            "JOIN payee_revision p ON p.party_id=ids.value "
+            "WHERE p.revision=(SELECT max(q.revision) FROM payee_revision q "
+            "WHERE q.party_id=p.party_id)",
+            (canonical(sorted(missing)),),
+        ) if row["name"].strip()
+    )
+    missing = entity_ids - named
+    if not missing or "tax_import_identity_v2" not in store.registry.models:
+        return named, {}
+    rows = list(connection.execute(
+        "SELECT t.employee_id,f.id FROM json_each(?) ids JOIN fact_scope s "
+        "ON s.kind='tax_import_identity_v2' AND s.scope_key='tax-identity:'||ids.value "
+        "JOIN fact_current a ON a.fact_id=s.fact_id JOIN fact_revision f ON f.id=a.fact_id "
+        "JOIN fact_tax_import_identity_v2 t ON t.revision_id=f.id AND t.employee_id=ids.value",
+        (canonical(sorted(missing)),),
+    ))
+    if rows:
+        from types import SimpleNamespace
+
+        from .integrity import verify_sources
+        # The verifier reads only these saved identities on the caller's transaction.
+        facts = verify_sources(
+            SimpleNamespace(store=store), connection,
+            fact_ids={row["id"] for row in rows}, _return_facts=True,
+        )
+        candidates = {}
+        for row in rows:
+            candidates.setdefault(row["employee_id"], []).append(facts[row["id"]])
+        conflicts = {}
+        for entity_id, identities in candidates.items():
+            names = {identity["data"]["name"] for identity in identities}
+            if len(names) > 1:
+                conflicts[entity_id] = sorted(identity["id"] for identity in identities)
+            elif any(isinstance(name, str) and name.strip() for name in names):
+                named.add(entity_id)
+        return named, conflicts
+    return named, {}
 
 
 def validate_filter(connection, entity_id, role, identity_match):

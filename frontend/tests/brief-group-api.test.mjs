@@ -32,6 +32,10 @@ test("group API validates company, month, snapshot, section, group and exact pai
         payload = structuredClone(value); mutate(payload);
         await assert.rejects(read(), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
       }
+      if (value.data.section === "activity") {
+        payload = structuredClone(value); payload.data.collections.members.items[0].detail_scope_key = "other-member-scope";
+        await assert.rejects(read(), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+      }
       if (value.data.collections.vouchers.items.length) {
         payload = structuredClone(value); payload.data.collections.vouchers.items[0].voucher_version_id = "wrong";
         await assert.rejects(read(), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");

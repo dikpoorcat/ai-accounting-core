@@ -94,7 +94,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
   <section v-if="expanded" class="group-members dashboard-business-expansion" aria-label="业务记录" @click.stop @keydown.stop>
     <p v-if="!data && loading" role="status">正在读取业务记录…</p>
     <div v-for="row in contributions" :key="row.id" class="contribution-summary">
-      <strong>{{ payrollMonthLabel(row.payroll_period!) }} · 社保与公积金</strong>
+      <strong>{{ payrollMonthLabel(row.payroll_period!) }} · {{ row.contributionMatter === "housing" ? "公积金" : "社保" }}</strong>
       <p>截至{{ payrollMonthLabel(openSummary!.cutoff_period) }}末{{ periodClosed ? '（关账时）' : '' }}</p>
       <table><thead><tr><th>款项</th><th>原应付</th><th>实际已付</th><th>抵销／代付</th><th>月末待付</th><th>操作</th></tr></thead>
         <tbody><template v-for="part in row.parts" :key="part.component">

@@ -1,17 +1,22 @@
 """Explicitly grouped payments and unnamed entrusted liabilities retain real sources."""
 
 import pytest
+from entity_fixture import seed_registration_entities
+from historical_pass_through_fixture import prior_pass_through_registration
 from pydantic import ValidationError
 from test_banking import book as book
 from test_banking import entry, funding, match, opening, reconciliation, statement
 from test_cash import close_transactions
 from test_dashboard_projection import diagnostic_position
+from test_dashboard_provenance import profile
 from test_query_semantics import calculation, resolver
 
+from ai_accounting.kernel.backup import create_portable, verify_file, verify_portable
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.transactions import PassThrough, Payment
+from ai_accounting.kernel.duplicates import Duplicates
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_semantics import (
     classify_financial_position,
@@ -205,10 +210,86 @@ def agency_payment(*, direction, party, amount, obligation, month="2026-09"):
     }
 
 
+def source_snapshot(engine):
+    with engine.store.connection(read_only=True) as connection:
+        return tuple(connection.iterdump())
+
+
+@pytest.mark.parametrize("operation", ["save", "amend", "batch", "prepare"])
+def test_new_pass_through_requires_final_beneficiary_atomically(book, operation):
+    engine, save, publish, proof = book
+    profile(engine, "counterparty", "beneficiary", display_name="真实最终收款人")
+    named = agency_data(beneficiary_id="beneficiary")
+    seed_registration_entities(engine, "pass_through", named)
+    if operation == "amend":
+        save("pass_through", "agency", named)
+        publish("agency")
+    before = source_snapshot(engine)
+    options = {"evidence": (proof,), "expected_revision": int(operation == "amend")}
+    with pytest.raises(NeedsInformation) as failure:
+        if operation == "save":
+            engine.save_fact("pass_through", "agency", agency_data(),
+                             **options, request_id="missing-beneficiary")
+        elif operation == "amend":
+            engine.amend_fact("pass_through", "agency", agency_data(), **options,
+                              recording_error_confirmed=True, request_id="missing-beneficiary")
+        elif operation == "prepare":
+            Duplicates(engine).prepare_fact_registration(
+                "pass_through", "agency", agency_data(), **options
+            )
+        else:
+            engine.save_facts([
+                {"kind": "pass_through", "subject_id": "valid-first", "data": named, **options},
+                {"kind": "pass_through", "subject_id": "invalid-second", "data": agency_data(),
+                 **options},
+            ], request_id="missing-beneficiary-batch")
+    issue = failure.value.details["fact_issues"][0]
+    assert issue["field"] == "beneficiary_id"
+    assert issue["semantics"] == "accounting"
+    assert issue["reusable_sources"] == ["original_document", "owner_confirmation"]
+    assert source_snapshot(engine) == before
+
+
+def test_uncomputed_historical_null_beneficiary_cannot_be_previewed(book):
+    engine, save, _, _ = book
+    with prior_pass_through_registration():
+        saved = save("pass_through", "agency", agency_data())
+    with engine.store.connection(read_only=True) as connection:
+        assert engine.store.fact(connection, saved["fact_id"]).fact.beneficiary_id is None
+    before = source_snapshot(engine)
+    with pytest.raises(NeedsInformation) as failure:
+        engine.preview(["agency"])
+    assert failure.value.details["fact_issues"][0]["field"] == "beneficiary_id"
+    assert source_snapshot(engine) == before
+
+
+def test_registration_schema_requires_named_beneficiary_but_history_still_parses():
+    from ai_accounting.kernel.command_schema import command_models, selected_registration_schema
+    from ai_accounting.kernel.service import default_registry
+
+    schema = PassThrough.model_json_schema()
+    assert "beneficiary_id" in schema["required"]
+    field = schema["properties"]["beneficiary_id"]
+    assert field["type"] == "string" and "anyOf" not in field
+    assert field["x-accounting-fact"]["required_for_registration"] is True
+    assert field["x-accounting-fact"]["requires_named_entity"] is True
+    assert PassThrough.model_validate_json(canonical(agency_data())).beneficiary_id is None
+    adapters = command_models(default_registry())
+    for command in ("save_fact", "amend_fact", "save_facts"):
+        for wire in (adapters[command].json_schema(), selected_registration_schema(
+            adapters[command], command, {"pass_through"}
+        )):
+            fact_schema = wire["$defs"]["PassThrough"]
+            assert "beneficiary_id" in fact_schema["required"]
+            assert fact_schema["properties"]["beneficiary_id"]["type"] == "string"
+            assert "anyOf" not in fact_schema["properties"]["beneficiary_id"]
+
+
 def test_explicit_unnamed_rightsholder_keeps_liability_without_fake_entity(book):
     engine, save, publish, _ = book
-    saved = save("pass_through", "agency", agency_data())
-    publish("agency")
+    with prior_pass_through_registration():
+        saved = save("pass_through", "agency", agency_data())
+        publish("agency")
     with engine.store.connection(read_only=True) as connection:
         assert [
             tuple(row)
@@ -269,7 +350,10 @@ def test_explicit_unnamed_rightsholder_keeps_liability_without_fake_entity(book)
 @pytest.mark.parametrize("confirmed", [None, False])
 def test_unknown_beneficiary_never_defaults_entrusted_rights_or_obligation(book, confirmed):
     engine, save, publish, _ = book
-    save("pass_through", "agency", agency_data(rights_and_obligation_confirmed=confirmed))
+    profile(engine, "counterparty", "beneficiary", display_name="真实最终收款人")
+    save("pass_through", "agency", agency_data(
+        beneficiary_id="beneficiary", rights_and_obligation_confirmed=confirmed
+    ))
     before = current_vouchers(engine)
     with pytest.raises(NeedsInformation) as failure:
         publish("agency")
@@ -283,6 +367,7 @@ def test_unknown_beneficiary_must_be_explicit_and_known_recipient_still_binding(
     with pytest.raises(ValidationError):
         PassThrough.model_validate(data)
     engine, save, publish, _ = book
+    profile(engine, "counterparty", "beneficiary", display_name="真实最终收款人")
     save("pass_through", "agency", agency_data(beneficiary_id="beneficiary"))
     publish("agency")
     before = current_vouchers(engine)
@@ -302,8 +387,9 @@ def test_unknown_beneficiary_must_be_explicit_and_known_recipient_still_binding(
 @pytest.mark.parametrize("fault", ["wrong_payer", "over_remittance", "wrong_direction"])
 def test_unnamed_beneficiary_does_not_relax_payer_direction_or_capacity(book, fault):
     engine, save, publish, _ = book
-    save("pass_through", "agency", agency_data())
-    publish("agency")
+    with prior_pass_through_registration():
+        save("pass_through", "agency", agency_data())
+        publish("agency")
     before = current_vouchers(engine)
     data = agency_payment(
         direction="inflow" if fault != "over_remittance" else "outflow",
@@ -325,11 +411,15 @@ def test_unnamed_beneficiary_does_not_relax_payer_direction_or_capacity(book, fa
     assert current_vouchers(engine) == before
 
 
-def test_later_true_recipient_settlement_does_not_rewrite_frozen_unnamed_source(book):
+def test_later_true_recipient_settlement_does_not_rewrite_frozen_unnamed_source(book, tmp_path):
     engine, save, publish, proof = book
-    save("pass_through", "agency", agency_data())
-    publish("agency")
+    with prior_pass_through_registration():
+        save("pass_through", "agency", agency_data())
+        publish("agency")
     frozen = close_transactions(engine, proof, "2026-09")
+    assert verify_file(engine.store.path)["verification"]["status"] == "verified"
+    archive = create_portable(engine.store.path, tmp_path / "historical-backup")
+    assert verify_portable(archive["path"])["verification"]["status"] == "verified"
     save(
         "payment",
         "later-remittance",

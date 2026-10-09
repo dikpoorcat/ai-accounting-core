@@ -491,7 +491,11 @@ def main():
     if len(book.month_stats) > args.months:
         raise ValueError("Existing sample exceeds requested months")
     connections = ExitStack()
-    connections.enter_context(book.engine.store.connection(read_only=True))
+    connections.enter_context(
+        book.engine.store.connection(read_only=True)
+        if args.verify_only
+        else book.construction_wal_keeper()
+    )
     atexit.register(connections.close)
     if args.defer_historical_verification:
         connections.enter_context(book.defer_historical_verification_for_construction())

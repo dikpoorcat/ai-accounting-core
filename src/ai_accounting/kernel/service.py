@@ -194,7 +194,11 @@ OPERATING_PROTOCOL = {
     ),
     "company_binding": "先列出公司并明确当前company_id；公司切换不能沿用另一公司的业务身份或预览。",
     "evidence_first": "先核对已提供资料及既有事实；正式确认事实必须引用实际采用的不可变证据。",
-    "typed_facts": "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。",
+    "typed_facts": (
+        "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。"
+        "代收代付必须明确真实最终权利人并引用已具名对象；缺少时先复用已有来源，仍缺少则补充后登记。"
+        "不得以付款方或后来实际收款人倒推补填历史最终权利人。"
+    ),
     "entities": (
         "登记前用find_entities按明确资料查找公司内对象；复用或用register_entity生成对象编号。"
         "人员、机构、资金账户、资产、项目、基金产品与单笔业务编号分开；同名不自动合并。"
@@ -543,28 +547,25 @@ class LocalService:
     def dashboard_context(self, company_id: str | None = None):
         from .dashboard import Dashboard
 
-        with self.catalog.connection(read_only=True) as connection:
-            companies = [
-                dict(row) for row in connection.execute("SELECT * FROM company ORDER BY name,id")
-            ]
-            if not companies:
-                if company_id:
-                    raise KernelError("unknown_company", "公司尚未登记")
-                return {
-                    "schema_version": 3,
-                    "company": None,
-                    "companies": [],
-                    "current_company": None,
-                    "periods": [],
-                    "quarters": [],
-                    "default_period": None,
-                    "default_quarter": None,
-                }
-            company = next((item for item in companies if item["id"] == company_id), None)
-            if company_id and company is None:
+        companies = self.catalog.companies()
+        if not companies:
+            if company_id:
                 raise KernelError("unknown_company", "公司尚未登记")
-            company = company or companies[0]
-            store = self.catalog._bound_store(company, read_pool=self.read_pool)
+            return {
+                "schema_version": 3,
+                "company": None,
+                "companies": [],
+                "current_company": None,
+                "periods": [],
+                "quarters": [],
+                "default_period": None,
+                "default_quarter": None,
+            }
+        company = next((item for item in companies if item["id"] == company_id), None)
+        if company_id and company is None:
+            raise KernelError("unknown_company", "公司尚未登记")
+        company = company or companies[0]
+        store = self.catalog._bound_store(company, read_pool=self.read_pool)
         return Dashboard(
             Engine(store),
             company_name=company["name"],

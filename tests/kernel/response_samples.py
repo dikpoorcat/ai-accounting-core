@@ -18,7 +18,9 @@ from test_dashboard_empty_replay import (
     replay_sources,
     reviewed_confirmation,
 )
+from test_dashboard_matters import formal_payment_samples
 from test_dashboard_provenance import profile as display_profile
+from test_opening_continuation import book as opening_book
 from test_payroll import payroll
 from test_payroll import profile as payroll_profile
 from test_payroll_corrections import Company
@@ -88,8 +90,11 @@ def native_samples(root):
     )
     add("company_without_period", "dashboard_context", call("dashboard_context"))
     add("funds_without_period", "dashboard_funds", call("dashboard_funds"))
-    add("first_account_without_period", "dashboard_funds",
-        call("dashboard_funds", movement_account_selection="first"))
+    add(
+        "first_account_without_period",
+        "dashboard_funds",
+        call("dashboard_funds", movement_account_selection="first"),
+    )
     references, evidence, _ = replay_sources(call, "contract")
     call(
         "confirm",
@@ -107,21 +112,35 @@ def native_samples(root):
     add("company_with_period", "dashboard_context", call("dashboard_context"))
     brief = call("dashboard_brief", period="2026-01")
     add("brief", "dashboard_brief", brief)
-    add("brief_vouchers", "dashboard_brief", call("dashboard_brief", period="2026-01", section="vouchers"))
+    add(
+        "brief_vouchers",
+        "dashboard_brief",
+        call("dashboard_brief", period="2026-01", section="vouchers"),
+    )
     for section in ("activity", "open_items"):
         for index, group in enumerate(brief["data"]["collections"][section]["items"]):
-            add(f"brief_{section}_members_{index}", "dashboard_brief_group", call(
-                "dashboard_brief_group", period="2026-01", section=section,
-                group_key=group["group_key"], expected_version=brief["snapshot_version"],
-            ))
+            add(
+                f"brief_{section}_members_{index}",
+                "dashboard_brief_group",
+                call(
+                    "dashboard_brief_group",
+                    period="2026-01",
+                    section=section,
+                    group_key=group["group_key"],
+                    expected_version=brief["snapshot_version"],
+                ),
+            )
     add(
         "deferred_brief",
         "dashboard_brief",
         call("dashboard_brief", period="2026-01", preparation="deferred"),
     )
     add("cash_funds", "dashboard_funds", call("dashboard_funds", period="2026-01"))
-    add("first_account_funds", "dashboard_funds",
-        call("dashboard_funds", period="2026-01", movement_account_selection="first"))
+    add(
+        "first_account_funds",
+        "dashboard_funds",
+        call("dashboard_funds", period="2026-01", movement_account_selection="first"),
+    )
     add(
         "deferred_funds",
         "dashboard_funds",
@@ -150,7 +169,10 @@ def native_samples(root):
             limit=1,
         ),
     )
-    add("employees", "dashboard_employees", call("dashboard_employees", period="2026-01", employee_filter="all"))
+    add(
+        "employees", "dashboard_employees",
+        call("dashboard_employees", period="2026-01", employee_filter="all"),
+    )
     add("assets", "dashboard_assets", call("dashboard_assets", period="2026-01"))
     add(
         "business_status",
@@ -220,8 +242,11 @@ def native_samples(root):
     closed_book, _ = public_bank_book(closed_path)
     engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
-    add("first_frozen_account_funds", "dashboard_funds",
-        Dashboard(engine).funds("2026-09", movement_account_selection="first"))
+    add(
+        "first_frozen_account_funds",
+        "dashboard_funds",
+        Dashboard(engine).funds("2026-09", movement_account_selection="first"),
+    )
     add(
         "frozen_readiness",
         "period_readiness",
@@ -272,47 +297,83 @@ def native_samples(root):
     personnel_dashboard = Dashboard(personnel.engine)
     payroll_brief = personnel_dashboard.brief("2026-01", section="open_items")
     add("brief_payroll_open_items", "dashboard_brief", payroll_brief)
-    social_group = next(group for group in payroll_brief["data"]["collections"]["open_items"]["items"]
-                        if group["description"] == "社保与公积金")
-    add("brief_payroll_members", "dashboard_brief_group", personnel_dashboard.brief_group(
-        "2026-01", section="open_items", group_key=social_group["group_key"],
-    ))
-    add("employees_month_dates", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
+    social_group = next(
+        group
+        for group in payroll_brief["data"]["collections"]["open_items"]["items"]
+        if group["description"] == "社保"
+    )
     add(
-        "employees_focused", "dashboard_employees",
-        personnel_dashboard.employees("2026-01", employee_id="employee", section="employees", employee_filter="all"),
+        "brief_payroll_members",
+        "dashboard_brief_group",
+        personnel_dashboard.brief_group(
+            "2026-01",
+            section="open_items",
+            group_key=social_group["group_key"],
+        ),
+    )
+    add(
+        "employees_month_dates", "dashboard_employees",
+        personnel_dashboard.employees("2026-01", employee_filter="all"),
+    )
+    add(
+        "employees_focused",
+        "dashboard_employees",
+        personnel_dashboard.employees(
+            "2026-01", employee_id="employee", section="employees", employee_filter="all",
+        ),
     )
     personnel.close("2026-01")
     display_profile(
-        personnel.engine, "employee", "employee", 1,
-        employment_start="2025-11", employment_end="2026-04-20",
+        personnel.engine,
+        "employee",
+        "employee",
+        1,
+        employment_start="2025-11",
+        employment_end="2026-04-20",
     )
-    add("employees_mixed_dates", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
     add(
-        "business_month_dates", "dashboard_business_status",
+        "employees_mixed_dates", "dashboard_employees",
+        personnel_dashboard.employees("2026-01", employee_filter="all"),
+    )
+    add(
+        "business_month_dates",
+        "dashboard_business_status",
         personnel_dashboard.business_status("2026-01", "january"),
     )
     display_profile(
-        personnel.engine, "employee", "employee", 2,
-        employment_start="2025-10", employment_end="2025-11-01",
+        personnel.engine,
+        "employee",
+        "employee",
+        2,
+        employment_start="2025-10",
+        employment_end="2025-11-01",
     )
-    add("employees_date_conflict", "dashboard_employees", personnel_dashboard.employees("2026-01", employee_filter="all"))
+    add(
+        "employees_date_conflict", "dashboard_employees",
+        personnel_dashboard.employees("2026-01", employee_filter="all"),
+    )
 
     labor_path = root / "labor"
     labor_path.mkdir()
     labor = Company(labor_path / "labor.sqlite")
     labor.save(
         LaborAccrual(
-            period="2026-01", person_id="person", expense_class="management",
-            gross_fee_fen=500000, tax_treatment="not_withheld_not_filed",
+            period="2026-01",
+            person_id="person",
+            expense_class="management",
+            gross_fee_fen=500000,
+            tax_treatment="not_withheld_not_filed",
         ),
         "labor",
     )
     labor.publish("labor")
     display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
     add(
-        "employees_labor_sources", "dashboard_employees",
-        Dashboard(labor.engine).employees("2026-01", section="labor_sources", employee_filter="all"),
+        "employees_labor_sources",
+        "dashboard_employees",
+        Dashboard(labor.engine).employees(
+            "2026-01", section="labor_sources", employee_filter="all",
+        ),
     )
     from test_workflow import (
         completion_from_basis,
@@ -358,6 +419,43 @@ def native_samples(root):
     asset_save("reimbursed_asset", "computer", asset())
     asset_publish("computer")
     add("asset_payment_summary", "dashboard_assets", Dashboard(asset_engine).assets("2026-02"))
+    matter_path = root / "matter-scopes"
+    matter_path.mkdir()
+    matter_dashboard = formal_payment_samples(opening_book.__wrapped__(matter_path))
+    matter_brief = matter_dashboard.brief("2026-01")
+    add("brief_matter_scopes", "dashboard_brief", matter_brief)
+    for index, group in enumerate(matter_brief["data"]["collections"]["activity"]["items"]):
+        member_response = matter_dashboard.brief_group(
+            "2026-01",
+            section="activity",
+            group_key=group["group_key"],
+        )
+        add(f"brief_matter_members_{index}", "dashboard_brief_group", member_response)
+        member = member_response["data"]["collections"]["members"]["items"][0]
+        status = matter_dashboard.business_status(
+            "2026-01",
+            member["subject_id"],
+            voucher_version_id=member["voucher_version_id"],
+            detail_scope_key=member["key"],
+            limit=1,
+        )
+        add(f"business_matter_scope_{index}", "dashboard_business_status", status)
+        page = status["data"]["collections"]["settlement_events"]["page"]
+        if page["has_more"]:
+            add(
+                f"business_matter_scope_page_{index}",
+                "dashboard_business_status",
+                matter_dashboard.business_status(
+                    "2026-01",
+                    member["subject_id"],
+                    voucher_version_id=member["voucher_version_id"],
+                    detail_scope_key=member["key"],
+                    section="settlement_events",
+                    limit=1,
+                    cursor=page["next_cursor"],
+                    expected_version=status["snapshot_version"],
+                ),
+            )
     return samples
 
 

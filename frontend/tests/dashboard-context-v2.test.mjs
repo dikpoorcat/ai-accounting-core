@@ -330,13 +330,13 @@ test("business history API carries the selected settlement view and version thro
     assert.equal(calls[1].get("settlement_view"), "historical");
     assert.equal(calls[1].get("subject_id"), subjectId);
     assert.equal(calls[1].get("company_id"), companyId);
-    response.data.detail_scope = { category: "payroll", voucher_version_id: "exact-voucher", amount_fen: "123", amount_label: "实际付款" };
-    const scope = { settlement_view: "historical", detail_scope_category: "payroll", voucher_version_id: "exact-voucher", expected_version: response.snapshot_version };
+    response.data.detail_scope = { key: "payroll-part", category: "payroll", voucher_version_id: "exact-voucher", amount_fen: "123", amount_label: "实际付款" };
+    const scope = { settlement_view: "historical", detail_scope_key: "payroll-part", voucher_version_id: "exact-voucher", expected_version: response.snapshot_version };
     await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, scope);
     await fetchBusinessStatus(response.selected_period.key, subjectId, undefined, { ...scope, section: "settlement_events" });
-    assert.equal(calls[2].get("detail_scope_category"), "payroll"); assert.equal(calls[3].get("voucher_version_id"), "exact-voucher");
+    assert.equal(calls[2].get("detail_scope_key"), "payroll-part"); assert.equal(calls[3].get("voucher_version_id"), "exact-voucher");
     for (const wrong of [
-      { ...scope, detail_scope_category: "expense_supplier" },
+      { ...scope, detail_scope_key: "expense_supplier" },
       { ...scope, voucher_version_id: "different-voucher" },
       { ...scope, settlement_view: "current" },
       { ...scope, expected_version: "different-snapshot" },

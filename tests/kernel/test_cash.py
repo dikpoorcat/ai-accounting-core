@@ -5,6 +5,7 @@ import itertools
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from test_dashboard_provenance import profile
 from test_payroll import labor, labor_policy
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -562,6 +563,7 @@ def test_future_settlement_does_not_invalidate_a_closed_personal_advance(book):
 
 def test_future_partial_pass_through_return_does_not_reopen_closed_return(book):
     engine, save, publish, proof = book
+    profile(engine, "counterparty", "beneficiary", display_name="真实最终收款人")
     save(
         "pass_through",
         "agency",

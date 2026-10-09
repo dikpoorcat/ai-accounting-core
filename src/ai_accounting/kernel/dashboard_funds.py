@@ -11,6 +11,7 @@ import json
 from .contracts import KernelError
 from .dashboard_reads import page_keys
 from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
+from .text_sort import pinyin_key
 from .types import YearMonth, canonical, checked
 
 FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
@@ -1025,7 +1026,7 @@ class FundsRead:
             item["recipient_id"] for item in data.get("allocations", ()) if item.get("recipient_id")
         )
         party = (
-            "、".join(self.snap.party(ident) for ident in sorted(parties))
+            "、".join(sorted((self.snap.party(ident) for ident in parties), key=pinyin_key))
             if parties
             else "公司账户内部划转"
             if internal_transfer
@@ -1966,10 +1967,18 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
                 for key in ("inflow_fen", "outflow_fen", "internal_transfer_fen")
             },
         }
+    account_keys = []
+    if select_first_account or "accounts" in sections:
+        snap.metadata.prime_profiles(
+            "fund_account", {ident for _category, ident in read.account_rows}
+        )
+        account_keys = sorted(read.account_rows, key=lambda key: (
+            pinyin_key(read.account_display(*key)["name"]), key,
+        ))
     if select_first_account:
         # Selection uses the proved visible account set, including zero-activity
         # openings, and excludes identities retired by opening corrections.
-        first = next(iter(sorted(read.account_rows)), None)
+        first = next(iter(account_keys), None)
         if first is not None:
             category, ident = first
             filters["movement_account_type"] = FUND_TYPES[category]
@@ -2063,13 +2072,20 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
     for section in sorted(sections):
         after = cursors.get(section)
         if section in {"accounts", "investment_products"}:
+            if section == "investment_products":
+                snap.metadata.prime_profiles("asset", read.product_rows)
             mapping = (
                 {
                     category + ":" + ident: (category, ident)
-                    for category, ident in sorted(read.account_rows)
+                    for category, ident in account_keys
                 }
                 if section == "accounts"
-                else {ident: ident for ident in sorted(read.product_rows)}
+                else {
+                    ident: ident for ident in sorted(
+                        read.product_rows,
+                        key=lambda ident: (pinyin_key(read.product_display(ident)["name"]), ident),
+                    )
+                }
             )
             keys, page = page_keys(mapping, after, limit)
             items = (

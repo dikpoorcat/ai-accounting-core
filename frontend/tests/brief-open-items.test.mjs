@@ -99,6 +99,7 @@ test("supplier advance rows label their historical balance as money awaiting off
       { key: "supplier_advances", label: "待冲抵供应商预付款", direction: "receivable", expected: { open: "待冲抵", closed: "关账时待冲抵" } },
       { key: "customer_receivables", label: "待收客户款", direction: "receivable", expected: { open: "待收", closed: "应收" } },
       { key: "supplier_payables", label: "待付供应商款", direction: "payable", expected: { open: "待付", closed: "应付" } },
+      { key: "tax_payables", label: "待缴税费", direction: "payable", expected: { open: "待付", closed: "应付" } },
     ];
     for (const periodStatus of ["open", "closed"]) for (const currentPeriod of ["2026-10", "2027-01"]) for (const scenario of categories) {
       const { expected, ...category } = scenario;
@@ -113,6 +114,7 @@ test("supplier advance rows label their historical balance as money awaiting off
       const heading = html.match(/<span class="column-money"[^>]*>([^<]+)<\/span>/)[1];
       const money = html.match(/<span class="open-event-money business-list-money"[^>]*>[\s\S]*?<\/span>/)[0];
       assert.equal(heading, `${label}金额`);
+      if (category.key === "tax_payables") assert(html.includes(periodStatus === "closed" ? "应付税费" : "待缴税费"));
       assert.doesNotMatch(money, /<small\b|月末|待收|待付|应收|应付|待冲抵/);
       assert.match(money, /¥100\.00/);
       assert.doesNotMatch(money, /¥0\.00/);

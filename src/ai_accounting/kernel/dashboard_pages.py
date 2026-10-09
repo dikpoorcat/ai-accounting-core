@@ -29,12 +29,17 @@ SECTIONS = {
 # Profiles bind seek positions to group summaries, bounded business members or
 # independent voucher-number pages, so incompatible continuations are rejected.
 SORT_PROFILES = {
-    ("brief", "activity"): "business-group/2",
+    ("brief", "activity"): "business-group/4",
     ("brief", "vouchers"): "voucher-number/1",
-    ("brief", "open_items"): "open-business-group/1",
-    ("brief-group", "activity"): "business-date-object/2",
-    ("brief-group", "open_items"): "object-matter/1",
-    ("funds", "movements"): "business-date-object/1",
+    ("brief", "open_items"): "open-business-group/3",
+    ("brief-group", "activity"): "business-date-object/4",
+    ("brief-group", "open_items"): "object-matter/3",
+    ("funds", "accounts"): "account-name-pinyin/1",
+    ("funds", "investment_products"): "product-name-pinyin/1",
+    ("funds", "movements"): "business-date-object/2",
+    ("employees", "employees"): "employment-start-name/2",
+    ("employees", "labor_sources"): "labor-period-name-pinyin/1",
+    ("assets", "assets"): "asset-name-pinyin/1",
 }
 
 

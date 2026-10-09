@@ -44,9 +44,9 @@ test("activity details only add information to the exact occurrence row", async 
     await t.test("scoped reserve expense displays its signed amount without inventing absent settlement records", async () => {
       const data = scenario([]);
       data.identity.kind = "payroll_reserve_payment";
-      data.detail_scope = { voucher_version_id: "reserve-voucher", category: "expense_supplier", amount_fen: "-9007199254740993", amount_label: "费用金额" };
+      data.detail_scope = { key: "expense-part", voucher_version_id: "reserve-voucher", category: "expense_supplier", amount_fen: "-9007199254740993", amount_label: "费用金额" };
       data.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
-      const html = await render(data, activity({ detail_scope_category: "expense_supplier", voucher_version_id: "reserve-voucher", description: "费用", title: "费用" }));
+      const html = await render(data, activity({ detail_scope_key: "expense-part", voucher_version_id: "reserve-voucher", description: "费用", title: "费用" }));
       assert.match(html, /费用金额[\s\S]*−¥90,071,992,547,409\.93/);
       assert.doesNotMatch(html, /暂无相关收付记录|当前业务结果金额|本业务其他款项/);
     });

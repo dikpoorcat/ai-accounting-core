@@ -448,7 +448,7 @@ def test_reimbursement_acceptance_roles_split_a_shared_pending_group(acceptance_
         assert close("2026-02")["status"] == "closed"
     expected = {
         item["key"]: (
-            "payroll_payables",
+            "tax_payables" if item["name"] == "tax" else "payroll_payables",
             item["amount_fen"] - (20000 if item["name"] == "employee_social" else 0),
         )
         for item in original_obligations

@@ -16,6 +16,7 @@ function matchesRequest(url: URL, response: BriefGroupResponse) {
     && data.group_key === url.searchParams.get("group_key")
     && validDashboardCollections(data)
     && members.every(item => item.group_key === data.group_key)
+    && (data.section !== "activity" || data.collections.members.items.every(item => item.detail_scope_key === null || item.detail_scope_key === item.key))
     && ids.length === data.collections.vouchers.items.length
     && ids.every((id, index) => data.collections.vouchers.items[index]?.voucher_version_id === id);
 }

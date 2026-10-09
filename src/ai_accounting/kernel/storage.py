@@ -17,6 +17,7 @@ from .dependencies import NO_PERIOD_LIMIT, scope_keys, validate_read
 from .runtime import connect, initialize_file, require_local_database
 from .schema import base_type, initialize, sequence_model, table_name
 from .stored_json import DuplicateStoredKey, loads_unique
+from .text_sort import pinyin_key
 from .types import YearMonth, canonical
 from .versions import verify_schema
 
@@ -258,7 +259,7 @@ class Store:
         result = []
         for row in connection.execute(
             "SELECT e.digest,e.name,e.media_type FROM json_each(?) j "
-            "JOIN evidence e ON e.digest=unhex(j.value) ORDER BY e.name,e.digest",
+            "JOIN evidence e ON e.digest=unhex(j.value)",
             (json.dumps(sorted(set(digests))),),
         ):
             identity = row["digest"].hex()
@@ -270,7 +271,7 @@ class Store:
                     "media_type": row["media_type"],
                 }
             )
-        return sorted(result, key=lambda item: (item["name"], item["digest"]))
+        return sorted(result, key=lambda item: (pinyin_key(item["name"]), item["digest"]))
 
     @classmethod
     def create(cls, path, bundle, company_id, taxpayer_id, database_id):
@@ -562,7 +563,7 @@ class Store:
         from .entity_references import sync_entity_references, validate_entity_references
 
         fact = version.fact
-        validate_entity_references(connection, fact, version.subject_id)
+        validate_entity_references(connection, fact, version.subject_id, store=self)
         connection.execute(
             "INSERT INTO subject VALUES(?,?) ON CONFLICT(id) DO NOTHING",
             (version.subject_id, fact.kind),

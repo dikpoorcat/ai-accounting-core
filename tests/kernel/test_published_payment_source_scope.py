@@ -110,7 +110,7 @@ def test_real_investment_payments_keep_direct_subscription_and_redemption_source
     )
 
 
-def test_real_unnamed_rightsholder_payment_keeps_published_source(party_book):
+def test_historical_unnamed_rightsholder_payment_keeps_published_source(party_book):
     party.test_explicit_unnamed_rightsholder_keeps_liability_without_fake_entity(party_book)
     assert "pass_through" in _actual_settlement_sources(party_book[0])
 

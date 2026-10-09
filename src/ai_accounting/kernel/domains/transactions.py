@@ -485,13 +485,18 @@ class PassThrough(Fact):
     kind: ClassVar[str] = "pass_through"
     payer_id: Identifier
     beneficiary_id: Identifier | None = Field(
-        description="已具名的最终权利人；受托代收债权和转付义务明确、最终权利人尚未具名时显式为null",
+        description="必须引用已具名的真实最终权利人；可复用原始资料或负责人确认，不得以付款方替代",
         json_schema_extra={
             "x-accounting-fact": {
-                "role": "management",
+                "role": "accounting",
                 "meaning": "known_final_pass_through_beneficiary",
                 "reusable_sources": ["original_document", "owner_confirmation"],
-                "constraint": "未知时显式为null；不虚构权利人，受托性质及责任金额仍须有明确依据",
+                "constraint": (
+                    "代收代付必须明确真实最终收款人，并引用其已具名对象；"
+                    "缺少时不能登记或核算"
+                ),
+                "required_for_registration": True,
+                "requires_named_entity": True,
             }
         },
     )
@@ -507,6 +512,7 @@ class PassThrough(Fact):
 
 def calculate_pass_through(version: FactVersion, ctx: Context) -> Outcome:
     fact: PassThrough = version.fact
+    fact.validate_registration()
     if fact.rights_and_obligation_confirmed is not True:
         raise NeedsInformation("rights_and_obligation_confirmed", "需要有依据的代收债权和转付义务")
     return outcome(

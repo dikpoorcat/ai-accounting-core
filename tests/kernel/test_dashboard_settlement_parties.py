@@ -92,7 +92,7 @@ def _events(dashboard, *, view="current", limit=1):
     response = dashboard.business_status(PERIOD, "batch", settlement_view=view, limit=limit)
     items = []
     while True:
-        assert response["schema_version"] == 9
+        assert response["schema_version"] == 10
         collection = response["data"]["collections"]["settlement_events"]
         assert collection["page"]["total_count"] == 4
         items.extend(collection["items"])

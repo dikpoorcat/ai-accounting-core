@@ -106,7 +106,7 @@ def test_activity_omits_repeated_party_and_keeps_purpose_and_full_voucher_summar
     data = Dashboard(engine).brief("2026-09")["data"]
     row = activity_members(engine, "2026-09")[0]
     assert "vouchers" not in data["collections"]
-    assert row["title"] == "办公用品采购"
+    assert row["title"] == "管理费用确认"
     assert row["description"] == (
         "办公用品采购（2026-09）；供研发办公室日常使用；已核对本次采购清单"
     )
@@ -127,8 +127,8 @@ def test_next_month_wage_payment_summary_names_employee_and_source_month(payroll
     company.publish("salary-paid")
     display_profile(company.engine, "business", "salary-paid", purpose="补发一月份工资")
     row = voucher(company.engine, "2026-02", "salary-paid")
-    assert row["title"] == "支付工资奖金"
-    assert row["description"] == "支付工资奖金（2026-01）；补发一月份工资"
+    assert row["title"] == "支付工资"
+    assert row["description"] == "支付工资（2026-01）；补发一月份工资"
     assert row["date"] == "2026-02-10"
     assert row["amount_fen"] == 907400
     assert row["party"] == "甲员工"
@@ -143,10 +143,10 @@ def test_next_month_wage_payment_summary_names_employee_and_source_month(payroll
 @pytest.mark.parametrize(
     "components, title",
     [
-        (("net",), "支付工资奖金"),
-        (("employee_social", "employer_social"), "支付社保"),
-        (("employee_housing", "employer_housing"), "支付公积金"),
-        (("withheld_tax",), "付款"),
+        (("net",), "支付工资"),
+        (("employee_social", "employer_social"), "缴纳社保"),
+        (("employee_housing", "employer_housing"), "缴纳公积金"),
+        (("withheld_tax",), "缴纳个税"),
     ],
 )
 def test_opening_payroll_payment_names_original_wage_month_and_component(
@@ -238,11 +238,11 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
         row for row in rows if row["subject_id"] == "january" and row["state"] == "更正原业务"
     )
     replacement = voucher(company.engine, "2026-02", "january")
-    assert reversal["title"] == "冲正·计提工资"
+    assert reversal["title"] == "冲正·工资计提"
     assert reversal["description"] == "冲销原业务：计提工资（2026-01）；一月份员工工资"
     assert reversal["party"] == replacement["party"] == "甲员工"
     assert reversal["amount_fen"] == -1000000
-    assert replacement["title"] == "计提工资"
+    assert replacement["title"] == "工资计提"
     assert replacement["amount_fen"] == 1100000
     assert "2026-01" in replacement["description"]
     status = accountant_status(company.engine, "2026-02", "january")
@@ -389,9 +389,7 @@ def test_offset_changes_obligations_without_presenting_company_money(bank_book):
     )
     publish("office", "prepayment", "offset")
     data = Dashboard(engine).brief("2026-09")["data"]
-    row = next(
-        row for row in activity_members(engine, "2026-09") if row["subject_id"] == "offset"
-    )
+    row = next(row for row in activity_members(engine, "2026-09") if row["subject_id"] == "offset")
     assert row["title"] == "款项抵销"
     assert row["amount_fen"] == 15000
     status = accountant_status(engine, "2026-09", "offset")

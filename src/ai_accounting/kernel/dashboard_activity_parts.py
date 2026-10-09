@@ -6,9 +6,11 @@ import json
 from collections import defaultdict
 
 from .contracts import KernelError
+from .dashboard_matters import Matter, obligation_matter
 from .domains.money import SETTLEMENT_PAYMENT_KINDS
 from .query_semantics import resolve_calculation_relations
 from .schema import table_name
+from .text_sort import pinyin_key
 from .types import YearMonth, canonical, checked, digest
 
 
@@ -46,7 +48,7 @@ def _records(snap, identifiers):
     if missing:
         fields = (
             "direction", "amount_fen", "settlements", "tax_transfers", "reserve_expense_fen",
-            "creditor_kind", "payer_kind", "nature", "obligations",
+            "creditor_kind", "payer_kind", "nature", "expense_class", "side", "obligations",
             "source_calculation_id", "superseded", "basis_values",
         )
         columns = ",".join(
@@ -142,24 +144,15 @@ def payment_components(snap):
     if binding_ids | tax_ids:
         snap.reads.verify_saved_input_identity(binding_ids | tax_ids)
     sources = _records(snap, direct_ids)
-    opening_payroll_ids = {
+    source_scalar_ids = {
         source["fact_id"] for source in sources.values()
-        if source["kind"] == "opening_payroll_payable"
+        if source["kind"] in {"opening_payroll_payable", "opening_tax"}
     }
-    opening_payroll = {}
-    if opening_payroll_ids:
-        for row in snap.connection.execute(
-            "SELECT revision_id,payroll_period,component "
-            f"FROM {table_name('opening_payroll_payable')} "
-            "WHERE revision_id IN (SELECT value FROM json_each(?))",
-            (canonical(sorted(opening_payroll_ids)),),
-        ):
-            opening_payroll[row["revision_id"]] = {
-                "period": str(YearMonth.from_ordinal(row["payroll_period"])),
-                "component": row["component"],
-            }
-        if opening_payroll.keys() != opening_payroll_ids:
-            _invalid()
+    from .dashboard_sort import fact_sort_scalars
+
+    source_scalars = fact_sort_scalars(snap, [
+        source for source in sources.values() if source["fact_id"] in source_scalar_ids
+    ])
     facts = {}
     by_kind = defaultdict(set)
     for root in roots.values():
@@ -222,12 +215,26 @@ def payment_components(snap):
             if binding_id is not None and binding_id not in parents[ident]:
                 _invalid()
             source_values = source["outcome"]["values"]
-            category = _settlement_group(
+            original_category = _settlement_group(
                 source["kind"], creditor_kind=source_values.get("creditor_kind"),
                 obligation_name=movement["obligation_name"], nature=source_values.get("nature"),
                 payer_kind=source_values.get("payer_kind"),
             )
-            part = grouped.setdefault(category, {
+            source_component = movement["obligation_name"]
+            source_period = source["period"]
+            scalar = source_scalars.get(source["fact_id"], {})
+            if source["kind"] == "opening_payroll_payable":
+                source_period, source_component = scalar["payroll_period"], scalar["component"]
+            matter = obligation_matter(
+                source["kind"], source_component, values=source_values, data=scalar,
+            )
+            category = matter.category if matter is not None else original_category
+            party = movement.get("recipient_id") or movement.get("creditor_id")
+            # Unknown matters or objects never borrow another slot's identity.
+            part_identity = (matter.key if matter is not None else None,
+                             index if matter is None or not party else None)
+            part = grouped.setdefault(part_identity, {
+                "matter": matter,
                 "source_category": category, "amount_fen": 0, "slots": [],
                 "obligation_keys": set(), "source_calculation_ids": set(), "identities": set(),
                 "source_periods": set(), "source_components": set(),
@@ -240,21 +247,16 @@ def payment_components(snap):
             part["slots"].append(index)
             part["obligation_keys"].add(movement["obligation_key"])
             part["source_calculation_ids"].add(source_id)
-            source_period = source["period"]
-            source_component = movement["obligation_name"]
-            if source["kind"] == "opening_payroll_payable":
-                opening = opening_payroll[source["fact_id"]]
-                source_period, source_component = opening["period"], opening["component"]
             part["source_periods"].add(source_period)
             part["source_components"].add(source_component)
-            party = movement.get("recipient_id") or movement.get("creditor_id")
             if party:
                 part["identities"].add(party)
         if root["kind"] == "payroll_reserve_payment":
             reserve = values.get("reserve_expense_fen")
             if type(reserve) is not int or reserve <= 0:
                 _invalid()
-            grouped["expense_supplier"] = {
+            grouped[("reserve-expense", None)] = {
+                "matter": Matter("reserve-expense", "备用金费用支出", "expense_supplier"),
                 "source_category": "expense_supplier", "amount_fen": reserve, "slots": [],
                 "obligation_keys": set(), "source_calculation_ids": set(), "identities": set(),
                 "source_periods": set(), "source_components": set(),
@@ -274,23 +276,28 @@ def payment_components(snap):
         data = facts[roots[ident]["fact_id"]]
         direction = roots[ident]["outcome"]["values"]["direction"]
         items = []
-        for category, raw in by_basis[ident].items():
+        for part_identity, raw in by_basis[ident].items():
+            category, matter = raw["source_category"], raw["matter"]
             identities = tuple(sorted(raw["identities"]))
-            title = _part_title(category, direction, roots[ident]["kind"], raw["source_components"])
+            title = (matter.title if matter is not None and matter.key == "reserve-expense"
+                     else matter.payment_title(direction) if matter is not None
+                     else "收款" if direction == "inflow" else "付款")
             source_periods = tuple(sorted(raw["source_periods"]))
             description = title + (
                 "（" + "、".join(source_periods) + "）" if source_periods else ""
             )
             items.append({
-                **raw, "key": digest(["activity-part/1", snap.store.company_id, snap.period,
-                                     row["id"], category]).hex(),
+                **raw, "key": digest(["activity-part/2", snap.store.company_id, snap.period,
+                                     row["id"], part_identity]).hex(),
+                "matter_key": matter.key if matter is not None else None,
                 "voucher_version_id": row["id"], "basis_calculation_id": ident,
                 "group": "correction" if reversal else category,
                 "amount_fen": -raw["amount_fen"] if reversal else raw["amount_fen"],
                 "amount_label": "实际收付款", "slots": tuple(raw["slots"]),
                 "obligation_keys": tuple(sorted(raw["obligation_keys"])),
                 "source_calculation_ids": tuple(sorted(raw["source_calculation_ids"])),
-                "identities": identities, "party": "、".join(snap.party(p) for p in identities),
+                "identities": identities,
+                "party": "、".join(sorted((snap.party(p) for p in identities), key=pinyin_key)),
                 "title": ("冲正·" if reversal else "") + title,
                 "description": ("冲正·" if reversal else "") + description,
                 "source_periods": source_periods,
@@ -300,25 +307,3 @@ def payment_components(snap):
             })
         result[row["id"]] = items
     return result
-
-
-def _part_title(category, direction, kind, components):
-    if kind == "payroll_reserve_payment" and category == "expense_supplier":
-        return "备用金费用支出"
-    if category == "payroll":
-        if components and components <= {"employee_social", "employer_social"}:
-            return "支付社保"
-        if components and components <= {"employee_housing", "employer_housing"}:
-            return "支付公积金"
-        if components and components <= {"net", "net_salary", "salary", "bonus"}:
-            return "支付工资奖金"
-        return "收款" if direction == "inflow" else "付款"
-    if category == "labor":
-        return "支付个人劳务款"
-    if category == "pass_through":
-        return "代收款" if direction == "inflow" else "代付款"
-    if category == "income_customer" and direction == "inflow":
-        return "客户收款"
-    if category == "employee_reimbursement" and direction == "outflow":
-        return "支付员工报销款"
-    return "收款" if direction == "inflow" else "付款"

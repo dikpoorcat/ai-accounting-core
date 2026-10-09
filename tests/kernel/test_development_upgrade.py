@@ -10,6 +10,7 @@ import pytest
 from draft_bundle_fixture import synthetic_draft_bundle
 from entity_fixture import seed_registration_entities
 from monthly_close_fixture import close_months, ready
+from test_dashboard_provenance import profile
 
 from ai_accounting.kernel import offline_development_upgrade as development
 from ai_accounting.kernel.backup import (
@@ -172,6 +173,7 @@ def old_business(path: Path, source):
         },
     )
     publish("supplier-payment")
+    profile(engine, "counterparty", "beneficiary", display_name="真实最终收款人")
     save(
         "pass_through",
         "entrusted-funds",
@@ -258,7 +260,9 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
         assert result["verification"]["status"] == "verified"
 
 
-@pytest.mark.parametrize("point", ["after_copy", "after_drop", "after_ddl", "after_index_ddl", "before_commit"])
+@pytest.mark.parametrize(
+    "point", ["after_copy", "after_drop", "after_ddl", "after_index_ddl", "before_commit"],
+)
 def test_each_fault_rolls_back_whole_company_upgrade(tmp_path, point):
     path, source, target = create_old_company(tmp_path / "company.sqlite")
     old_business(path, source)
@@ -323,7 +327,7 @@ def test_undeclared_target_and_corrupt_source_reject_before_any_ddl(tmp_path):
         )
 
 
-def test_new_nullable_facts_and_internal_reserve_type_work_after_upgrade(tmp_path):
+def test_grouped_payment_required_beneficiary_and_internal_reserve_work_after_upgrade(tmp_path):
     from test_platform_movements import movement
 
     path, source, target = create_old_company(tmp_path / "company.sqlite")
@@ -392,18 +396,19 @@ def test_new_nullable_facts_and_internal_reserve_type_work_after_upgrade(tmp_pat
         },
     )
     publish("grouped-payment")
-    save(
-        "pass_through",
-        "unnamed-beneficiary",
-        {
-            "period": "2026-02",
-            "payer_id": "payer",
-            "beneficiary_id": None,
-            "amount_fen": 50,
-            "rights_and_obligation_confirmed": True,
-        },
-    )
-    publish("unnamed-beneficiary")
+    agency = {
+        "period": "2026-02",
+        "payer_id": "payer",
+        "beneficiary_id": None,
+        "amount_fen": 50,
+        "rights_and_obligation_confirmed": True,
+    }
+    with pytest.raises(KernelError) as failure:
+        save("pass_through", "required-beneficiary", agency)
+    assert failure.value.code == "needs_information"
+    assert failure.value.details["fact_issues"][0]["field"] == "beneficiary_id"
+    save("pass_through", "required-beneficiary", dict(agency, beneficiary_id="beneficiary"))
+    publish("required-beneficiary")
     save(
         "platform_movement",
         "platform-original",
@@ -441,9 +446,9 @@ def test_new_nullable_facts_and_internal_reserve_type_work_after_upgrade(tmp_pat
         assert (
             connection.execute(
                 "SELECT beneficiary_id FROM fact_pass_through WHERE revision_id="
-                "(SELECT fact_id FROM fact_current WHERE subject_id='unnamed-beneficiary')"
+                "(SELECT fact_id FROM fact_current WHERE subject_id='required-beneficiary')"
             ).fetchone()[0]
-            is None
+            == "beneficiary"
         )
         assert (
             connection.execute(

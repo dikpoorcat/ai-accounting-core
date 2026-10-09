@@ -10,7 +10,7 @@ import calendar
 import json
 import os
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -131,6 +131,24 @@ class MixedBook:
         book.materials = Materials(book.engine)
         book.periods = Periods(book.engine)
         return book
+
+    @contextmanager
+    def construction_wal_keeper(self):
+        """Attach an idle reader after a copied DELETE database enters WAL.
+
+        Standard writable connection setup performs the same WAL initialization
+        as the first production command, without changing business rows. Keep it
+        alive until the reader has completed its read, then retain only the idle
+        reader so short production connections share the existing WAL index.
+        """
+        with ExitStack() as connections:
+            with self.engine.store.connection():
+                keeper = connections.enter_context(self.engine.store.connection(read_only=True))
+                with closing(keeper.execute("SELECT * FROM state")) as cursor:
+                    cursor.fetchall()
+                if keeper.in_transaction:
+                    raise ValueError("Construction WAL keeper must not hold a transaction")
+            yield keeper
 
     @contextmanager
     def defer_historical_verification_for_construction(self):

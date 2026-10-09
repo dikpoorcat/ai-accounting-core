@@ -15,6 +15,7 @@ from .content_history_context import source_canonical as canonical
 from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
+from .text_sort import pinyin_key
 from .types import ActualDate, EvidenceDigest, YearMonth, evidence_digest_bytes
 
 EntityKind = Literal["person", "organization", "fund_account", "asset", "project", "fund_product"]
@@ -523,5 +524,9 @@ class Entities:
                         "corrections": linked,
                     }
                 )
-            items.sort(key=lambda row: (row["match"] != "exact", row["entity_id"]))
+            items.sort(key=lambda row: (
+                row["match"] != "exact",
+                pinyin_key(row["profile"]["display_name"] or ""),
+                row["entity_id"],
+            ))
             return {"schema_version": 1, "items": items[:limit], "has_more": len(items) > limit}

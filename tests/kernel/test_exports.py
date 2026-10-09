@@ -113,6 +113,47 @@ def queue(
     return preview, export.confirm(period, **options), options
 
 
+def test_new_export_previews_use_pinyin_and_saved_plan_keeps_its_original_names(setup, tmp_path):
+    company, export, template = setup
+    seed_entities(company.engine, [("party-z", "person", None), ("party-a", "person", None)])
+    for party, name in (("party-z", "李四"), ("party-a", "王五")):
+        source = "reimbursement-" + party
+        company.save(
+            Expense(
+                period="2026-01", counterparty_id=party, amount_fen=100,
+                expense_class="administration", creditor_kind="employee",
+            ),
+            source,
+        )
+        company.publish(source)
+        export.save_payee(
+            party, name=name, account="0012345601" if party == "party-z" else "0012345602",
+            evidence_digest=company.owner_confirmation, expected_revision=0,
+            request_id=company.request(),
+        )
+    inventory(company)
+    preview, queued, _ = queue(company, export, template, tmp_path / "pinyin-export")
+    assert [row["name"] for row in preview["rows"]] == ["李四", "王五", "张三"]
+    export.save_payee(
+        "employee", name="阿三", account="001234567890",
+        evidence_digest=company.owner_confirmation, expected_revision=1,
+        request_id=company.request(),
+    )
+    fresh = export.preview("2026-01", template_evidence_digest=template)
+    assert [row["name"] for row in fresh["rows"]] == ["阿三", "李四", "王五"]
+    with company.engine.store.connection(read_only=True) as connection:
+        frozen = json.loads(connection.execute(
+            "SELECT payload FROM jobs WHERE id=?", (queued["job_id"],)
+        ).fetchone()[0])["plan"]
+    assert frozen == preview
+    completed = run_export_jobs(company.engine)[0]
+    assert completed["status"] == "succeeded"
+    manifest = json.loads(
+        (tmp_path / "pinyin-export" / "代发核对.json").read_text(encoding="utf-8")
+    )
+    assert manifest["plan"] == preview
+
+
 def test_export_preview_rejects_duplicate_key_in_selected_result(setup):
     company, export, template = setup
     with company.engine.store.connection() as connection:

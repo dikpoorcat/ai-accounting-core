@@ -26,9 +26,9 @@ async function harness(component, suppliedProps, exported) {
 }
 const tick = async () => { await Vue.nextTick(); await Promise.resolve(); };
 const page = (cursor = null) => ({ total_count: cursor ? 2 : 1, filtered_count: cursor ? 2 : 1, returned_count: 1, has_more: Boolean(cursor), next_cursor: cursor });
-const member = { key: "part-key", group_key: "batch-group", subject_id: "payment", voucher_version_id: "voucher-a", detail_scope_category: "payroll" };
-const groupResult = (keys = [member.key]) => ({ data: { section: "activity", group_key: "batch-group", collections: { members: { items: keys.map(key => ({ ...member, key })), page: page() }, vouchers: { items: [], page: page() } } } });
-const statusResult = () => ({ snapshot_version: "snapshot", data: { detail_scope: { category: "payroll", voucher_version_id: "voucher-a", amount_fen: "100", amount_label: "实际付款" }, collections: { settlement_events: { items: [{ id: "first" }], page: page("next") } } } });
+const member = { key: "part-key", group_key: "batch-group", subject_id: "payment", voucher_version_id: "voucher-a", detail_scope_key: "part-key" };
+const groupResult = (keys = [member.key]) => ({ data: { section: "activity", group_key: "batch-group", collections: { members: { items: keys.map(key => ({ ...member, key, detail_scope_key: key })), page: page() }, vouchers: { items: [], page: page() } } } });
+const statusResult = () => ({ snapshot_version: "snapshot", data: { detail_scope: { key: "part-key", category: "payroll", voucher_version_id: "voucher-a", amount_fen: "100", amount_label: "实际付款" }, collections: { settlement_events: { items: [{ id: "first" }], page: page("next") } } } });
 
 test("ordinary, single-member batch and multi-member batch progress requires a separate click after first read, cached reopen and refresh", async () => {
   for (const keys of [["ordinary"], ["single-batch"], ["batch-one", "batch-two"]]) {
@@ -72,20 +72,20 @@ test("late member responses after collapse or any scope change never select deta
   }
 });
 
-test("scoped detail initial and subsequent reads carry exact category, voucher and view", async () => {
+test("scoped detail initial and subsequent reads carry exact member scope, voucher and view", async () => {
   const view = await harness("BusinessStatusDetails", { subjectId: "payment", period: "2026-09", snapshotVersion: "snapshot", settlementView: "historical", presentation: "brief", expanded: false, activityContext: { ...member }, refreshGeneration: 0 }, "data, loadMore");
   try {
     assert.equal(view.calls.length, 0); view.props.expanded = true; await tick();
-    for (const request of [view.calls[0]]) assert.deepEqual(request.args[3], { expected_version: "snapshot", settlement_view: "historical", detail_scope_category: "payroll", voucher_version_id: "voucher-a", limit: 20 });
+    for (const request of [view.calls[0]]) assert.deepEqual(request.args[3], { expected_version: "snapshot", settlement_view: "historical", detail_scope_key: "part-key", voucher_version_id: "voucher-a", limit: 20 });
     view.calls[0].resolve(statusResult()); await tick();
-    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].detail_scope_category, "payroll"); assert.equal(view.calls[1].args[3].voucher_version_id, "voucher-a");
+    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].detail_scope_key, "part-key"); assert.equal(view.calls[1].args[3].voucher_version_id, "voucher-a");
     view.props.expanded = false; await tick(); assert.equal(view.calls[1].args[2].aborted, true);
     view.calls[1].resolve(statusResult()); await pending; assert.equal(view.data.value.collections.settlement_events.items.length, 1);
   } finally { view.unmount(); }
 });
 
 test("scoped first responses cannot write back after collapse or any detail scope change", async () => {
-  for (const field of ["expanded", "detail_scope_category", "voucher_version_id", "refreshGeneration", "company_id", "period", "snapshotVersion"]) {
+  for (const field of ["expanded", "detail_scope_key", "voucher_version_id", "refreshGeneration", "company_id", "period", "snapshotVersion"]) {
     const view = await harness("BusinessStatusDetails", { subjectId: "payment", period: "2026-09", snapshotVersion: "snapshot", settlementView: "current", presentation: "brief", expanded: true, activityContext: { ...member }, refreshGeneration: 0 }, "data");
     try {
       if (field === "expanded") view.props.expanded = false;
@@ -99,4 +99,16 @@ test("scoped first responses cannot write back after collapse or any detail scop
       assert.equal(view.calls.length, 1);
     } finally { view.unmount(); }
   }
+});
+
+
+test("same voucher and category with distinct member scopes do not share detail cache identity", async () => {
+  const view = await harness("BusinessStatusDetails", { subjectId: "payment", period: "2026-09", snapshotVersion: "snapshot", settlementView: "current", presentation: "brief", expanded: false, activityContext: { ...member }, refreshGeneration: 0 }, "cacheKey, detailScope");
+  try {
+    const socialKey = view.cacheKey();
+    view.props.activityContext = { ...member, key: "housing-part", detail_scope_key: "housing-part" };
+    assert.notEqual(view.cacheKey(), socialKey);
+    assert.deepEqual(view.detailScope(), { detail_scope_key: "housing-part", voucher_version_id: "voucher-a" });
+    assert.equal(view.calls.length, 0, "changing an unexpanded member scope never preloads progress");
+  } finally { view.unmount(); }
 });

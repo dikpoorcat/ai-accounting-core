@@ -25,6 +25,46 @@ def engine(tmp_path):
     )
 
 
+def test_entity_directory_sorts_pinyin_before_limit_and_preserves_exact_match_priority(engine):
+    directory = Entities(engine)
+    for index, name in enumerate(("张三", "王五", "李四", "安张三")):
+        directory.register_entity(
+            "person", {"display_name": name}, source="确认姓名", request_id=f"name-{index}"
+        )
+    first = directory.find_entities(kind="person", limit=2)
+    assert [row["profile"]["display_name"] for row in first["items"]] == ["安张三", "李四"]
+    assert first["has_more"]
+    complete = directory.find_entities(kind="person")
+    assert [row["profile"]["display_name"] for row in complete["items"]] == [
+        "安张三", "李四", "王五", "张三",
+    ]
+    matches = directory.find_entities(query="张三", kind="person")
+    assert [(row["profile"]["display_name"], row["match"]) for row in matches["items"]] == [
+        ("张三", "exact"), ("安张三", "similar"),
+    ]
+
+
+def test_evidence_metadata_sorts_pinyin_file_names_without_changing_digests(engine):
+    files = [
+        (b"zhang", r"C:\originals\张三.pdf"),
+        (b"wang", "/originals/王五.pdf"),
+        (b"li", "李四.pdf"),
+    ]
+    proofs = [
+        engine.register_evidence(content, "application/pdf", name, request_id=f"file-{index}")[
+            "digest"
+        ]
+        for index, (content, name) in enumerate(files)
+    ]
+    with engine.store.connection(read_only=True) as connection:
+        metadata = engine.store.evidence_metadata(connection, proofs)
+        assert [row["name"] for row in metadata] == ["李四.pdf", "王五.pdf", "张三.pdf"]
+        assert [row["digest"] for row in metadata] == [proofs[2], proofs[1], proofs[0]]
+        assert [connection.execute(
+            "SELECT content FROM evidence WHERE digest=?", (bytes.fromhex(proof),)
+        ).fetchone()[0] for proof in proofs] == [content for content, _ in files]
+
+
 def test_same_name_multi_role_unnamed_inactive_and_isolation(engine, tmp_path):
     entities = Entities(engine)
     first = entities.register_entity(

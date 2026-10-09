@@ -159,7 +159,7 @@ def test_complete_group_spans_months_and_members_are_twenty_bounded(book, closed
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_payroll_contributions_merge_across_months_with_four_month_components(tmp_path, closed):
+def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, closed):
     company = Company(tmp_path / "four-contributions.sqlite")
     policy = contribution_policy()
     housing = policy.rules[0].model_copy(
@@ -192,17 +192,18 @@ def test_payroll_contributions_merge_across_months_with_four_month_components(tm
     with snapshot(company.engine, "2026-02") as snap:
         data = open_group_page(snap)
         groups = data["collection"]["items"]
-        contribution = next(row for row in groups if row["description"] == "社保与公积金")
-        assert contribution["member_count"] == 8
-        members = open_group_members(snap, contribution["group_key"])["items"]
-        assert len({row["contribution_group_key"] for row in members}) == 2
-        assert {row["contribution_component"] for row in members} == {
-            "employee_social",
-            "employer_social",
-            "employee_housing",
-            "employer_housing",
-        }
-        assert {row["payroll_period"] for row in members} == {"2026-01", "2026-02"}
+        for title, components in (
+            ("社保", {"employee_social", "employer_social"}),
+            ("公积金", {"employee_housing", "employer_housing"}),
+        ):
+            contribution = next(row for row in groups if row["description"] == title)
+            assert contribution["member_count"] == 4
+            members = open_group_members(snap, contribution["group_key"])["items"]
+            assert len({row["contribution_group_key"] for row in members}) == 2
+            assert {row["contribution_component"] for row in members} == components
+            assert {row["payroll_period"] for row in members} == {"2026-01", "2026-02"}
+        tax = next(row for row in groups if row["description"] == "个人所得税")
+        assert tax["category_key"] == "tax_payables"
         net = next(row for row in groups if row["description"] == "实发工资")
         assert net["member_count"] == 2 and net["outstanding_fen"] == 2 * net_amount - 10000
     with snapshot(company.engine, "2026-01") as snap:
@@ -221,6 +222,7 @@ def test_group_identity_retains_formal_matter_direction_and_unknown_is_independe
         "key": "expense:a:primary",
         "source_business": {"kind": "expense", "subject_id": "a"},
         "name": "primary",
+        "source_fact_id": "fact",
         "category": "payable",
         "category_key": "supplier_payables",
         "counterparty_id": None,
@@ -229,15 +231,22 @@ def test_group_identity_retains_formal_matter_direction_and_unknown_is_independe
         first = _identity(snap, base, {})["group_key"]
         assert _identity(snap, base | {"key": "expense:b:primary"}, {})["group_key"] != first
         named = base | {"counterparty_id": "supplier"}
-        first = _identity(snap, named, {})["group_key"]
-        assert _identity(snap, named | {"key": "expense:b:primary"}, {})["group_key"] == first
+        assert (
+            _identity(snap, named, {})["group_key"]
+            != _identity(snap, named | {"key": "expense:b:primary"}, {})["group_key"]
+        )
+        scalars = {"fact": {"creditor_kind": "supplier", "expense_class": "administration"}}
+        first = _identity(snap, named, scalars)["group_key"]
+        assert _identity(snap, named | {"key": "expense:b:primary"}, scalars)["group_key"] == first
         assert (
             _identity(
-                snap, named | {"category": "receivable", "category_key": "other_receivables"}, {}
+                snap,
+                named | {"category": "receivable", "category_key": "other_receivables"},
+                scalars,
             )["group_key"]
             != first
         )
-        assert _identity(snap, named | {"name": "different"}, {})["group_key"] != first
+        assert _identity(snap, named | {"name": "different"}, scalars)["group_key"] != first
 
 
 def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members(opening_book):
@@ -271,13 +280,14 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
     )
     with snapshot(engine, "2026-01") as snap:
         groups = open_group_page(snap)["collection"]["items"]
-        assert len(groups) == 3
-        contribution = next(row for row in groups if row["description"] == "社保与公积金")
-        assert contribution["member_count"] == 4 and contribution["outstanding_fen"] == 8000
-        members = open_group_members(snap, contribution["group_key"])["items"]
-        assert {row["payroll_period"] for row in members} == {"2025-12"}
-        assert {row["source_period"] for row in members} == {"2026-01"}
-        assert all(row["voucher_version_id"] is None for row in members)
+        assert len(groups) == 4
+        for title in ("社保", "公积金"):
+            contribution = next(row for row in groups if row["description"] == title)
+            assert contribution["member_count"] == 2 and contribution["outstanding_fen"] == 4000
+            members = open_group_members(snap, contribution["group_key"])["items"]
+            assert {row["payroll_period"] for row in members} == {"2025-12"}
+            assert {row["source_period"] for row in members} == {"2026-01"}
+            assert all(row["voucher_version_id"] is None for row in members)
         opening_source = {
             "key": "opening_payroll_payable:prior-net:primary",
             "source_business": {"kind": "opening_payroll_payable"},

@@ -178,22 +178,32 @@ def test_pending_objects_and_tax_names_match_across_pages_and_month_freeze(book,
     assert [tuple(row[field] for field in fields) for row in paged] == [
         tuple(row[field] for field in fields) for row in complete
     ]
-    assert [(row["party"], row["description"]) for row in paged] == sorted(
-        (row["party"], row["description"]) for row in paged
-    )
+    assert [(row["party"], row["description"]) for row in paged] == [
+        ("丙劳务人员", "个人劳务款"),
+        ("丙劳务人员", "个人所得税"),
+        ("丁客户", "客户款"),
+        ("甲付款方", "代收款"),
+        ("甲付款方", "代收款"),
+        ("税务机关", "附加税"),
+        ("税务机关", "企业所得税"),
+        ("税务机关", "增值税"),
+        ("未提供姓名或名称", "管理费用"),
+        ("乙最终收款人", "代付款"),
+        ("最终收款人未具名", "代付款"),
+    ]
     by_id = {row["id"]: row for row in paged}
     expected = {
-        "pass_through:entrusted-unknown:collection": ("甲付款方", "代收代付", 3000),
-        "pass_through:entrusted-unknown:remittance": ("最终收款人未具名", "代收代付", 3000),
-        "pass_through:entrusted-named:collection": ("甲付款方", "代收代付", 3000),
-        "pass_through:entrusted-named:remittance": ("乙最终收款人", "代收代付", 3000),
-        "expense:unnamed-supplier:primary": ("未提供姓名或名称", "费用", 1200),
+        "pass_through:entrusted-unknown:collection": ("甲付款方", "代收款", 3000),
+        "pass_through:entrusted-unknown:remittance": ("最终收款人未具名", "代付款", 3000),
+        "pass_through:entrusted-named:collection": ("甲付款方", "代收款", 3000),
+        "pass_through:entrusted-named:remittance": ("乙最终收款人", "代付款", 3000),
+        "expense:unnamed-supplier:primary": ("未提供姓名或名称", "管理费用", 1200),
         "income_tax_assessment:enterprise-tax:tax": ("税务机关", "企业所得税", 700),
         "tax_assessment:sales-tax:vat": ("税务机关", "增值税", 1000),
         "tax_assessment:sales-tax:surtax": ("税务机关", "附加税", 60),
-        "service_sale:sale:primary": ("丁客户", "服务收入", 101000),
-        "labor:contractor-fee:net": ("丙劳务人员", "劳务报酬", 840000),
-        "labor:contractor-fee:tax": ("丙劳务人员", "代扣个人所得税", 160000),
+        "service_sale:sale:primary": ("丁客户", "客户款", 101000),
+        "labor:contractor-fee:net": ("丙劳务人员", "个人劳务款", 840000),
+        "labor:contractor-fee:tax": ("丙劳务人员", "个人所得税", 160000),
     }
     assert set(by_id) == set(expected)
     for key, display in expected.items():

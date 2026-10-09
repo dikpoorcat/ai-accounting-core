@@ -153,11 +153,12 @@ def test_payroll_batch_placeholder_does_not_create_a_missing_person(tmp_path):
     assert [line["party"] for line in voucher["lines"][:4]] == ["甲员工", "", "乙员工", ""]
     parts = [item for item in activity_members(company.engine, "2026-02")
              if item["subject_id"] == "gross-batch"]
-    assert {item["detail_scope_category"] for item in parts} == {"payroll", "expense_supplier"}
-    activity = next(item for item in parts if item["detail_scope_category"] == "payroll")
+    assert {item["group"] for item in parts} == {"payroll", "expense_supplier"}
+    assert all(item["key"] == item["detail_scope_key"] for item in parts)
+    activity = next(item for item in parts if item["group"] == "payroll")
     assert activity["party"] == "甲员工、乙员工"
     assert "payroll-group" not in activity["party"]
-    reserve = next(item for item in parts if item["detail_scope_category"] == "expense_supplier")
+    reserve = next(item for item in parts if item["group"] == "expense_supplier")
     assert reserve["party"] == ""
     assert reserve["amount_fen"] == company.current(
         "gross-batch", "payroll_reserve_payment"
@@ -362,7 +363,9 @@ def test_tax_identity_name_and_employee_code_are_reused(tmp_path):
     company = payroll_company(tmp_path)
     original = company.current("january")
     complete_details(company)
-    item = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"]["collections"]["employees"][
+    item = Dashboard(company.engine).employees("2026-01", employee_filter="all")[
+        "data"
+    ]["collections"]["employees"][
         "items"
     ][0]
     assert item["name"] == "测试员工"

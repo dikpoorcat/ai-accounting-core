@@ -1,9 +1,9 @@
 """The restored Vue routes share one authenticated SQLite service."""
 
-from urllib.parse import quote
 import json
 import sys
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import test_resident_service as resident_cases
 from entity_fixture import seed_entities
@@ -198,7 +198,9 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
     assert status == 200 and browser["data"]["position"]["month_expense_fen"] == "123456"
 
 
-def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, tmp_path, monkeypatch, capsys):
+def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
+    resident, tmp_path, monkeypatch, capsys
+):
     from ai_accounting.kernel import cli, mcp
 
     service, _, capability, http, _ = resident
@@ -208,14 +210,21 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, t
     amount = 9007199254740993
     _publish_expense(engine, "expense", amount)
     summary = Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"][0]
-    payload = {"company_id": company, "period": "2026-09", "section": "activity",
-               "group_key": summary["group_key"]}
+    payload = {
+        "company_id": company,
+        "period": "2026-09",
+        "section": "activity",
+        "group_key": summary["group_key"],
+    }
 
     def dispatch(command, data):
         status, _, _, response = http.request(
-            "/api/command", {"command": command, "payload": data},
-            headers={"X-Local-Capability": capability,
-                     "Authorization": "Bearer " + token.get_secret_value()},
+            "/api/command",
+            {"command": command, "payload": data},
+            headers={
+                "X-Local-Capability": capability,
+                "Authorization": "Bearer " + token.get_secret_value(),
+            },
         )
         assert status == 200, response
         return response
@@ -224,8 +233,19 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, t
     monkeypatch.setattr(cli, "ServiceClient", lambda _: client)
     request = tmp_path / "group.json"
     request.write_text(json.dumps(payload), encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", ["finance-local", "--root", str(tmp_path), "call",
-                                     "dashboard_brief_group", "--input", str(request)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "finance-local",
+            "--root",
+            str(tmp_path),
+            "call",
+            "dashboard_brief_group",
+            "--input",
+            str(request),
+        ],
+    )
     cli.main()
     cli_response = json.loads(capsys.readouterr().out)
     tools = {}
@@ -238,6 +258,7 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, t
             def register(function):
                 tools[function.__name__] = function
                 return function
+
             return register
 
         def run(self, **kwargs):
@@ -248,7 +269,7 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(resident, t
     mcp.serve(tmp_path)
     mcp_response = tools["finance_local_command"]("dashboard_brief_group", payload)
     for response in (cli_response, mcp_response):
-        assert response["schema_version"] == 2
+        assert response["schema_version"] == 3
         members = response["data"]["collections"]["members"]["items"]
         vouchers = response["data"]["collections"]["vouchers"]["items"]
         assert type(members[0]["amount_fen"]) is int and members[0]["amount_fen"] == amount
@@ -315,7 +336,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
     assert status == 200, response
-    assert response["schema_version"] == 9
+    assert response["schema_version"] == 10
     assert response["data"]["identity"]["subject_id"] == "expense"
     assert response["data"]["settlements"]["obligations"][0]["remaining_fen"] == "12500"
     assert "events" not in response["data"]["collections"]
@@ -386,12 +407,15 @@ def test_download_cannot_read_unknown_or_other_company_jobs(resident):
     assert http.request(base + f"?company_id={company}", headers=headers)[0] == 404
     assert http.request(base + f"?company_id={company}&path=C:/Windows", headers=headers)[0] == 400
     assert http.request(base + "?company_id=foreign", headers=headers)[0] == 400
-    assert http.request(
-        f"/api/local/jobs?company_id={company}&job_id=foreign", headers=headers
-    )[0] == 404
+    assert (
+        http.request(f"/api/local/jobs?company_id={company}&job_id=foreign", headers=headers)[0]
+        == 404
+    )
 
 
-def _publish_expense(engine, subject, amount, revision=0, party=None):
+def _publish_expense(
+    engine, subject, amount, revision=0, party=None, expense_class="administration"
+):
     party = party or subject + "-supplier"
     seed_entities(engine, [(party, "organization", None)])
     proof = engine.register_evidence(
@@ -404,7 +428,7 @@ def _publish_expense(engine, subject, amount, revision=0, party=None):
             "period": "2026-09",
             "amount_fen": amount,
             "counterparty_id": party,
-            "expense_class": "administration",
+            "expense_class": expense_class,
             "creditor_kind": "supplier",
         },
         evidence=(proof,),
@@ -419,6 +443,105 @@ def _publish_expense(engine, subject, amount, revision=0, party=None):
         request_id=f"publish-{subject}-{revision}",
     )
     return engine.ledger("2026-09")[-1]
+
+
+def test_http_and_command_scope_select_same_category_by_exact_member_key(resident):
+    service, _, capability, http, _ = resident
+    headers, token = authenticated(resident)
+    company = service.catalog.create_company("91310000123456789A", "精确事项接口测试")["id"]
+    engine = service.engine(company)
+    for subject, nature, amount in (
+        ("admin-a", "administration", 1000),
+        ("admin-b", "administration", 2000),
+        ("sales", "sales", 3000),
+    ):
+        _publish_expense(engine, subject, amount, party="supplier", expense_class=nature)
+    seed_entities(engine, [("bank", "fund_account", "bank")])
+    proof = engine.register_evidence(
+        b"synthetic exact payment scope",
+        "text/plain",
+        "fixture",
+        request_id="scope-proof",
+    )["digest"]
+    engine.save_fact(
+        "payment",
+        "combined",
+        {
+            "period": "2026-09",
+            "actual_date": "2026-09-28",
+            "direction": "outflow",
+            "bank_account_id": "bank",
+            "counterparty_id": None,
+            "payment_method": "bank_batch",
+            "amount_fen": 1000,
+            "allocations": [
+                {
+                    "source_kind": "expense",
+                    "source_id": subject,
+                    "obligation": "primary",
+                    "amount_fen": amount,
+                    "recipient_id": "supplier",
+                }
+                for subject, amount in (("admin-a", 500), ("admin-b", 200), ("sales", 300))
+            ],
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="scope-payment",
+    )
+    plan = engine.preview(["combined"])
+    engine.confirm(
+        ["combined"],
+        preview_digest=plan["digest"],
+        epochs=plan["epochs"],
+        request_id="scope-publication",
+    )
+    dashboard = Dashboard(engine)
+    with dashboard._snapshot("2026-09") as snap:
+        parts = next(parts for parts in snap.activity_components.values() if len(parts) == 2)
+    assert {part["source_category"] for part in parts} == {"expense_supplier"}
+    admin = next(part for part in parts if part["amount_fen"] == 700)
+    sales = next(part for part in parts if part["amount_fen"] == 300)
+    path = (
+        f"/api/dashboard/business-status?company_id={company}&period=2026-09"
+        f"&subject_id=combined&voucher_version_id={admin['voucher_version_id']}&limit=1"
+    )
+    status, _, _, response = http.request(
+        path + "&detail_scope_key=" + admin["key"], headers=headers
+    )
+    assert status == 200 and response["schema_version"] == 10
+    assert response["data"]["detail_scope"]["key"] == admin["key"]
+    assert response["data"]["detail_scope"]["amount_fen"] == "700"
+    cursor = response["data"]["collections"]["settlement_events"]["page"]["next_cursor"]
+    assert http.request(path + "&detail_scope_category=expense_supplier", headers=headers)[0] == 400
+    assert (
+        http.request(
+            path
+            + "&detail_scope_key="
+            + sales["key"]
+            + "&section=settlement_events&cursor="
+            + cursor,
+            headers=headers,
+        )[0]
+        == 409
+    )
+    payload = {
+        "company_id": company,
+        "period": "2026-09",
+        "subject_id": "combined",
+        "voucher_version_id": sales["voucher_version_id"],
+        "detail_scope_key": sales["key"],
+    }
+    status, _, _, native = http.request(
+        "/api/command",
+        {"command": "dashboard_business_status", "payload": payload},
+        headers={
+            "X-Local-Capability": capability,
+            "Authorization": "Bearer " + token.get_secret_value(),
+        },
+    )
+    assert status == 200 and native["data"]["detail_scope"]["amount_fen"] == 300
+    assert native["data"]["detail_scope"]["key"] == sales["key"]
 
 
 def test_http_voucher_trace_is_company_bound_and_keeps_exact_money_strings(resident):
@@ -478,7 +601,10 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
     assert status == 200
     group = first["data"]["collections"]["activity"]["items"][0]
     assert group["member_count"] == 2
-    member_base = f"/api/dashboard/brief-group?company_id={company}&period=2026-09&section=activity&group_key={group['group_key']}&limit=1"
+    member_base = (
+        f"/api/dashboard/brief-group?company_id={company}&period=2026-09"
+        f"&section=activity&group_key={group['group_key']}&limit=1"
+    )
     status, _, _, members = http.request(member_base, headers=headers)
     assert status == 200 and members["data"]["collections"]["members"]["page"]["has_more"]
     cursor = quote(members["data"]["collections"]["members"]["page"]["next_cursor"], safe="")
@@ -510,7 +636,10 @@ def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     assert result["data"]["focused_activity"]["amount_fen"] == "200"
     group = result["data"]["collections"]["activity"]["items"][0]
     assert group["member_count"] == 1
-    assert result["data"]["focused_activity_group"]["group_key"] == result["data"]["focused_activity"]["group_key"]
+    assert (
+        result["data"]["focused_activity_group"]["group_key"]
+        == result["data"]["focused_activity"]["group_key"]
+    )
     assert result["data"]["focused_activity_group"]["group_key"] != group["group_key"]
     assert result["data"]["collections"]["activity"]["page"]["has_more"]
     status, _, _, exact = http.request(

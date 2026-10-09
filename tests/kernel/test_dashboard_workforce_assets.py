@@ -1,5 +1,6 @@
 """Dashboard semantics follow existing published payroll, obligations and asset sources."""
 
+import base64
 import json
 from typing import get_args
 
@@ -542,6 +543,90 @@ def test_historical_missing_state_reuses_registered_status_without_rewriting(
     )
 
 
+def test_employee_employment_and_name_order_is_global_across_pages_and_filters(tmp_path):
+    company = Company(tmp_path / "employee-order.sqlite")
+    company.save(profile(employee_id="person-90"), "roster-period")
+    people = [
+        ("person-90", "丁", "2024-12-31", "2025-01"),
+        ("person-80", "李四", "2025-02-01", None),
+        ("person-20", "王五", "2025-02-01", None),
+        ("person-30", "王五", "2025-02-01", None),
+        ("person-70", "丙", "2025-02-14", None),
+        ("person-60", "一", "2025-02", None),
+        ("person-50", "乙", "2025-02", None),
+        ("person-40", "甲", "2025-03-01", None),
+        ("person-10", "李四", None, None),
+        ("person-00", "张三", None, None),
+    ]
+    for ident, name, start, end in reversed(people):
+        save_entity_display_profile(
+            company.engine,
+            {
+                "kind": "employee",
+                "entity_id": ident,
+                "display_name": name,
+                "employment_start": start,
+                "employment_end": end,
+                "employment_status": "inactive" if end else "active",
+                "source": "合成员工入离职资料",
+            },
+            expected_revision=0,
+            request_id="ordered-profile-" + ident,
+        )
+    dashboard = Dashboard(company.engine)
+
+    def read_pages(employee_filter):
+        response = dashboard.employees("2026-01", limit=3, employee_filter=employee_filter)
+        first = response
+        items = []
+        while True:
+            collection = response["data"]["collections"]["employees"]
+            items.extend(collection["items"])
+            if not collection["page"]["has_more"]:
+                return first, items
+            response = dashboard.employees(
+                "2026-01",
+                section="employees",
+                cursor=collection["page"]["next_cursor"],
+                expected_version=first["snapshot_version"],
+                employee_filter=employee_filter,
+                limit=3,
+            )
+
+    first, items = read_pages("all")
+    expected_ids = [ident for ident, _name, _start, _end in people]
+    assert [item["employee_id"] for item in items] == expected_ids
+    assert first["data"]["collections"]["employees"]["page"]["returned_count"] == 3
+    assert first["data"]["collections"]["employees"]["page"]["total_count"] == 10
+    assert [item["employment_start_date"] for item in items] == [
+        start for _ident, _name, start, _end in people
+    ]
+    filtered_first, filtered = read_pages("in_period")
+    assert [item["employee_id"] for item in filtered] == expected_ids[1:]
+    assert filtered_first["data"]["collections"]["employees"]["page"]["filtered_count"] == 9
+    assert filtered_first["data"]["employees"] == first["data"]["employees"]
+    focused = dashboard.employees(
+        "2026-01",
+        section="employees",
+        employee_id="person-90",
+        expected_version=first["snapshot_version"],
+        employee_filter="all",
+    )
+    assert focused["data"]["collections"]["employees"]["items"] == [items[0]]
+
+    cursor = first["data"]["collections"]["employees"]["page"]["next_cursor"]
+    old_page = json.loads(base64.urlsafe_b64decode(cursor))
+    old_page.pop("sort")
+    old_cursor = base64.urlsafe_b64encode(json.dumps(old_page).encode()).decode()
+    with pytest.raises(KernelError) as failure:
+        dashboard.employees(
+            "2026-01",
+            section="employees",
+            cursor=old_cursor,
+            expected_version=first["snapshot_version"],
+            employee_filter="all",
+        )
+    assert failure.value.code == "dashboard_snapshot_changed"
 
 
 def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company):
