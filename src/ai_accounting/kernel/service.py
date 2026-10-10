@@ -48,7 +48,7 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
 )
 
 OPERATING_PROTOCOL = {
-    "version": 6,
+    "version": 7,
     "schema_discovery": (
         "finance_local_schema无参读取overview概要。按当前事项用view=selected明确选择"
         "fact_kinds、commands和response_types取得所需详细合同；通用登记命令同时选择事实类型。"
@@ -259,9 +259,15 @@ OPERATING_PROTOCOL = {
     "management": "管理说明、归集资料可后补，不把管理缺项当核算门禁，不以月末冒充实际日期。",
     "dashboard_management": (
         "对象名称、人员入离职资料与用途通过update_entity_profile按明确来源追加管理版本；"
-        "save_display_profile只保存单笔业务说明；"
+        "save_display_profile只保存老板可理解的单笔业务用途和备注；"
         "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
-        "复用稳定业务身份，记录证据文件名和具体来源位置；不只保留内部编号。"
+        "复用稳定业务身份，不只保留内部编号。证据文件名和具体来源位置写入source，"
+        "不可变证据引用写入evidence_digest；purpose和note只补充尚未由业务字段表达的信息，"
+        "不重述日期、金额、对象和清偿结果，不写来源行号、核验过程或重算依据。"
+        "工资计提及社保、公积金付款由正式事实生成标准业务名称和摘要，"
+        "不另写核算过程或金额拆分叙述作为展示用途。银行原摘要保持原文。"
+        "社保和公积金应付拆解使用正式款项名称、所属月、金额及状态，"
+        "不把整笔工资说明复制为个人或单位分项用途。"
         "资料后补保留实际来源，不因展示资料缺项阻断核算。"
         "不从工资生效月推断入职日。月度经营结论先preview_period_commentary读取核算上下文，"
         "再用同一context_digest调用update_period_commentary；闭期补充显示为后补说明，"

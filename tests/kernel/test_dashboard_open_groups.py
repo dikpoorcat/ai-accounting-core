@@ -7,6 +7,7 @@ from test_banking import book as book
 from test_banking import close_month, inventories
 from test_dashboard_provenance import profile
 from test_integrity_content import damage
+from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as opening_book_fixture
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll
 from test_payroll import profile as payroll_profile
@@ -20,6 +21,8 @@ from ai_accounting.kernel.dashboard_open_groups import (
     open_group_members,
     open_group_page,
 )
+from ai_accounting.kernel.domains.payroll import PayrollBounded
+from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_reads import QueryReads
 
 opening_book = opening_book_fixture
@@ -159,7 +162,8 @@ def test_complete_group_spans_months_and_members_are_twenty_bounded(book, closed
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, closed):
+@pytest.mark.parametrize("kind", ["payroll", "payroll_bounded"])
+def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, closed, kind, monkeypatch):
     company = Company(tmp_path / "four-contributions.sqlite")
     policy = contribution_policy()
     housing = policy.rules[0].model_copy(
@@ -179,16 +183,42 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
     )
     company.save(income_tax_policy(), "income-tax")
     company.save(opening(), "opening")
-    company.save(payroll(), "january")
-    company.save(payroll(period="2026-02"), "february")
+    wages = [payroll(), payroll(period="2026-02")]
+    if kind == "payroll_bounded":
+        wages = [PayrollBounded(**wage.model_dump(mode="json")) for wage in wages]
+    company.save(wages[0], "january")
+    company.save(wages[1], "february")
     company.confirm_payroll("january", "february")
     company.publish("january")
-    net_amount = company.current("january").values["net_fen"]
+    net_amount = company.current("january", kind).values["net_fen"]
+    with snapshot(company.engine, "2026-01") as snap:
+        original = {
+            item["id"]: item
+            for group in open_group_page(snap)["collection"]["items"]
+            if group["description"] in {"社保", "公积金"}
+            for item in open_group_members(snap, group["group_key"])["items"]
+        }
+    for subject in ("january", "february"):
+        profile(
+            company.engine, "business", subject,
+            purpose="依据模拟工资资料第六行核对", note="模拟负责人复核说明",
+        )
+        Periods(company.engine).management(
+            subject, note="模拟管理核对说明", payment_period=None, payment_category=None,
+            expected_revision=0, request_id=f"management:{subject}",
+        )
     if closed:
         company.close("2026-01")
     company.publish("february")
-    company.save(payment(amount=10000), "later-payment")
+    later_payment = payment(amount=10000)
+    company.save(later_payment.model_copy(update={
+        "allocations": tuple(
+            allocation.model_copy(update={"source_kind": kind})
+            for allocation in later_payment.allocations
+        ),
+    }), "later-payment")
     company.publish("later-payment")
+    ledger = company.engine.ledger("2026-02")
     with snapshot(company.engine, "2026-02") as snap:
         data = open_group_page(snap)
         groups = data["collection"]["items"]
@@ -198,14 +228,35 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
         ):
             contribution = next(row for row in groups if row["description"] == title)
             assert contribution["member_count"] == 4
-            members = open_group_members(snap, contribution["group_key"])["items"]
+            original_prime = snap.metadata.prime_profiles
+
+            def no_business_profiles(profile_kind, identifiers):
+                assert profile_kind != "business", "contribution members do not read business notes"
+                return original_prime(profile_kind, identifiers)
+
+            def no_management(*args, **kwargs):
+                raise AssertionError("contribution members do not read management notes")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(snap.metadata, "prime_profiles", no_business_profiles)
+                patch.setattr(snap.management, "prime", no_management)
+                members = open_group_members(snap, contribution["group_key"])["items"]
             assert len({row["contribution_group_key"] for row in members}) == 2
             assert {row["contribution_component"] for row in members} == components
             assert {row["payroll_period"] for row in members} == {"2026-01", "2026-02"}
+            assert all(row["purpose"] is None for row in members)
+            assert all(row["voucher_version_id"] and row["voucher_number"] for row in members)
+            for row in members:
+                if row["id"] in original:
+                    assert row == original[row["id"]]
         tax = next(row for row in groups if row["description"] == "个人所得税")
         assert tax["category_key"] == "tax_payables"
         net = next(row for row in groups if row["description"] == "实发工资")
         assert net["member_count"] == 2 and net["outstanding_fen"] == 2 * net_amount - 10000
+        assert all(
+            row["purpose"] is None
+            for row in open_group_members(snap, net["group_key"])["items"]
+        )
     with snapshot(company.engine, "2026-01") as snap:
         net = next(
             row
@@ -214,6 +265,14 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
         )
         assert net["outstanding_fen"] == net_amount
         assert net["current_outstanding_fen"] == net_amount - 10000
+    assert company.engine.ledger("2026-02") == ledger
+    with company.engine.store.connection(read_only=True) as connection:
+        assert [tuple(row) for row in connection.execute(
+            "SELECT purpose,note FROM display_profile_revision ORDER BY entity_id"
+        )] == [("依据模拟工资资料第六行核对", "模拟负责人复核说明")] * 2
+        assert [row["note"] for row in connection.execute(
+            "SELECT note FROM management_revision ORDER BY subject_id"
+        )] == ["模拟管理核对说明"] * 2
 
 
 def test_group_identity_retains_formal_matter_direction_and_unknown_is_independent(book):
@@ -249,7 +308,8 @@ def test_group_identity_retains_formal_matter_direction_and_unknown_is_independe
         assert _identity(snap, named | {"name": "different"}, scalars)["group_key"] != first
 
 
-def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members(opening_book):
+@pytest.mark.parametrize("closed", [False, True])
+def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members(opening_book, closed):
     engine, save, publish, package, proof = opening_book
     components = (
         "net",
@@ -261,7 +321,7 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
     )
     package(
         [
-            ("opening_bank", "bank-start", {"bank_account_id": "bank", "balance_fen": 12000}),
+            ("opening_cash", "cash-start", {"cash_account_id": "cash", "balance_fen": 12000}),
             *[
                 (
                     "opening_payroll_payable",
@@ -278,6 +338,16 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
             ],
         ]
     )
+    for component in components:
+        subject = "prior-" + component
+        profile(engine, "business", subject, purpose="模拟期初核算依据", note="模拟期初复核说明")
+        Periods(engine).management(
+            subject, note="模拟期初管理说明", payment_period=None, payment_category=None,
+            expected_revision=0, request_id=f"management:{subject}",
+        )
+    if closed:
+        _close_without_current_business(engine, "2026-01", proof)
+    ledger = engine.ledger("2026-01")
     with snapshot(engine, "2026-01") as snap:
         groups = open_group_page(snap)["collection"]["items"]
         assert len(groups) == 4
@@ -288,6 +358,8 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
             assert {row["payroll_period"] for row in members} == {"2025-12"}
             assert {row["source_period"] for row in members} == {"2026-01"}
             assert all(row["voucher_version_id"] is None for row in members)
+            assert all(row["purpose"] is None for row in members)
+            assert all(row["source_amount_fen"] == row["outstanding_fen"] == 2000 for row in members)
         opening_source = {
             "key": "opening_payroll_payable:prior-net:primary",
             "source_business": {"kind": "opening_payroll_payable"},
@@ -311,6 +383,7 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
             _identity(snap, opening_source, scalars)["group_key"]
             == _identity(snap, wage_source, scalars)["group_key"]
         )
+    assert engine.ledger("2026-01") == ledger
 
 
 def test_frozen_group_rejects_modified_member_state(book):

@@ -80,6 +80,11 @@ test("fund movement details add precise progress and context without repeating t
       data.display_profiles.business.values = { purpose: "包含交通补助的9月工资", note: "包含交通补助的9月工资" };
       html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
       assert.doesNotMatch(html, /用途／备注/);
+      data.display_profiles.business.values = { purpose: "原始业务用途", note: "确需补充的备注" };
+      html = await render(data, movement({ display_summary: "工资付款（2026-09）；原始业务用途" }));
+      assert.match(html, /事项说明：工资付款（2026-09）；原始业务用途/);
+      assert.doesNotMatch(html, /用途／备注：原始业务用途/);
+      assert.match(html, /用途／备注：确需补充的备注/);
     });
     await t.test("account identity excludes only current account and preserves same names across roles", async () => {
       const profile = (entity_id, display_name) => ({ entity_id, values: { display_name } });

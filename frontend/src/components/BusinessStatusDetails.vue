@@ -9,12 +9,13 @@ import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
-import type { BriefActivityRow, BriefVoucher } from "../api/brief";
+import type { BriefActivityRow, BriefOpenItem, BriefVoucher } from "../api/brief";
 import type { FundMovement } from "../api/funds";
 import type { PersonalLaborItem } from "../api/employees";
 
 interface BriefStatusContext {
   obligationKey: string; categoryKey: string;
+  contributionComponent?: BriefOpenItem["contribution_component"];
   cutoffPeriod: string; currentCutoffPeriod: string; status: string;
   direction: "receivable" | "payable"; party: string; description?: string;
   sourceAmountFen?: string | null; paidFen?: string | null;
@@ -66,19 +67,20 @@ const activityDescription = computed(() => {
   return item?.description && ![item.party, item.title].includes(item.description) ? item.description : "";
 });
 const ownerPurposes = computed(() => {
+  if (isOpenItem.value && props.briefContext?.contributionComponent) return [];
   if (isVoucher.value && props.voucherContext) {
     const voucher = props.voucherContext;
     const visibleTexts = [voucher.summary, voucher.list_summary, voucher.type, voucher.business_amount_label,
       ...voucher.lines.flatMap(line => [line.party, line.source_label, ...line.parties.map(party => party.name)]),
       ...[...(voucher.asset ? [voucher.asset] : []), ...voucher.asset_members,
         ...voucher.lines.flatMap(line => line.asset ? [line.asset] : [])].map(asset => asset.name || asset.code || "资产卡片")];
-    return purposes.value.filter(value => !visibleTexts.includes(value));
+    return purposes.value.filter(value => !visibleTexts.some(text => text?.includes(value)));
   }
   const context = props.activityContext || props.briefContext;
   const rowTexts = isFunds.value
     ? [props.fundsContext?.party, props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value]
     : [context?.party, isActivity.value ? props.activityContext?.title : context?.description, activityDescription.value];
-  return purposes.value.filter(value => !rowTexts.includes(value));
+  return purposes.value.filter(value => !rowTexts.some(text => text?.includes(value)));
 });
 type Obligation = BusinessStatusData["settlements"]["obligations"][number];
 const sameLaborSource = computed(() => Boolean(isLabor.value && props.laborContext && data.value

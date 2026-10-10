@@ -1080,14 +1080,58 @@ class _Snapshot:
         suffix = "等" if len(unique) > 2 else ""
         return f"{len(unique)} 张资产卡片：{labels}{suffix}"
 
+    def owner_uses_standard_text(self, calc, *, relations=None, matter_key=None):
+        from .dashboard_matters import PAYMENT_KINDS, owner_uses_standard_text
+
+        kind = calc["kind"]
+        if kind not in PAYMENT_KINDS or matter_key is not None:
+            return owner_uses_standard_text(
+                kind, components=(calc["fact"]["data"].get("component"),), matter_key=matter_key,
+            )
+        key = ("owner_standard_text", calc["id"])
+        if key not in self.semantic_cache:
+            data = calc["fact"]["data"]
+            if data.get("reserve_expense_fen"):
+                self.semantic_cache[key] = False
+            else:
+                if relations is None:
+                    resolution = self.query_relations(calc)
+                    obligations = {item["key"]: item for item in resolution["obligations"]}
+                    relations = [
+                        obligations[effect["key"]]
+                        for effect in calc["outcome"].get("balances", ())
+                        if effect["key"] in obligations
+                    ]
+                opening = [
+                    {"kind": "opening_payroll_payable", "fact_id": item["source_fact_id"]}
+                    for item in relations
+                    if item.get("source_kind", (item.get("source_business") or {}).get("kind"))
+                    == "opening_payroll_payable"
+                ]
+                from .dashboard_sort import fact_sort_scalars
+
+                scalars = fact_sort_scalars(self, opening) if opening else {}
+                components = []
+                for item in relations:
+                    source_kind = item.get("source_kind", (item.get("source_business") or {}).get("kind"))
+                    if source_kind == "opening_payroll_payable":
+                        components.append(scalars[item["source_fact_id"]].get("component"))
+                    elif source_kind in {"payroll", "payroll_bounded"}:
+                        components.append(item.get("obligation_name", item.get("name")))
+                    else:
+                        components.append(None)
+                self.semantic_cache[key] = owner_uses_standard_text(kind, components=components)
+        return self.semantic_cache[key]
+
     def business_summary(
         self, calc, sign=1, relations=None, *, include_sources=False, asset_references=(),
         include_parties=True,
     ):
         """Owner-facing wording from exact selected facts, without inferred business causes."""
         data, kind = calc["fact"]["data"], calc["kind"]
-        profile = self.profile("business", calc["fact"]["subject_id"])
         relations = self.voucher_relations(calc, sign) if relations is None else relations
+        standard_text = not include_sources and self.owner_uses_standard_text(calc, relations=relations)
+        profile = {} if standard_text else self.profile("business", calc["fact"]["subject_id"])
         short = {
             "payroll": "计提工资",
             "payroll_bounded": "计提工资",
@@ -1126,9 +1170,9 @@ class _Snapshot:
                 for r in relations
             }
             if names and names <= {"employee_social", "employer_social"}:
-                short = "支付社保"
+                short = "缴纳社保" if standard_text else "支付社保"
             elif names and names <= {"employee_housing", "employer_housing"}:
-                short = "支付公积金"
+                short = "缴纳公积金" if standard_text else "支付公积金"
             elif names and names <= {"net", "net_salary", "salary", "bonus"}:
                 short = "支付工资奖金"
             else:
@@ -1189,7 +1233,7 @@ class _Snapshot:
         purposes = [
             profile.get("purpose"),
             profile.get("note"),
-            (self.management.get(calc["fact"]["subject_id"]) or {}).get("note"),
+            None if standard_text else (self.management.get(calc["fact"]["subject_id"]) or {}).get("note"),
         ]
         supplied = list(dict.fromkeys(p.strip() for p in purposes if p and p.strip()))
         if supplied:
@@ -1202,7 +1246,7 @@ class _Snapshot:
                 for field in ("display_name", "purpose", "note")
                 if profile.get(field)
             ]
-            management = self.management.get(calc["fact"]["subject_id"])
+            management = None if standard_text else self.management.get(calc["fact"]["subject_id"])
             if management and management.get("note"):
                 sources.append(self.management_source(management, "note"))
             for party in named_parties:
@@ -2348,6 +2392,8 @@ class Dashboard:
 
             data["display_profiles"] = business_profiles(
                 snap, data, fact=scoped_row["basis"]["fact"] if scoped_row is not None else None,
+                calculation=scoped_row["basis"] if scoped_row is not None else None,
+                matter_key=component["matter_key"] if component is not None else None,
             )
             if component is not None:
                 source_headers = snap.reads.metadata(
@@ -2473,7 +2519,9 @@ def _voucher_profile_progress(voucher, context):
         visible.update((line["party"], line["source_label"]))
         visible.update(party["name"] for party in line["parties"])
     business = profiles["business"]["values"]
-    if any(business.get(field) and business[field] not in visible for field in ("purpose", "note")):
+    if any(business.get(field) and not any(
+        business[field] in text for text in visible if isinstance(text, str)
+    ) for field in ("purpose", "note")):
         return True
     visible_parties = {
         party["id"] for line in voucher["lines"] for party in line["parties"]
@@ -2562,6 +2610,7 @@ def _brief_prime_voucher_profiles(snap, rows):
                 snap, {"identity": {"subject_id": subject}, "frozen_adoption": None,
                        "current_business_result": None},
                 fact=selected_facts[subject], entity_kinds=kinds,
+                calculation=snap.calculation(selected[subject]) if subject in selected else None,
             ) if subject in selected_facts else {},
         }
 
@@ -2573,7 +2622,8 @@ def _brief_prime_activity(snap, rows):
     subjects, parties, asset_ids = set(), set(), set()
     for ident in identifiers:
         calc = snap.calculation(ident)
-        subjects.add(calc["subject_id"])
+        if not snap.owner_uses_standard_text(calc):
+            subjects.add(calc["subject_id"])
         data = calc["fact"]["data"]
         parties.update(
             data[field] for field in (
@@ -2595,8 +2645,9 @@ def _brief_prime_activity(snap, rows):
             if item.get("recipient_id")
         )
     parties.discard("payroll-group")
-    snap.metadata.prime_profiles("business", subjects)
-    snap.management.prime(subjects)
+    if subjects:
+        snap.metadata.prime_profiles("business", subjects)
+        snap.management.prime(subjects)
     snap.metadata.prime_profiles("employee", parties)
     snap.metadata.prime_profiles("counterparty", parties)
     if asset_ids:
@@ -2616,11 +2667,14 @@ def _brief_activity_row(snap, row):
         data = row["basis"]["fact"]["data"]
         recognition = _recognition(data, str(YearMonth.from_ordinal(row["period"])))
         description = component["description"]
-        profile = snap.profile("business", row["basis"]["subject_id"])
+        standard_text = snap.owner_uses_standard_text(
+            row["basis"], matter_key=component["matter_key"],
+        )
+        profile = {} if standard_text else snap.profile("business", row["basis"]["subject_id"])
         supplied = list(dict.fromkeys(
             value.strip() for value in (
                 profile.get("purpose"), profile.get("note"),
-                (snap.management.get(row["basis"]["subject_id"]) or {}).get("note"),
+                None if standard_text else (snap.management.get(row["basis"]["subject_id"]) or {}).get("note"),
             )
             if value and value.strip()
         ))

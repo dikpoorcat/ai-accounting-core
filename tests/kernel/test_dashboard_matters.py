@@ -183,7 +183,10 @@ def test_same_voucher_many_matters_conserve_money_and_exact_scope(opening_book):
         member = page["data"]["collections"]["members"]["items"][0]
         members.append(member)
         assert member["key"] == member["detail_scope_key"]
-        assert "整单说明：原单事项说明；原单保留备注；原单管理备注" in member["description"]
+        if member["title"] in {"缴纳社保", "缴纳公积金"}:
+            assert "原单" not in member["description"]
+        else:
+            assert "整单说明：原单事项说明；原单保留备注；原单管理备注" in member["description"]
         vouchers = page["data"]["collections"]["vouchers"]["items"]
         assert len(vouchers) == 1
         versions.add(vouchers[0]["voucher_version_id"])

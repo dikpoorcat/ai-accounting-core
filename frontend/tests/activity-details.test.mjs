@@ -183,6 +183,9 @@ test("activity details only add information to the exact occurrence row", async 
       assert.equal((html.match(/事项说明：9月工资/g) ?? []).length, 1);
       assert.doesNotMatch(html, /用途／备注：9月工资<\/p>/); assert.match(html, /用途／备注：9月工资补充用途/);
       assert.doesNotMatch(await render(data, activity({ description: "工资" })), /事项说明：工资<\/p>/);
+      const combined = await render(data, activity({ description: "支付工资（2026-09）；9月工资；9月工资补充用途" }));
+      assert.match(combined, /事项说明：支付工资（2026-09）；9月工资；9月工资补充用途/);
+      assert.doesNotMatch(combined, /用途／备注/);
       data.display_profiles.employees = [{ entity_id: "employee-a", values: { display_name: "张某" } }, { entity_id: "employee-b", values: { display_name: "张某" } }];
       assert.match(await render(data), /员工：张某、张某/);
     });

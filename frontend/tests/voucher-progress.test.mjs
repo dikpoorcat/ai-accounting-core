@@ -123,6 +123,8 @@ test("voucher progress adds business facts without repeating the voucher", async
       }
       const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资确认补充", note: "9月工资确认补充" };
       assert.equal(((await render(data)).match(/用途／备注：9月工资确认补充/g) ?? []).length, 1);
+      const combined = await render(data, voucher({ summary: "9月工资确认；9月工资确认补充" }));
+      assert.doesNotMatch(combined, /用途／备注：9月工资确认补充/);
       for (const asset of [{ asset_id: "asset-a", name: "设备", code: "A" }, { asset_id: "asset-a", name: "", code: "A" }, { asset_id: "asset-a", name: "", code: "" }]) {
         data.display_profiles.business.values = { purpose: asset.name || asset.code || "资产卡片" };
         assert.doesNotMatch(await render(data, voucher({ asset })), /用途／备注：/);

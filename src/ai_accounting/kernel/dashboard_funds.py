@@ -1087,7 +1087,11 @@ class FundsRead:
         # one metadata and one fact SELECT per visible movement.
         metadata = self.snap.reads.metadata(presentation_ids)
         self.snap.reads.fact_versions({item["fact_id"] for item in metadata.values()})
-        subjects = {self.snap.calculation(ident)["subject_id"] for ident in identifiers}
+        subjects = {
+            calc["subject_id"]
+            for ident in identifiers
+            if not self.snap.owner_uses_standard_text(calc := self.snap.calculation(ident))
+        }
         self.snap.metadata.prime_profiles("business", subjects)
         self.snap.management.prime(subjects)
 
@@ -1619,7 +1623,9 @@ class FundsRead:
         title = {
             "支付工资奖金": "工资批量代发",
             "支付社保": "社保批量支付",
+            "缴纳社保": "社保批量支付",
             "支付公积金": "公积金批量支付",
+            "缴纳公积金": "公积金批量支付",
         }.get(short, "批量付款")
         recipient_count = len(seen_parties)
         count_label = (

@@ -34,10 +34,18 @@ class _Profile(BaseModel):
     entity_id: ShortText
     display_name: ShortText | None = None
     display_number: ShortText | None = None
-    purpose: NoteText | None = None
-    note: NoteText | None = None
-    source: Annotated[str, Field(min_length=1, max_length=2000)]
-    evidence_digest: EvidenceDigest | None = None
+    purpose: NoteText | None = Field(
+        default=None, description="老板可理解的补充用途；不重述已展示的日期、金额、对象和清偿结果，不写核算依据"
+    )
+    note: NoteText | None = Field(
+        default=None, description="老板可理解的补充备注；不重述结构化业务事实，核算来源定位写入source"
+    )
+    source: Annotated[str, Field(
+        min_length=1, max_length=2000, description="真实来源文件名和具体位置，不作为看板用途展示"
+    )]
+    evidence_digest: EvidenceDigest | None = Field(
+        default=None, description="实际采用的不可变证据引用"
+    )
 
 
 class BusinessProfile(_Profile):

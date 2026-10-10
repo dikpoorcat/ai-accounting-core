@@ -32,6 +32,27 @@ SALARY = Matter("salary", "实发工资", "payroll", "payroll_payables")
 BONUS = Matter("bonus", "奖金", "payroll", "payroll_payables")
 SOCIAL = Matter("social", "社保", "payroll", "payroll_payables")
 HOUSING = Matter("housing", "公积金", "payroll", "payroll_payables")
+CONTRIBUTION_COMPONENTS = frozenset({
+    "employee_social", "employer_social", "employee_housing", "employer_housing",
+})
+PAYMENT_KINDS = frozenset({"payment", "cash_payment", "platform_payment", "payroll_reserve_payment"})
+
+
+def owner_uses_standard_text(kind, *, components=(), matter_key=None):
+    """Use typed payroll meanings instead of whole-business explanatory prose."""
+    if kind in {"payroll", "payroll_bounded"}:
+        return True
+    if kind == "opening_payroll_payable":
+        components = set(components)
+        return bool(components) and components <= CONTRIBUTION_COMPONENTS
+    if kind not in PAYMENT_KINDS:
+        return False
+    if matter_key is not None:
+        return matter_key in {"social", "housing"}
+    components = set(components)
+    return bool(components) and components <= CONTRIBUTION_COMPONENTS
+
+
 INDIVIDUAL_TAX = Matter("individual-income-tax", "个人所得税", "tax", "tax_payables")
 LABOR = Matter("labor-payment", "个人劳务款", "labor", "labor_payables")
 EXPENSE_MATTERS = {

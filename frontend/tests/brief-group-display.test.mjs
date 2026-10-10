@@ -12,7 +12,7 @@ async function renderMembers(server, members, { hasMore = false, expandedPart = 
   const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
   const data = { section: "open_items", group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
-  const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; return state; } };
+  const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; for (const item of members) assert.equal(state.openContext(item).contributionComponent, item.contribution_component); return state; } };
   const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", lines: [] });
   const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-07", openSummary: { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] }, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
   return renderToString(app);
@@ -25,7 +25,7 @@ test("monthly contribution table owns single records and compresses missing and 
     assert.equal((html.match(/class="contribution-row"/g) ?? []).length, 2);
     assert.doesNotMatch(html, /class="member-row"/);
     assert.equal((html.match(/¥525\.00/g) ?? []).length, 2, "original and period-end amount stay distinct; no third duplicate member amount");
-    assert.equal((html.match(/社保缴费/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /社保缴费/);
     assert.equal((html.match(/凭证 88/g) ?? []).length, 2, "both component rows retain their exact voucher entrance");
     assert.equal((html.match(/>业务进展<\/button>/g) ?? []).length, 2);
     assert.doesNotMatch(html, /公积金|该月末未列待付款项/);
@@ -35,18 +35,21 @@ test("monthly contribution table owns single records and compresses missing and 
   } finally { await server.close(); }
 });
 
-test("multi-record components keep exact dates, purposes and vouchers while unmatched records stay visible", async () => {
+test("contribution records keep dates and vouchers without whole-business purposes, including incomplete pages", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
     const records = [contributionMember("first", { date: "2026-07-15", purpose: "第一笔补缴" }), contributionMember("second", { date: "2026-07-20", purpose: "第二笔补缴", voucher_version_id: "exact-89" }), contributionMember("no-identity", { contribution_group_key: null, purpose: "缺员工身份" }), contributionMember("no-period", { payroll_period: null, purpose: "缺工资月" }), contributionMember("no-component", { contribution_component: null, purpose: "缺分项" })];
     const html = await renderMembers(server, records, { expandedPart: 'contribution:["employee-a","2026-07","social"]:employee_social' });
     assert.match(html, /aria-expanded="true"[^>]*>共 2 笔/);
     assert.match(html, /¥1,050\.00/);
-    for (const text of ["2026-07-15", "2026-07-20", "第一笔补缴", "第二笔补缴", "凭证 88", "凭证 89", "缺员工身份", "缺工资月", "缺分项"]) assert(html.includes(text), text);
+    for (const text of ["2026-07-15", "2026-07-20", "凭证 88", "凭证 89", "缺分项"]) assert(html.includes(text), text);
+    assert.doesNotMatch(html, /第一笔补缴|第二笔补缴|缺员工身份|缺工资月/);
     assert.equal((html.match(/class="member-row"/g) ?? []).length, 5, "only multi-record children and unmatched ordinary records retain member rows");
     const partial = await renderMembers(server, records, { hasMore: true });
     assert.doesNotMatch(partial, /class="contribution-row"/);
     assert.equal((partial.match(/class="member-row"/g) ?? []).length, 5, "incomplete grouping retains all already loaded records");
+    assert.doesNotMatch(partial, /第一笔补缴|第二笔补缴|缺员工身份|缺工资月/);
+    assert.match(partial, /缺分项/);
   } finally { await server.close(); }
 });
 
@@ -62,7 +65,7 @@ test("later mixed or unknown contribution states never collapse into a settled s
   } finally { await server.close(); }
 });
 
-test("group member lists preserve purposes, exact vouchers and monthly contribution breakdowns", async () => {
+test("group member lists preserve monthly contribution breakdowns without whole-business purposes", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
     const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
@@ -74,7 +77,7 @@ test("group member lists preserve purposes, exact vouchers and monthly contribut
     const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; return state; } };
     const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-09", openSummary: summary, direction: "payable", periodClosed: true, voucherIndex: new Map() }); app.use(router);
     const html = await renderToString(app);
-    assert.match(html, /2026-08工资对应社保/); assert.match(html, /2026-09工资对应社保/);
+    assert.doesNotMatch(html, /2026-08工资对应社保|2026-09工资对应社保/);
     assert.match(html, /2026年8月 · 社保/); assert.match(html, /2026年9月 · 社保/);
     for (const label of ["原应付", "实际已付", "抵销／代付", "月末待付", "后续进展", "个人社保", "公司社保", "该月末未列待付款项"]) assert(html.includes(label));
     assert.match(html, /¥100\.00/); assert.match(html, /¥50\.00/);
@@ -105,7 +108,26 @@ test("social and housing monthly panels only name missing components of their ow
       assert(html.includes(`2026年7月 · ${ownLabel}`));
       assert(html.includes(`${missingLabel}：该月末未列待付款项`));
       assert.doesNotMatch(html, new RegExp(otherLabel));
-      assert(html.includes("原资料用途"));
+      assert.doesNotMatch(html, /原资料用途/);
+    }
+  } finally { await server.close(); }
+});
+
+test("all contribution components exclude accounting basis while ordinary bank purposes remain visible", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const basis = "依据模拟核算表工作表第六行及合成工资复核";
+    const records = ["employee_social", "employer_social", "employee_housing", "employer_housing"].map(component => contributionMember(component, { contribution_component: component, purpose: basis, date: "2026-07-15" }));
+    records.push(contributionMember("ordinary", { contribution_component: null, contribution_group_key: null, purpose: "银行原始付款备注", description: "普通付款" }));
+    for (const hasMore of [false, true]) {
+      const html = await renderMembers(server, records, { hasMore });
+      assert.doesNotMatch(html, new RegExp(basis));
+      assert.match(html, /银行原始付款备注/);
+      assert.match(html, /普通付款/);
+      assert.match(html, /2026-07-15/);
+      assert.match(html, /凭证 88/);
+      assert.match(html, /业务进展/);
+      assert.match(html, /¥525\.00/);
     }
   } finally { await server.close(); }
 });

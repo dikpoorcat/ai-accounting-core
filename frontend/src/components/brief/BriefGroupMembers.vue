@@ -76,6 +76,7 @@ function toggle(key: string) { selected.value = selected.value === key ? "" : ke
 function togglePart(key: string) { expandedPart.value = expandedPart.value === key ? "" : key; selected.value = ""; preview.value = ""; }
 function openContext(item: BriefOpenItem) {
   return { obligationKey: item.id, categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
+    contributionComponent: item.contribution_component,
     currentCutoffPeriod: props.openSummary?.current_cutoff_period ?? props.period, status: item.status, direction: props.direction ?? "payable",
     party: item.party, description: item.description, sourceAmountFen: item.source_amount_fen, paidFen: item.paid_fen,
     otherSettledFen: item.other_settled_fen, outstandingFen: item.outstanding_fen, currentStatus: item.current_status,
@@ -99,7 +100,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
       <table><thead><tr><th>款项</th><th>原应付</th><th>实际已付</th><th>抵销／代付</th><th>月末待付</th><th>操作</th></tr></thead>
         <tbody><template v-for="part in row.parts" :key="part.component">
           <tr class="contribution-row"><th scope="row">{{ part.label }}
-            <template v-if="part.members.length === 1"><small v-if="part.members[0]!.date || part.members[0]!.recognition.period !== row.payroll_period">{{ part.members[0]!.date || part.members[0]!.recognition.label }}</small><small v-if="part.members[0]!.purpose">{{ part.members[0]!.purpose }}</small></template>
+            <template v-if="part.members.length === 1"><small v-if="part.members[0]!.date || part.members[0]!.recognition.period !== row.payroll_period">{{ part.members[0]!.date || part.members[0]!.recognition.label }}</small></template>
           </th>
             <td data-label="原应付">{{ amount(part.sourceAmountFen) }}</td><td data-label="实际已付">{{ amount(part.paidFen) }}</td><td data-label="抵销／代付">{{ amount(part.otherSettledFen) }}</td><td data-label="月末待付"><strong>{{ amount(part.outstandingFen) }}</strong><small v-for="notice in part.notices" :key="notice">{{ notice }}</small><small v-if="!['open', 'partial', 'settled'].includes(part.status)">{{ businessStateLabel(part.status) }}</small></td>
             <td class="contribution-actions">
@@ -114,7 +115,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
             <BusinessStatusDetails :subject-id="part.members[0]!.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(part.members[0]!)" :expanded="expanded && selected === part.members[0]!.id" hide-summary presentation="brief" @changed="$emit('changed')" />
           </td></tr>
           <tr v-else-if="part.members.length > 1" v-show="expandedPart === row.id + ':' + part.component" class="contribution-detail-row"><td colspan="6"><ul class="contribution-records" :aria-label="part.label + '逐笔记录'">
-            <li v-for="item in part.members" :key="item.id"><div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.purpose || item.description }}</span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
+            <li v-for="item in part.members" :key="item.id"><div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}</span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
               <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
               <button v-if="item.subject_id" type="button" :aria-expanded="selected === item.id" @click="toggle(item.id)">业务进展</button>
             </div><BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && expandedPart === row.id + ':' + part.component && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" /></li>
@@ -136,7 +137,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
         <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
       <li v-for="item in ungroupedOpenMembers" :key="item.id">
-        <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}<small v-if="item.purpose" class="member-purpose">{{ item.purpose }}</small></span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
+        <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}<small v-if="item.purpose && !item.contribution_component" class="member-purpose">{{ item.purpose }}</small></span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id" type="button" :aria-expanded="selected === itemKey(item)" @click="toggle(itemKey(item))">业务进展</button>
         </div>

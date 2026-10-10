@@ -10,7 +10,7 @@ import hashlib
 from collections import defaultdict
 
 from .contracts import KernelError
-from .dashboard_matters import obligation_matter
+from .dashboard_matters import CONTRIBUTION_COMPONENTS, obligation_matter, owner_uses_standard_text
 from .text_sort import pinyin_key
 from .types import YearMonth, canonical, checked
 
@@ -348,10 +348,16 @@ def open_group_members(snap, group_key, *, after=None, limit=20):
     sources = [row for row in ordered if row["key"] in selected_set]
     selected_headers = _source_headers(snap, sources)
     scalars = fact_sort_scalars(snap, selected_headers.values())
-    subjects = {(source.get("source_business") or {}).get("subject_id") for source in sources}
+    subjects = {
+        (source.get("source_business") or {}).get("subject_id")
+        for source in sources
+        if data["identities"][source["key"]]["component"] not in CONTRIBUTION_COMPONENTS
+        and not owner_uses_standard_text((source.get("source_business") or {}).get("kind"))
+    }
     subjects.discard(None)
-    snap.metadata.prime_profiles("business", subjects)
-    snap.management.prime(subjects)
+    if subjects:
+        snap.metadata.prime_profiles("business", subjects)
+        snap.management.prime(subjects)
     voucher_rows = {}
     for row in snap.connection.execute(
         "SELECT p.calculation_id,v.id,v.period,n.number FROM json_each(?) ids "
@@ -381,21 +387,23 @@ def open_group_members(snap, group_key, *, after=None, limit=20):
             fact_data,
             source.get("counterparty_id"),
         )
-        if identity["component"] not in {
-            "employee_social", "employer_social", "employee_housing", "employer_housing",
-        }:
+        purpose = None
+        if identity["component"] not in CONTRIBUTION_COMPONENTS:
             description = identity["description"]
-        profile = snap.profile("business", business.get("subject_id"))
-        supplied = dict.fromkeys(
-            value.strip()
-            for value in (
-                profile.get("purpose"),
-                profile.get("note"),
-                (snap.management.get(business.get("subject_id")) or {}).get("note"),
+        if identity["component"] not in CONTRIBUTION_COMPONENTS and not owner_uses_standard_text(
+            business.get("kind")
+        ):
+            profile = snap.profile("business", business.get("subject_id"))
+            supplied = dict.fromkeys(
+                value.strip()
+                for value in (
+                    profile.get("purpose"),
+                    profile.get("note"),
+                    (snap.management.get(business.get("subject_id")) or {}).get("note"),
+                )
+                if isinstance(value, str) and value.strip()
             )
-            if isinstance(value, str) and value.strip()
-        )
-        purpose = "；".join(supplied) or None
+            purpose = "；".join(supplied) or None
         result.append(
             {
                 "id": source["key"],

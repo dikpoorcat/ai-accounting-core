@@ -239,7 +239,7 @@ def test_reversal_summary_identifies_original_payroll_without_hiding_its_sign(pa
     )
     replacement = voucher(company.engine, "2026-02", "january")
     assert reversal["title"] == "冲正·工资计提"
-    assert reversal["description"] == "冲销原业务：计提工资（2026-01）；一月份员工工资"
+    assert reversal["description"] == "冲销原业务：计提工资（2026-01）"
     assert reversal["party"] == replacement["party"] == "甲员工"
     assert reversal["amount_fen"] == -1000000
     assert replacement["title"] == "工资计提"

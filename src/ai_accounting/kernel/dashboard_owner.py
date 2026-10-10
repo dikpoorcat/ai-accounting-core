@@ -227,7 +227,7 @@ def scope_business_status(value, component, row):
     }
 
 
-def business_profiles(snapshot, value, *, fact=None, entity_kinds=None):
+def business_profiles(snapshot, value, *, fact=None, entity_kinds=None, calculation=None, matter_key=None):
     """Locate business objects through the adopted fact's explicit references."""
     from .entity_references import references_from_data
 
@@ -252,8 +252,17 @@ def business_profiles(snapshot, value, *, fact=None, entity_kinds=None):
             (json.dumps(ids),),
         )
     }
+    from .dashboard_matters import owner_uses_standard_text
+
+    standard_text = (
+        snapshot.owner_uses_standard_text(calculation, matter_key=matter_key)
+        if calculation is not None else owner_uses_standard_text(
+            fact["kind"], components=(fact["data"].get("component"),), matter_key=matter_key,
+        )
+    )
     result = {
-        "business": {"entity_id": subject_id, "values": snapshot.profile("business", subject_id)}
+        "business": {"entity_id": subject_id,
+                     "values": {} if standard_text else snapshot.profile("business", subject_id)}
     }
     employees = {item["entity_id"] for item in references if item["role"] == "employee"}
     groups = {}

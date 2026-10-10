@@ -111,6 +111,8 @@ test("open item details explain the selected obligation and distinguish historic
       data.display_profiles = { business: { values: { purpose: "9月工资", note: "另外记录的用途" } }, employees: [profile("张某"), profile("张小某")], counterparties: [profile("张某")], assets: [profile("设备")], fund_accounts: [profile("工资账户")] };
       const html = await render(data);
       assert.doesNotMatch(html, /用途／备注：9月工资/); assert.match(html, /用途／备注：另外记录的用途/);
+      const combined = await render(data, context({ description: "工资应付；另外记录的用途" }));
+      assert.doesNotMatch(combined, /用途／备注：另外记录的用途/);
       assert.match(html, /员工：张小某/); assert.match(html, /相关往来方：张某/);
       assert.match(html, /相关资产：设备/); assert.match(html, /相关账户：工资账户/);
       assert.match(html, /业务所属月份：2026年8月/);
@@ -120,6 +122,24 @@ test("open item details explain the selected obligation and distinguish historic
       const html = await render(scenario({}, { remaining_fen: null, settlement_status: "settled" }));
       const latest = html.match(/<div class="owner-item-latest"[^>]*>[\s\S]*?<\/div><\/div>/)[0];
       assert.match(latest, /AI 会计核对中/); assert.doesNotMatch(latest, /已结清|¥0\.00/);
+    });
+    await t.test("contribution progress excludes whole-payroll purposes while ordinary net and bank notes remain", async () => {
+      const basis = "依据模拟核算表工作表第六行及合成工资复核";
+      for (const contributionComponent of ["employee_social", "employer_social", "employee_housing", "employer_housing"]) {
+        const data = scenario({ name: contributionComponent }, { name: contributionComponent });
+        data.display_profiles = { business: { values: { purpose: basis, note: "整笔工资核算备注" } } };
+        const html = await render(data, context({ contributionComponent }));
+        assert.doesNotMatch(html, /依据模拟核算表|整笔工资核算备注|用途／备注/);
+        assert.match(html, /原应付.*¥8,000\.00/);
+        assert.match(html, /已付.*¥6,000\.00/);
+        assert.match(html, /已结清/);
+        assert.match(html, /实际收付款/);
+      }
+      const ordinary = scenario();
+      ordinary.display_profiles = { business: { values: { purpose: "包含补助的工资用途", note: "银行原始付款备注" } } };
+      const html = await render(ordinary);
+      assert.match(html, /用途／备注：包含补助的工资用途/);
+      assert.match(html, /用途／备注：银行原始付款备注/);
     });
   } finally { await server.close(); delete globalThis.ownerDetailScenario; }
 });
