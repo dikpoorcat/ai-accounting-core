@@ -2103,6 +2103,7 @@ class FileJobsSummary(ResponseObject):
 class DisplayProfileValues(ResponseObject):
     display_name: str | None
     display_number: str | None
+    account_number: str | None
     purpose: str | None
     note: str | None
     employment_start: MonthOrDay | None
@@ -2111,11 +2112,6 @@ class DisplayProfileValues(ResponseObject):
     employment_state: str | None
     active: bool | None
     category_label: str | None
-    rights_description: str | None
-    useful_life_basis: str | None
-    counterparty_id: str | None
-    beneficiary_id: str | None
-    handler_id: str | None
 
 
 class DisplayProfile(ResponseObject):
@@ -2281,6 +2277,7 @@ class OwnerBusinessReview(ResponseObject):
 class OwnerProfileValues(ResponseObject):
     display_name: str | None
     display_number: str | None
+    account_number: str | None
     purpose: str | None
     note: str | None
     employment_start: MonthOrDay | None
@@ -2289,7 +2286,6 @@ class OwnerProfileValues(ResponseObject):
     employment_state: str | None
     active: bool | None
     category_label: str | None
-    rights_description: str | None
 
 
 class OwnerDisplayProfile(ResponseObject):

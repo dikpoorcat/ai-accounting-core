@@ -14,6 +14,7 @@ from test_banking import (
     statement,
 )
 from test_business_domains import surtax_policy, vat_policy
+from test_dashboard_model_integrity import raw_read
 from test_dashboard_provenance import profile
 from test_integrity_content import damage
 
@@ -425,7 +426,7 @@ def test_bounded_activity_summary_rejects_damaged_off_page_classification_source
             "UPDATE calculation SET digest=zeroblob(32) WHERE id=?",
             (source["id"],),
         )
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief(PERIOD, preparation="deferred", limit=1)
     assert failure.value.code == "content_integrity_failed"
 
@@ -868,6 +869,6 @@ def test_cross_month_mixed_receipt_rejects_damaged_entrusted_source(book, corrup
             engine, "calculation", "UPDATE calculation SET outcome=? WHERE id=?",
             (body, source["id"]),
         )
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief(PERIOD, preparation="deferred", limit=1)
     assert failure.value.code == "content_integrity_failed"

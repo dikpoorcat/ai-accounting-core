@@ -97,7 +97,7 @@ def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(b
         {
             "kind": "asset",
             "entity_id": "asset-1",
-            "purpose": "明确业务用途",
+            "display_name": "合成资产名称",
             "source": "负责人确认",
         },
         expected_revision=0,
@@ -109,7 +109,7 @@ def test_profiles_commentary_basis_and_audit_survive_verified_portable_restore(b
             {
                 "kind": "asset",
                 "entity_id": "asset-1",
-                "purpose": "过期修改",
+                "display_name": "过期修改",
                 "source": "负责人确认",
             },
             expected_revision=0,

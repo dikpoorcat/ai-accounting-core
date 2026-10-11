@@ -852,9 +852,8 @@ def calculate_drawdown(version: FactVersion, ctx: Context) -> Outcome:
 
 class LoanInterest(Fact):
     kind: ClassVar[str] = "loan_interest"
-    identity_fields: ClassVar[tuple[str, ...]] = ("drawdown_id", "agreement_id")
+    identity_fields: ClassVar[tuple[str, ...]] = ("drawdown_id",)
     drawdown_id: SubjectId
-    agreement_id: SubjectId
     period_start: ActualDate
     period_end_exclusive: ActualDate
 
@@ -882,7 +881,6 @@ class LoanInterest(Fact):
         opening_scope = f"payment:opening_loan:{self.drawdown_id}:principal"
         before = YearMonth.from_ordinal(self.period.ordinal + 1)
         return (
-            Read("fact", "loan_agreement", f"@{self.agreement_id}"),
             Read("fact", "loan_drawdown", f"@{self.drawdown_id}"),
             Read("calculation", "loan_drawdown", f"@{self.drawdown_id}"),
             Read("fact", "opening_loan", f"@{self.drawdown_id}"),
@@ -897,17 +895,39 @@ class LoanInterest(Fact):
             Read("fact", self.kind, f"loan:{self.drawdown_id}"),
         )
 
+    def reads_after(self, subject_id, context):
+        _, principal = _interest_principal(self, context)
+        return (Read("fact", "loan_agreement", f"@{principal.agreement_id}"),)
 
-def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
-    fact: LoanInterest = version.fact
-    agreement: LoanAgreement = ctx.one("loan_agreement", f"@{fact.agreement_id}").fact
+
+def _interest_principal(fact, ctx):
     sources = (
         *ctx.facts("loan_drawdown", f"@{fact.drawdown_id}"),
         *ctx.facts("opening_loan", f"@{fact.drawdown_id}"),
     )
     if len(sources) != 1:
         raise NeedsInformation("drawdown_id", "需要唯一的真实放款或期初贷款本金来源")
-    source = sources[0]
+    principal = sources[0].fact
+    if principal.kind == "opening_loan":
+        from ..identity_corrections import OpeningIdentityBinding
+
+        bindings = ctx.facts(OpeningIdentityBinding.kind, "opening-binding:" + fact.drawdown_id)
+        if len(bindings) > 1:
+            raise KernelError("opening_identity_conflict", "期初贷款采用绑定不唯一")
+        if bindings:
+            binding = bindings[0].fact
+            if binding.operation == "supersede":
+                raise NeedsInformation("drawdown_id", "原期初贷款已被替代，须明确保留本金来源")
+            for assignment in binding.assignments:
+                if assignment.path == "agreement_id":
+                    principal = principal.model_copy(update={"agreement_id": assignment.entity_id})
+    return sources[0], principal
+
+
+def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
+    fact: LoanInterest = version.fact
+    source, principal = _interest_principal(fact, ctx)
+    agreement: LoanAgreement = ctx.one("loan_agreement", f"@{principal.agreement_id}").fact
     drawdown = source.fact
     results = ctx.calculations(drawdown.kind, f"@{fact.drawdown_id}")
     if len(results) != 1 or results[0].fact_id != source.id:
@@ -932,8 +952,8 @@ def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
     principal_start = (
         drawdown.interest_start if drawdown.kind == "opening_loan" else drawdown.actual_date
     )
-    if drawdown.agreement_id != fact.agreement_id:
-        raise KernelError("loan_agreement_conflict", "计息合同须为本次真实放款合同")
+    if drawdown.agreement_id != principal.agreement_id:
+        raise KernelError("loan_agreement_conflict", "本金来源的采用合同发生变化")
     if fact.period_start < principal_start or fact.period_end_exclusive > agreement.maturity_date:
         raise KernelError("interest_outside_contract", "计息区间不在放款和到期日之间")
     for other in ctx.facts(fact.kind, f"loan:{fact.drawdown_id}"):

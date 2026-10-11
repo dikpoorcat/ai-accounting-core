@@ -21,7 +21,8 @@ def book(tmp_path):
 
 def person(directory, name, request, *, active=True):
     return directory.register_entity(
-        "person", {"display_name": name, "active": active},
+        "person", {"display_name": name,
+                   "employment_status": "active" if active else "inactive"},
         source="synthetic identity", request_id=request,
     )["entity_id"]
 
@@ -108,7 +109,7 @@ def test_tied_latest_sources_and_has_more_are_all_authenticated(book):
             mutate_reference(engine, fact_id, "source_digest", original)
     items = directory.find_entities(query="Alpha", kind="person", limit=1)["items"]
     assert len(items) == 1 and items[0]["entity_id"] == first
-    assert items[0]["profile"]["active"] is False
+    assert items[0]["profile"]["employment_status"] == "inactive"
 
 
 def test_unrelated_and_older_sources_are_outside_the_recent_proof(book):

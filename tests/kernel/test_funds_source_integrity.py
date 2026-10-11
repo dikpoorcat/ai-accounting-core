@@ -7,6 +7,7 @@ import test_banking as banking
 import test_investments as investments
 from test_dashboard_bank_source_proof import closed_banks
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 
 from ai_accounting.kernel.contracts import KernelError
@@ -70,7 +71,7 @@ def test_default_funds_reject_off_page_consumed_source_damage(bank_book, closed,
         outcome["balances"][0]["amount"] += 1
         damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
                (canonical(outcome), digest(outcome), source["id"]))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds(MONTH, limit=1)
     assert failure.value.code == "content_integrity_failed"
 
@@ -98,7 +99,7 @@ def test_funds_authenticate_consumed_opening_state(bank_book, closed, corruption
         ident = source["id"] if corruption == "calculation_seal" else source["fact_id"]
         damage(engine, corruption, f"DELETE FROM {corruption} WHERE {field}=?", (ident,),
                foreign_keys=False)
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds(MONTH, section="accounts", limit=1)
     assert failure.value.code == "content_integrity_failed"
 
@@ -175,7 +176,7 @@ def test_default_twenty_row_page_authenticates_later_summary_sources(bank_book, 
         outcome["balances"][0]["amount"] += 1
         damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
                (canonical(outcome), digest(outcome), source["id"]))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         dashboard.funds(MONTH)
     assert failure.value.code == "content_integrity_failed"
 
@@ -235,7 +236,7 @@ def test_frozen_original_fund_owner_body_cannot_follow_its_mutable_digest(
     outcome["values"]["fund_id"] = "synthetic-wrong-fund"
     damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
            (canonical(outcome), digest(outcome), original["id"]))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds("2026-01")
     assert failure.value.code == "content_integrity_failed"
 
@@ -268,7 +269,7 @@ def test_open_zero_amount_states_cannot_change_consumed_values_with_self_digest(
     outcome["values"][field] = value
     damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
            (canonical(outcome), digest(outcome), source["id"]))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds(MONTH)
     assert failure.value.code == "content_integrity_failed"
 
@@ -342,7 +343,7 @@ def test_later_settlement_authenticates_its_exact_post_close_review_source(
         outcome["values"]["fund_id"] = "synthetic-wrong-fund"
         damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
                (canonical(outcome), digest(outcome), source_id))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds("2026-02")
     assert failure.value.code == "content_integrity_failed"
     with pytest.raises(KernelError) as failure:

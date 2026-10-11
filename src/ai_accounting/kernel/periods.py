@@ -34,14 +34,13 @@ class Periods:
         self,
         subject_id: str,
         *,
-        note: str | None,
         payment_period: str | None,
         payment_category: str | None,
         expected_revision: int,
         request_id: str,
     ):
         month = YearMonth(payment_period).ordinal if payment_period is not None else None
-        data = [subject_id, note, month, payment_category, expected_revision]
+        data = [subject_id, month, payment_category, expected_revision]
 
         def operation(connection):
             current = connection.execute(
@@ -52,10 +51,10 @@ class Periods:
                 raise KernelError("management_conflict", "管理资料已变化")
             connection.execute(
                 "INSERT INTO "
-                "management_revision(subject_id,revision,note,payment_pe"
+                "management_revision(subject_id,revision,payment_pe"
                 "riod,payment_category) "
-                "VALUES(?,?,?,?,?)",
-                (subject_id, current + 1, note, month, payment_category),
+                "VALUES(?,?,?,?)",
+                (subject_id, current + 1, month, payment_category),
             )
             return {"status": "saved", "revision": current + 1}
 

@@ -224,7 +224,6 @@ def test_closed_correction_preserves_frozen_manifest(identity_engine):
         request_id="material-source",
     )
     with engine.store.connection(read_only=True) as connection:
-        fact = engine.store.current_fact(connection, "expense")
         calc = connection.execute(
             "SELECT calculation_id FROM calculation_current WHERE subject_id='expense'"
         ).fetchone()[0]
@@ -239,13 +238,9 @@ def test_closed_correction_preserves_frozen_manifest(identity_engine):
             recognition_period="2026-01",
             links=[
                 dict(
-                    subject_id="expense",
-                    fact_kind="expense",
-                    fact_id=fact.id,
                     calculation_id=calc,
                     amount_field="fact.amount_fen",
                     amount_fen=100,
-                    recognition_period="2026-01",
                 )
             ],
         ),
@@ -609,10 +604,12 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     with engine.store.connection(read_only=True) as connection:
         plan_version = engine.store.select(
             connection,
-            Read("fact", "payroll_plan_v2", f"employee:{second}:month:2026-01"),
+            Read("fact", "payroll_plan_v2", "payroll-confirmation:jan-b"),
         )[0]
+    from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
+
     corrected_plan = plan_version.fact.model_copy(
-        update={"payroll": type(facts["jan-b"]).model_validate(corrected)}
+        update={"payroll_revision": FactRevisionReference(subject_id="jan-b", revision=2)}
     )
     engine.save_fact(
         corrected_plan.kind,
@@ -736,25 +733,23 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
         period="2026-01", employee_id=first, changed_fields=("employment",)
     )
     save_model(engine, evidence, "notice", notice)
+    save_model(engine, evidence, "wage", wage)
     with engine.store.connection(read_only=True) as connection:
-        profile_first = engine.store.current_fact(connection, "profile-first")
-        contribution = engine.store.current_fact(connection, "contributions")
-        income_tax = engine.store.current_fact(connection, "income-tax")
+        wage_version = engine.store.current_fact(connection, "wage")
         notice_version = engine.store.current_fact(connection, "notice")
     plan = PayrollPlan(
         period="2026-01",
-        employee_id=first,
-        payroll=wage,
-        profile_revision=revision_reference(profile_first),
-        contribution_policy_revision=revision_reference(contribution),
-        income_tax_policy_revision=revision_reference(income_tax),
+        payroll_revision=revision_reference(wage_version),
         change_notice_revisions=(revision_reference(notice_version),),
     )
     save_model(engine, evidence, "plan", plan)
-    save_model(engine, evidence, "wage", wage)
     publish_subjects(engine, ["wage"], "publish-wage")
 
-    corrected_wage = wage.model_copy(update={"employee_id": second, "profile_id": "profile-second"})
+    with engine.store.connection(read_only=True) as connection:
+        profile_second = engine.store.current_fact(connection, "profile-second")
+    corrected_wage = wage.model_copy(update={
+        "employee_id": second, "profile_revision": revision_reference(profile_second),
+    })
     command = IdentityCorrections(engine)
     with pytest.raises(KernelError) as missing_sources:
         command.preview_identity_correction(
@@ -776,9 +771,7 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
         profile_second = engine.store.current_fact(connection, "profile-second")
     corrected_plan = plan.model_copy(
         update={
-            "employee_id": second,
-            "payroll": corrected_wage,
-            "profile_revision": revision_reference(profile_second),
+            "payroll_revision": FactRevisionReference(subject_id="wage", revision=2),
             "change_notice_revisions": (FactRevisionReference(subject_id="notice", revision=2),),
         }
     )
@@ -806,6 +799,16 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
         evidence=[evidence],
         reason="confirmed corrected employee identity with exact wage sources",
     )
+    import copy
+
+    unrelated = copy.deepcopy(kwargs)
+    unrelated["changes"][0]["data"]["accounting_gross_salary_fen"] += 1
+    with pytest.raises(KernelError) as arbitrary_amount:
+        command.preview_identity_correction(**unrelated)
+    assert arbitrary_amount.value.code == "identity_correction_no_change"
+    with pytest.raises(KernelError) as standalone_confirmation:
+        command.preview_identity_correction(**(kwargs | {"changes": [kwargs["changes"][2]]}))
+    assert standalone_confirmation.value.code == "identity_correction_no_change"
     preview, _ = confirm(engine, kwargs, request="correct-wage-with-confirmation")
     wage_result = next(item for item in preview["results"] if item["subject_id"] == "wage")
     assert wage_result["values"]["employee_id"] == second
@@ -874,13 +877,9 @@ def close_calculated_payroll(engine, evidence, subjects):
                 recognition_period="2026-01",
                 links=[
                     dict(
-                        subject_id=row["subject_id"],
-                        fact_kind=row["kind"],
-                        fact_id=row["fact_id"],
                         calculation_id=row["id"],
                         amount_field="result.gross_fen",
                         amount_fen=json.loads(row["outcome"])["values"]["gross_fen"],
-                        recognition_period="2026-01",
                     )
                 ],
             ),
@@ -1167,13 +1166,9 @@ def test_frozen_asset_opening_binding_continues_and_can_be_reassigned_back(ident
             recognition_period="2026-01",
             links=[
                 dict(
-                    subject_id=owner_row["subject_id"],
-                    fact_kind="asset_consumption_month",
-                    fact_id=owner_row["fact_id"],
                     calculation_id=owner_row["calculation_id"],
                     amount_field="result.consumption_fen",
                     amount_fen=4000,
-                    recognition_period="2026-01",
                 )
             ],
         ),
@@ -2072,7 +2067,6 @@ def test_opening_loan_binding_is_used_by_subsequent_interest(identity_engine):
         "interest",
         dict(
             period="2026-01",
-            agreement_id="agreement",
             drawdown_id="principal",
             period_start="2026-01-01",
             period_end_exclusive="2026-02-01",

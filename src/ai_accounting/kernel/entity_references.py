@@ -34,16 +34,13 @@ _declare(
     "payroll_profile payroll_contribution_actual payroll_opening_state "
     "payroll_first_wage_treatment "
     "payroll_withholding_actual annual_bonus_opening_usage payroll payroll_bounded annual_bonus "
-    "reimbursed_deposit opening_payroll_payable opening_payroll_state payroll_plan_v2 "
-    "payroll_plan_bounded payroll_change_notice_v2 tax_import_identity_v2 tax_import_details_v2 "
+    "reimbursed_deposit opening_payroll_payable opening_payroll_state "
+    "payroll_change_notice_v2 tax_import_identity_v2 tax_import_details_v2 "
     "payroll_tax_declaration_actual payroll_disbursement_basis",
     "employee_id",
     "employee",
     ("person",),
 )
-_declare("payroll_plan_v2 payroll_plan_bounded", "payroll.employee_id", "employee", ("person",))
-_declare("payroll_no_change_v2", "employees.*.employee_id", "employee", ("person",))
-_declare("payroll_no_change_v2", "employees.*.payroll.employee_id", "employee", ("person",))
 _declare("labor labor_accrual labor_project_cost", "person_id", "worker", ("person",))
 _declare(
     "funding payment bank_income loan_drawdown bank_opening bank_statement bank_reconciliation "
@@ -164,8 +161,14 @@ BUSINESS_PATHS = {
     "opening_basis_correction": (
         "members.*.binding_subject_id members.*.binding_fact_id members.*.package_calculation_id"
     ),
-    "payroll": "profile_id contribution_policy_id income_tax_policy_id",
-    "payroll_bounded": "profile_id contribution_policy_id income_tax_policy_id",
+    "payroll": (
+        "profile_revision.subject_id contribution_policy_revision.subject_id "
+        "income_tax_policy_revision.subject_id"
+    ),
+    "payroll_bounded": (
+        "profile_revision.subject_id contribution_policy_revision.subject_id "
+        "income_tax_policy_revision.subject_id"
+    ),
     "annual_bonus": "bonus_policy_id income_tax_policy_id regular_payroll_id",
     "labor": "policy_id gross_payment_id",
     "tax_assessment": "vat_policy_id surtax_policy_id tax_credit_ids.*",
@@ -191,7 +194,7 @@ BUSINESS_PATHS = {
     "reimbursed_asset": "acceptance_id",
     "asset_disposal": "vat_policy_id",
     "loan_drawdown": "agreement_id",
-    "loan_interest": "drawdown_id agreement_id",
+    "loan_interest": "drawdown_id",
     "asset_activation_batch": "members.*.subject_id",
     "bank_reconciliation": "statement_id matches.*.source_id",
     "employee_advance": "sources.*.source_id",
@@ -232,31 +235,14 @@ BUSINESS_PATHS = {
     "opening_money_fund": "package_id",
     "opening_package": "package_id members.*.subject_id members.*.agreement_id",
     "material_resolution_v2": (
-        "source_id source_fact_id links.*.subject_id links.*.fact_id "
-        "links.*.calculation_id duplicate_source_id"
+        "source_id source_fact_id links.*.calculation_id duplicate_source_id"
     ),
     "material_period_allocation": "source_id source_fact_id",
     "material_group_resolution": (
-        "source_id source_fact_id links.*.subject_id links.*.fact_id links.*.calculation_id"
+        "source_id source_fact_id links.*.calculation_id"
     ),
-    "payroll_plan_v2": (
-        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id "
-        "profile_revision.subject_id contribution_policy_revision.subject_id "
-        "income_tax_policy_revision.subject_id change_notice_revisions.*.subject_id"
-    ),
-    "payroll_plan_bounded": (
-        "payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id "
-        "profile_revision.subject_id contribution_policy_revision.subject_id "
-        "income_tax_policy_revision.subject_id change_notice_revisions.*.subject_id"
-    ),
-    "payroll_no_change_v2": (
-        "employees.*.payroll.profile_id employees.*.payroll.contribution_policy_id "
-        "employees.*.payroll.income_tax_policy_id "
-        "employees.*.prior_payroll_revision.subject_id "
-        "employees.*.profile_revision.subject_id "
-        "employees.*.contribution_policy_revision.subject_id "
-        "employees.*.income_tax_policy_revision.subject_id"
-    ),
+    "payroll_plan_v2": "payroll_revision.subject_id change_notice_revisions.*.subject_id",
+    "payroll_no_change_v2": "employees.*.prior_payroll_revision.subject_id",
     "payroll_disbursement_basis": "payroll_id declaration_id declaration_fact_id",
 }
 for _kind, _paths in BUSINESS_PATHS.items():

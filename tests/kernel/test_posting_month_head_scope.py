@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_employee_roster_scope import current_zero_company
 from test_integrity_content import damage
 from test_labor_accrual import accrual
@@ -45,7 +46,10 @@ def candidate_work(work):
 
 
 def normalized_brief(engine, period):
-    value = Dashboard(engine).brief(period)
+    # This suite compares the real native candidate query under owned and
+    # unowned snapshots. Persisted model-hit proofs have their own matrix.
+    with raw_read():
+        value = Dashboard(engine).brief(period)
     value["data"].pop("generated_at")
     return value
 
@@ -137,7 +141,8 @@ def test_month_frozen_fact_and_calculation_lanes_keep_damage_visible(tmp_path, c
                 ]
             with pytest.raises(KernelError):
                 if change == "publication":
-                    Dashboard(company.engine).brief("2026-01")
+                    with raw_read():
+                        Dashboard(company.engine).brief("2026-01")
                 else:
                     heads(company.engine, "2026-01")
 

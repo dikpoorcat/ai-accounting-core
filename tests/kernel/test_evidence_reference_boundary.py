@@ -57,13 +57,9 @@ SOURCE = dict(
     specification={"format": "csv"},
 )
 LINK = dict(
-    subject_id="expense",
-    fact_kind="expense",
-    fact_id="f",
     calculation_id="c",
     amount_field="fact.amount_fen",
     amount_fen=100,
-    recognition_period="2026-01",
 )
 GROUP = dict(
     period="2026-01",

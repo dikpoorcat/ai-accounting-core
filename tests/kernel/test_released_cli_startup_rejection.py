@@ -175,7 +175,6 @@ def root_snapshot(root):
                 "security_session",
                 "security_audit",
                 "security_recovery",
-                "security_identity_import",
             }
             rows[path.relative_to(root).as_posix()] = {
                 name: connection.execute(f"SELECT * FROM {name} ORDER BY rowid").fetchall()

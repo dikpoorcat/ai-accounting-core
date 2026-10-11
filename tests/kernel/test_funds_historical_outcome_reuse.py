@@ -6,6 +6,7 @@ import json
 import pytest
 import test_banking as banking
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_funds_historical_account_identities import prepared, public, source
 from test_integrity_content import damage
 from test_payroll import profile
@@ -44,11 +45,13 @@ def test_public_reuse_reduces_actual_body_transfer_and_decode(
         result["data"].pop("generated_at", None)
         return result
 
-    narrow_work, narrow = measure_work(engine, response)
-    with monkeypatch.context() as raw:
+    with raw_read():
+        narrow_work, narrow = measure_work(engine, response)
+    with raw_read(), monkeypatch.context() as raw:
         without_carry(raw)
         raw_work, baseline = measure_work(engine, response)
     assert narrow == baseline
+    assert response() == narrow
     # Funds consumes one exact frozen identity per bank. Brief consumes only
     # money totals and has no account-identity body to carry between calls.
     if page == "funds":
@@ -151,7 +154,7 @@ def test_metadata_carry_rejects_duplicate_before_any_state_success(bank_book):
             reads.metadata({good["id"], bad["id"]}, _decoded_outcomes=outcomes)
         assert outcomes == reads._metadata == reads._verified_source_contents == {}
         assert reads._verified_sql_outcomes == set()
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).funds("2026-10")
 
 
@@ -276,8 +279,11 @@ def test_missing_historical_publication_keeps_original_selector_failure(bank_boo
         return original(queries, *args, **kwargs)
 
     errors, omitted, amounts = [], [], []
+    # The sealed model keeps its frozen money/identity source. Native source
+    # selection independently requires the historical publication locator.
+    assert Dashboard(engine).funds("2026-10") == before["funds"]
     for old in (False, True):
-        with monkeypatch.context() as patch:
+        with raw_read(), monkeypatch.context() as patch:
             if old:
                 patch.setattr(BusinessQueries, "_selected_accounting", old_selector)
             try:

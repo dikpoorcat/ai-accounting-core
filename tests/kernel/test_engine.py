@@ -192,7 +192,7 @@ def test_preview_expiration_lanes(engine):
     preview = engine.preview(["charge"])
     Periods(engine).management(
         "charge",
-        note="说明后补",
+
         payment_period=None,
         payment_category=None,
         expected_revision=0,

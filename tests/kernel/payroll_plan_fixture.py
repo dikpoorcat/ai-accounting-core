@@ -7,7 +7,7 @@ stale confirmation deliberately omit the call.
 
 from ai_accounting.kernel.contracts import Read
 from ai_accounting.kernel.payroll_confirmation import revision_reference
-from ai_accounting.kernel.payroll_preparation import BoundedPayrollPlan, PayrollPlan
+from ai_accounting.kernel.payroll_preparation import PayrollPlan
 from ai_accounting.kernel.types import digest
 
 
@@ -25,30 +25,6 @@ def confirm_wage_inputs(engine, subject_id, *, evidence, request_id):
         if len(versions) != 1:
             raise ValueError("one current synthetic wage is required")
         wage = versions[0].fact
-        references = {}
-        profile = None
-        for field, kind, source_id in (
-            ("profile_revision", "payroll_profile", wage.profile_id),
-            (
-                "contribution_policy_revision",
-                "payroll_contribution_policy",
-                wage.contribution_policy_id,
-            ),
-            ("income_tax_policy_revision", "payroll_income_tax_policy", wage.income_tax_policy_id),
-        ):
-            if (
-                field == "income_tax_policy_revision"
-                and profile is not None
-                and wage.period < profile.fact.withholding_start_date[:7]
-            ):
-                references[field] = None
-                continue
-            sources = engine.store.select(connection, Read("fact", kind, "@" + source_id))
-            if len(sources) != 1:
-                raise ValueError("arrange every exact payroll source before confirming it")
-            references[field] = revision_reference(sources[0])
-            if field == "profile_revision":
-                profile = sources[0]
         notices = engine.store.select(
             connection,
             Read(
@@ -57,12 +33,10 @@ def confirm_wage_inputs(engine, subject_id, *, evidence, request_id):
                 f"employee:{wage.employee_id}:month:{wage.period}",
             ),
         )
-        model = PayrollPlan if wage.kind == "payroll" else BoundedPayrollPlan
+        model = PayrollPlan
         plan = model(
             period=wage.period,
-            employee_id=wage.employee_id,
-            payroll=wage,
-            **references,
+            payroll_revision=revision_reference(versions[0]),
             change_notice_revisions=tuple(
                 revision_reference(item)
                 for item in sorted(notices, key=lambda item: item.subject_id)

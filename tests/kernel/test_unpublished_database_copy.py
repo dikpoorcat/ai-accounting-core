@@ -6,11 +6,13 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from archived_draft_fixture import FINGERPRINTS, archived_company
 
 from ai_accounting.kernel import runtime
 from ai_accounting.kernel.backup import BackupError, copy_to_unpublished_database
 from ai_accounting.kernel.permissions import assert_private_file
 from ai_accounting.kernel.runtime import connect
+from ai_accounting.kernel.versions import verify_schema
 
 
 def file_state(path):
@@ -19,6 +21,47 @@ def file_state(path):
         for suffix in ("", "-wal")
         if Path(str(path) + suffix).exists()
     }
+
+
+@pytest.mark.parametrize("fingerprint", [FINGERPRINTS[0], FINGERPRINTS[-1]])
+def test_archived_snapshot_copy_retains_exact_sql_metadata_rowids_and_blobs(tmp_path, fingerprint):
+    path, archived = archived_company(tmp_path / "archived.sqlite", fingerprint)
+    blob = b"synthetic preserved raw bytes\x00\xff" * 3000
+    with closing(sqlite3.connect(path, isolation_level=None)) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute(
+            "INSERT INTO evidence(rowid,digest,content,media_type,name) VALUES(83,?,?,?,?)",
+            (hashlib.sha256(blob).digest(), blob, "application/octet-stream", "synthetic-original"),
+        )
+        wal = path.with_name(path.name + "-wal")
+        before = path.read_bytes(), wal.read_bytes()
+        with closing(
+            sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, isolation_level=None)
+        ) as source:
+            source.execute("PRAGMA query_only=ON")
+            source.execute("BEGIN")
+            source_rows = tuple(source.iterdump())
+            target_path = tmp_path / "unpublished-archived-copy.sqlite"
+            assert not target_path.exists()
+            with closing(sqlite3.connect(target_path, isolation_level=None)) as target:
+                copy_to_unpublished_database(source, target)
+                assert tuple(target.iterdump()) == source_rows
+                assert target.execute("SELECT rowid,content FROM evidence").fetchone() == (83, blob)
+                assert verify_schema(target, bundle=archived) == 0
+                assert archived.company_verifiers == {}
+            assert source.in_transaction
+        assert (path.read_bytes(), wal.read_bytes()) == before
+
+
+def test_raw_archive_copy_cannot_target_the_source_database(tmp_path):
+    path, _ = archived_company(tmp_path / "archived.sqlite")
+    before = path.read_bytes()
+    with closing(sqlite3.connect(path, isolation_level=None)) as source:
+        with closing(sqlite3.connect(path, isolation_level=None)) as target:
+            with pytest.raises(BackupError) as failure:
+                copy_to_unpublished_database(source, target)
+            assert failure.value.code == "backup_content_invalid"
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("fail", [False, True])

@@ -64,6 +64,7 @@ def test_all_current_native_and_http_owner_consumers(current_samples):
     assert commands == {
         "dashboard_context",
         "dashboard_brief",
+        "dashboard_brief_group",
         "dashboard_funds",
         "dashboard_employees",
         "dashboard_assets",
@@ -85,7 +86,7 @@ def test_all_owner_consumers_reject_obsolete_envelopes(current_samples):
             assert_owner_read(command, value)
         assert rejected.value.code == "response_contract_mismatch"
         commands.add(command)
-    assert len(commands) == 8
+    assert len(commands) == 9
 
 
 def test_owner_consumer_checks_pagination_scope_and_transport_money(current_samples):

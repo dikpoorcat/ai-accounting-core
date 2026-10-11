@@ -7,6 +7,7 @@ from threading import Event
 import pytest
 from material_fixture import supporting_text
 from pydantic import SecretStr
+from test_dashboard_model_transactions import raw_read
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
@@ -29,6 +30,12 @@ def _without_generated(value):
 
 def _fund(engine, label, amount, *, period=PERIOD):
     entities = Entities(engine)
+    proof = engine.register_evidence(
+        ("Synthetic funding confirmation " + label).encode(),
+        "text/plain",
+        label,
+        request_id=label + "-evidence",
+    )["digest"]
     owner = entities.register_entity(
         "person",
         {"display_name": label},
@@ -37,17 +44,22 @@ def _fund(engine, label, amount, *, period=PERIOD):
     )["entity_id"]
     bank = entities.register_entity(
         "fund_account",
-        {},
+        {
+            "bank_name": "合成银行",
+            "bank_account_number": {
+                "first-funding": "990001",
+                "second-funding": "990002",
+                "october-funding": "990003",
+                "during-read": "990004",
+                "package-funding": "990005",
+            }[label],
+            "account_holder_name": label,
+        },
         account_type="bank",
         source="synthetic bank account",
+        evidence_digest=proof,
         request_id=label + "-bank",
     )["entity_id"]
-    proof = engine.register_evidence(
-        ("Synthetic funding confirmation " + label).encode(),
-        "text/plain",
-        label,
-        request_id=label + "-evidence",
-    )["digest"]
     supporting_text(engine, proof, period=period)
     engine.save_fact(
         "funding",
@@ -101,6 +113,11 @@ def _brief(service, token, company, **options):
     )
 
 
+def _native_brief(service, token, company, **options):
+    with raw_read():
+        return _brief(service, token, company, **options)
+
+
 
 def test_read_failure_discards_connection_and_recovers(resident_service, monkeypatch):
     from ai_accounting.kernel import dashboard_open_groups
@@ -117,7 +134,7 @@ def test_read_failure_discards_connection_and_recovers(resident_service, monkeyp
 
     monkeypatch.setattr(dashboard_open_groups, "open_group_page", fail_once)
     with pytest.raises(KernelError) as rejected:
-        _brief(service, token, first)
+        _native_brief(service, token, first)
     assert rejected.value.code == "synthetic_open_items_failure"
     assert service.read_pool._total == 0
     assert _brief(service, token, first)["data"]["funds_overview"]["bank_fen"] == 123456
@@ -137,7 +154,8 @@ def test_client_cannot_supply_parallel_values(resident_service):
 def test_resident_brief_matches_snapshot_company_and_http_amounts(resident_service):
     service, token, first, second = resident_service
     for company, amount in ((first, 123456), (second, 987654), (first, 123456)):
-        expected = Dashboard(service.engine(company["id"], dashboard_read=True)).brief(PERIOD)
+        with raw_read():
+            expected = Dashboard(service.engine(company["id"], dashboard_read=True)).brief(PERIOD)
         actual = _brief(service, token, company, preparation="complete")
         assert _without_generated(actual) == _without_generated(expected)
         assert actual["read_context"]["company_id"] == company["id"]
@@ -180,14 +198,15 @@ def test_concurrent_commit_keeps_snapshot_and_next_read_sees_commit(resident_ser
 
     def pause_after_position(snap):
         result = original(snap)
-        reached.set()
-        assert committed.wait(10)
+        if not reached.is_set():
+            reached.set()
+            assert committed.wait(10)
         return result
 
     with monkeypatch.context() as patch:
         patch.setattr(dashboard, "_position", pause_after_position)
         with ThreadPoolExecutor(max_workers=1) as executor:
-            reading = executor.submit(_brief, service, token, first)
+            reading = executor.submit(_native_brief, service, token, first)
             try:
                 assert reached.wait(10)
                 _fund(service.engine(first["id"]), "during-read", 333)
@@ -238,6 +257,6 @@ def test_owner_brief_rejects_damaged_source(resident_service):
             connection.execute(sql)
         connection.commit()
     with pytest.raises(KernelError) as rejected:
-        _brief(service, token, first)
+        _native_brief(service, token, first)
     assert rejected.value.code == "content_integrity_failed"
     assert service.read_pool._total == 0

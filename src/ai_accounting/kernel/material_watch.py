@@ -136,10 +136,11 @@ def _directory(connection, period, manifest, *, historic_heads=None):
                 calculation_id,
                 recognition_period,
             ) in connection.execute(
-                "SELECT l.revision_id,l.subject_id,l.fact_id,l.calculation_id,"
-                "l.recognition_period "
+                "SELECT l.revision_id,linked.subject_id,linked.fact_id,l.calculation_id,"
+                "linked.period "
                 "FROM json_each(?) ids "
-                f"CROSS JOIN {table}_links l ON l.revision_id=ids.value",
+                f"CROSS JOIN {table}_links l ON l.revision_id=ids.value "
+                "CROSS JOIN calculation linked ON linked.id=l.calculation_id",
                 (canonical(proof[label]),),
             ):
                 keys[f"business:{subject_id}"].add(sources[revision_id])
@@ -517,8 +518,9 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
             keys.update(
                 f"business:{row[0]}"
                 for row in connection.execute(
-                    "SELECT DISTINCT l.subject_id FROM json_each(?) ids "
-                    f"CROSS JOIN {table} l ON l.revision_id=ids.value",
+                    "SELECT DISTINCT linked.subject_id FROM json_each(?) ids "
+                    f"CROSS JOIN {table} l ON l.revision_id=ids.value "
+                    "CROSS JOIN calculation linked ON linked.id=l.calculation_id",
                     (references_by_kind[kind],),
                 )
             )

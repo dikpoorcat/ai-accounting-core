@@ -88,7 +88,6 @@ def run_size(workspace: Path, size: int, repeats: int):
     company.save(
         PayrollNoChange(
             period="2026-02",
-            prior_period="2026-01",
             employees=tuple(basis["employees"]),
             employee_roster_unchanged=True,
             salary_and_deductions_unchanged=True,

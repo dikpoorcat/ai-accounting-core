@@ -37,7 +37,7 @@ def company_with_evaluator(tmp_path, evaluator):
 
 def publish(company, fact):
     seed_fact_entities(company.engine, fact)
-    saved = company.engine.save_fact(
+    company.engine.save_fact(
         fact.kind,
         "business",
         fact.model_dump(mode="json"),
@@ -53,12 +53,8 @@ def publish(company, fact):
         request_id=company.request(),
     )["results"][0]
     return dict(
-        subject_id="business",
-        fact_kind=fact.kind,
-        fact_id=saved["fact_id"],
         calculation_id=result["calculation_id"],
         amount_fen=1000,
-        recognition_period="2026-01",
     )
 
 

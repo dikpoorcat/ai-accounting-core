@@ -15,9 +15,8 @@ from .dashboard_model_runtime import (
 from .dashboard_read_model import (
     LoadedModel,
     _anchored_descriptor,
-    _audit_descriptors,
-    _check_request,
     _load_root,
+    _verified_audit_descriptors,
     supports_native_content,
 )
 from .storage import _active_fact_reads
@@ -195,6 +194,8 @@ def verify_models(engine, connection, *, compare_content=True, reconstruct_curre
     if not supports_model(connection):
         return {"status": "not_applicable"}
     commits = {}
+    # An unowned autocommit reader retains independent proofs for each row.
+    verified_batches = {} if connection.in_transaction else None
     rows = connection.execute(
         "SELECT c.*,a.request_id anchor_request_id,a.action anchor_action,"
         "a.payload anchor_payload,r.result request_result,r.digest request_digest "
@@ -202,7 +203,7 @@ def verify_models(engine, connection, *, compare_content=True, reconstruct_curre
         "LEFT JOIN request r ON r.id=c.request_id ORDER BY c.audit_id,c.period"
     )
     for row in rows:
-        descriptor = _anchored_descriptor(row)
+        descriptor = _anchored_descriptor(row, _verified_batches=verified_batches)
         if (descriptor.scope.company_id, descriptor.scope.database_id) != (
             engine.store.company_id, engine.store.database_id,
         ):
@@ -213,8 +214,10 @@ def verify_models(engine, connection, *, compare_content=True, reconstruct_curre
         "SELECT a.*,r.result request_result,r.digest request_digest FROM audit a "
         "LEFT JOIN request r ON r.id=a.request_id WHERE a.action='dashboard_read_model'"
     ):
-        _check_request(row["payload"], row["request_result"], row["request_digest"])
-        for descriptor in _audit_descriptors(row["payload"]):
+        for descriptor in _verified_audit_descriptors(
+            row["id"], row["request_id"], row["action"], row["payload"],
+            row["request_result"], row["request_digest"], verified_batches,
+        ).values():
             member = commits.get(descriptor.commit_id)
             if member != (row["id"], descriptor) or descriptor.commit_id in audit_members:
                 raise _invalid()

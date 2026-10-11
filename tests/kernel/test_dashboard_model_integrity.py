@@ -1,38 +1,29 @@
 """Certified summaries, exact hit proofs and independent repair have distinct duties."""
 
 import copy
-from contextlib import contextmanager
 from dataclasses import replace
 
 import pytest
+from archived_draft_fixture import FINGERPRINTS, archived_company
 from test_banking import book as book
 from test_banking import funding, opening
 from test_dashboard_bank_source_proof import closed_banks
-from test_development_upgrade import create_old_company, old_business
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage, verify
 from test_v1_stored_json_isolation import released_book as released_book
 
 from ai_accounting.kernel.backup import BackupError, verify_file
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
-from ai_accounting.kernel.dashboard_model_runtime import _producing
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.maintenance import Maintenance
-from ai_accounting.kernel.offline_development_upgrade import READ_MODEL_SOURCE_FINGERPRINT
 from ai_accounting.kernel.read_state import repair_revision
+from ai_accounting.kernel.schema_bundle import production_bundle
+from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.stored_json import loads_unique
 
 MONTH = "2026-09"
-
-
-@contextmanager
-def raw_read():
-    token = _producing.set(True)
-    try:
-        yield
-    finally:
-        _producing.reset(token)
 
 
 def comparable(value):
@@ -316,8 +307,10 @@ def test_authenticated_but_wrong_summary_is_compared_with_independent_domain_alg
         # A display profile changes native UI content and must rebuild it.
         # Unattached evidence registration legitimately reuses those bytes.
         Entities(engine).update_entity_profile(
-            "bank-a", {"display_name": "synthetic faulty producer update"},
-            source="synthetic owner update", expected_revision=1,
+            "bank-a",
+            {"display_name": "synthetic faulty producer update"},
+            source="synthetic owner update",
+            expected_revision=1,
             request_id="faulty-production",
         )
     assert Dashboard(engine).brief(MONTH)["data"]["voucher_count"] == expected + 1
@@ -352,18 +345,29 @@ def test_obsolete_ui_bytes_are_reclaimed_without_rewriting_production_receipts(m
         )
     old_root = bytes.fromhex(descriptor["root_digest"])
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute("SELECT 1 FROM dashboard_read_model_block WHERE digest=?",
-                                  (old_root,)).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM dashboard_read_model_block WHERE digest=?", (old_root,)
+            ).fetchone()
+            is None
+        )
     assert Dashboard(engine).brief(MONTH)["data"] is not None
     assert verify(engine)["status"] == "verified"
     result = Maintenance(engine).rebuild_dashboard_read_model(
-        MONTH, request_id="no-old-ui-reconstruction",
+        MONTH,
+        request_id="no-old-ui-reconstruction",
     )
     assert result["changed"] is False
     with engine.store.connection(read_only=True) as connection:
-        assert loads_unique(connection.execute(
-            "SELECT descriptor FROM dashboard_read_model_commit WHERE id=?", (old_commit,),
-        ).fetchone()[0]) == descriptor
+        assert (
+            loads_unique(
+                connection.execute(
+                    "SELECT descriptor FROM dashboard_read_model_commit WHERE id=?",
+                    (old_commit,),
+                ).fetchone()[0]
+            )
+            == descriptor
+        )
 
 
 def test_frozen_accounting_content_is_never_a_derived_model_repair_target(book):
@@ -383,40 +387,21 @@ def test_frozen_accounting_content_is_never_a_derived_model_repair_target(book):
     assert database_state(engine) == before
 
 
-def test_declared_old_draft_without_model_tables_keeps_the_complete_source_path(
-    tmp_path, monkeypatch
-):
-    import ai_accounting.kernel.dashboard_model_materializer as materializer
-
-    path, source, _ = create_old_company(
-        tmp_path / "old.sqlite", source_fingerprint=READ_MODEL_SOURCE_FINGERPRINT
-    )
-    engine, _, _, _ = old_business(path, source)
-
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("old exact draft attempted current dashboard materialization")
-
-    monkeypatch.setattr(materializer, "build_model", forbidden)
-    with engine.store.connection(read_only=True) as connection:
-        assert (
-            connection.execute(
-                "SELECT 1 FROM sqlite_schema WHERE name='dashboard_read_model_commit'"
-            ).fetchone()
-            is None
+def test_archived_draft_without_model_tables_is_rejected_and_preserved(tmp_path):
+    path, _ = archived_company(tmp_path / "archived.sqlite", FINGERPRINTS[2])
+    original = path.read_bytes()
+    engine = Engine(
+        Store(
+            path, production_bundle(), "archived-synthetic-company", "archived-synthetic-database"
         )
-    assert Dashboard(engine).brief("2026-02")["data"] is not None
-    assert verify_file(path, _bundle=source)["verification"]["status"] == "verified"
-    with engine.store.connection(read_only=True) as connection:
-        fact = connection.execute("SELECT revision_id FROM fact_funding LIMIT 1").fetchone()[0]
-    damage(
-        engine,
-        "fact_funding",
-        "UPDATE fact_funding SET amount_fen=amount_fen+1 WHERE revision_id=?",
-        (fact,),
     )
+    with pytest.raises(KernelError) as failure:
+        Dashboard(engine).brief("2026-02")
+    assert failure.value.code == "schema_fingerprint_mismatch"
     with pytest.raises(BackupError) as failure:
-        verify_file(path, _bundle=source)
-    assert failure.value.code == "backup_content_invalid"
+        verify_file(path, _bundle=production_bundle())
+    assert failure.value.code == "backup_schema_unsupported"
+    assert path.read_bytes() == original
 
 
 def test_fixed_v1_fixture_keeps_its_registered_source_verifier(released_book, monkeypatch):
@@ -426,7 +411,7 @@ def test_fixed_v1_fixture_keeps_its_registered_source_verifier(released_book, mo
 
     legacy, bundle = released_book
     # Preserve the registered content-v1 fixture unchanged. It verifies frozen
-    # source interpretation; the exact old draft above proves table absence.
+    # source interpretation; archived draft shape support is deliberately absent.
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError("fixed v1 called current dashboard materializer")

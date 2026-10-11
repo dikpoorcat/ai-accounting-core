@@ -531,7 +531,7 @@ def test_empty_context_does_not_infer_next_work_or_business_fact(company):
 def test_payroll_management_month_sources_are_discoverable_without_known_subjects(tmp_path):
     from test_payroll import payroll
     from test_payroll_preparation import company as prepared_company
-    from test_payroll_preparation import confirm_no_change, plan_references
+    from test_payroll_preparation import confirm_no_change
 
     from ai_accounting.kernel import payroll_preparation, tax_import
     from ai_accounting.kernel.domains.payroll import PayrollBounded
@@ -547,22 +547,20 @@ def test_payroll_management_month_sources_are_discoverable_without_known_subject
         "notice",
     )
     wage = payroll(period="2026-02")
+    instance.save(wage, "regular-wage")
     instance.save(
         payroll_preparation.PayrollPlan(
             period="2026-02",
-            employee_id="employee",
-            payroll=wage,
-            **plan_references(instance),
+            payroll_revision={"subject_id": "regular-wage", "revision": 1},
         ),
         "regular-plan",
     )
     bounded = PayrollBounded.model_validate(wage.model_dump(mode="json"))
+    instance.save(bounded, "bounded-wage")
     instance.save(
-        payroll_preparation.BoundedPayrollPlan(
+        payroll_preparation.PayrollPlan(
             period="2026-02",
-            employee_id="employee",
-            payroll=bounded,
-            **plan_references(instance),
+            payroll_revision={"subject_id": "bounded-wage", "revision": 1},
         ),
         "bounded-plan",
     )
@@ -592,7 +590,6 @@ def test_payroll_management_month_sources_are_discoverable_without_known_subject
     kinds = {item["kind"] for item in items}
     assert {
         "payroll_plan_v2",
-        "payroll_plan_bounded",
         "payroll_change_notice_v2",
         "payroll_no_change_v2",
         "tax_import_mapping_v2",

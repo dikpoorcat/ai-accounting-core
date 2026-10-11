@@ -165,7 +165,9 @@ def test_complete_group_spans_months_and_members_are_twenty_bounded(book, closed
 
 @pytest.mark.parametrize("closed", [False, True])
 @pytest.mark.parametrize("kind", ["payroll", "payroll_bounded"])
-def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, closed, kind, monkeypatch):
+def test_payroll_social_and_housing_are_two_matters_across_months(
+    tmp_path, closed, kind, monkeypatch
+):
     company = Company(tmp_path / "four-contributions.sqlite")
     policy = contribution_policy()
     housing = policy.rules[0].model_copy(
@@ -202,23 +204,34 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
         }
     for subject in ("january", "february"):
         profile(
-            company.engine, "business", subject,
-            purpose="依据模拟工资资料第六行核对", note="模拟负责人复核说明",
+            company.engine,
+            "business",
+            subject,
+            purpose="依据模拟工资资料第六行核对",
+            note="模拟负责人复核说明",
         )
         Periods(company.engine).management(
-            subject, note="模拟管理核对说明", payment_period=None, payment_category=None,
-            expected_revision=0, request_id=f"management:{subject}",
+            subject,
+            payment_period=None,
+            payment_category=None,
+            expected_revision=0,
+            request_id=f"management:{subject}",
         )
     if closed:
         company.close("2026-01")
     company.publish("february")
     later_payment = payment(amount=10000)
-    company.save(later_payment.model_copy(update={
-        "allocations": tuple(
-            allocation.model_copy(update={"source_kind": kind})
-            for allocation in later_payment.allocations
+    company.save(
+        later_payment.model_copy(
+            update={
+                "allocations": tuple(
+                    allocation.model_copy(update={"source_kind": kind})
+                    for allocation in later_payment.allocations
+                ),
+            }
         ),
-    }), "later-payment")
+        "later-payment",
+    )
     company.publish("later-payment")
     ledger = company.engine.ledger("2026-02")
     with snapshot(company.engine, "2026-02") as snap:
@@ -232,9 +245,9 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
             assert contribution["member_count"] == 4
             original_prime = snap.metadata.prime_profiles
 
-            def no_business_profiles(profile_kind, identifiers):
+            def no_business_profiles(profile_kind, identifiers, _original_prime=original_prime):
                 assert profile_kind != "business", "contribution members do not read business notes"
-                return original_prime(profile_kind, identifiers)
+                return _original_prime(profile_kind, identifiers)
 
             def no_management(*args, **kwargs):
                 raise AssertionError("contribution members do not read management notes")
@@ -256,8 +269,7 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
         net = next(row for row in groups if row["description"] == "实发工资")
         assert net["member_count"] == 2 and net["outstanding_fen"] == 2 * net_amount - 10000
         assert all(
-            row["purpose"] is None
-            for row in open_group_members(snap, net["group_key"])["items"]
+            row["purpose"] is None for row in open_group_members(snap, net["group_key"])["items"]
         )
     with snapshot(company.engine, "2026-01") as snap:
         net = next(
@@ -269,12 +281,15 @@ def test_payroll_social_and_housing_are_two_matters_across_months(tmp_path, clos
         assert net["current_outstanding_fen"] == net_amount - 10000
     assert company.engine.ledger("2026-02") == ledger
     with company.engine.store.connection(read_only=True) as connection:
-        assert [tuple(row) for row in connection.execute(
-            "SELECT purpose,note FROM display_profile_revision ORDER BY entity_id"
-        )] == [("依据模拟工资资料第六行核对", "模拟负责人复核说明")] * 2
-        assert [row["note"] for row in connection.execute(
-            "SELECT note FROM management_revision ORDER BY subject_id"
-        )] == ["模拟管理核对说明"] * 2
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT purpose,note FROM display_profile_revision ORDER BY entity_id"
+            )
+        ] == [("依据模拟工资资料第六行核对", "模拟负责人复核说明")] * 2
+        assert "note" not in {
+            row["name"] for row in connection.execute("PRAGMA table_info(management_revision)")
+        }
 
 
 def test_group_identity_retains_formal_matter_direction_and_unknown_is_independent(book):
@@ -311,7 +326,9 @@ def test_group_identity_retains_formal_matter_direction_and_unknown_is_independe
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members(opening_book, closed):
+def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members(
+    opening_book, closed
+):
     engine, save, publish, package, proof = opening_book
     components = (
         "net",
@@ -344,8 +361,11 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
         subject = "prior-" + component
         profile(engine, "business", subject, purpose="模拟期初核算依据", note="模拟期初复核说明")
         Periods(engine).management(
-            subject, note="模拟期初管理说明", payment_period=None, payment_category=None,
-            expected_revision=0, request_id=f"management:{subject}",
+            subject,
+            payment_period=None,
+            payment_category=None,
+            expected_revision=0,
+            request_id=f"management:{subject}",
         )
     if closed:
         _close_without_current_business(engine, "2026-01", proof)
@@ -361,7 +381,9 @@ def test_opening_contributions_use_employee_identity_and_keep_no_voucher_members
             assert {row["source_period"] for row in members} == {"2026-01"}
             assert all(row["voucher_version_id"] is None for row in members)
             assert all(row["purpose"] is None for row in members)
-            assert all(row["source_amount_fen"] == row["outstanding_fen"] == 2000 for row in members)
+            assert all(
+                row["source_amount_fen"] == row["outstanding_fen"] == 2000 for row in members
+            )
         opening_source = {
             "key": "opening_payroll_payable:prior-net:primary",
             "source_business": {"kind": "opening_payroll_payable"},
@@ -489,20 +511,43 @@ def test_group_status_keeps_mixed_overpayment_unknown_and_partial(book):
         assert group["outstanding_fen"] is None and group["status"] == "unestablished"
 
 
-@pytest.mark.parametrize("values,expected,status", [
-    ([(100, 200, 0, -100, "over_settled"), (100, 0, 0, 100, "open")],
-     (200, 200, 0, 0), "over_settled"),
-    ([(None, 0, 0, None, "unestablished"), (2**63 - 1, 0, 0, None, "unestablished"),
-      (1, 0, 0, None, "unestablished")], (None, 0, 0, None), "unestablished"),
-    ([(2**63 - 1, 0, 0, 1, "open"), (1, 0, 0, 1, "open")], None, "open"),
-    ([(0, 2**63 - 1, 0, None, "unknown"), (0, 1, 0, None, "unknown")], None, "unestablished"),
-])
+@pytest.mark.parametrize(
+    "values,expected,status",
+    [
+        (
+            [(100, 200, 0, -100, "over_settled"), (100, 0, 0, 100, "open")],
+            (200, 200, 0, 0),
+            "over_settled",
+        ),
+        (
+            [
+                (None, 0, 0, None, "unestablished"),
+                (2**63 - 1, 0, 0, None, "unestablished"),
+                (1, 0, 0, None, "unestablished"),
+            ],
+            (None, 0, 0, None),
+            "unestablished",
+        ),
+        ([(2**63 - 1, 0, 0, 1, "open"), (1, 0, 0, 1, "open")], None, "open"),
+        ([(0, 2**63 - 1, 0, None, "unknown"), (0, 1, 0, None, "unknown")], None, "unestablished"),
+    ],
+)
 def test_record_group_checked_none_and_abnormal_status(values, expected, status):
-    fields = ("source_amount_fen", "paid_fen", "other_settled_fen", "remaining_fen",
-              "settlement_status")
-    rows = [{"key": str(index), "category_key": "supplier_payables",
-             **dict(zip(fields, value, strict=True))}
-            for index, value in enumerate(values)]
+    fields = (
+        "source_amount_fen",
+        "paid_fen",
+        "other_settled_fen",
+        "remaining_fen",
+        "settlement_status",
+    )
+    rows = [
+        {
+            "key": str(index),
+            "category_key": "supplier_payables",
+            **dict(zip(fields, value, strict=True)),
+        }
+        for index, value in enumerate(values)
+    ]
     data = {
         "groups": {"group": rows},
         "identities": {"0": {"party_id": None, "missing_party": "未提供", "description": "费用"}},
@@ -523,16 +568,22 @@ def test_closed_all_object_and_member_pages_keep_complete_counts(book):
     from test_dashboard_open_identity_tokens import _read_all
 
     engine, _, _, proof = book
-    total = sum(expenses(book, 1, party=f"supplier-{index}", prefix=f"group-{index}")
-                for index in range(26))
-    assert close_month(inventories(engine, proof, "2026-09", {"transactions"}), proof, "2026-09")[
-        "status"
-    ] == "closed"
+    total = sum(
+        expenses(book, 1, party=f"supplier-{index}", prefix=f"group-{index}") for index in range(26)
+    )
+    assert (
+        close_month(inventories(engine, proof, "2026-09", {"transactions"}), proof, "2026-09")[
+            "status"
+        ]
+        == "closed"
+    )
     pages, members = _read_all(engine)
     rows = [row for page in pages for row in page["collection"]["items"]]
     assert len(rows) == len({row["id"] for row in rows}) == 26
-    assert all(page["payable_fen"] == total and page["group_count"] == page["total_count"] == 26
-               for page in pages)
+    assert all(
+        page["payable_fen"] == total and page["group_count"] == page["total_count"] == 26
+        for page in pages
+    )
     assert all(page["current_outstanding"]["payable_fen"] == total for page in pages)
     assert sum(row["outstanding_fen"] for row in rows) == total
     selected = [row for parts in members.values() for page in parts for row in page["items"]]

@@ -5,6 +5,7 @@ import json
 
 import pytest
 from stage9_book import MixedBook
+from test_v1_stored_json_isolation import released_book as released_book
 
 from ai_accounting.kernel import material_watch, materials
 from ai_accounting.kernel.contracts import KernelError
@@ -34,9 +35,10 @@ def test_watch_preserves_unchanged_sources_and_locates_linked_accounting_change(
         assert material_watch._read_keys(connection, january, root, {absent_in_occupied}) == set()
         material_watch.require_material_watch(book.engine, connection)
         source_id, subject_id = connection.execute(
-            "SELECT r.source_id,l.subject_id FROM fact_material_resolution_v2 r "
+            "SELECT r.source_id,calc.subject_id FROM fact_material_resolution_v2 r "
             "JOIN fact_current c ON c.fact_id=r.revision_id "
             "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+            "JOIN calculation calc ON calc.id=l.calculation_id "
             "WHERE r.period=? LIMIT 1",
             (january,),
         ).fetchone()
@@ -181,23 +183,6 @@ def test_full_rebuild_advances_one_journal_across_corrected_closes(tmp_path, mon
         connection.execute("BEGIN IMMEDIATE")
         material_watch.require_material_watch(book.engine, connection)
         assert calls == [(0, None)]
-        from ai_accounting.kernel import material_watch_v1
-
-        historical_changes = material_watch_v1.changes_since
-        historical_calls = []
-
-        def counted_historical(connection, after, *, through=None):
-            historical_calls.append((after, through))
-            return historical_changes(connection, after, through=through)
-
-        monkeypatch.setattr(material_watch_v1, "changes_since", counted_historical)
-        monkeypatch.setattr(
-            material_watch_v1,
-            "heads_at",
-            lambda *_args: pytest.fail("v1 per-close journal replay returned"),
-        )
-        material_watch_v1.require_material_watch(book.engine, connection)
-        assert historical_calls == [(0, None)]
         calls.clear()
         connection.execute(
             "UPDATE material_watch_bucket SET content='[]' WHERE period=? AND bucket=("
@@ -235,7 +220,7 @@ def test_full_rebuild_advances_one_journal_across_corrected_closes(tmp_path, mon
 
 
 def test_released_v1_material_watch_reads_nonempty_close_without_current_rules(
-    tmp_path, monkeypatch
+    released_book, monkeypatch
 ):
     from test_integrity_content import damage
 
@@ -246,8 +231,7 @@ def test_released_v1_material_watch_reads_nonempty_close_without_current_rules(
     )
     from ai_accounting.kernel.types import canonical
 
-    book = MixedBook(tmp_path / "watch-v1", employees=1, businesses=26)
-    book.add_month(0)
+    book, _bundle = released_book
 
     def changed_current(*_args, **_kwargs):
         raise AssertionError("released v1 must not use current close or watch decoding")
@@ -322,10 +306,11 @@ def test_new_business_does_not_probe_frozen_dependencies_but_restored_old_fact_d
         assert not affected
         assert f"business:{subject}" not in seen[-1]
         source_id, old_subject, fact_id = connection.execute(
-            "SELECT r.source_id,l.subject_id,l.fact_id FROM fact_material_resolution_v2 r "
+            "SELECT r.source_id,calc.subject_id,calc.fact_id FROM fact_material_resolution_v2 r "
             "JOIN fact_current c ON c.fact_id=r.revision_id "
             "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
-            "JOIN fact_revision f ON f.id=l.fact_id WHERE f.revision=1 LIMIT 1"
+            "JOIN calculation calc ON calc.id=l.calculation_id "
+            "JOIN fact_revision f ON f.id=calc.fact_id WHERE f.revision=1 LIMIT 1"
         ).fetchone()
         connection.execute("DELETE FROM fact_current WHERE subject_id=?", (old_subject,))
         connection.execute("INSERT INTO fact_current VALUES(?,?)", (old_subject, fact_id))

@@ -577,7 +577,9 @@ def test_filter_keeps_conflict_and_unsafe_keys_on_exact_tree_path():
     connection.close()
 
 
-def test_released_v1_directory_reader_is_separate_and_checks_the_bound_root(book):
+def test_released_v1_directory_reader_is_separate_and_checks_the_bound_root(book, monkeypatch):
+    from ai_accounting.kernel import close_storage, close_storage_v1
+    from ai_accounting.kernel import report_classification_directory as current_directory
     from ai_accounting.kernel.content_history_context import (
         historical_content,
         report_classification_directory_reader,
@@ -587,12 +589,55 @@ def test_released_v1_directory_reader_is_separate_and_checks_the_bound_root(book
     engine = book[0]
     scenario(book)
     close_quarter(book)
+    # Current fixture closes use the current physical source codec. Isolate
+    # the fixed directory rules without relabeling this database as released v1.
+    monkeypatch.setattr(close_storage_v1, "decode_close", close_storage.decode_close)
+
+    def reject_current(*_args, **_kwargs):
+        raise AssertionError("fixed directory rules must not call the current directory reader")
+
+    monkeypatch.setattr(current_directory, "require_classification_directory", reject_current)
+    monkeypatch.setattr(current_directory, "classification_directory_scope", reject_current)
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         expected = require_report_flow(engine, connection)["expected_rows"]
+        classification = connection.execute(
+            "SELECT c.revision_id,c.voucher_version_id,f.digest,f.period "
+            "FROM fact_report_classification c JOIN fact_revision f ON f.id=c.revision_id"
+        ).fetchone()
+        end = YearMonth("2026-03").ordinal
         with historical_content(1):
             reader = report_classification_directory_reader()
             assert reader.__name__.endswith("report_classification_directory_v1")
             assert reader.require_classification_directory(
                 engine, connection, _expected_flows=expected
             )["roots"] == 3
+            scope = reader.classification_directory_scope(
+                connection, end, {classification["voucher_version_id"], "missing-voucher"}
+            )
+            assert scope["membership"][classification["voucher_version_id"]] == (
+                (classification["revision_id"], classification["digest"].hex(),
+                 classification["period"], True),
+            )
+            assert scope["membership"]["missing-voucher"] == ()
+    damage(
+        engine, "report_classification_directory",
+        "UPDATE report_classification_directory SET root_digest=zeroblob(32) WHERE period=?",
+        (end,),
+    )
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with historical_content(1):
+            reader = report_classification_directory_reader()
+            with pytest.raises(KernelError) as rejected:
+                reader.classification_directory_scope(
+                    connection, end, {classification["voucher_version_id"]}
+                )
+            assert rejected.value.code == "content_integrity_failed"
+            assert rejected.value.details["reason"] == "root_binding_mismatch"
+            with pytest.raises(KernelError) as rejected:
+                reader.require_classification_directory(
+                    engine, connection, _expected_flows=expected
+                )
+            assert rejected.value.code == "content_integrity_failed"
+            assert rejected.value.details["component"] == "report_classifications"

@@ -617,7 +617,35 @@ def _audit_descriptors(raw) -> list[ModelDescriptor]:
         raise _failure() from exc
 
 
-def _anchored_descriptor(row) -> ModelDescriptor:
+def _verified_audit_descriptors(
+    audit_id, request_id, action, payload, request_result, request_digest, verified_batches,
+):
+    """Reuse exact batch proof only within the caller's current transaction.
+
+    Batch consumers create and discard this dictionary inside one invocation.
+    IDs locate a proof; the complete original audit/request bytes must match
+    before it can be reused. A conflicting row never replaces an earlier proof.
+    """
+    key = (audit_id, request_id)
+    original = (action, payload, request_result, request_digest)
+    if verified_batches is not None and key in verified_batches:
+        previous, descriptors = verified_batches[key]
+        if previous != original:
+            raise _failure()
+        return descriptors
+    if action != "dashboard_read_model":
+        raise _failure()
+    members = _audit_descriptors(payload)
+    descriptors = {descriptor.commit_id: descriptor for descriptor in members}
+    if len(descriptors) != len(members):
+        raise _failure()
+    _check_request(payload, request_result, request_digest)
+    if verified_batches is not None:
+        verified_batches[key] = (original, descriptors)
+    return descriptors
+
+
+def _anchored_descriptor(row, *, _verified_batches=None) -> ModelDescriptor:
     descriptor = _parse_descriptor(row["descriptor"])
     parent = bytes(row["parent_id"]).hex() if row["parent_id"] is not None else None
     if (
@@ -630,10 +658,12 @@ def _anchored_descriptor(row) -> ModelDescriptor:
         or row["anchor_action"] != "dashboard_read_model"
     ):
         raise _failure()
-    anchored = _audit_descriptors(row["anchor_payload"])
-    if sum(value == descriptor for value in anchored) != 1:
+    anchored = _verified_audit_descriptors(
+        row["audit_id"], row["request_id"], row["anchor_action"], row["anchor_payload"],
+        row["request_result"], row["request_digest"], _verified_batches,
+    )
+    if anchored.get(descriptor.commit_id) != descriptor:
         raise _failure()
-    _check_request(row["anchor_payload"], row["request_result"], row["request_digest"])
     return descriptor
 
 
@@ -1040,11 +1070,12 @@ def authenticate_current_storage(connection: Connection) -> set[str]:
     if current != latest:
         raise _failure()
     live = set()
+    verified_batches = {}
     for period, ident in current.items():
         row = _receipt_row(connection, ident)
         if row is None:
             raise _failure()
-        descriptor = _anchored_descriptor(row)
+        descriptor = _anchored_descriptor(row, _verified_batches=verified_batches)
         if descriptor.scope.period != period:
             raise _failure()
         root = _load_root(connection, descriptor)

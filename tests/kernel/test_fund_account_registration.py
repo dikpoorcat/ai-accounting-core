@@ -1,5 +1,7 @@
 """Public fund registration requires sourced identity and an atomic subject binding."""
 
+import json
+
 import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
@@ -97,15 +99,31 @@ def test_registration_binds_sourced_identity_and_kernel_assigned_subject(
     result = register(book, account_type)
     with engine.store.connection(read_only=True) as connection:
         definition = require_fund_account(connection, result["entity_id"], account_type)
+        assert definition == result["fund_account"]
         assert definition["parent_account"] == parent
         assert definition["detail_code"] == parent + ".0001"
         assert definition["evidence_digest"] == proof
         assert definition["identity"] == {
             k: profile(account_type)[k] for k in IDENTITY_FIELDS[account_type]
         }
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
+        row = connection.execute(
+            "SELECT content FROM entity_profile_revision WHERE entity_id=?", (result["entity_id"],)
+        ).fetchone()
+        assert row is not None
+        assert not {
+            "display_number", "external_identifiers", "bank_account_number", "account_identifier",
+        } & json.loads(row[0]).keys()
     assert result["fund_account"]["detail_code"] == definition["detail_code"]
     assert register(book, account_type) == result
     assert len(entities.find_entities(kind="fund_account")["items"]) == 1
+    query = definition["identity"].get(
+        "bank_account_number",
+        definition["identity"].get("account_identifier", profile(account_type)["display_name"]),
+    )
+    assert entities.find_entities(kind="fund_account", query=query)["items"][0]["entity_id"] == (
+        result["entity_id"]
+    )
 
 
 @pytest.mark.parametrize("account_type", ["bank", "platform"])
@@ -139,17 +157,18 @@ def test_account_source_is_required_and_must_reference_preserved_evidence(
 ):
     engine, _, _ = book
     changes = (
-        {"source": "   "}
+        [{"source": "   "}, {"source": None}]
         if missing == "source"
-        else {
+        else [{
             "evidence_digest": "00" * 32 if missing == "unregistered_evidence" else None,
-        }
+        }]
     )
     before = snapshot(engine)
-    with pytest.raises(NeedsInformation) as error:
-        register(book, account_type, **changes)
-    assert_issue(error, "source" if missing == "source" else "evidence_digest")
-    assert snapshot(engine) == before
+    for fields in changes:
+        with pytest.raises(NeedsInformation) as error:
+            register(book, account_type, **fields)
+        assert_issue(error, "source" if missing == "source" else "evidence_digest")
+        assert snapshot(engine) == before
 
 
 @pytest.mark.parametrize(

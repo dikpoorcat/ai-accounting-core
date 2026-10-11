@@ -5,6 +5,7 @@ import json
 import pytest
 from stage9_metrics import measure_work
 from test_asset_batches import month
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_owner_asset_activation_identity import closed_cards
 from test_reimbursement_assets import consume_assets
@@ -32,7 +33,8 @@ def _dispose_second(company, ids):
 def test_complete_carrying_amounts_do_not_load_growing_closed_charge_bodies(tmp_path):
     company, ids = closed_cards(tmp_path, 2)
     view = Dashboard(company.engine)
-    before_work, before = measure_work(company.engine, lambda: view.assets("2026-04"))
+    with raw_read():
+        before_work, before = measure_work(company.engine, lambda: view.assets("2026-04"))
     assert before["data"]["ledger_net_fen"] == 200010
     for index, ident in enumerate(ids):
         assert _items(before)[ident]["accumulated_charge_fen"] == 20000 + index * 2
@@ -41,7 +43,8 @@ def test_complete_carrying_amounts_do_not_load_growing_closed_charge_bodies(tmp_
     month(company.engine, company.owner_confirmation, "2026-05", "consume-may")
     company.close("2026-05")
     month(company.engine, company.owner_confirmation, "2026-06", "consume-june")
-    after_work, after = measure_work(company.engine, lambda: view.assets("2026-06"))
+    with raw_read():
+        after_work, after = measure_work(company.engine, lambda: view.assets("2026-06"))
     assert after["data"]["ledger_net_fen"] == 160008
     assert after["data"]["active_count"] == 2
     for index, ident in enumerate(ids):
@@ -58,9 +61,11 @@ def test_complete_carrying_amounts_do_not_load_growing_closed_charge_bodies(tmp_
 def test_disposed_fallback_and_current_card_keep_independent_complete_amounts(tmp_path):
     company, ids = closed_cards(tmp_path, 2)
     view = Dashboard(company.engine)
-    fast_work, _ = measure_work(company.engine, lambda: view.assets("2026-04"))
+    with raw_read():
+        fast_work, _ = measure_work(company.engine, lambda: view.assets("2026-04"))
     _dispose_second(company, ids)
-    fallback_work, response = measure_work(company.engine, lambda: view.assets("2026-04"))
+    with raw_read():
+        fallback_work, response = measure_work(company.engine, lambda: view.assets("2026-04"))
     items = _items(response)
     assert items[ids[0]]["accumulated_charge_fen"] == 20000
     assert items[ids[0]]["month_charge_fen"] == 10000
@@ -106,6 +111,7 @@ def test_required_source_damage_is_not_hidden_by_card_or_fallback_scope(tmp_path
     else:
         damage(company.engine, "fact_revision", "DELETE FROM fact_revision WHERE id=?",
                (fact_id,), foreign_keys=False)
-    with pytest.raises(KernelError) as failure:
+    # Exercise the native carrying/fallback source consumer, not a cached card.
+    with raw_read(), pytest.raises(KernelError) as failure:
         view.assets("2026-04", asset_id=ids[0])
     assert failure.value.code == "content_integrity_failed"

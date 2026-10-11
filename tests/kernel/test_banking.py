@@ -748,7 +748,7 @@ def test_interest_and_principal_in_one_real_payment_publish_without_dependency_c
         "interest",
         {
             "period": "2026-09",
-            "agreement_id": "agreement",
+
             "drawdown_id": "drawdown",
             "period_start": "2026-09-01",
             "period_end_exclusive": "2026-09-16",
@@ -1044,7 +1044,7 @@ def test_loan_readiness_requires_zero_interest_but_releases_fully_settled_princi
         "september-interest",
         {
             "period": "2026-09",
-            "agreement_id": "agreement",
+
             "drawdown_id": "drawdown",
             "period_start": "2026-09-01",
             "period_end_exclusive": "2026-10-01",

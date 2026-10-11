@@ -11,6 +11,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import month
+from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage, verify
 from test_payroll import payroll
 from test_payroll_corrections import Company
@@ -47,11 +48,18 @@ def test_exact_locator_preserves_public_money_and_roster(tmp_path, monkeypatch, 
     if state == "late":
         company.close("2026-02")
     period = "2026-01" if state in {"closed", "no_impact"} else "2026-02"
-    actual = Dashboard(company.engine).employees(period, preparation="deferred", employee_filter="all")
+    with raw_read():
+        actual = Dashboard(company.engine).employees(
+            period, preparation="deferred", employee_filter="all",
+        )
     with Dashboard(company.engine)._snapshot(period) as snapshot:
         actual_heads = dashboard_reads.adopted_head_metadata(snapshot, KINDS)
     monkeypatch.setattr(dashboard_reads, "_verify_head_close_locators", old_locators)
-    assert Dashboard(company.engine).employees(period, preparation="deferred", employee_filter="all") == actual
+    # Execute the patched complete locator verifier on the public native roster.
+    with raw_read():
+        assert Dashboard(company.engine).employees(
+            period, preparation="deferred", employee_filter="all",
+        ) == actual
     with Dashboard(company.engine)._snapshot(period) as snapshot:
         assert dashboard_reads.adopted_head_metadata(snapshot, KINDS) == actual_heads
 
@@ -81,7 +89,12 @@ def test_selected_node_rejects_bad_reference_and_source(tmp_path, change, reader
                "(SELECT id FROM calculation WHERE subject_id='january')")
     with pytest.raises(KernelError):
         if reader == "roster":
-            Dashboard(company.engine).employees("2026-01", preparation="deferred", employee_filter="all")
+            # Exercise the native roster's exact close locators, independently
+            # of the already certified aggregate model produced at close.
+            with raw_read():
+                Dashboard(company.engine).employees(
+                    "2026-01", preparation="deferred", employee_filter="all"
+                )
         else:
             with Dashboard(company.engine)._snapshot("2026-01") as snapshot:
                 dashboard_reads.adopted_head_metadata(snapshot, KINDS)
@@ -279,7 +292,9 @@ def test_other_month_extra_directory_row_is_full_verifier_scope(tmp_path):
     company.confirm_payroll("february")
     company.publish("february")
     company.close("2026-02")
-    baseline = Dashboard(company.engine).employees("2026-02", preparation="deferred", employee_filter="all")
+    baseline = Dashboard(company.engine).employees(
+        "2026-02", preparation="deferred", employee_filter="all",
+    )
     damage(company.engine, "close_reference",
            "INSERT INTO close_reference(close_period,path,position,reference_type,reference_id) "
            "SELECT ?,path,'synthetic-extra',reference_type,reference_id FROM close_reference "

@@ -22,7 +22,7 @@ from .contracts import (
     NeedsInformation,
     read_identity_payload,
 )
-from .dependencies import checked_lanes, read_matches, scope_keys
+from .dependencies import checked_lanes, read_matches, scope_keys, select_fact_dependencies
 from .storage import Store
 from .stored_json import load_outcome, loads_unique
 from .types import (
@@ -67,7 +67,7 @@ class Prepared:
 class Engine:
     _allows_asset_graph = False
 
-    def _reads(self, version):
+    def _reads(self, version, selections=None):
         reads = version.fact.reads_for(version.subject_id)
         if (
             version.fact.kind == "external_basis_review"
@@ -76,6 +76,8 @@ class Engine:
             from .report_snapshot import report_dependency_reads
 
             reads += report_dependency_reads(self.store.registry, version.fact.end_period)
+        if selections is not None:
+            reads += version.fact.reads_after(version.subject_id, Context(selections))
         return tuple(dict.fromkeys(reads))
 
     def _explicit_roots(self, subjects):
@@ -708,8 +710,9 @@ class Engine:
                 raise KernelError(
                     "asset_batch_command_required", "包含资产卡片或汇总的变更须通过资产专用编排预览"
                 )
-            reads = {read for version in facts.values() for read in self._reads(version)}
-            selections = self.store.select_many(connection, sorted(reads, key=repr))
+            selections = select_fact_dependencies(
+                facts.values(), lambda reads: self.store.select_many(connection, reads), self._reads
+            )
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
             previous = {
@@ -771,7 +774,7 @@ class Engine:
         )
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
-        declared = {sid: self._reads(version) for sid, version in facts.items()}
+        declared = {sid: self._reads(version, selections) for sid, version in facts.items()}
         scopes = {
             sid: scope_keys("calculation", version.fact, sid) for sid, version in facts.items()
         }

@@ -556,6 +556,7 @@ class _Snapshot:
         fields = (
             "display_name",
             "display_number",
+            "account_number",
             "purpose",
             "note",
             "employment_start",
@@ -564,11 +565,6 @@ class _Snapshot:
             "employment_state",
             "active",
             "category_label",
-            "rights_description",
-            "useful_life_basis",
-            "counterparty_id",
-            "beneficiary_id",
-            "handler_id",
         )
         result = {key: base[key] for key in ("id", "revision") if key in base}
         result["field_sources"] = {}
@@ -588,10 +584,13 @@ class _Snapshot:
                     if self.close
                     else "current"
                 )
+                definition_source = (
+                    selected.get("account_number_source") if field == "account_number" else None
+                )
                 result["field_sources"][field] = self.source(
-                    "display_profile", selected, basis,
-                    field=selected.get("display_number_source_field", field)
-                    if field == "display_number" else field,
+                    "fund_account_identity" if definition_source else "display_profile",
+                    definition_source or selected, basis,
+                    field=definition_source["field"] if definition_source else field,
                 )
         start, end = result.get("employment_start"), result.get("employment_end")
         result["field_conflicts"] = []
@@ -1238,9 +1237,6 @@ class _Snapshot:
         purposes = [
             profile.get("purpose"),
             profile.get("note"),
-            None if standard_text else (
-                self.management.get(calc["fact"]["subject_id"]) or {}
-            ).get("note"),
         ]
         supplied = list(dict.fromkeys(p.strip() for p in purposes if p and p.strip()))
         if supplied:
@@ -1253,9 +1249,6 @@ class _Snapshot:
                 for field in ("display_name", "purpose", "note")
                 if profile.get(field)
             ]
-            management = None if standard_text else self.management.get(calc["fact"]["subject_id"])
-            if management and management.get("note"):
-                sources.append(self.management_source(management, "note"))
             for party in named_parties:
                 source = party.get("field_sources", {}).get("name")
                 sources.extend(source if isinstance(source, list) else [source] if source else [])
@@ -1378,7 +1371,7 @@ class _Snapshot:
             ]
         return asset_references, asset_reference, asset_members, asset_lines, member_evidence
 
-    def owner_voucher(self, row):
+    def owner_voucher(self, row, *, fund_details=None):
         """Render the selected voucher's saved lines without diagnostic graphs."""
         calc = row["basis"]
         relations = self.voucher_relations(calc, row["sign"])
@@ -1391,7 +1384,8 @@ class _Snapshot:
         from .fund_line_details import display_fund_lines
 
         display_lines = {line["line_no"]: line for line in
-                         display_fund_lines(self.connection, row["id"], row["lines"])}
+                         display_fund_lines(self.connection, row["id"], row["lines"],
+                                            details=fund_details)}
 
         def owner_asset(reference):
             return {key: value for key, value in reference.items() if key != "field_sources"}
@@ -1448,8 +1442,7 @@ class _Snapshot:
         period = str(YearMonth.from_ordinal(row["period"]))
         recognition = _recognition(data, period)
         profile = self.profile("business", fact["subject_id"])
-        management = self.management.get(fact["subject_id"])
-        note = profile.get("note") or (management["note"] if management else None) or ""
+        note = profile.get("note") or ""
         relations = self.voucher_relations(calc, row["sign"])
         asset_references, asset_reference, asset_members, asset_lines, member_evidence = (
             self._voucher_asset_details(row)
@@ -1463,8 +1456,6 @@ class _Snapshot:
             asset_references=summary_asset_references,
         )
         note_source = profile["field_sources"].get("note")
-        if not note_source and management and management.get("note"):
-            note_source = self.management_source(management, "note")
         party_fields = (
             "employee_id",
             "person_id",
@@ -2726,9 +2717,6 @@ def _brief_activity_row(snap, row):
         supplied = list(dict.fromkeys(
             value.strip() for value in (
                 profile.get("purpose"), profile.get("note"),
-                None if standard_text else (
-                    snap.management.get(row["basis"]["subject_id"]) or {}
-                ).get("note"),
             )
             if value and value.strip()
         ))
@@ -4472,7 +4460,11 @@ def _project_cost_balances(snap):
         parameters,
     ).fetchall()
     snap.reads.verify_selected_voucher_adoptions(rows, through_period=snap.month)
-    outcomes = snap.reads.verify_selected_content({row["basis_calculation_id"] for row in rows})
+    # The displayed remaining amount consumes saved effects. A mutable result
+    # digest alone cannot authenticate a rewritten amount under the original ID.
+    outcomes = snap.reads.verify_saved_input_identity(
+        {row["basis_calculation_id"] for row in rows}
+    )
     for row in rows:
         sign = -1 if row["reverses_id"] is not None else 1
         for effect in outcomes[row["basis_calculation_id"]]["balances"]:
@@ -4889,7 +4881,7 @@ def _assets(
     )
     snap.metadata.prime_profiles("asset", selected)
     items = []
-    for index, (ident, calc) in enumerate(sorted(acquisitions.items()), 1):
+    for ident, calc in sorted(acquisitions.items()):
         if ident not in selected:
             continue
         data = calc["fact"]["data"] | asset_details.get(ident, {})
@@ -4929,7 +4921,7 @@ def _assets(
         item = {
             "asset_id": ident,
             "asset_type": data["asset_type"],
-            "code": profile.get("display_number") or f"资产 {index}",
+            "code": profile.get("display_number") or "",
             "name": profile.get("display_name") or "未提供资产名称",
             "category": data["asset_type"],
             "category_label": profile.get("category_label")
@@ -5058,6 +5050,9 @@ def _assets(
     )
     picked_projects = set(project_keys) if "projects" in requested and not summary_only else set()
     if picked_projects:
+        # Bind each actually displayed cost to its original calculation identity;
+        # scalar fact/head checks alone do not authenticate result values.
+        snap.reads.verify_saved_input_identity(picked_projects)
         snap.reads.calculations(calc["id"] for calc in candidates if calc["id"] in picked_projects)
     projects = [
         {
@@ -5065,7 +5060,10 @@ def _assets(
             "project_id": calc["outcome"]["values"]["project_id"],
             "period": calc["fact"]["data"]["period"],
             "kind": calc["kind"],
-            "label": _name(calc["kind"]),
+            "label": snap.profile("asset", calc["outcome"]["values"]["project_id"]).get(
+                "display_name"
+            )
+            or _name(calc["kind"]),
             "party": snap.party(
                 calc["fact"]["data"].get("person_id") or calc["fact"]["data"].get("supplier_id")
             ),

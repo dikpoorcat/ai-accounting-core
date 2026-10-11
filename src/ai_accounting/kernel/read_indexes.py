@@ -26,6 +26,7 @@ AUDIT_ACTIONS = (
     "payee",
     "register_entity",
     "update_entity_profile",
+    "correct_fund_account_identity",
 )
 CLOSE_CALCULATIONS = "adopted_results[*].calculation_id"
 CLOSE_ADOPTION_FACTS = "adopted_results[*].fact_id"
@@ -79,7 +80,7 @@ CREATE TRIGGER read_index_source_owner BEFORE INSERT ON read_index_source
  OR (NEW.source_kind='audit' AND NOT EXISTS(SELECT 1 FROM audit
  WHERE id=CAST(NEW.source_id AS INTEGER) AND CAST(id AS TEXT)=NEW.source_id AND action IN
  ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee',
- 'register_entity','update_entity_profile')))
+ 'register_entity','update_entity_profile','correct_fund_account_identity')))
  BEGIN SELECT RAISE(ABORT,'read index source ownership mismatch'); END;
 CREATE TABLE close_reference(close_period INTEGER NOT NULL REFERENCES period_close(period),
  path TEXT NOT NULL,position TEXT NOT NULL,reference_type TEXT NOT NULL,

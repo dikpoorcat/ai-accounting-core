@@ -5,6 +5,7 @@ import json
 import pytest
 import test_banking as banking
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_funds_historical_account_identities import prepared, public, source
 from test_integrity_content import damage
 
@@ -57,11 +58,13 @@ def test_positive_witnesses_keep_zero_inactive_accounts_and_reduce_real_work(
         expected_revision=1, request_id="inactive-zero",
     )
     narrow_states = states(engine)
-    narrow_work, narrow = measure_work(engine, lambda: public(engine, PERIOD))
+    with raw_read():
+        narrow_work, narrow = measure_work(engine, lambda: public(engine, PERIOD))
     with monkeypatch.context() as complete:
         full_scope(complete)
         full_states = states(engine)
-        full_work, baseline = measure_work(engine, lambda: public(engine, PERIOD))
+        with raw_read():
+            full_work, baseline = measure_work(engine, lambda: public(engine, PERIOD))
     assert narrow == baseline
     assert narrow["funds"]["data"]["bank_account_count"] == 2
     assert narrow["funds"]["data"]["bank_statement"]["missing_account_count"] == 2
@@ -89,7 +92,7 @@ def test_incomplete_or_unowned_guards_retain_complete_scope(bank_book, monkeypat
         sql = ("DELETE FROM entity_reference_recorded WHERE fact_id=?" if boundary == "missing_role"
                else "UPDATE entity_reference_recorded SET role='counterparty' WHERE fact_id=?")
         damage(engine, "entity_reference_recorded", sql, (row["fact_id"],))
-    with monkeypatch.context() as complete:
+    with raw_read(), monkeypatch.context() as complete:
         full_scope(complete)
         expected = public(engine, PERIOD)
     if boundary == "v1":
@@ -144,7 +147,7 @@ def test_unselected_damaged_candidate_cannot_disappear(bank_book, change):
             return
     # The funds page consumes bank identity; brief money does not claim this
     # separate zero-account source proof. Its monetary sources stay complete.
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds(PERIOD)
     assert failure.value.code == "content_integrity_failed"
 
@@ -159,7 +162,7 @@ def test_consumed_witness_body_still_rejects_self_consistent_mutation(bank_book)
     outcome["values"]["bank_account_id"] = "zero-bank"
     damage(engine, "calculation", "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
            (canonical(outcome), digest(outcome), row["id"]))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         public(engine, PERIOD)
     assert failure.value.code == "content_integrity_failed"
 
@@ -174,7 +177,7 @@ def test_unused_old_body_is_not_a_display_proof_but_core_stays_complete(bank_boo
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)
     # Its own month requires substantive bank coverage and the exact body.
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).funds("2026-10")
 
 
@@ -188,12 +191,12 @@ def test_all_open_and_month_bank_sources_keep_substantive_content(bank_book, mon
     assert {item["subject_id"] for item in current.values()} >= {
         "nov-statement", "nov-reconciliation", "statement-bank-a", "statement-zero-bank"
     }
-    with monkeypatch.context() as complete:
+    with raw_read(), monkeypatch.context() as complete:
         full_scope(complete)
         assert public(engine, PERIOD) == narrow
     row = source(engine, "nov-reconciliation")
     damage(engine, "calculation", "UPDATE calculation SET outcome='{}' WHERE id=?", (row["id"],))
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         public(engine, PERIOD)
 
 
@@ -212,7 +215,7 @@ def test_open_terminal_cannot_hide_behind_an_existing_frozen_account(bank_book, 
     else:
         damage(engine, "calculation_current",
                "DELETE FROM calculation_current WHERE subject_id='nov-statement'")
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         public(engine, PERIOD)
     assert failure.value.code == "content_integrity_failed"
 
@@ -240,7 +243,7 @@ def test_real_bank_identity_correction_keeps_complete_scope_and_former_accounts(
             "bank-a", "zero-bank"
         }
     expected = public(engine, PERIOD)
-    with monkeypatch.context() as complete:
+    with raw_read(), monkeypatch.context() as complete:
         full_scope(complete)
         assert public(engine, PERIOD) == expected
 
@@ -337,8 +340,9 @@ def test_independent_bank_start_cannot_hide_its_open_terminal(bank_book, damage_
     row = source(engine, "opening-bank-a")
     if damage_head == "redirected":
         # A real same-month no-impact review retains its typed start identity.
-        from ai_accounting.kernel import engine as engine_module
         from unittest.mock import patch
+
+        from ai_accounting.kernel import engine as engine_module
 
         with patch.object(engine_module, "PROGRAM_VERSION", "synthetic-bank-start-review"):
             assert publish("opening-bank-a")["results"][0]["impact"] == "review_no_impact"
@@ -349,7 +353,7 @@ def test_independent_bank_start_cannot_hide_its_open_terminal(bank_book, damage_
     else:
         damage(engine, "calculation_current",
                "DELETE FROM calculation_current WHERE subject_id='opening-bank-a'")
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).funds("2026-09")
     assert failure.value.code == "content_integrity_failed"
 
@@ -357,11 +361,17 @@ def test_independent_bank_start_cannot_hide_its_open_terminal(bank_book, damage_
 def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
     bank_book, monkeypatch, record_property,
 ):
+    from ai_accounting.kernel import dashboard_model_runtime
+
     # Only two accounts / empty monthly bank statements and reconciliations.
     # Established accounts require these actual states even with no new money.
     # This is a posting-node scope
     # regression over real freezes, not the 12/48/120 owner workload or latency.
-    engine, save, publish = history(bank_book)
+    # This test measures the actual native selector over real frozen sources.
+    # Building all five UI pages after each fixture write is a separate workload.
+    with monkeypatch.context() as setup:
+        setup.setattr(dashboard_model_runtime, "supports_native_production", lambda _engine: False)
+        engine, save, publish = history(bank_book)
     first = YearMonth("2026-09").ordinal
     prepared_months = 2
     samples = []
@@ -374,30 +384,36 @@ def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
             return {
                 "states": {ident: (row["subject_id"], row["fact_id"], row["result_digest"])
                            for ident, row in read.states.items()},
-                "accounting_periods": sorted({key[0] for key in snap.reads._close_accounting_slices}),
+                "accounting_periods": sorted({
+                    key[0] for key in snap.reads._close_accounting_slices
+                }),
             }
 
     for months in (12, 48, 120):
-        while prepared_months < months:
-            month = str(YearMonth.from_ordinal(first + prepared_months))
-            for bank, initial in (("bank-a", 1000), ("zero-bank", 0)):
-                statement = "idle-statement-" + month + "-" + bank
-                banking.statement(save, publish, [], subject=statement, bank=bank,
-                                  month=month, initial=initial)
-                banking.reconciliation(save, publish, [],
-                                       subject="idle-reconciliation-" + month + "-" + bank,
-                                       statement_id=statement, bank=bank, month=month)
-            # Inventory is recorded before freezing this very month. No later
-            # inventory is used to reconstruct or affirm a frozen source.
-            banking.close_month(banking.inventories(engine, bank_book[3], month, {"bank"}),
-                               bank_book[3], month)
-            prepared_months += 1
-        period = str(YearMonth.from_ordinal(first + months))
-        banking.inventories(engine, bank_book[3], period, set())
-        narrow_work, narrow = measure_work(engine, lambda: selected_states(period))
+        with monkeypatch.context() as setup:
+            setup.setattr(
+                dashboard_model_runtime, "supports_native_production", lambda _engine: False
+            )
+            while prepared_months < months:
+                month = str(YearMonth.from_ordinal(first + prepared_months))
+                for bank, initial in (("bank-a", 1000), ("zero-bank", 0)):
+                    statement = "idle-statement-" + month + "-" + bank
+                    banking.statement(save, publish, [], subject=statement, bank=bank,
+                                      month=month, initial=initial)
+                    banking.reconciliation(save, publish, [],
+                                           subject="idle-reconciliation-" + month + "-" + bank,
+                                           statement_id=statement, bank=bank, month=month)
+                # Inventory is recorded before freezing this very month. No later
+                # inventory is used to reconstruct or affirm a frozen source.
+                banking.close_month(banking.inventories(engine, bank_book[3], month, {"bank"}),
+                                   bank_book[3], month)
+                prepared_months += 1
+            period = str(YearMonth.from_ordinal(first + months))
+            banking.inventories(engine, bank_book[3], period, set())
+        narrow_work, narrow = measure_work(engine, lambda period=period: selected_states(period))
         with monkeypatch.context() as complete:
             full_scope(complete)
-            full_work, full = measure_work(engine, lambda: selected_states(period))
+            full_work, full = measure_work(engine, lambda period=period: selected_states(period))
         typed_states = 2 + months * 4
         assert len(narrow["states"]) == 4 and len(full["states"]) == typed_states
         assert all(full["states"][ident] == value for ident, value in narrow["states"].items())
@@ -421,6 +437,17 @@ def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
             "SELECT id FROM calculation WHERE kind IN "
             "('bank_opening','bank_statement','bank_reconciliation')"
         ))
+        assert len(ids) == 482
+        closed_periods = [row[0] for row in connection.execute(
+            "SELECT period FROM period_close ORDER BY period"
+        )]
+        assert closed_periods == list(range(first, first + 120))
+        typed_counts = {
+            kind: connection.execute(f"SELECT count(*) FROM fact_{kind}").fetchone()[0]
+            for kind in ("bank_opening", "bank_statement", "bank_reconciliation")
+        }
+        assert typed_counts == {"bank_opening": 2, "bank_statement": 240,
+                                "bank_reconciliation": 240}
         plan = [row[3] for row in connection.execute(
             "EXPLAIN QUERY PLAN " + dashboard_funds._BANK_IDENTITY_SCALARS_SQL,
             (canonical(ids),),
@@ -429,5 +456,6 @@ def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
     assert not any("entity_recorded_role" in row for row in plan)
     record_property("bank_exact_witness_node_growth", json.dumps({
         "scope": "two actual bank accounts; real monthly empty bank states and freezes",
+        "actual_frozen_months": len(closed_periods), "actual_typed_sources": typed_counts,
         "samples": samples, "role_plan": plan,
     }, sort_keys=True))

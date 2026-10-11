@@ -537,7 +537,7 @@ def test_management_grouping_does_not_change_accounting_period_or_amount(setup):
     before = company.current("january")
     Periods(company.engine).management(
         "january",
-        note=None,
+
         payment_period="2026-02",
         payment_category="次月工资",
         expected_revision=0,

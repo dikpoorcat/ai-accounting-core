@@ -4,236 +4,143 @@ import hashlib
 import json
 
 import pytest
-from close_storage_fixture import use_v4_close_manifest
-from schema_fixture import TEST_FAMILY, full_contract, write_contract
+from close_storage_fixture import replace_stored_manifest
+from test_dashboard_model_integrity import raw_read
 from test_engine import close as close_custom
 from test_engine import engine as custom_engine_fixture
 from test_integrity_content import damage
 from test_reports import book as book_fixture
 from test_reports import scenario
 
-from ai_accounting.kernel import close_storage, close_storage_v1, content_v1, service
-from ai_accounting.kernel.backup import create_portable, verify_portable
-from ai_accounting.kernel.catalog import catalog_sql
+from ai_accounting.kernel import close_storage, close_storage_v1
+from ai_accounting.kernel.backup import create_portable, restore_portable, verify_portable
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.reports import _closed_report_fact_sources
-from ai_accounting.kernel.schema import schema_sql
-from ai_accounting.kernel.schema_bundle import APPLICATION_ID, load_bundle
+from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical
 
 book = book_fixture
 custom_engine = custom_engine_fixture
 
 
-def _close_report_book(book):
+def _close_report_book(book, *, codec_version=5):
     scenario(book)
     book[3]("2026-01")
+    if codec_version == 4:
+        # Finish the current producer first. Only isolated storage-codec reads
+        # below consume this historical logical shape, never current services.
+        with book[0].store.connection(read_only=True) as connection:
+            row = connection.execute("SELECT * FROM period_close").fetchone()
+            historical = close_storage.decode_close(connection, row)
+        historical.pop("fund_details")
+        historical["format_version"] = 4
+        replace_stored_manifest(book[0], historical)
     return book[0], YearMonth("2026-01").ordinal
 
 
-def test_released_v1_portable_backup_replays_nonempty_history_position(
-    request, tmp_path, monkeypatch
-):
-    import test_reports
-
-    use_v4_close_manifest(monkeypatch)
-
-    registry = service.default_registry()
-    contract_dir = tmp_path / "schema_contracts"
-    write_contract(
-        contract_dir,
-        full_contract(
-            schema_sql(registry), kind="company", status="released", version=1
-        ),
+def test_current_portable_backup_preserves_nonempty_history_and_frozen_position(book, tmp_path):
+    engine, save, _, close = book
+    scenario(book)
+    with engine.store.connection(read_only=True) as connection:
+        voucher_id, line_no = connection.execute(
+            "SELECT v.id,l.line_no FROM voucher_version v "
+            "JOIN calculation c ON c.id=v.calculation_id "
+            "JOIN voucher_line l ON l.version_id=v.id "
+            "WHERE c.subject_id='cost' AND l.account='2202'"
+        ).fetchone()
+    save(
+        "report_classification",
+        "class-" + voucher_id,
+        {
+            "period": "2026-02",
+            "voucher_version_id": voucher_id,
+            "profit_details": [
+                {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
+            ],
+            "counterparties": [{"line_no": line_no, "counterparty_id": "supplier"}],
+        },
+        revision=1,
     )
-    write_contract(
-        contract_dir,
-        full_contract(catalog_sql(), kind="catalog", status="released", version=1),
-    )
-    (contract_dir / "content-v1.json").write_text(
-        json.dumps(content_v1.content_contract(registry), ensure_ascii=False),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(content_v1, "__file__", str(tmp_path / "content_v1.py"))
-    content_v1.v1_registry.cache_clear()
-    bundle = load_bundle(
-        registry,
-        contract_dir,
-        family=TEST_FAMILY,
-        application_id=APPLICATION_ID,
-        status="released",
-        current_versions={"company": 1, "catalog": 1},
-        company_verifiers={1: content_v1.verify_v1_company},
-    )
-    monkeypatch.setattr(test_reports, "production_bundle", lambda: bundle)
-    book = request.getfixturevalue("book")
-    engine, _, _, close = book
-    try:
-        scenario(book)
-        with engine.store.connection(read_only=True) as connection:
-            voucher_id, line_no = connection.execute(
-                "SELECT v.id,l.line_no FROM voucher_version v "
-                "JOIN calculation c ON c.id=v.calculation_id "
-                "JOIN voucher_line l ON l.version_id=v.id "
-                "WHERE c.subject_id='cost' AND l.account='2202'"
-            ).fetchone()
-        book[1](
-            "report_classification",
-            "class-" + voucher_id,
-            {
-                "period": "2026-02",
-                "voucher_version_id": voucher_id,
-                "profit_details": [
-                    {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
-                ],
-                "counterparties": [
-                    {"line_no": line_no, "counterparty_id": "supplier"}
-                ],
-            },
-            revision=1,
-        )
-        for period in ("2026-01", "2026-02", "2026-03"):
-            close(period)
-        from ai_accounting.kernel import position_v1, report_projection_v1
-        from ai_accounting.kernel.history_reads_v1 import V1Reads
+    for period in ("2026-01", "2026-02", "2026-03"):
+        close(period)
 
-        selected = []
-        decode_callers = []
-        line_batches = []
-        calculation_batches = []
-        selected_scopes = []
-        original_lines = V1Reads.voucher_lines
-        original_calculations = V1Reads.calculations
-        original_selected_sql = report_projection_v1.selected_voucher_sql
-
-        def counted_lines(reader, identifiers):
-            identifiers = tuple(identifiers)
-            line_batches.append(len(set(identifiers)))
-            return original_lines(reader, identifiers)
-
-        def counted_calculations(reader, identifiers):
-            identifiers = tuple(identifiers)
-            calculation_batches.append(len(set(identifiers)))
-            return original_calculations(reader, identifiers)
-
-        def checked_selected_sql(period, **kwargs):
-            if (
-                kwargs.get("voucher_ids") is not None
-                and kwargs.get("authoritative_vouchers") is not None
-            ):
-                candidates = set(kwargs["voucher_ids"])
-                assert set(kwargs["authoritative_vouchers"]) <= candidates
-                selected_scopes.append((YearMonth(period).ordinal, candidates))
-            return original_selected_sql(period, **kwargs)
-
-        monkeypatch.setattr(V1Reads, "voucher_lines", counted_lines)
-        monkeypatch.setattr(V1Reads, "calculations", counted_calculations)
-        monkeypatch.setattr(report_projection_v1, "selected_voucher_sql", checked_selected_sql)
-        original_decode = close_storage_v1.decode_close
-
-        def counted_decode(*args, **kwargs):
-            import sys
-
-            decode_callers.append(sys._getframe(1).f_code.co_name)
-            return original_decode(*args, **kwargs)
-
-        monkeypatch.setattr(close_storage_v1, "decode_close", counted_decode)
-        original_select = position_v1._V1SelectedJournal.select
-
-        def checked_select(journal, *, accounts):
-            selected.append(tuple(sorted(accounts)))
-            return original_select(journal, accounts=accounts)
-
-        monkeypatch.setattr(position_v1._V1SelectedJournal, "select", checked_select)
-        with engine.store.connection(read_only=True) as connection:
-            assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] > 0
-            assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 3
+    def frozen_sources(selected):
+        with selected.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            verify_integrity(engine, connection)
-            content_v1.verify_v1_company(connection, engine.store.bundle)
-        assert selected, "the v1 history journal path must be exercised"
-        assert selected_scopes
-        assert max(line_batches) > 1
-        assert max(calculation_batches) > 1
-        with engine.store.connection(read_only=True) as connection:
-            for cutoff, candidates in selected_scopes:
-                if not candidates:
-                    continue
-                latest = connection.execute(
-                    "SELECT max(period) FROM voucher_version WHERE id IN "
-                    "(SELECT value FROM json_each(?))",
-                    (canonical(sorted(candidates)),),
-                ).fetchone()[0]
-                assert latest <= cutoff
-        assert "__init__" not in decode_callers
-        assert "select" not in decode_callers
-        # A direct v1 owner-review check has no trusted prefix and retains its
-        # original source-reading path and exact frozen output comparison.
-        from dataclasses import replace
+            assert verify_integrity(selected, connection)["status"] == "verified"
+            rows = connection.execute("SELECT * FROM period_close ORDER BY period").fetchall()
+            assert len(rows) == 3
+            manifests = tuple(close_storage.decode_close(connection, row) for row in rows)
+            assert all(item["format_version"] == 5 for item in manifests)
+            assert all(item["fund_details"]["definitions"] for item in manifests)
+            assert manifests[1]["readiness"]["financial_reports"]["facts"]
+            return tuple(connection.iterdump()), manifests
 
-        from ai_accounting.kernel.close_review_integrity_v1 import verify_owner_review_integrity
-        from ai_accounting.kernel.content_history_context import historical_content
-        from ai_accounting.kernel.engine import Engine
-        from ai_accounting.kernel.storage import Store
+    source_before, frozen_before = frozen_sources(engine)
+    with raw_read():
+        report_before = Dashboard(engine).quarterly_report(2026, 1)
+    assert report_before["close_state"] == "closed"
+    assert report_before["export"]["available"]
+    assert report_before["summary"]["ending_cash_fen"] == 40000
+    assert report_before["summary"]["assets_total_fen"] == 40000
+    assert report_before["summary"]["year_to_date_net_profit_fen"] == -10000
 
-        historical_store = Store(
-            engine.store.path,
-            replace(engine.store.bundle, registry=content_v1.v1_registry()),
-            engine.store.company_id,
-            engine.store.database_id,
-        )
+    created = create_portable(
+        engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle
+    )
+    verified = verify_portable(created["path"], _bundle=engine.store.bundle)
+    assert verified["database_format"]["status"] == "draft"
+    assert verified["database_format"]["version"] == 0
+    assert verified["verification"]["status"] == "verified"
+    target = tmp_path / "independent-restored.sqlite"
+    assert not target.exists()
+    restored = restore_portable(
+        created["path"], target,
+        expected_company_id=engine.store.company_id,
+        expected_database_id=engine.store.database_id,
+        _bundle=engine.store.bundle,
+    )
+    assert restored["verification"]["status"] == "verified"
+    restored_engine = Engine(Store(
+        target, engine.store.bundle, engine.store.company_id, engine.store.database_id
+    ))
+    restored_sources, restored_frozen = frozen_sources(restored_engine)
+    assert restored_sources == source_before
+    assert restored_frozen == frozen_before
+    with raw_read():
+        report_after = Dashboard(restored_engine).quarterly_report(2026, 1)
+    assert report_after["summary"] == report_before["summary"]
+    assert report_after["statements"] == report_before["statements"]
+    assert frozen_sources(engine) == (source_before, frozen_before)
 
-        with engine.store.connection(read_only=True) as connection:
-            row = connection.execute(
-                "SELECT * FROM period_close ORDER BY period DESC LIMIT 1"
-            ).fetchone()
-            manifest = original_decode(connection, row)
-            connection.execute("BEGIN")
-            with historical_content(1):
-                assert verify_owner_review_integrity(
-                    connection, Engine(historical_store), manifest
-                ) == {"status": "verified"}
-        assert "__init__" in decode_callers
-        assert "<genexpr>" in decode_callers
-        created = create_portable(
-            engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle
-        )
-        verified = verify_portable(created["path"], _bundle=engine.store.bundle)
-        assert verified["database_format"]["status"] == "released"
-        assert verified["database_format"]["version"] == 1
-        constructed = []
-        original_prefix = position_v1._verified_close_prefix
-
-        def counted_prefix(*args):
-            constructed.append(True)
-            return original_prefix(*args)
-
-        monkeypatch.setattr(position_v1, "_verified_close_prefix", counted_prefix)
-        damage(
-            engine,
-            "close_storage_block",
-            "UPDATE close_storage_block SET content='{}' "
-            "WHERE period=(SELECT max(period) FROM period_close) "
-            "AND field='management_snapshot'",
-        )
-        with engine.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
-            with pytest.raises(KernelError):
-                content_v1.verify_v1_company(connection, engine.store.bundle)
-        assert not constructed, "damaged close bodies must fail before prefix reuse"
-    finally:
-        content_v1.v1_registry.cache_clear()
+    # Corrupt only the independent copy; all original source bytes and the
+    # verified portable archive remain available for a clean restore.
+    damage(
+        restored_engine,
+        "close_storage_block",
+        "UPDATE close_storage_block SET content='{}' "
+        "WHERE period=(SELECT max(period) FROM period_close) "
+        "AND field='management_snapshot'",
+    )
+    with restored_engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        with pytest.raises(KernelError):
+            verify_integrity(restored_engine, connection)
+    assert frozen_sources(engine) == (source_before, frozen_before)
+    assert verify_portable(
+        created["path"], _bundle=engine.store.bundle
+    )["verification"]["status"] == "verified"
 
 
 @pytest.mark.parametrize("close_version", [4, 5])
 def test_readiness_section_is_bounded_and_full_logical_close_is_unchanged(
     book, monkeypatch, close_version
 ):
-    if close_version == 4:
-        use_v4_close_manifest(monkeypatch)
-    engine, period = _close_report_book(book)
+    engine, period = _close_report_book(book, codec_version=close_version)
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT * FROM period_close WHERE period=?", (period,)).fetchone()
         current = close_storage.decode_close(connection, row)
@@ -285,9 +192,7 @@ def test_readiness_section_is_bounded_and_full_logical_close_is_unchanged(
 def test_full_close_decode_reads_each_authenticated_family_and_adoption_once(
     book, monkeypatch, close_version
 ):
-    if close_version == 4:
-        use_v4_close_manifest(monkeypatch)
-    engine, period = _close_report_book(book)
+    engine, period = _close_report_book(book, codec_version=close_version)
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT * FROM period_close WHERE period=?", (period,)).fetchone()
         results = []

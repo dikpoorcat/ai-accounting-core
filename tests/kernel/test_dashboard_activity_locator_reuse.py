@@ -7,6 +7,7 @@ import pytest
 from test_banking import book as book
 from test_dashboard_activity_classification import PERIOD, _allocation, _expense, _payment
 from test_dashboard_activity_components import _bank_batch
+from test_dashboard_model_transactions import raw_read
 from test_dashboard_provenance import profile
 from test_integrity_content import damage
 
@@ -93,19 +94,21 @@ def test_unique_batch_parts_skip_only_unused_root_objects_and_keep_all_group_ord
     assert len(observed["headers"][0]) == 4
     assert observed["scalars"] == {"fact_expense": 1}
     assert all(not identifiers & batch_ids for identifiers in observed["ancestry"])
-    first = dashboard.brief(PERIOD, section="activity", limit=1)
-    keys = [item["group_key"] for item in first["data"]["collections"]["activity"]["items"]]
-    current = first
-    while current["data"]["collections"]["activity"]["page"]["has_more"]:
-        current = dashboard.brief(
-            PERIOD, section="activity", limit=1, expected_version=first["snapshot_version"],
-            cursor=current["data"]["collections"]["activity"]["page"]["next_cursor"],
-        )
-        keys.extend(
-            item["group_key"] for item in current["data"]["collections"]["activity"]["items"]
-        )
+    with raw_read():
+        first = dashboard.brief(PERIOD, section="activity", limit=1)
+        keys = [item["group_key"] for item in first["data"]["collections"]["activity"]["items"]]
+        current = first
+        while current["data"]["collections"]["activity"]["page"]["has_more"]:
+            current = dashboard.brief(
+                PERIOD, section="activity", limit=1, expected_version=first["snapshot_version"],
+                cursor=current["data"]["collections"]["activity"]["page"]["next_cursor"],
+            )
+            keys.extend(
+                item["group_key"] for item in current["data"]["collections"]["activity"]["items"]
+            )
     assert keys == list(expected[0])
-    funds = dashboard.funds(PERIOD)["data"]["collections"]["movements"]["items"]
+    with raw_read():
+        funds = dashboard.funds(PERIOD)["data"]["collections"]["movements"]["items"]
     batch_movements = [
         item for item in funds if item["subject_id"] in {"first-batch", "second-batch"}
     ]
@@ -151,6 +154,6 @@ def test_batch_date_reuse_keeps_exact_detail_and_rejects_adopted_source_damage(b
     assert detail["schema_version"] == 10
     damage(engine, "fact_expense", "UPDATE fact_expense SET creditor_kind='owner' "
            "WHERE revision_id IN(SELECT fact_id FROM calculation WHERE subject_id='supplier-cost')")
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         dashboard.brief(PERIOD, section="activity", limit=1)
     assert failure.value.code == "content_integrity_failed"

@@ -194,8 +194,9 @@ OPERATING_PROTOCOL = {
                 "duplicates": (
                     "duplicate明确重复原件位置和依据；普通逐项links为空时须同额同期间引用完整原"
                     "行。重复资料仅对应联合组中的部分完整分配时，"
-                    "duplicate.links精确选择目标组已有的完整MaterialLink，全部身份、事实、"
-                    "计算、字段、金额及核算月必须相同；选择金额合计等于重复原行。不得裁切分配、"
+                    "duplicate.links精确选择目标组已有的完整MaterialLink，只输入计算引用、"
+                    "金额口径和分配金额；身份、事实版本及核算月由该计算取得。选择金额合计"
+                    "等于重复原行。不得裁切分配、"
                     "猜逐行对应或放宽原始收支方向；目标完整组及所有结果仍须有效。"
                     "这些链接只表达重复覆盖，不新增业务或再次占用原业务金额；"
                     "变化仍参与资料依赖和冻结核验。多个原行共同重复一个完整联合组时，"
@@ -268,8 +269,9 @@ OPERATING_PROTOCOL = {
                     "管理版本或真实资料。"
                 ),
                 "display": (
-                    "对象名称、人员入离职资料与用途通过update_entity_profile按明确来源追加管理"
-                    "版本；save_display_profile只保存老板可理解的单笔业务用途和备注；"
+                    "对象名称、人员入离职资料通过update_entity_profile按对象类别及明确来源追加管理"
+                    "版本；save_display_profile保存单笔业务自定义标题、用途和唯一备注；"
+                    "management只维护收付归集月份及类别，不另存备注或交易方副本。"
                     "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
                     "复用稳定业务身份，不只保留内部编号。证据文件名和具体来源位置写入source，"
                     "不可变证据引用写入evidence_digest；purpose和note只补充尚未由业务字段表达的"
@@ -295,8 +297,11 @@ OPERATING_PROTOCOL = {
             "rules": {
                 "confirmation": (
                     "普通和bounded工资正式发布前必须有本月明确方案或有效的全员无变化确认及原始"
-                    "依据。方案绑定完整工资输入、档案和政策修订及全部变更通知；"
-                    "无变化绑定完整人员范围和逐人上期输入。prepare_payroll也检查已有工资；"
+                    "依据。先登记工资正文及精确档案、政策修订，再用方案确认其payroll_revision"
+                    "及全部change_notice_revisions，不复制工资正文。无变化确认以逐人"
+                    "prior_payroll_revision引用上期已采用工资；内核复核完整人员范围、上期正式采用、"
+                    "本期政策及通知后原子生成本期输入。工资、政策或通知变化使确认失效。"
+                    "prepare_payroll也检查已有工资；"
                     "confirm_payroll_preparation只登记事实，不代表已发布。"
                     "累计或实际扣款重算不自动使工资输入确认失效；先处理明确的待重算来源，"
                     "不补造负责人确认。payroll_first_wage_treatment.period是有源适用首月，"

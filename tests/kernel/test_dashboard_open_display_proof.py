@@ -6,6 +6,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_banking import book as book
 from test_banking import close_month, inventories
+from test_dashboard_model_integrity import raw_read
 from test_dashboard_open_item_classification import _expense
 from test_dashboard_provenance import profile
 from test_integrity_content import damage
@@ -79,7 +80,8 @@ def test_display_rejects_distinct_current_fact_body_damage(book, entry, replace)
     group, _, current, _ = _different_current(book, replace)
     damage(book[0], "fact_expense", "UPDATE fact_expense SET amount_fen=amount_fen+1 "
            "WHERE revision_id=?", (current["source_fact_id"],))
-    with pytest.raises(KernelError) as failure:
+    # The native group consumer proves its distinct current correction fact.
+    with raw_read(), pytest.raises(KernelError) as failure:
         _read(book[0], group, entry)
     assert failure.value.code == "content_integrity_failed"
 
@@ -92,7 +94,8 @@ def test_display_rejects_each_returned_result_body_damage(book, entry, source):
     damage(book[0], "calculation", "UPDATE calculation SET outcome=json_set("
            "outcome,'$.values.creditor_kind','supplier') WHERE id=?",
            (selected["source_calculation_id"],))
-    with pytest.raises(KernelError) as failure:
+    # Native returned-result interpretation authenticates both exact bodies.
+    with raw_read(), pytest.raises(KernelError) as failure:
         _read(book[0], group, entry)
     assert failure.value.code == "content_integrity_failed"
 
@@ -136,14 +139,21 @@ def test_same_snapshot_group_and_members_reuse_exact_result_byte_proof(book, mon
 def test_unrelated_nonsemantic_groups_do_not_expand_returned_result_body_work(book, entry):
     group, _ = _selected_group(book)
     engine, save, publish, _ = book
-    before_work, before = measure_work(engine, lambda: _read(engine, group, entry))
+
+    def native_read():
+        # Measure native bounded exact-body proof, not a certified page hit.
+        with raw_read():
+            return _read(engine, group, entry)
+
+    before_work, before = measure_work(engine, native_read)
+    assert before_work["counters"]["calculation_result_rows_loaded"] > 0
     unrelated = []
     for index in range(8):
         ident, party = f"unrelated-{index}", f"last-party-{index}"
         _expense(save, publish, ident, party, index + 1)
         profile(engine, "counterparty", party, display_name=f"Z{index}")
         unrelated.append(ident)
-    after_work, after = measure_work(engine, lambda: _read(engine, group, entry))
+    after_work, after = measure_work(engine, native_read)
     assert after == before
     for field in ("calculation_result_rows_loaded", "calculation_result_bytes_loaded",
                   "calculation_result_json_decodes"):
@@ -157,6 +167,6 @@ def test_unrelated_nonsemantic_groups_do_not_expand_returned_result_body_work(bo
         ).fetchone()[0]
     damage(engine, "calculation", "UPDATE calculation SET outcome=json_set("
            "outcome,'$.values.creditor_kind','supplier') WHERE id=?", (ident,))
-    assert _read(engine, group, entry) == before
+    assert native_read() == before
     print(json.dumps({"entry": entry, "before": before_work["counters"],
                       "unrelated": after_work["counters"]}))

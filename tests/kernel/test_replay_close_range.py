@@ -452,7 +452,7 @@ def test_unrelated_management_mutation_invalidates_preview(replay_book):
     payload = book.payload(book.preview())
     Periods(book.app.engine(book.company)).management(
         "profile",
-        note="New synthetic note",
+
         payment_period=None,
         payment_category=None,
         expected_revision=0,
@@ -473,7 +473,7 @@ def test_mutation_between_months_preserves_closed_prefix_and_blocks_next(replay_
         if month == "2026-01":
             periods.management(
                 "profile",
-                note="Concurrent synthetic owner correction",
+
                 payment_period=None,
                 payment_category=None,
                 expected_revision=0,

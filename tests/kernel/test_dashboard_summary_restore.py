@@ -3,6 +3,7 @@
 import pytest
 from test_banking import book as _bank_book
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 from test_payroll import payroll, profile
 from test_payroll_corrections import company as _company
 from test_reports import book as _report_book
@@ -34,7 +35,8 @@ def test_financial_position_reuses_all_bank_accounts_and_pagination_omits_summar
 
     monkeypatch.setattr(FundsRead, "account_summary", measured)
     dashboard = Dashboard(engine)
-    first = dashboard.brief("2026-09", limit=1)
+    with raw_read():
+        first = dashboard.brief("2026-09", limit=1)
     validate_response("dashboard_brief", first)
     data = first["data"]
     assert len(calls) == 1 and calls[0][1] == {("bank", "bank-a"), ("bank", "bank-b")}
@@ -46,7 +48,8 @@ def test_financial_position_reuses_all_bank_accounts_and_pagination_omits_summar
     assert data["collections"]["activity"]["page"]["total_count"] == 3
     assert len(data["collections"]["activity"]["items"]) == 1
     for section in ("activity", "vouchers", "open_items"):
-        page = dashboard.brief("2026-09", section=section, limit=1)
+        with raw_read():
+            page = dashboard.brief("2026-09", section=section, limit=1)
         validate_response("dashboard_brief", page)
         assert {"financial_position", "workforce_cost", "long_term_assets"}.isdisjoint(page["data"])
         assert page["scope"] == section
@@ -106,7 +109,8 @@ def test_zero_journal_payroll_still_has_activity(company):
         "profile", revision=1,
     )
     company.save(
-        payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0),
+        payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0,
+                profile_revision={"subject_id": "profile", "revision": 2}),
         "january", revision=1,
     )
     company.confirm_payroll("january")
@@ -171,7 +175,8 @@ def test_explicit_party_fallback_only_resolves_affected_saved_lines(report_book,
         return original(self, grouped)
 
     monkeypatch.setattr(QueryReads, "report_line_relations_many", measured)
-    data = Dashboard(report_book[0]).brief("2026-02")["data"]
+    with raw_read():
+        data = Dashboard(report_book[0]).brief("2026-02")["data"]
     assert [(line["account"], line["debit"], line["credit"]) for line in resolved] == [
         ("2202", 0, 10000),
     ]
@@ -191,13 +196,14 @@ def test_position_fallback_rejects_damaged_historical_voucher_lines(report_book,
         close("2026-01")
         close("2026-02")
     dashboard = Dashboard(engine)
-    assert dashboard.brief("2026-03")["data"]["financial_position"]["assets_fen"] == 40000
+    with raw_read():
+        assert dashboard.brief("2026-03")["data"]["financial_position"]["assets_fen"] == 40000
     # This history voucher is outside the complete current-month money proof.
     damage(
         engine, "voucher_line",
         "UPDATE voucher_line SET credit=credit+1 WHERE version_id=? AND line_no=2", (version,),
     )
-    with pytest.raises(KernelError) as rejected:
+    with raw_read(), pytest.raises(KernelError) as rejected:
         dashboard.brief("2026-03")
     assert rejected.value.code == "content_integrity_failed"
     assert rejected.value.response()["reason"] == "unbalanced_lines"

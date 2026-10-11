@@ -82,7 +82,7 @@ class Company:
             creditor_kind="supplier",
         )
         seed_fact_entities(self.engine, fact)
-        result = self.engine.save_fact(
+        self.engine.save_fact(
             fact.kind,
             subject,
             fact.model_dump(mode="json"),
@@ -98,13 +98,9 @@ class Company:
             request_id=self.request(),
         )["results"][0]
         return dict(
-            subject_id=subject,
-            fact_kind="expense",
-            fact_id=result["fact_id"],
             calculation_id=published["calculation_id"],
             amount_field="fact.amount_fen",
             amount_fen=amount,
-            recognition_period=period,
         )
 
     def resolve(self, source, location, links=(), subject=None, revision=0, **changes):

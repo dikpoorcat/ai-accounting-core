@@ -5,6 +5,7 @@ from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import month
 from test_asset_owner_frozen_scope import amend_activation
 from test_asset_owner_frozen_scope import owner_book as _owner_book
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage, verify
 from test_payroll_corrections import Company
 
@@ -73,7 +74,9 @@ def assert_private_lanes_reject(engine, period, *, warm):
                 }
                 assert_no_owner_identity_success(snap.reads, snap.month)
                 assert snap.reads._fact_versions == typed_before
-    with pytest.raises(KernelError):
+    # This assertion exercises the native consumer of both owner kinds;
+    # a materialized page can omit the consumption owners from its page scope.
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets(period, preparation="deferred")
     with pytest.raises(KernelError):
         verify(engine)

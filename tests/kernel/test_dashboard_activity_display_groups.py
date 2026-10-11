@@ -8,6 +8,7 @@ from test_asset_batches import asset_engine as asset_engine
 from test_banking import book as book
 from test_banking import funding
 from test_dashboard_activity_classification import _allocation, _expense, _payment
+from test_dashboard_model_transactions import raw_read
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
@@ -77,7 +78,9 @@ def test_complete_group_amount_and_two_bounded_member_pages(book, monkeypatch):
         return original(reads, ids)
 
     monkeypatch.setattr(QueryReads, "facts", facts)
-    first = dashboard.brief_group("2026-09", section="activity", group_key=group["group_key"])
+    # Probe native member hydration rather than the already materialized UI page.
+    with raw_read():
+        first = dashboard.brief_group("2026-09", section="activity", group_key=group["group_key"])
     assert first["schema_version"] == 3
     validate_response("dashboard_brief_group", first)
     members = first["data"]["collections"]["members"]
@@ -88,13 +91,14 @@ def test_complete_group_amount_and_two_bounded_member_pages(book, monkeypatch):
         item["voucher_version_id"] for item in vouchers["items"]
     }
     assert vouchers["page"]["next_cursor"] is None
-    second = dashboard.brief_group(
-        "2026-09",
-        section="activity",
-        group_key=group["group_key"],
-        cursor=members["page"]["next_cursor"],
-        expected_version=first["snapshot_version"],
-    )
+    with raw_read():
+        second = dashboard.brief_group(
+            "2026-09",
+            section="activity",
+            group_key=group["group_key"],
+            cursor=members["page"]["next_cursor"],
+            expected_version=first["snapshot_version"],
+        )
     assert len(second["data"]["collections"]["members"]["items"]) == 3
     assert len(set(loaded)) == 23
     assert all(row["group_key"] == group["group_key"] for row in members["items"])
@@ -418,7 +422,9 @@ def test_default_and_member_growth_have_bounded_bodies(book, monkeypatch, count)
     monkeypatch.setattr(QueryReads, "facts", observed_facts)
     monkeypatch.setattr(QueryReads, "verify_selected_content", observed_content)
     dashboard = Dashboard(engine)
-    root = dashboard.brief("2026-09")
+    # Count native body hydration at both sample sizes; UI model hits need none.
+    with raw_read():
+        root = dashboard.brief("2026-09")
     root_facts, root_outcomes = len(fact_ids), len(outcome_ids)
     assert root_facts == 0
     assert root["data"]["group_count"] == 1
@@ -427,7 +433,10 @@ def test_default_and_member_growth_have_bounded_bodies(book, monkeypatch, count)
     assert group["amount_fen"] == count * (count + 1) // 2
     fact_ids.clear()
     outcome_ids.clear()
-    response = dashboard.brief_group("2026-09", section="activity", group_key=group["group_key"])
+    with raw_read():
+        response = dashboard.brief_group(
+            "2026-09", section="activity", group_key=group["group_key"],
+        )
     assert len(fact_ids) == 20
     assert len(response["data"]["collections"]["members"]["items"]) == 20
     from ai_accounting.kernel.response_contracts import http_response

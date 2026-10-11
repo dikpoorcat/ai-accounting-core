@@ -212,6 +212,25 @@ def _check_facts(engine, connection, identifiers):
     from .entity_references import verify_fact_entity_types
 
     verify_fact_entity_types(connection, facts, registry=engine.store.registry)
+    material_links = [
+        (fact["kind"], link)
+        for fact in facts.values()
+        if fact["kind"] in {"material_resolution_v2", "material_group_resolution"}
+        for link in fact["data"].get("links", ())
+    ]
+    if material_links:
+        from .materials import resolve_material_links
+        from .schema import sequence_model
+
+        resolve_material_links(
+            connection,
+            (
+                sequence_model(engine.store.registry.models[kind].model_fields["links"].annotation)
+                .model_validate_json(canonical(link))
+                for kind, link in material_links
+            ),
+            registry=engine.store.registry,
+        )
     evidence_ids = set()
     for row in connection.execute(
         "SELECT e.fact_id,e.evidence_digest FROM fact_evidence e "
@@ -1196,7 +1215,10 @@ def _check_closes(
             _invalid("close", period, "trial_balance_source_mismatch")
         from .close_fund_details import verify_fund_close_snapshot
 
-        verify_fund_close_snapshot(connection, manifest, previous_manifest=previous_fund_manifest)
+        verify_fund_close_snapshot(
+            connection, manifest, previous_manifest=previous_fund_manifest,
+            require_index_marker=require_index_marker,
+        )
         previous_fund_manifest = (
             {"fund_details": manifest["fund_details"]}
             if manifest.get("format_version") == 5
@@ -1312,7 +1334,7 @@ def _verify_integrity_in_snapshot(
     include_indexes,
     include_dashboard_models,
 ):
-    if include_projections and connection.in_transaction:
+    if connection.in_transaction:
         from .verified_source_lease import verified_source_lease
 
         with verified_source_lease(connection):
@@ -1412,7 +1434,7 @@ def _verify_integrity_snapshot(
         source = _check_sources(engine, connection)
         source_reads = None
         source_token = None
-        if include_projections and getattr(engine.store.registry, "content_version", None) != 1:
+        if getattr(engine.store.registry, "content_version", None) != 1:
             from .verified_source_lease import verified_calculation_source
             from .verified_source_reads import VerifiedSourceReads
 

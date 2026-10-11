@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 import test_cash as cash
+from test_dashboard_model_transactions import comparable, raw_read
 from test_engine import close, publish, save
 from test_engine import engine as engine  # noqa: F401
 from test_integrity_content import damage
@@ -73,11 +74,39 @@ def test_actual_owner_amount_and_detail_routes_reject_changed_kind(book, entry):
             return dashboard.business_status("2026-09", "expense")
         return dashboard.brief("2026-09")
 
-    read()
+    def stable(value):
+        result = comparable(value)
+        if entry == "quarterly_report":
+            assert result.pop("checked_at")
+        return result
+
+    before = read()
+    with raw_read():
+        assert stable(read()) == stable(before)
     change_kind(engine, "expense", "income")
-    with pytest.raises(KernelError) as failure:
+    with engine.store.connection(read_only=True) as connection:
+        damaged_state = tuple(connection.iterdump())
+        source = connection.execute(
+            "SELECT s.kind,f.amount_fen,c.kind FROM subject s "
+            "JOIN fact_current h ON h.subject_id=s.id JOIN fact_expense f "
+            "ON f.revision_id=h.fact_id JOIN calculation_current x ON x.subject_id=s.id "
+            "JOIN calculation c ON c.id=x.calculation_id WHERE s.id='expense'"
+        ).fetchone()
+        assert tuple(source) == ("expense", 300, "income")
+    with raw_read(), pytest.raises(KernelError) as failure:
         read()
     assert failure.value.code == "content_integrity_failed"
+    if entry in {"brief", "quarterly_report"}:
+        # The sealed aggregate has no displayed calculation hit. Its saved
+        # amount/kind selection remains authoritative; the native probe above
+        # independently rejects the damaged physical calculation header.
+        assert stable(read()) == stable(before)
+    else:
+        with pytest.raises(KernelError) as failure:
+            read()
+        assert failure.value.code == "content_integrity_failed"
+    with engine.store.connection(read_only=True) as connection:
+        assert tuple(connection.iterdump()) == damaged_state
 
 
 def test_changed_calculation_kind_cannot_enter_another_subject_kind_scope(engine):

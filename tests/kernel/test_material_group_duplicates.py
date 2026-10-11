@@ -27,7 +27,7 @@ def setup_pool(company, *, reserve=False):
             bank_account_id="bank",
         )
         seed_fact_entities(company.engine, fact)
-        saved = company.engine.save_fact(
+        company.engine.save_fact(
             fact.kind,
             "reserve",
             fact.model_dump(mode="json"),
@@ -43,9 +43,6 @@ def setup_pool(company, *, reserve=False):
             request_id=company.request(),
         )["results"][0]
         links[1] = links[1] | dict(
-            subject_id="reserve",
-            fact_kind=fact.kind,
-            fact_id=saved["fact_id"],
             calculation_id=published["calculation_id"],
         )
     data = dict(
@@ -109,17 +106,19 @@ def test_several_complete_allocations_can_cover_duplicate_original(company):
     "field,value",
     [
         ("amount_fen", 4900),
-        ("subject_id", "invented"),
-        ("fact_id", "invented"),
-        ("fact_kind", "payment"),
-        ("calculation_id", "invented"),
         ("amount_field", "result.amount_fen"),
-        ("recognition_period", "2026-02"),
     ],
 )
-def test_selector_must_match_all_seven_fields(company, field, value):
+def test_selector_must_match_exact_amount_fields(company, field, value):
     _, links = setup_pool(company)
     result = duplicate(company, [links[1] | {field: value}])
+    assert "material_duplicate_basis" in codes(result)
+
+
+def test_selector_must_match_exact_calculation(company):
+    _, links = setup_pool(company)
+    other = company.expense("other", 5001)
+    result = duplicate(company, [links[1] | {"calculation_id": other["calculation_id"]}])
     assert "material_duplicate_basis" in codes(result)
 
 

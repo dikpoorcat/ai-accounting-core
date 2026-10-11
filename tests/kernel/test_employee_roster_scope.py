@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 from entity_fixture import save_entity_display_profile
 from stage9_book import MixedBook
+from test_dashboard_model_transactions import raw_read
 from test_identity_corrections import identity_engine as identity_engine_fixture
 from test_integrity_content import damage, verify
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
@@ -24,14 +25,16 @@ identity_engine = identity_engine_fixture
 
 
 def result(engine, period, **kwargs):
-    response = Dashboard(engine).employees(period, preparation="deferred", **kwargs, employee_filter="all")
+    response = Dashboard(engine).employees(
+        period, preparation="deferred", **kwargs, employee_filter="all"
+    )
     response.pop("generated_at", None)
     response["data"].pop("generated_at", None)
     return response
 
 
 def rejected_read(engine, period, *, warm, expected_code="content_integrity_failed"):
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         if warm:
             # Reuse a real successful immutable root proof in this owned read;
             # it is not a proof of the mutable calculation or publication.
@@ -99,12 +102,14 @@ def test_default_roster_authenticates_witnesses_and_month_money_without_all_hist
         return original(snapshot, heads)
 
     monkeypatch.setattr(dashboard_module, "verified_payroll_heads", observed)
-    actual = result(book.engine, "2016-03", limit=1)
+    with raw_read():
+        actual = result(book.engine, "2016-03", limit=1)
     assert len(scopes) == 1 and len(scopes[0]) == 2
     assert actual["data"]["employees"]["registered_count"] == 2
     assert actual["data"]["collections"]["employees"]["page"]["returned_count"] == 1
     monkeypatch.setattr(dashboard_module, "payroll_list_head_metadata", lambda *_a, **_k: None)
-    expected = result(book.engine, "2016-03", limit=1)
+    with raw_read():
+        expected = result(book.engine, "2016-03", limit=1)
     assert len(scopes[-1]) == 6
     assert actual == expected
 

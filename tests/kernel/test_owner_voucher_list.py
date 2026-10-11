@@ -6,6 +6,7 @@ from entity_fixture import seed_entities
 from stage9_metrics import measure_work
 from test_banking import book as _bank_book
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_integrity import raw_read
 from test_dashboard_projection import diagnostic_vouchers
 from test_dashboard_provenance import profile
 from test_reimbursement_assets import accepted_batch, batch_card
@@ -32,29 +33,33 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
     monkeypatch.setattr(_Snapshot, "voucher", forbidden)
     monkeypatch.setattr(_Snapshot, "evidence_details", forbidden)
     dashboard = Dashboard(engine)
-    response = dashboard.brief("2026-09")
+    with raw_read():
+        response = dashboard.brief("2026-09")
     data = response["data"]
     assert response["schema_version"] == 19 and response["scope"] == "overview"
     assert data["voucher_count"] == data["activity_count"] == 23
     assert "vouchers" not in data["collections"]
-    voucher_response = dashboard.brief("2026-09", section="vouchers")
+    with raw_read():
+        voucher_response = dashboard.brief("2026-09", section="vouchers")
     vouchers = voucher_response["data"]["collections"]["vouchers"]["items"]
     assert len(vouchers) == 20
     page = voucher_response["data"]["collections"]["vouchers"]["page"]
     activity_page = data["collections"]["activity"]["page"]
     assert page["next_cursor"] != activity_page["next_cursor"]
-    activity_response = dashboard.brief(
-        "2026-09", section="activity", cursor=activity_page["next_cursor"],
-        expected_version=response["snapshot_version"], limit=7,
-    )
+    with raw_read():
+        activity_response = dashboard.brief(
+            "2026-09", section="activity", cursor=activity_page["next_cursor"],
+            expected_version=response["snapshot_version"], limit=7,
+        )
     following = activity_response["data"]["collections"]
     assert set(following) == {"activity"}
     assert following["activity"]["page"]["returned_count"] == 3
     validate_response("dashboard_brief", activity_response)
-    next_response = dashboard.brief(
-        "2026-09", section="vouchers", cursor=page["next_cursor"],
-        expected_version=response["snapshot_version"], limit=7,
-    )
+    with raw_read():
+        next_response = dashboard.brief(
+            "2026-09", section="vouchers", cursor=page["next_cursor"],
+            expected_version=response["snapshot_version"], limit=7,
+        )
     assert set(next_response["data"]["collections"]) == {"vouchers"}
     final = next_response["data"]["collections"]["vouchers"]
     assert len(final["items"]) == 3 and final["page"]["has_more"] is False

@@ -16,6 +16,7 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_funds import FundsRead
 from ai_accounting.kernel.entities import Entities
+from ai_accounting.kernel.fund_accounts import fund_account_definitions
 
 bank_book = banking.book
 investment_book = investments.book
@@ -478,7 +479,7 @@ def test_cash_bank_transfer_uses_money_boundary(bank_book):
     assert data["bank_fen"] == 800 and data["cash_fen"] == 200
 
 
-def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_book):
+def test_drafts_are_not_book_accounts_and_display_labels_are_not_identity(bank_book):
     engine, save, publish, _ = bank_book
     banking.funding(save, publish, amount=1000)
     banking.funding(save, publish, subject="second", bank="bank-b", amount=500)
@@ -486,8 +487,8 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
     for ident in ("bank-a", "bank-b"):
         Entities(engine).update_entity_profile(
             ident,
-            {"display_number": "001"},
-            source="synthetic explicit display number",
+            {"display_name": "001"},
+            source="synthetic explicit display label",
             expected_revision=1,
             request_id=ident,
         )
@@ -496,26 +497,26 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
         "bank-a",
         "bank-b",
     }
-    assert [account["code"] for account in data["collections"]["accounts"]["items"]] == [
-        "001",
-        "001",
-    ]
+    with engine.store.connection(read_only=True) as connection:
+        definitions = fund_account_definitions(connection, {"bank-a", "bank-b"})
+    accounts = data["collections"]["accounts"]["items"]
+    assert all(account["name"] == "001" for account in accounts)
+    assert {account["code"] for account in accounts} == {
+        item["identity"]["bank_account_number"] for item in definitions
+    }
+    assert len({account["code"] for account in accounts}) == 2
     assert {row["account_id"] for row in data["collections"]["movements"]["items"]} == {
         "bank-a",
         "bank-b",
     }
 
 
-@pytest.mark.parametrize(("display_number", "external_identifiers", "expected_code"), [
-    (None, {}, ""),
-    ("622200001234", {}, "622200001234"),
-    (None, {"bank_account_number": "622200009876"}, "622200009876"),
-    ("622200001234", {"bank_account_number": "622200009876"}, "622200001234"),
-    (None, {"basic_account_number": "J123456789"}, ""),
+@pytest.mark.parametrize("display_name", [
+    "兴业银行", "公司收款账户", "001", "622200001234", "J123456789",
 ])
 @pytest.mark.parametrize("native", [False, True])
 def test_account_display_does_not_invent_monthly_numbers(
-    bank_book, monkeypatch, display_number, external_identifiers, expected_code, native,
+    bank_book, monkeypatch, display_name, native,
 ):
     from ai_accounting.kernel import dashboard_model_reads
 
@@ -534,8 +535,7 @@ def test_account_display_does_not_invent_monthly_numbers(
     })
     publish("new-september-account")
     Entities(engine).update_entity_profile(
-        "bank-z", {"display_name": "兴业银行", "display_number": display_number,
-                   "external_identifiers": external_identifiers},
+        "bank-z", {"display_name": display_name},
         source="synthetic registered account", expected_revision=1, request_id="existing-profile",
     )
     Entities(engine).update_entity_profile(
@@ -544,12 +544,16 @@ def test_account_display_does_not_invent_monthly_numbers(
     )
     if native:
         monkeypatch.setattr(dashboard_model_reads, "read_page", lambda *args, **kwargs: None)
+    with engine.store.connection(read_only=True) as connection:
+        expected_code = fund_account_definitions(connection, {"bank-z"})[0][
+            "identity"
+        ]["bank_account_number"]
     dashboard = Dashboard(engine)
     for period in periods:
         data = dashboard.funds(period)["data"]
         account = next(item for item in data["collections"]["accounts"]["items"]
                        if item["account_id"] == "bank-z")
-        assert (account["name"], account["code"]) == ("兴业银行", expected_code)
+        assert (account["name"], account["code"]) == (display_name, expected_code)
         assert (account["statement"]["account_name"], account["statement"]["account_code"]) == (
             account["name"], account["code"],
         )

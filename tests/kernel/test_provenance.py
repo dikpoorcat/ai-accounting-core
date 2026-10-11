@@ -33,8 +33,12 @@ def test_fund_identity_receipt_keeps_original_profile_registration_time(tmp_path
         request_id=company.request(),
     )
     reference = ("display_profile", saved["profile_id"])
+    identity_reference = ("fund_account_identity", saved["fund_account"]["digest"])
     with company.engine.store.connection(read_only=True) as connection:
-        assert recorded_times(connection, [reference]) == {reference: RECORDED}
+        assert recorded_times(connection, [reference, identity_reference]) == {
+            reference: RECORDED,
+            identity_reference: RECORDED,
+        }
     confirmation_clock(monkeypatch, company.engine, "2026-09-12T10:00:00.000Z")
     repeated = entities.register_entity(
         "fund_account",
@@ -45,8 +49,66 @@ def test_fund_identity_receipt_keeps_original_profile_registration_time(tmp_path
         request_id=company.request(),
     )
     assert repeated["entity_id"] == saved["entity_id"]
+    assert repeated["status"] == "existing"
     with company.engine.store.connection(read_only=True) as connection:
-        assert recorded_times(connection, [reference]) == {reference: RECORDED}
+        assert recorded_times(connection, [reference, identity_reference]) == {
+            reference: RECORDED,
+            identity_reference: RECORDED,
+        }
+
+
+def test_fund_identity_correction_records_only_new_identity_version(tmp_path, monkeypatch):
+    company = setup_company(tmp_path)
+    entities = Entities(company.engine)
+    data = {
+        "bank_name": "合成银行",
+        "bank_account_number": "0001234567",
+        "account_holder_name": "合成公司",
+    }
+    confirmation_clock(monkeypatch, company.engine, RECORDED)
+    saved = entities.register_entity(
+        "fund_account",
+        data,
+        account_type="bank",
+        source="明确合成开户资料",
+        evidence_digest=company.owner_confirmation,
+        request_id=company.request(),
+    )
+    corrected_time = "2026-09-12T10:00:00.000Z"
+    confirmation_clock(monkeypatch, company.engine, corrected_time)
+    corrected_data = data | {"bank_account_number": "0007654321"}
+    corrected = entities.correct_fund_account_identity(
+        saved["entity_id"],
+        account_type="bank",
+        data=corrected_data,
+        expected_identity_digest=saved["fund_account"]["digest"],
+        recording_error_confirmed=True,
+        source="合成有据账号更正",
+        evidence_digest=company.owner_confirmation,
+        request_id=company.request(),
+    )
+    identity = corrected["fund_account"]
+    expected = {
+        ("display_profile", saved["profile_id"]): RECORDED,
+        ("fund_account_identity", saved["fund_account"]["digest"]): RECORDED,
+        ("fund_account_identity", identity["digest"]): corrected_time,
+    }
+    with company.engine.store.connection(read_only=True) as connection:
+        assert recorded_times(connection, expected) == expected
+    confirmation_clock(monkeypatch, company.engine, "2026-09-13T10:00:00.000Z")
+    unchanged = entities.correct_fund_account_identity(
+        saved["entity_id"],
+        account_type="bank",
+        data=corrected_data,
+        expected_identity_digest=identity["digest"],
+        recording_error_confirmed=True,
+        source="合成复核未改变身份",
+        evidence_digest=company.owner_confirmation,
+        request_id=company.request(),
+    )
+    assert unchanged["fund_account"] == identity
+    with company.engine.store.connection(read_only=True) as connection:
+        assert recorded_times(connection, expected) == expected
 
 
 @pytest.mark.parametrize("actor", [False, True])
@@ -79,7 +141,6 @@ def test_batch_uses_exact_profile_payee_and_fact_versions_and_keeps_management_u
     )
     Periods(engine).management(
         "obligation",
-        note="补充管理说明",
         payment_period=None,
         payment_category=None,
         expected_revision=0,

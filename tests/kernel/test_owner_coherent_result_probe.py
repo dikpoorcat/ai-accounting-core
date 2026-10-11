@@ -6,6 +6,7 @@ from functools import partial
 
 import pytest
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import comparable, raw_read
 from test_integrity_content import damage
 from test_labor_assets import book as _labor_book
 from test_labor_assets import cost
@@ -75,9 +76,23 @@ def require_rejection(name, ident, before, request, receipt_dir):
     target = receipt_dir / f"owner-coherent-{name}.json"
     target.write_text(json.dumps(record, ensure_ascii=False, indent=2), "utf-8")
     assert record["rejected"], (
-        f"default owner did not reject with content_integrity_failed "
+        f"owner consumer did not reject with content_integrity_failed "
         f"({record.get('exception_type', 'accepted response')}); evidence: {target}"
     )
+
+
+def stable(payload):
+    value = comparable(payload)
+    value.pop("checked_at", None)
+    return value
+
+
+def require_native_rejection_with_sealed_aggregate(name, ident, before, request, receipt_dir):
+    with raw_read():
+        require_rejection(name + "-native", ident, before, request, receipt_dir)
+    # An aggregate has no displayed mutable calculation hit. Its authenticated
+    # saved amount, kinds and periods remain the authority for the normal read.
+    assert stable(request()) == stable(before)
 
 
 @pytest.mark.parametrize("change", ["gross", "outside_kind"])
@@ -87,6 +102,13 @@ def test_default_employee_current_result_coherent_probe(company, change, tmp_pat
     request = partial(dashboard.employees, "2026-01")
     before = request()
     assert before["data"]["employees"]["gross_salary_fen"] == 1_000_000
+    focused = partial(
+        dashboard.employees, "2026-01", employee_id="employee", employee_filter="all"
+    )
+    focused_before = focused()
+    assert focused_before["data"]["collections"]["employees"]["items"][0][
+        "gross_salary_fen"
+    ] == 1_000_000
     if change == "gross":
         ident = change_result(
             company.engine,
@@ -95,7 +117,10 @@ def test_default_employee_current_result_coherent_probe(company, change, tmp_pat
         )
     else:
         ident = change_result(company.engine, "january", kind="expense")
-    require_rejection("employees-" + change, ident, before, request, tmp_path)
+    require_native_rejection_with_sealed_aggregate(
+        "employees-" + change, ident, before, request, tmp_path
+    )
+    require_rejection("employees-focused-" + change, ident, focused_before, focused, tmp_path)
 
 
 def test_default_assets_project_value_coherent_probe(labor_book, tmp_path):
@@ -109,6 +134,8 @@ def test_default_assets_project_value_coherent_probe(labor_book, tmp_path):
     ident = change_result(
         engine, "labor-cost", lambda body: body["values"].__setitem__("capitalized_fen", 1_600_001)
     )
+    with raw_read():
+        require_rejection("assets-project-value-native", ident, before, request, tmp_path)
     require_rejection("assets-project-value", ident, before, request, tmp_path)
 
 
@@ -121,6 +148,8 @@ def test_default_assets_outside_domain_kind_probe(asset_book, tmp_path):
     before = request()
     assert before["data"]["collections"]["assets"]["page"]["total_count"] == 1
     ident = change_result(engine, "asset", kind="expense")
+    with raw_read():
+        require_rejection("assets-outside-kind-native", ident, before, request, tmp_path)
     require_rejection("assets-outside-kind", ident, before, request, tmp_path)
 
 
@@ -133,7 +162,9 @@ def test_default_brief_activity_value_coherent_probe(company, tmp_path):
     ident = change_result(
         company.engine, "january", lambda body: body["values"].__setitem__("gross_fen", 1_000_001)
     )
-    require_rejection("brief-activity-value", ident, before, request, tmp_path)
+    require_native_rejection_with_sealed_aggregate(
+        "brief-activity-value", ident, before, request, tmp_path
+    )
 
 
 def test_default_quarter_amount_coherent_probe(report_book, tmp_path):
@@ -152,7 +183,9 @@ def test_default_quarter_amount_coherent_probe(report_book, tmp_path):
                 line["credit"] += 1
 
     ident = change_result(engine, "cost", mutate)
-    require_rejection("quarter-amount", ident, before, request, tmp_path)
+    require_native_rejection_with_sealed_aggregate(
+        "quarter-amount", ident, before, request, tmp_path
+    )
 
 
 def test_default_brief_cross_month_payment_source_outside_kind_probe(report_book, tmp_path):
@@ -161,12 +194,33 @@ def test_default_brief_cross_month_payment_source_outside_kind_probe(report_book
     dashboard = Dashboard(engine)
     request = partial(dashboard.brief, "2026-03")
     before = request()
-    assert any(
-        item["subject_id"] == "payment" and item["amount_fen"] == 10000
-        for item in before["data"]["collections"]["activity"]["items"]
+    groups = [item for item in before["data"]["collections"]["activity"]["items"]
+              if item["kind"] == "cash_payment" and item["amount_fen"] == 10000]
+    assert len(groups) == 1
+    group = dashboard.brief_group(
+        "2026-03", section="activity", group_key=groups[0]["group_key"]
     )
+    members = group["data"]["collections"]["members"]["items"]
+    assert len(members) == 1
+    assert members[0]["subject_id"] == "payment"
+    assert members[0]["amount_fen"] == 10000
+    vouchers = group["data"]["collections"]["vouchers"]["items"]
+    assert len(vouchers) == 1
+    assert vouchers[0]["subject_id"] == "payment"
+    assert vouchers[0]["kind"] == groups[0]["kind"] == "cash_payment"
+    assert vouchers[0]["business_amount_fen"] == 10000
+    assert members[0]["recognition"]["period"] == "2026-03"
+    assert vouchers[0]["recognition"]["period"] == "2026-03"
+    assert members[0]["recognition"]["date"] == "2026-03-09"
+    source_request = partial(dashboard.business_status, "2026-03", "cost")
+    source_before = source_request()
     ident = change_result(engine, "cost", kind="report_profile")
-    require_rejection("brief-cross-month-source-kind", ident, before, request, tmp_path)
+    require_native_rejection_with_sealed_aggregate(
+        "brief-cross-month-source-kind", ident, before, request, tmp_path
+    )
+    require_rejection(
+        "cross-month-exact-source-kind", ident, source_before, source_request, tmp_path
+    )
 
 
 def test_asset_scalar_header_validation_reads_only_exact_headers(asset_book, tmp_path):

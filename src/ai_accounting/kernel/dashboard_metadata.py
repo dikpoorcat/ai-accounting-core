@@ -139,6 +139,17 @@ class Records(Mapping):
             return
         query, parameters = self._query(records=True, identifiers=missing)
         rows = self.connection.execute(query, parameters).fetchall()
+        definitions = {}
+        if self.kind == "fund_account":
+            from .fund_accounts import fund_account_definitions
+
+            definitions = {
+                item["entity_id"]: item
+                for item in (
+                    self.snapshot.close.section("fund_details")["definitions"]
+                    if self.frozen else fund_account_definitions(self.connection, missing)
+                )
+            }
         if self.frozen:
             self.snapshot.reads.verify_close_references(rows)
         for row in rows:
@@ -150,7 +161,10 @@ class Records(Mapping):
             if self.record_type == "entity_profile":
                 from .entities import _profile_record, display_profile
 
-                record = display_profile(_profile_record(record), self.kind)
+                record = display_profile(
+                    _profile_record(record), self.kind,
+                    fund_account=definitions.get(row[self.identity]),
+                )
             elif self.record_type == "profile":
                 record = Display._record(record)
             self.cache[row[self.identity]] = record
@@ -271,7 +285,7 @@ class Management(Mapping):
                 continue
             selected = dict(frozen or current)
             selected["field_sources"] = {}
-            for field in ("note", "payment_period", "payment_category"):
+            for field in ("payment_period", "payment_category"):
                 record = frozen if frozen.get(field) not in (None, "") else current
                 selected[field] = record.get(field)
                 if selected[field] not in (None, ""):

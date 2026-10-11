@@ -5,6 +5,7 @@ from test_reports import book as book  # noqa: F401
 from test_reports import close_quarter, scenario
 
 from ai_accounting.kernel.close_contract import CLOSE_FORMAT, CLOSE_FORMAT_VERSION
+from ai_accounting.kernel.close_fund_details import build_fund_close_snapshot
 from ai_accounting.kernel.close_review import build_owner_review
 from ai_accounting.kernel.close_storage import write_close
 from ai_accounting.kernel.materials import check_completeness
@@ -126,6 +127,7 @@ def insert_closes(engine, rows):
                 },
                 "approval": None,
             }
+            manifest["fund_details"] = build_fund_close_snapshot(connection, manifest)
             manifest["owner_review"] = build_owner_review(connection, engine, manifest)
             month = YearMonth(period).ordinal
             checksum = digest(manifest)
@@ -169,17 +171,18 @@ def test_batch_coverage_matches_original_contract_and_reads_authenticated_closes
         connection.execute("BEGIN")
         expected = {key: legacy_coverage(reports, connection, *key) for key in quarters}
     verified = []
-    original = QueryReads.close_readiness_check
+    original = QueryReads.close_readiness_checks_many
 
-    def verify(reads, row, name):
+    def verify(reads, rows, name):
+        rows = tuple(rows)
         if name == "financial_reports":
-            verified.append(row["period"])
-        return original(reads, row, name)
+            verified.extend(row["period"] for row in rows)
+        return original(reads, rows, name)
 
     def no_statements(*args, **kwargs):
         raise AssertionError("quarter coverage must not build financial statements")
 
-    monkeypatch.setattr(QueryReads, "close_readiness_check", verify)
+    monkeypatch.setattr(QueryReads, "close_readiness_checks_many", verify)
     monkeypatch.setattr(reports, "_report", no_statements)
     actual = reports.closed_period_coverages(quarters)
     assert actual == expected

@@ -381,9 +381,6 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
             "payroll",
             {
                 "employee_id": employee,
-                "profile_id": "reserve-profile",
-                "contribution_policy_id": "reserve-contributions",
-                "income_tax_policy_id": "reserve-income-tax",
                 "accounting_gross_salary_fen": 500000,
                 "tax_reported_salary_fen": 500000,
                 "tax_exempt_income_fen": 0,
@@ -453,12 +450,14 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
         },
     )["digest"]
 
+    saved_versions = {}
+
     def save(subject, kind, data, *, revision=0, evidence=proof, amend=False):
         command = {
             "material_source_v2": "receive_material",
             "material_resolution_v2": "resolve_material",
         }.get(kind)
-        return execute(
+        result = execute(
             command or ("amend_fact" if amend else "save_fact"),
             {
                 "subject_id": subject,
@@ -470,6 +469,9 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
                 **({"recording_error_confirmed": True} if amend else {}),
             },
         )
+
+        saved_versions[subject] = result
+        return result
 
     def publish(subjects, posting_period=None):
         args = {
@@ -532,31 +534,36 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
             },
         )
     for subject, (kind, data) in facts.items():
+        if kind == "payroll":
+            for field, source in (
+                ("profile_revision", "reserve-profile"),
+                ("contribution_policy_revision", "reserve-contributions"),
+                ("income_tax_policy_revision", "reserve-income-tax"),
+            ):
+                saved = saved_versions[source]
+                data[field] = {"subject_id": saved["subject_id"], "revision": saved["revision"]}
         save(subject, kind, data)
     call_rejected(
         "preview", {"company_id": cid, "subjects": ["reserve-wage"]}, code="needs_information"
     )
 
-    def wage_confirmation(data, *, revision=0, evidence=proof):
+    def wage_confirmation(*, revision=0, evidence=proof):
+        saved = saved_versions["reserve-wage"]
         return save(
             "reserve-wage-confirmation",
             "payroll_plan_v2",
             {
-                "employee_id": employee,
-                "payroll": {"period": month, **data},
-                "profile_revision": {"subject_id": "reserve-profile", "revision": 1},
-                "contribution_policy_revision": {
-                    "subject_id": "reserve-contributions",
-                    "revision": 1,
+                "payroll_revision": {
+                    "subject_id": saved["subject_id"],
+                    "revision": saved["revision"],
                 },
-                "income_tax_policy_revision": {"subject_id": "reserve-income-tax", "revision": 1},
                 "change_notice_revisions": [],
             },
             revision=revision,
             evidence=evidence,
         )
 
-    wage_confirmation(facts["reserve-wage"][1])
+    wage_confirmation()
     publish(
         [
             "reserve-wage",
@@ -705,7 +712,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
         {"company_id": cid, "subjects": ["reserve-wage"], "posting_period": "2026-02"},
         code="needs_information",
     )
-    wage_confirmation(revised_wage, revision=1, evidence=wage_proof)
+    wage_confirmation(revision=1, evidence=wage_proof)
     wage_correction = publish(["reserve-wage"], "2026-02")
     assert (
         next(row for row in wage_correction["results"] if row["subject_id"] == "reserve-wage")[

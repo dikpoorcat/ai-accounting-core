@@ -225,9 +225,7 @@ def test_bad_source_recording_is_amended_before_real_completion_can_publish(tmp_
     company.publish("completion")
     item = external_item(company)
     assert item["actual_completion_status"] == "completed"
-    assert [record["fact_id"] for record in item["recorded_completions"]] == [
-        amended["fact_id"]
-    ]
+    assert [record["fact_id"] for record in item["recorded_completions"]] == [amended["fact_id"]]
     with company.engine.store.connection(read_only=True) as connection:
         assert (
             connection.execute(
@@ -786,7 +784,13 @@ def test_equivalent_new_calculation_keeps_real_submission_and_requires_new_revie
     company.confirm_payroll("january")
     company.publish("january")
     assert company.current("january").id != old_payroll.id
-    assert company.current("january").result_digest == old_payroll.result_digest
+    current_payroll = company.current("january")
+    # Reconfirming an exact new wage revision changes the approval evidence,
+    # while preserving the accounting result and the real submission.
+    assert {
+        key: value for key, value in current_payroll.values.items() if key != "payroll_confirmation"
+    } == {key: value for key, value in old_payroll.values.items() if key != "payroll_confirmation"}
+    assert current_payroll.values["payroll_confirmation"]["confirmation_revision"] == 2
     assert company.engine.ledger("2026-01") == ledger
     assert company.current("completion", "external_completion").fact_id == old_completion.fact_id
     item = external_item(company)

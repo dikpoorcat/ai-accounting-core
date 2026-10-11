@@ -6,6 +6,7 @@ import pytest
 import test_banking as banking
 import test_investments as investments
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 from test_funds_source_integrity import _reviewed_closed_investment
 from test_funds_summary_page import _steps
 from test_integrity_content import damage
@@ -147,7 +148,8 @@ def test_failed_off_page_money_proof_cannot_supply_event_headers(bank_book, corr
         ).fetchone())
     if corruption == "line":
         damage(engine, "voucher_line",
-               "DELETE FROM voucher_line WHERE version_id=? AND line_no=1", (row["id"],))
+               "DELETE FROM voucher_line WHERE version_id=? AND line_no=1", (row["id"],),
+               foreign_keys=False)
     else:
         damage(engine, "calculation",
                "UPDATE calculation SET outcome=json_set(outcome,'$.values.amount_fen',2) "
@@ -160,7 +162,9 @@ def test_failed_off_page_money_proof_cannot_supply_event_headers(bank_book, corr
         assert FundsRead(snap)._verified_current_event_rows(
             current=True, accounts=ACCOUNTS, subjects=None,
         ) is None
-    with pytest.raises(KernelError) as failure:
+    # The native complete amount proof consumes the off-page source; the
+    # model's certified group summary has no returned member hits here.
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief(MONTH, limit=20)
     assert failure.value.code == "content_integrity_failed"
 

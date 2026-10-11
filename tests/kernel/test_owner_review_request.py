@@ -10,6 +10,7 @@ from threading import Event
 import pytest
 from monthly_close_fixture import ready
 from pydantic import SecretStr
+from test_dashboard_model_transactions import raw_read
 
 from ai_accounting.kernel import close_storage, dashboard
 from ai_accounting.kernel.close_review import CloseReview
@@ -72,7 +73,7 @@ def test_only_exact_ready_intent_is_requested_and_wire_contract_matches(owner_bo
 
     monkeypatch.setattr(CloseReview, "read", forbidden)
     response = brief(owner_book)
-    assert response["schema_version"] == 15
+    assert response["schema_version"] == 19
     assert response["data"]["month_state"] == "open"
     assert response["data"]["owner_review_request"] == {"preview_digest": selected["digest"]}
     for response_format in ("http", "http_json"):
@@ -194,10 +195,15 @@ def test_concurrent_change_cannot_attach_new_intent_to_old_money(owner_book, mon
         assert changed.wait(10)
         return result
 
+    def native_brief():
+        # This probe pauses the native money consumer inside its owned snapshot.
+        with raw_read():
+            return brief(owner_book)
+
     with monkeypatch.context() as patch:
         patch.setattr(dashboard, "_brief_amounts", pause)
         with ThreadPoolExecutor(max_workers=1) as executor:
-            pending = executor.submit(brief, owner_book)
+            pending = executor.submit(native_brief)
             try:
                 assert reached.wait(10)
                 advance(owner_book[1], "material")
@@ -217,7 +223,7 @@ def test_empty_brief_keeps_none_data_and_context_version(owner_book):
     service, _, _, _, token, _ = owner_book
     empty = service.catalog.create_company("91310000123456789B", "合成空企业")
     response = service.dispatch("dashboard_brief", {"company_id": empty["id"]}, session_token=token)
-    assert response["schema_version"] == 15 and response["data"] is None
+    assert response["schema_version"] == 19 and response["data"] is None
     context = service.dispatch(
         "dashboard_context", {"company_id": empty["id"]}, session_token=token
     )

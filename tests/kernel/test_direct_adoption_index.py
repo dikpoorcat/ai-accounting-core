@@ -3,10 +3,12 @@
 import sqlite3
 
 import pytest
+from test_dashboard_model_transactions import raw_read
 from test_employee_roster_scope import _sql_vm_work, prepared, rejected_read, result
 from test_integrity_content import damage
 
-from ai_accounting.kernel import dashboard as dashboard_module, dashboard_reads
+from ai_accounting.kernel import dashboard as dashboard_module
+from ai_accounting.kernel import dashboard_reads
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.read_indexes import verify_read_indexes
@@ -37,7 +39,8 @@ def test_cumulative_readiness_rows_do_not_expand_direct_adoption_seek_work(tmp_p
         ))
         for period, typ, ident in anchors:
             copy.executemany(
-                "INSERT INTO close_reference(close_period,path,position,reference_type,reference_id) "
+                "INSERT INTO close_reference("
+                "close_period,path,position,reference_type,reference_id) "
                 "VALUES(?,?,?,?,?)",
                 [(period, f"readiness.unrelated-{index % 7}.{typ}s[*]", str(index), typ, ident)
                  for index in range(1000)],
@@ -55,9 +58,13 @@ def test_cumulative_readiness_rows_do_not_expand_direct_adoption_seek_work(tmp_p
         copy.close()
 
 
-@pytest.mark.parametrize("path", ["adopted_results[*].fact_id", "adopted_results[*].calculation_id"])
+@pytest.mark.parametrize("path", [
+    "adopted_results[*].fact_id", "adopted_results[*].calculation_id",
+])
 @pytest.mark.parametrize("warm", [False, True])
-def test_partial_index_preserves_malformed_reference_type_candidates(tmp_path, path, warm, monkeypatch):
+def test_partial_index_preserves_malformed_reference_type_candidates(
+    tmp_path, path, warm, monkeypatch,
+):
     company = prepared(tmp_path, zero=True)
     assert result(company.engine, "2026-01")["data"]["employees"]["registered_count"] == 1
     damage(company.engine, "close_reference",
@@ -86,12 +93,14 @@ def test_partial_index_preserves_malformed_reference_type_candidates(tmp_path, p
     # checks the consumed calculation locator; the fact directory damage is
     # independently rejected by the full checker above for either query plan.
     if path.endswith("calculation_id"):
-        rejected_read(company.engine, "2026-01", warm=warm,
-                      expected_code="read_index_integrity_failed")
-        with monkeypatch.context() as original_plan:
-            original_plan.setattr(dashboard_reads, "_adopted_heads_sql", original_selector)
+        with raw_read():
             rejected_read(company.engine, "2026-01", warm=warm,
                           expected_code="read_index_integrity_failed")
+        with monkeypatch.context() as original_plan:
+            original_plan.setattr(dashboard_reads, "_adopted_heads_sql", original_selector)
+            with raw_read():
+                rejected_read(company.engine, "2026-01", warm=warm,
+                              expected_code="read_index_integrity_failed")
     else:
         new_result = result(company.engine, "2026-01")
         with monkeypatch.context() as original_plan:

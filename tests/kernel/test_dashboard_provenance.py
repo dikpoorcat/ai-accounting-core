@@ -189,9 +189,10 @@ def test_false_and_empty_management_fields_keep_their_actual_selected_sources(en
     publish(engine)
     account = profile(engine, "fund_account", "bank", active=False, note="")
     periods = Periods(engine)
+    profile(engine, "business", "charge", note="")
     periods.management(
         "charge",
-        note="",
+
         payment_period=None,
         payment_category=None,
         expected_revision=0,
@@ -199,9 +200,10 @@ def test_false_and_empty_management_fields_keep_their_actual_selected_sources(en
     )
     close(engine)
     latest = profile(engine, "fund_account", "bank", 1, active=True, note="后补用途")
+    profile(engine, "business", "charge", 1, note="后补说明")
     periods.management(
         "charge",
-        note="后补说明",
+
         payment_period=None,
         payment_category=None,
         expected_revision=1,
@@ -216,9 +218,9 @@ def test_false_and_empty_management_fields_keep_their_actual_selected_sources(en
     component = diagnostic_vouchers(engine, "2026-01")[0]["components"][0]
     metadata = component["management"]
     assert metadata["metadata"]["description"] == "后补说明"
-    assert metadata["field_sources"]["description"]["source_type"] == "management"
+    assert metadata["field_sources"]["description"]["source_type"] == "display_profile"
     assert metadata["field_sources"]["description"]["revision"] == 2
-    assert metadata["field_sources"]["description"]["recorded_at"] is None
+    assert metadata["field_sources"]["description"]["recorded_at"] is not None
 
 
 def test_payee_and_tax_identity_fallbacks_keep_exact_sources(company):

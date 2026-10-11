@@ -1740,9 +1740,27 @@ def reference_leaf(
     return value, None
 
 
-def read_section(connection, header: CloseHeader, name: str):
-    """Return one authenticated logical field without a caller-supplied cache."""
-    return _read_section(connection, header, name)
+def read_section(connection, header: CloseHeader, name: str, *, _verified_parts=None):
+    """Read a complete field, sharing only authenticated subroots in its owned snapshot."""
+    if _verified_parts is None:
+        return _read_section(connection, header, name)
+    from .query_reads import _owns_unchanged_read_snapshot
+    from .storage import _active_fact_reads
+
+    reads = _active_fact_reads.get()
+    if (
+        not _owns_unchanged_read_snapshot(reads, connection)
+        or _verified_parts is not reads._verified_close_storage_parts
+    ):
+        _invalid(header.period, "storage_section_snapshot_invalid")
+    prefix = (header.period, header.storage_digest, "family")
+    subroots = {family: _verified_parts[*prefix, family]
+                for family in FAMILIES if (*prefix, family) in _verified_parts}
+    # Complete leaf reads and their negative/multiset checks remain independent.
+    # A late failure must not lend a newly decoded family to the next consumer.
+    result = _read_section(connection, header, name, _subroots=subroots)
+    _verified_parts.update({(*prefix, family): value for family, value in subroots.items()})
+    return result
 
 
 def _read_section(

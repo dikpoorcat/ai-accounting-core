@@ -84,9 +84,10 @@ def test_changed_closed_source_is_rechecked_and_summary_blocks_are_verified(tmp_
     with book.engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         subject = connection.execute(
-            "SELECT l.subject_id FROM fact_material_resolution_v2 r "
+            "SELECT c.subject_id FROM fact_material_resolution_v2 r "
             "JOIN fact_current h ON h.fact_id=r.revision_id "
             "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+            "JOIN calculation c ON c.id=l.calculation_id "
             "WHERE r.period=? LIMIT 1",
             (month - 1,),
         ).fetchone()[0]

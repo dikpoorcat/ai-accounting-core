@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from functools import cache
 
 from .account_definitions import ACCOUNT_NAMES, CASH_ACCOUNTS
 from .contracts import KernelError
@@ -75,14 +74,8 @@ def _error(reason, identity=None):
     )
 
 
-@cache
-def _source_models():
-    from .service import default_registry
-
-    return default_registry().models
-
-
 def _exact_fact(connection, kind, fact_id):
+    from .content_history_context import source_fact_registry
     from .storage import Store
 
     header = connection.execute(
@@ -92,7 +85,13 @@ def _exact_fact(connection, kind, fact_id):
     ).fetchone()
     if header is None or header["kind"] != kind:
         _error("missing_exact_fact", fact_id)
-    data = Store._fact_data(connection, fact_id, _source_models()[kind], kind)
+    registry = source_fact_registry()
+    if getattr(registry, "content_version", None) == 1:
+        from .content_v1 import load_v1_fact_data_many
+
+        data = load_v1_fact_data_many(connection, registry, [fact_id])[fact_id]
+    else:
+        data = Store._fact_data(connection, fact_id, registry.models[kind], kind)
     if digest(data) != header["digest"] or data["period"] != str(
         YearMonth.from_ordinal(header["period"])
     ):
@@ -279,10 +278,14 @@ def preview_fund_details(
     return result
 
 
-def _expected(connection, calculation_id, lines, *, opening=False, source_reads=None):
+def _expected(
+    connection, calculation_id, lines, *, opening=False, source_reads=None, source=None,
+):
     from .fund_accounts import require_fund_account
 
-    calculation, outcome, fact = _read_source(connection, calculation_id, source_reads)
+    calculation, outcome, fact = (
+        _read_source(connection, calculation_id, source_reads) if source is None else source
+    )
     original = outcome.get("opening_lines" if opening else "lines", [])
     if list(lines) != original:
         _error("posted_lines_differ_from_source", calculation_id)
@@ -325,20 +328,22 @@ def _expected(connection, calculation_id, lines, *, opening=False, source_reads=
     return output
 
 
-def _voucher_expected(connection, version_id, *, source_reads=None):
-    header = connection.execute(
+def _voucher_expected(
+    connection, version_id, *, source_reads=None, headers=None, stored_lines=None, sources=None,
+):
+    header = headers.get(version_id) if headers is not None else connection.execute(
         "SELECT * FROM voucher_version WHERE id=?", (version_id,)
     ).fetchone()
     if header is None:
         _error("missing_voucher", version_id)
     basis = header
     if header["reverses_id"]:
-        basis = connection.execute(
+        basis = headers.get(header["reverses_id"]) if headers is not None else connection.execute(
             "SELECT * FROM voucher_version WHERE id=?", (header["reverses_id"],)
         ).fetchone()
         if basis is None:
             _error("missing_reversal_basis", version_id)
-    lines = [
+    lines = list(stored_lines.get(version_id, ())) if stored_lines is not None else [
         dict(row)
         for row in connection.execute(
             "SELECT account,debit,credit,cashflow FROM voucher_line "
@@ -348,7 +353,10 @@ def _voucher_expected(connection, version_id, *, source_reads=None):
     ]
     if header["reverses_id"]:
         lines = [{**line, "debit": line["credit"], "credit": line["debit"]} for line in lines]
-    expected = _expected(connection, basis["calculation_id"], lines, source_reads=source_reads)
+    expected = _expected(
+        connection, basis["calculation_id"], lines, source_reads=source_reads,
+        source=None if sources is None else sources[basis["calculation_id"]],
+    )
     return [{"version_id": version_id, **item} for item in expected]
 
 
@@ -420,6 +428,7 @@ def verify_fund_line_details(
     calculation_ids=None,
     period=None,
     _source_reads=None,
+    _voucher_reads=None,
 ):
     """Validate exact selected records. Historical pre-activation closes stay unchanged."""
     if (
@@ -430,14 +439,25 @@ def verify_fund_line_details(
     ):
         return {"lines": [], "opening_lines": []}
     if _source_reads is not None:
+        from .dashboard_model_sources import ModelFundSourceReads
         from .verified_source_reads import VerifiedSourceReads
 
         if (
-            not isinstance(_source_reads, VerifiedSourceReads)
+            not isinstance(_source_reads, (VerifiedSourceReads, ModelFundSourceReads))
             or _source_reads.connection is not connection
         ):
             _error("verified_source_reader_identity")
         _source_reads._require_source()
+    if _voucher_reads is not None:
+        from .query_reads import QueryReads
+
+        if (
+            not isinstance(_voucher_reads, QueryReads)
+            or _voucher_reads.connection is not connection
+        ):
+            _error("voucher_reader_identity")
+        # Even an empty selection must reject a stale or foreign reader.
+        _voucher_reads.raw_voucher_lines(())
     if version_ids is None:
         sql = "SELECT v.id FROM voucher_current h JOIN voucher_version v ON v.id=h.version_id"
         parameters = ()
@@ -478,25 +498,74 @@ def verify_fund_line_details(
             "opening_lines",
         ),
     ):
-        for identity in identities:
-            rows = [
-                dict(row)
+        payload = canonical(identities)
+        rows_by_identity = defaultdict(list)
+        for row in connection.execute(
+            f"SELECT t.* FROM json_each(?) ids JOIN {table} t "
+            f"ON t.{identity_field}=ids.value ORDER BY t.{identity_field},t.line_no", (payload,),
+        ):
+            rows_by_identity[row[identity_field]].append(dict(row))
+        header_table = "voucher_version" if section == "lines" else "calculation"
+        header_columns = "t.*" if section == "lines" else "t.id,t.period"
+        headers = {row["id"]: row for row in connection.execute(
+            f"SELECT {header_columns} FROM json_each(?) ids "
+            f"JOIN {header_table} t ON t.id=ids.value", (payload,),
+        )}
+        if headers.keys() != set(identities):
+            _error("missing_source")
+        selected_headers = dict(headers)
+        stored_lines, sources = None, None
+        if section == "lines":
+            reversal_ids = {row["reverses_id"] for row in headers.values() if row["reverses_id"]}
+            selected_headers.update((row["id"], row) for row in connection.execute(
+                "SELECT v.* FROM json_each(?) ids JOIN voucher_version v ON v.id=ids.value",
+                (canonical(sorted(reversal_ids - headers.keys())),),
+            ))
+            if not reversal_ids <= selected_headers.keys():
+                _error("missing_reversal_basis")
+            if _voucher_reads is not None:
+                stored_lines = {
+                    ident: [{key: row[key] for key in ("account", "debit", "credit", "cashflow")}
+                            for row in lines]
+                    for ident, lines in _voucher_reads.raw_voucher_lines(identities).items()
+                }
+            else:
+                stored_lines = defaultdict(list)
                 for row in connection.execute(
-                    f"SELECT * FROM {table} WHERE {identity_field}=? ORDER BY line_no", (identity,)
-                )
-            ]
-            header_table = "voucher_version" if section == "lines" else "calculation"
-            source_period = connection.execute(
-                f"SELECT period FROM {header_table} WHERE id=?", (identity,)
-            ).fetchone()
-            if source_period is None:
-                _error("missing_source", identity)
-            if first is not None and source_period[0] < first and not rows:
+                    "SELECT l.version_id,l.account,l.debit,l.credit,l.cashflow "
+                    "FROM json_each(?) ids JOIN voucher_line l ON l.version_id=ids.value "
+                    "ORDER BY l.version_id,l.line_no", (payload,),
+                ):
+                    stored_lines[row["version_id"]].append(
+                        {key: row[key] for key in ("account", "debit", "credit", "cashflow")}
+                    )
+        if _source_reads is not None:
+            source_ids = {
+                selected_headers[row["reverses_id"]]["calculation_id"]
+                if section == "lines" and row["reverses_id"] else row["calculation_id"]
+                if section == "lines" else row["id"]
+                for row in headers.values()
+                if not (first is not None and row["period"] < first
+                        and not rows_by_identity[row["id"]])
+            }
+            sources = {
+                ident: (value, value["outcome"], value["fact_data"])
+                for ident, value in _source_reads.raw_calculations(source_ids).items()
+            }
+        for identity in identities:
+            rows = rows_by_identity[identity]
+            if first is not None and headers[identity]["period"] < first and not rows:
                 continue
             if section == "lines":
-                expected = _voucher_expected(connection, identity, source_reads=_source_reads)
+                expected = _voucher_expected(
+                    connection, identity, source_reads=_source_reads, headers=selected_headers,
+                    stored_lines=stored_lines, sources=sources,
+                )
             else:
-                _, outcome, _ = _read_source(connection, identity, _source_reads)
+                source = sources[identity] if sources is not None else _read_source(
+                    connection, identity, _source_reads,
+                )
+                _, outcome, _ = source
                 expected = [
                     {"calculation_id": identity, **item}
                     for item in _expected(
@@ -505,6 +574,7 @@ def verify_fund_line_details(
                         outcome.get("opening_lines", []),
                         opening=True,
                         source_reads=_source_reads,
+                        source=source,
                     )
                 ]
             expected = [{**row, "digest": digest([CONTRACT, table, row])} for row in expected]
@@ -584,8 +654,11 @@ def snapshot_fund_details(connection, period, *, version_ids=None, calculation_i
     }
 
 
-def fund_line_details(connection, version_ids):
-    verified = verify_fund_line_details(connection, version_ids=version_ids, calculation_ids=[])
+def fund_line_details(connection, version_ids, *, _source_reads=None, _voucher_reads=None):
+    verified = verify_fund_line_details(
+        connection, version_ids=version_ids, calculation_ids=[], _source_reads=_source_reads,
+        _voucher_reads=_voucher_reads,
+    )
     return {(row["version_id"], row["line_no"]): row for row in verified["lines"]}
 
 
@@ -627,7 +700,7 @@ def display_fund_lines(connection, version_id, lines, *, details=None):
             elif value["parent_account"] == "1012":
                 name = identity["provider_name"] + "—" + identity["account_identifier"]
             else:
-                name = identity["display_name"]
+                name = "现金账户"
         names[entity_id] = name
     name_counts = defaultdict(int)
     for name in names.values():

@@ -7,6 +7,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_owner_frozen_scope import amend_activation
+from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage, verify
 from test_owner_asset_activation_identity import closed_cards
 from test_payroll_corrections import Company
@@ -32,7 +33,7 @@ def complete_current_guard_page(engine, period, **options):
 
     # The control constructs the same independent typed/directory proof first.
     # Only its current-member guard consumes the former complete-body path.
-    with patch.object(BusinessQueries, "_current_accounting_heads", complete_guard):
+    with patch.object(BusinessQueries, "_current_accounting_heads", complete_guard), raw_read():
         return Dashboard(engine).assets(period, preparation="deferred", **options)
 
 
@@ -40,13 +41,15 @@ def complete_current_guard_page(engine, period, **options):
 def test_complete_assets_equal_with_less_actual_activation_body_work(tmp_path, count):
     company, identities = closed_cards(tmp_path, count)
     engine = company.engine
-    before_work, before = measure_work(
-        engine, lambda: complete_current_guard_page(engine, "2026-04"),
-    )
-    after_work, after = measure_work(
-        engine, lambda: Dashboard(engine).assets("2026-04", preparation="deferred"),
-    )
+    with raw_read():
+        before_work, before = measure_work(
+            engine, lambda: complete_current_guard_page(engine, "2026-04"),
+        )
+        after_work, after = measure_work(
+            engine, lambda: Dashboard(engine).assets("2026-04", preparation="deferred"),
+        )
     assert after == before
+    assert Dashboard(engine).assets("2026-04", preparation="deferred") == after
     before_counts, after_counts = before_work["counters"], after_work["counters"]
     # Exactly the closed activation owner plus its entire member directory
     # leave this duplicate guard. The open consumption body lane is unchanged.
@@ -62,9 +65,10 @@ def test_complete_assets_equal_with_less_actual_activation_body_work(tmp_path, c
     assert after_counts["typed_fact_json_decodes"] == before_counts["typed_fact_json_decodes"]
     print(json.dumps({"cards": count, "full_guard": before_counts, "identity_guard": after_counts}))
     for options in ({"asset_filter": "fixed"}, {"asset_id": identities[-1]}):
-        assert Dashboard(engine).assets("2026-04", preparation="deferred", **options) == (
-            complete_current_guard_page(engine, "2026-04", **options)
-        )
+        modeled = Dashboard(engine).assets("2026-04", preparation="deferred", **options)
+        with raw_read():
+            native = Dashboard(engine).assets("2026-04", preparation="deferred", **options)
+        assert modeled == native == complete_current_guard_page(engine, "2026-04", **options)
     # Successful identity-only reuse never publishes a complete body proof.
     for _ in range(2):
         with Dashboard(engine)._snapshot("2026-04") as snap:
@@ -119,7 +123,7 @@ def test_current_member_redirect_survives_complete_frozen_identity_proof(closed_
         lambda: Dashboard(engine).assets("2026-02", preparation="deferred"),
         lambda: complete_current_guard_page(engine, "2026-02"),
     ):
-        with pytest.raises(KernelError):
+        with raw_read(), pytest.raises(KernelError):
             read()
 
 
@@ -160,7 +164,7 @@ def test_missing_current_adoption_is_not_hidden_by_frozen_identity(closed_activa
         lambda: Dashboard(engine).assets("2026-02", preparation="deferred"),
         lambda: complete_current_guard_page(engine, "2026-02"),
     ):
-        with pytest.raises(KernelError):
+        with raw_read(), pytest.raises(KernelError):
             read()
 
 
@@ -241,7 +245,7 @@ def test_identity_reuse_does_not_certify_unconsumed_body_bytes(closed_activation
         complete_current_guard_page(engine, "2026-02")
     # This fixture has no consumption owner: the page's amount consumer still
     # needs the activation body and must perform its own complete validation.
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-02", preparation="deferred")
     with pytest.raises(KernelError):
         verify(engine)

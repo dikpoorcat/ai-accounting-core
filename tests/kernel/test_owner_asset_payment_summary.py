@@ -1,6 +1,7 @@
 """Asset cards retain exact payment scope while dropping payment drilldowns."""
 
 import pytest
+from test_dashboard_model_integrity import raw_read
 from test_reimbursement_assets import asset
 from test_reimbursement_assets import book as book_fixture
 
@@ -64,7 +65,8 @@ def test_asset_dashboard_rejects_removed_payment_collection_and_keeps_ai_read(bo
 
     monkeypatch.setattr(_Snapshot, "settlement_summary", watched)
     dashboard = Dashboard(engine)
-    response = dashboard.assets("2026-02")
+    with raw_read():
+        response = dashboard.assets("2026-02")
     assert response["schema_version"] == 10
     item = response["data"]["collections"]["assets"]["items"][0]
     assert "settlements" not in item

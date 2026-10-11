@@ -3,6 +3,7 @@
 import pytest
 from stage9_metrics import measure_work
 from test_asset_batches import month
+from test_dashboard_model_transactions import comparable, raw_read
 from test_reimbursement_assets import activate_assets, activation, asset, fact_evidence
 from test_reimbursement_assets import book as book_fixture
 
@@ -35,10 +36,13 @@ def cards(book):
 def test_default_twenty_next_page_and_exact_jump_keep_complete_money_and_card_dates(cards):
     engine, identities = cards
     dashboard = Dashboard(engine)
-    page_work, first = measure_work(engine, lambda: dashboard.assets("2026-03"))
-    full_work, complete = measure_work(
-        engine, lambda: dashboard.assets("2026-03", limit=50)
-    )
+    with raw_read():
+        page_work, first = measure_work(engine, lambda: dashboard.assets("2026-03"))
+        full_work, complete = measure_work(
+            engine, lambda: dashboard.assets("2026-03", limit=50)
+        )
+    assert comparable(dashboard.assets("2026-03")) == comparable(first)
+    assert comparable(dashboard.assets("2026-03", limit=50)) == comparable(complete)
     first_collection = first["data"]["collections"]["assets"]
     complete_items = complete["data"]["collections"]["assets"]["items"]
     assert len(first_collection["items"]) == 20
@@ -49,6 +53,7 @@ def test_default_twenty_next_page_and_exact_jump_keep_complete_money_and_card_da
         cursor=first_collection["page"]["next_cursor"],
     )["data"]["collections"]["assets"]
     assert next_page["items"] == complete_items[20:]
+    assert len(next_page["items"]) == 11
     assert not next_page["page"]["has_more"]
     exact = dashboard.assets("2026-03", asset_id=identities[-1])["data"]
     assert exact["collections"]["assets"]["items"] == [complete_items[-1]]

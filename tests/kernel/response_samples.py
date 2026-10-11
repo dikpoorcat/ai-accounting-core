@@ -312,6 +312,13 @@ def native_samples(root):
     personnel_path.mkdir()
     personnel = correction_company.__wrapped__(personnel_path)
     personnel.save(payroll_profile(withholding_start_date="2026-01"), "profile", revision=1)
+    for subject in ("january", "february"):
+        with personnel.engine.store.connection(read_only=True) as connection:
+            current = personnel.engine.store.current_fact(connection, subject)
+        revised = current.fact.model_copy(update={
+            "profile_revision": current.fact.profile_revision.model_copy(update={"revision": 2})
+        })
+        personnel.save(revised, subject, revision=current.revision)
     personnel.confirm_payroll("january", "february")
     personnel.publish("january", "february")
     display_profile(personnel.engine, "employee", "employee", employment_start="2025-12")

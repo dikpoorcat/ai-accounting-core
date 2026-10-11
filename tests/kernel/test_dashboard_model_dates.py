@@ -1,4 +1,4 @@
-"""Calendar changes adapt certified personnel, without publishing new books."""
+"""Current confirmations do not change merely because the reading date changes."""
 
 import pytest
 from entity_fixture import save_entity_display_profile
@@ -26,17 +26,14 @@ from ai_accounting.kernel.maintenance import Maintenance
 def basis(employee="person", **fields):
     return EmployeeDateBasis(
         employee_id=employee,
-        explicit_state=fields.get("explicit_state"),
-        employment_start=fields.get("employment_start"),
-        employment_end=fields.get("employment_end"),
-        employment_status=fields.get("employment_status"),
+        explicit_state=fields.get("explicit_state") or "unknown",
     )
 
 
 @pytest.mark.parametrize(
     "source,day,expected",
     [
-        ({"employment_status": "active", "employment_end": "2026-02-15"}, "2026-02-14", "regular"),
+        ({"employment_status": "active", "employment_end": "2026-02-15"}, "2026-02-14", "unknown"),
         ({"employment_status": "active", "employment_end": "2026-02-15"}, "2026-02-15", "unknown"),
         (
             {"employment_status": "inactive", "employment_end": "2026-02-15"},
@@ -46,11 +43,11 @@ def basis(employee="person", **fields):
         (
             {"employment_status": "inactive", "employment_end": "2026-02-15"},
             "2026-02-15",
-            "departed",
+            "unknown",
         ),
-        ({"employment_status": "active", "employment_end": "2026-02"}, "2026-02-28", "regular"),
+        ({"employment_status": "active", "employment_end": "2026-02"}, "2026-02-28", "unknown"),
         ({"employment_status": "active", "employment_end": "2026-02"}, "2026-03-01", "unknown"),
-        ({"employment_status": "inactive", "employment_end": "2026-02"}, "2026-03-01", "departed"),
+        ({"employment_status": "inactive", "employment_end": "2026-02"}, "2026-03-01", "unknown"),
         ({"explicit_state": "unknown", "employment_status": "active"}, "2026-02-01", "unknown"),
         ({"explicit_state": "regular", "employment_end": "2026-02-01"}, "2026-03-01", "regular"),
         ({"explicit_state": "unpaid_leave"}, "2026-03-01", "unpaid_leave"),
@@ -79,20 +76,20 @@ def basis(employee="person", **fields):
                 "employment_end": "2026-02",
             },
             "2026-02-14",
-            "regular",
+            "unknown",
         ),
-        ({"employment_status": "active"}, "2026-03-01", "regular"),
+        ({"employment_status": "active"}, "2026-03-01", "unknown"),
         ({}, "2026-03-01", "unknown"),
     ],
 )
-def test_current_personnel_rule_preserves_precision_and_explicit_unknown(source, day, expected):
+def test_current_personnel_rule_requires_explicit_confirmation(source, day, expected):
     saved = basis(**source)
     profile = {**source, "employment_state": source.get("explicit_state")}
     assert current_employment_state(saved, day) == expected
     assert current_employment_state(profile, day) == expected
 
 
-def test_calendar_certificate_has_only_actual_state_change_boundaries():
+def test_current_state_certificate_has_no_inferred_calendar_boundaries():
     saved = make_date_basis(
         (
             basis("explicit", explicit_state="regular", employment_end="2026-02-01"),
@@ -103,24 +100,18 @@ def test_calendar_certificate_has_only_actual_state_change_boundaries():
         ),
         "2026-02-01",
     )
-    assert saved.next_change == "2026-02-15"
-    assert date_verification_days(saved) == (
-        "2026-02-01",
-        "2026-02-14",
-        "2026-02-15",
-        "2026-02-28",
-        "2026-03-01",
-    )
+    assert "next_change" not in saved.model_dump()
+    assert date_verification_days(saved) == ("2026-02-01",)
     assert employee_states(saved, "2026-02-15")["day"] == "unknown"
-    assert employee_states(saved, "2026-03-01")["month"] == "departed"
+    assert employee_states(saved, "2026-03-01")["month"] == "unknown"
     assert employee_states(saved, "2026-03-01")["explicit"] == "regular"
     assert original_date_states_valid(saved, "2026-02-01")
     assert original_date_states_valid(saved, "2026-02-14")
-    assert not original_date_states_valid(saved, "2026-02-15")
+    assert original_date_states_valid(saved, "2026-02-15")
     assert not original_date_states_valid(saved, "2026-01-31")
 
 
-def test_complete_calendar_inputs_reject_missing_or_false_interval_claims():
+def test_current_state_certificate_rejects_old_calendar_inputs_and_duplicate_people():
     saved = make_date_basis((basis(employment_end="2026-02"),), "2026-02-01")
     value = saved.model_dump(mode="python")
     for changed in (
@@ -131,7 +122,7 @@ def test_complete_calendar_inputs_reject_missing_or_false_interval_claims():
         with pytest.raises(ValidationError):
             ModelDateBasis.model_validate({**value, **changed})
     with pytest.raises(ValidationError):
-        basis(employment_end="2026-02-30")
+        EmployeeDateBasis(employee_id="person", explicit_state="unknown", employment_end="2026-02")
 
 
 def test_all_five_pages_cross_day_without_writes_or_native_fallback(book, monkeypatch):
@@ -268,7 +259,7 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
             for item in all_people["collections"]["employees"]["items"]
         }
         assert states["day-person"] == "unknown"
-        assert states["month-person"] == ("unknown" if day == "2026-10-11" else "departed")
+        assert states["month-person"] == "unknown"
         assert states["explicit-person"] == "regular"
         assert states["unknown-person"] == "unknown"
     assert state(engine) == before

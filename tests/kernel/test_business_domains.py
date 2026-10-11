@@ -41,7 +41,7 @@ def calculation(source, result):
 
 def context(source, *, facts=(), calculations=()):
     selections = {}
-    for read in source.fact.reads_for(source.subject_id):
+    def select(read):
         candidates = facts if read.source == "fact" else calculations
         chosen = []
         for item in candidates:
@@ -53,7 +53,11 @@ def context(source, *, facts=(), calculations=()):
             if not matches:
                 continue
             chosen.append(item if read.source == "fact" else item[1])
-        selections[read] = tuple(chosen)
+        return tuple(chosen)
+    for read in source.fact.reads_for(source.subject_id):
+        selections[read] = select(read)
+    for read in source.fact.reads_after(source.subject_id, Context(selections)):
+        selections[read] = select(read)
     return Context(selections)
 
 
@@ -562,7 +566,7 @@ def test_loan_interest_stays_at_actual_principal_until_real_repayment():
         "interest",
         period="2026-01",
         drawdown_id="drawdown",
-        agreement_id="agreement",
+
         period_start="2026-01-01",
         period_end_exclusive="2026-02-01",
     )
@@ -647,7 +651,7 @@ def test_partial_actual_repayment_changes_only_the_following_interest_interval()
             start,
             period="2026-01",
             drawdown_id="drawdown",
-            agreement_id="agreement",
+
             period_start=start,
             period_end_exclusive=end,
         )
@@ -693,7 +697,7 @@ def test_owner_repayment_to_lender_reduces_interest_without_inventing_company_ca
         "interest",
         period="2026-01",
         drawdown_id="drawdown",
-        agreement_id="agreement",
+
         period_start="2026-01-16",
         period_end_exclusive="2026-02-01",
     )
@@ -720,7 +724,7 @@ def test_unvalidated_actual_repayment_cannot_reduce_loan_principal(changes, code
         "interest",
         period="2026-01",
         drawdown_id="drawdown",
-        agreement_id="agreement",
+
         period_start="2026-01-16",
         period_end_exclusive="2026-02-01",
     )
@@ -745,7 +749,7 @@ def test_paid_off_or_sub_fen_interest_keeps_an_explainable_zero_result(principal
         "interest",
         period="2026-01",
         drawdown_id="drawdown",
-        agreement_id="agreement",
+
         period_start="2026-01-16",
         period_end_exclusive="2026-02-01",
     )

@@ -57,14 +57,6 @@ CATALOG_DDL = (
         BEGIN SELECT RAISE(ABORT,'immutable security audit'); END""",
     """CREATE TRIGGER security_audit_no_delete BEFORE DELETE ON security_audit
         BEGIN SELECT RAISE(ABORT,'immutable security audit'); END""",
-    """CREATE TABLE security_identity_import(
-        source_catalog_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE
-          REFERENCES security_owner(id), imported_at INTEGER NOT NULL
-    ) STRICT""",
-    """CREATE TRIGGER security_import_no_update BEFORE UPDATE ON security_identity_import
-        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END""",
-    """CREATE TRIGGER security_import_no_delete BEFORE DELETE ON security_identity_import
-        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END""",
 )
 
 COMPANY_DDL = (

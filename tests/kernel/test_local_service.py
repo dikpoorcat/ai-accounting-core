@@ -29,22 +29,38 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
         ("income-tax", income_tax_policy()),
         ("profile", profile(employee_id="employee")),
         ("tax-opening", opening(employee_id="employee")),
-        ("wage", payroll(employee_id="employee", profile_id="profile")),
+        (
+            "wage",
+            payroll(
+                employee_id="employee", profile_revision={"subject_id": "profile", "revision": 1}
+            ),
+        ),
     )
     for subject, fact in sources:
         data = fact.model_dump(mode="json")
         seed_registration_entities(engine, fact.kind, data)
         engine.save_fact(
-            fact.kind, subject, data, evidence=(proof,), expected_revision=0,
+            fact.kind,
+            subject,
+            data,
+            evidence=(proof,),
+            expected_revision=0,
             request_id="save-" + subject,
         )
     confirm_wage_inputs(engine, "wage", evidence=(proof,), request_id="confirm-wage")
     preview = engine.preview(["wage"])
     engine.confirm(
-        ["wage"], preview_digest=preview["digest"], epochs=preview["epochs"],
+        ["wage"],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
         request_id="publish-wage",
     )
-    payload = {"company_id": company, "period": "2026-01", "preparation": "deferred"}
+    payload = {
+        "company_id": company,
+        "period": "2026-01",
+        "preparation": "deferred",
+        "employee_filter": "all",
+    }
     native = app.dispatch("dashboard_employees", payload)
     from ai_accounting.kernel.response_contracts import RESPONSE_ADAPTERS
 
@@ -56,7 +72,7 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
         connection.request(
             "GET",
-            f"/api/dashboard/employees?company_id={company}&period=2026-01&preparation=deferred",
+            f"/api/dashboard/employees?company_id={company}&period=2026-01&preparation=deferred&employee_filter=all",
             headers={"Authorization": "Bearer " + app._test_session_token},
         )
         response = connection.getresponse()
@@ -64,9 +80,7 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
         connection.close()
         assert response.status == 200
         assert json.loads(body) == expected_http
-        assert native["data"]["collections"]["employees"]["items"][0][
-            "employee_id"
-        ] == "employee"
+        assert native["data"]["collections"]["employees"]["items"][0]["employee_id"] == "employee"
     finally:
         server.shutdown()
         thread.join(timeout=5)

@@ -31,6 +31,31 @@ from ai_accounting.kernel.storage import Store
 MONTH = "2026-09"
 
 
+def test_current_read_model_rebuild_preserves_original_business_rows_and_matches_native(book):
+    engine, save, publish, _ = book
+    opening(save, publish)
+    funding(save, publish, subject="current-funded", amount=17)
+    tables = (
+        "identity", "schema_history", "schema_draft_history", "fact_revision", "calculation",
+        "voucher_version",
+    )
+
+    def originals():
+        with engine.store.connection(read_only=True) as connection:
+            return {
+                table: tuple(tuple(row) for row in connection.execute(f"SELECT * FROM {table}"))
+                for table in tables
+            }
+
+    before = originals()
+    Maintenance(engine).rebuild_dashboard_read_model(MONTH, request_id="new-baseline-model")
+    assert originals() == before
+    materialized = dashboard_model_runtime.stable_payload(Dashboard(engine).funds(MONTH))
+    with raw_read():
+        native = dashboard_model_runtime.stable_payload(Dashboard(engine).funds(MONTH))
+    assert native == materialized
+
+
 def _seed_v1_current(engine, monkeypatch):
     """Save an authenticated earlier UI contract with today's identical scope."""
     with raw_read():
@@ -93,6 +118,7 @@ def test_clock_rollback_adapts_employees_and_rejects_the_previous_day_cursor(boo
         save_entity_display_profile(engine, {
             "kind": "employee", "entity_id": employee, "employment_start": "2026-01",
             "employment_end": "2026-10-11", "employment_status": "active",
+            "employment_state": "regular",
             "source": "synthetic personnel confirmation",
         }, expected_revision=0, request_id="profile-" + employee)
     dashboard = Dashboard(engine)

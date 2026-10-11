@@ -10,6 +10,7 @@ import test_investments as investments
 import test_platforms as platforms
 from stage9_metrics import measure_work
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 from test_funds_source_integrity import _reviewed_closed_investment
 from test_funds_summary_page import _source_rows, _steps
 from test_integrity_content import damage
@@ -456,6 +457,7 @@ def test_failed_scope_never_supplies_inputs_and_fresh_requests_reject_damage(ban
             "voucher_line",
             "DELETE FROM voucher_line WHERE version_id=? AND line_no=1",
             (row["version_id"],),
+            foreign_keys=False,
         )
     elif corruption == "missing_source":
         damage(
@@ -477,7 +479,7 @@ def test_failed_scope_never_supplies_inputs_and_fresh_requests_reject_damage(ban
             snap.month_journal.account_amounts()
         assert failure.value.code == "content_integrity_failed"
         assert FundsRead(snap)._verified_money_effects() is None
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).brief(MONTH, limit=1)
 
 

@@ -219,8 +219,8 @@ def production_reads(engine, connection):
     finally:
         _producing.reset(producer_token)
         _active_fact_reads.reset(token)
-        reads._reset()
         try:
+            reads._reset()
             connection.set_authorizer(None)
             connection.execute("PRAGMA query_only=OFF")
             if connection.execute("PRAGMA query_only").fetchone()[0] != 0:

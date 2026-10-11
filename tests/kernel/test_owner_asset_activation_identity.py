@@ -7,6 +7,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import month
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_payroll_corrections import Company
 from test_reimbursement_assets import activate_assets, activation, asset
@@ -121,11 +122,13 @@ def test_complete_card_response_and_work_with_object_and_profile_history_growth(
                 for header in owners.values()} == expected_owner_periods
         owner_fact_ids = {header["source_fact_id"] for header in owners.values()}
         assert len(owner_fact_ids) == len(owners)
-    before_work, before = measure_work(engine, lambda: old_page(
-        engine, "2026-04", owner_fact_ids=owner_fact_ids,
-    ))
-    after_work, after = measure_work(engine, lambda: view.assets("2026-04"))
+    with raw_read():
+        before_work, before = measure_work(engine, lambda: old_page(
+            engine, "2026-04", owner_fact_ids=owner_fact_ids,
+        ))
+        after_work, after = measure_work(engine, lambda: view.assets("2026-04"))
     assert after == before
+    assert view.assets("2026-04") == after
     before_counts, after_counts = before_work["counters"], after_work["counters"]
     print(json.dumps({"cards": count, "before": before_counts, "after": after_counts}))
     assert after_counts["calculation_result_rows_loaded"] < before_counts[
@@ -156,12 +159,14 @@ def test_complete_card_response_and_work_with_object_and_profile_history_growth(
             owner = connection.execute(
                 "SELECT id FROM calculation WHERE kind='asset_activation_batch'"
             ).fetchone()[0]
+        selected_before = view.assets("2026-04", asset_id=identities[0])
         damage(engine, "asset_batch_member",
                "DELETE FROM asset_batch_member WHERE owner_calculation_id=? AND asset_id=?",
                (owner, identities[-1]), foreign_keys=False)
+        assert view.assets("2026-04", asset_id=identities[0]) == selected_before
         for read in (lambda: view.assets("2026-04", asset_id=identities[0]),
                      lambda: old_page(engine, "2026-04", asset_id=identities[0])):
-            with pytest.raises(KernelError):
+            with raw_read(), pytest.raises(KernelError):
                 read()
 
 
@@ -221,6 +226,7 @@ def test_failed_complete_activation_identity_never_publishes_selection_cache(
     company, _ = activated_company
     engine = company.engine
     company.close("2026-02")
+    before = Dashboard(engine).assets("2026-02", asset_id="computer")
     with engine.store.connection(read_only=True) as connection:
         owner = connection.execute(
             "SELECT id FROM calculation WHERE kind='asset_activation_batch'"
@@ -242,7 +248,12 @@ def test_failed_complete_activation_identity_never_publishes_selection_cache(
                 "asset_owner_identity_selection", "asset_activation_identity_events",
             }
                            for key in snap.reads._report_snapshot_cache)
-    with pytest.raises(KernelError):
+    if bad == "other_member":
+        assert Dashboard(engine).assets("2026-02", asset_id="computer") == before
+    else:
+        with pytest.raises(KernelError):
+            Dashboard(engine).assets("2026-02", asset_id="computer")
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-02", asset_id="computer")
 
 
@@ -252,6 +263,7 @@ def test_latest_member_body_remains_strict_and_failure_is_not_cached(activated_c
     company.close("2026-02")
     month(engine, evidence, "2026-03", "consume-positive")
     company.close("2026-03")
+    before = Dashboard(engine).assets("2026-03", asset_id="chair")
     with engine.store.connection(read_only=True) as connection:
         member = dict(connection.execute(
             "SELECT m.*,c.outcome FROM asset_batch_member m JOIN calculation o "
@@ -260,7 +272,8 @@ def test_latest_member_body_remains_strict_and_failure_is_not_cached(activated_c
         ).fetchone())
     damage(engine, "calculation", "UPDATE calculation SET outcome=? WHERE id=?",
            ('{"values":{},' + member["outcome"][1:], member["member_calculation_id"]))
-    with pytest.raises(KernelError):
+    assert Dashboard(engine).assets("2026-03", asset_id="chair") == before
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-03", asset_id="chair")
     with Dashboard(engine)._snapshot("2026-03") as snap:
         snap.queries._selected_asset_activation_identities(snap.connection, snap.period)

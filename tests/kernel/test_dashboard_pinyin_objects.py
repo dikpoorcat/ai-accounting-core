@@ -19,7 +19,6 @@ def named(engine, kind, ident, name):
             "kind": kind,
             "entity_id": ident,
             "display_name": name,
-            "display_number": ident,
             "source": "synthetic explicit object names",
         },
         expected_revision=0,

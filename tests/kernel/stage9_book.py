@@ -33,7 +33,6 @@ def synthetic_employee_profile(name):
     """The fixture explicitly defines fictional employees as regularly employed."""
     return {
         "display_name": name,
-        "active": True,
         "employment_status": "active",
         "employment_state": "regular",
         "employment_start": "2016-01-01",
@@ -527,13 +526,9 @@ class MixedBook:
                         "recognition_period": period,
                         "links": [
                             {
-                                "subject_id": subject,
-                                "fact_kind": self.inputs[subject][0],
-                                "fact_id": self.facts[subject],
                                 "calculation_id": self.results[subject],
                                 "amount_field": field,
                                 "amount_fen": amount,
-                                "recognition_period": period,
                             }
                         ],
                     },
@@ -566,7 +561,7 @@ class MixedBook:
                         followup,
                         {
                             "period": prior,
-                            "agreement_id": f"agreement-{prior}",
+
                             "drawdown_id": f"draw-{prior}",
                             "period_start": prior + "-19",
                             "period_end_exclusive": prior + "-20",
@@ -601,7 +596,7 @@ class MixedBook:
                     for i, employee in enumerate(self.employees)
                 ]
             )
-        wages = []
+        wages, plans = [], []
         for i, employee in enumerate(self.employees):
             subject = f"wage-{period}-{i}"
             data = payroll(
@@ -612,25 +607,19 @@ class MixedBook:
                 tax_reported_salary_fen=600000 + i * 100,
             ).model_dump(mode="json")
             wages.append(self.item("payroll", subject, data, business=True))
-            wages.append(
+            plans.append(
                 self.item(
                     "payroll_plan_v2",
                     f"wage-plan-{period}-{i}",
                     {
                         "period": period,
-                        "employee_id": employee,
-                        "payroll": data,
-                        "profile_revision": {"subject_id": f"profile-{i}", "revision": 1},
-                        "contribution_policy_revision": {
-                            "subject_id": "contributions",
-                            "revision": 1,
-                        },
-                        "income_tax_policy_revision": {"subject_id": "income-tax", "revision": 1},
+                        "payroll_revision": {"subject_id": subject, "revision": 1},
                         "change_notice_revisions": [],
                     },
                 )
             )
         self.save(wages)
+        self.save(plans)
         acquisitions.extend(item["subject_id"] for item in wages if item["kind"] == "payroll")
         wage_rows = [
             (
@@ -831,7 +820,7 @@ class MixedBook:
                     interest,
                     {
                         "period": period,
-                        "agreement_id": agreement,
+
                         "drawdown_id": draw,
                         "period_start": period + "-01",
                         "period_end_exclusive": period + "-20",

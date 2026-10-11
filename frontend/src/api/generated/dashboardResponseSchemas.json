@@ -13206,6 +13206,17 @@
             ],
             "title": "Display Number"
           },
+          "account_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Number"
+          },
           "purpose": {
             "anyOf": [
               {
@@ -13303,22 +13314,12 @@
               }
             ],
             "title": "Category Label"
-          },
-          "rights_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rights Description"
           }
         },
         "required": [
           "display_name",
           "display_number",
+          "account_number",
           "purpose",
           "note",
           "employment_start",
@@ -13326,8 +13327,7 @@
           "employment_status",
           "employment_state",
           "active",
-          "category_label",
-          "rights_description"
+          "category_label"
         ],
         "title": "OwnerProfileValues",
         "type": "object"

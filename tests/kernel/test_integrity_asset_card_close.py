@@ -1,7 +1,5 @@
 """A frozen asset card is accepted only through its actual voucher-owning batch."""
 
-import json
-
 import pytest
 from close_storage_fixture import replace_stored_manifest, stored_manifest
 from test_asset_batch_reads import prepare_batch_assets
@@ -26,18 +24,19 @@ def test_full_integrity_accepts_frozen_batch_and_card_relationships(closed_compa
 
 
 def test_v1_asset_membership_uses_released_proof_after_current_rules_change(
-    closed_company, tmp_path, monkeypatch
+    closed_company, monkeypatch
 ):
-    from ai_accounting.kernel import asset_batch_models, asset_batches, content_v1
+    from ai_accounting.kernel import asset_batch_models, asset_batches, asset_membership_v1
 
     engine = closed_company.engine
-    contract_dir = tmp_path / "schema_contracts"
-    contract_dir.mkdir()
-    (contract_dir / "content-v1.json").write_text(
-        json.dumps(content_v1.content_contract(engine.store.registry), ensure_ascii=False),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(content_v1, "__file__", str(tmp_path / "content_v1.py"))
+    assert verify(engine)["counts"]["closes"] == 1
+    with engine.store.connection(read_only=True) as connection:
+        owners = [row[0] for row in connection.execute(
+            "SELECT id FROM calculation WHERE kind IN "
+            "('asset_activation_batch','asset_consumption_month') ORDER BY id"
+        )]
+        expected = {owner: asset_batches.frozen_members(connection, owner) for owner in owners}
+    assert owners and all(expected.values())
 
     def current_rule_must_not_run(*_args):
         raise AssertionError("v1 asset membership called a current rule")
@@ -45,15 +44,11 @@ def test_v1_asset_membership_uses_released_proof_after_current_rules_change(
     monkeypatch.setattr(asset_batches, "frozen_members", current_rule_must_not_run)
     monkeypatch.setattr(asset_batches, "digest", current_rule_must_not_run)
     monkeypatch.setattr(asset_batch_models, "OWNER_KINDS", frozenset())
-    content_v1.v1_registry.cache_clear()
-    try:
-        with engine.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
-            result = content_v1.verify_v1_company(connection, engine.store.bundle)
-        assert result["status"] == "verified"
-        assert result["counts"]["closes"] == 1
-    finally:
-        content_v1.v1_registry.cache_clear()
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert {
+            owner: asset_membership_v1.frozen_members(connection, owner) for owner in owners
+        } == expected
 
 
 @pytest.mark.parametrize("changed", ["asset", "digest", "owner"])

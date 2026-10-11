@@ -11,7 +11,7 @@ from test_opening_continuation import book as book  # noqa: F401
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.entities import Entities, EntityProfile
+from ai_accounting.kernel.entities import Entities, PersonProfile
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
@@ -289,7 +289,7 @@ def test_metadata_change_expires_close_preview_without_accounting_mutation(book)
 
 
 def test_employment_dates_describe_management_precision_in_typed_schema():
-    schema = TypeAdapter(EntityProfile).json_schema()
+    schema = TypeAdapter(PersonProfile).json_schema()
     start = schema["properties"]["employment_start"]
     assert start["anyOf"][0]["x-accounting-fact"]["role"] == "management"
     assert start["anyOf"][0]["x-accounting-fact"]["allowed_precision"] == ["month", "day"]
@@ -324,20 +324,19 @@ def test_explicit_employment_state_alone_registers_employee_without_accounting_c
         )
 
 
-def test_historical_profile_missing_employment_state_keeps_original_digest():
+def test_new_person_profile_keeps_explicit_unknown_state_and_exact_digest():
     from ai_accounting.kernel.entities import _profile_record, display_profile
     from ai_accounting.kernel.types import canonical, digest
 
-    content = EntityProfile().model_dump(mode="json")
-    content.pop("employment_state")
-    row = {"id": "synthetic-old", "entity_id": "person", "revision": 1,
+    content = PersonProfile().model_dump(mode="json")
+    row = {"id": "synthetic-profile", "entity_id": "person", "revision": 1,
            "content": canonical(content), "source": "原始合成档案", "evidence_digest": None,
            "digest": digest(["person", 1, content, "原始合成档案", None])}
     selected = _profile_record(row)
-    assert "employment_state" not in selected
+    assert selected["employment_state"] == "unknown"
     assert selected["digest"] == row["digest"].hex()
-    assert display_profile(selected, "employee")["employment_state"] is None
-    schema = EntityProfile.model_json_schema()["properties"]["employment_state"]
+    assert display_profile(selected, "employee")["employment_state"] == "unknown"
+    schema = PersonProfile.model_json_schema()["properties"]["employment_state"]
     assert schema["x-accounting-fact"]["role"] == "management"
     assert schema["x-accounting-fact"]["reusable_sources"] == [
         "owner_confirmation",
@@ -352,14 +351,12 @@ def test_historical_profile_missing_employment_state_keeps_original_digest():
         {
             "kind": "asset",
             "category_label": "办公设备",
-            "rights_description": "自有",
-            "useful_life_basis": "负责人确认的使用计划",
         },
         {
             "kind": "business",
-            "counterparty_id": "supplier",
-            "beneficiary_id": "person",
-            "handler_id": "owner",
+            "display_name": "管理名称",
+            "purpose": "必要补充用途",
+            "note": "必要补充备注",
         },
     ],
 )
@@ -368,11 +365,21 @@ def test_finite_profile_fields_preserve_original_display_capabilities(book, data
     kind = data["kind"]
     if kind != "business":
         accounting_epoch = database_state(engine)["epochs"]["accounting"]
+        details = {key: value for key, value in data.items() if key != "kind"}
+        evidence_digest = None
+        if kind == "fund_account":
+            details.update({"bank_name": "合成银行", "bank_account_number": "0001234567",
+                            "account_holder_name": "合成公司"})
+            evidence_digest = engine.register_evidence(
+                b"synthetic explicit bank identity", "text/plain", "account-identity",
+                request_id="bank-identity-proof",
+            )["digest"]
         saved = Entities(engine).register_entity(
             kind,
-            {key: value for key, value in data.items() if key != "kind"},
+            details,
             account_type="bank" if kind == "fund_account" else None,
             source="明确管理资料",
+            evidence_digest=evidence_digest,
             request_id="profile",
         )
         result = next(
@@ -384,21 +391,15 @@ def test_finite_profile_fields_preserve_original_display_capabilities(book, data
             if key != "kind":
                 assert result[key] == value
     else:
-        references = {
-            key: Entities(engine).register_entity(
-                "organization" if key == "counterparty_id" else "person",
-                {},
-                source="明确管理资料",
-                request_id="profile-" + key,
-            )["entity_id"]
-            for key in ("counterparty_id", "beneficiary_id", "handler_id")
-        }
+        supplier = Entities(engine).register_entity(
+            "organization", {}, source="明确管理资料", request_id="profile-supplier",
+        )["entity_id"]
         save(
             "expense",
             "item",
             {
                 "period": "2026-01",
-                "counterparty_id": references["counterparty_id"],
+                "counterparty_id": supplier,
                 "amount_fen": 1,
                 "expense_class": "administration",
                 "creditor_kind": "supplier",
@@ -410,12 +411,12 @@ def test_finite_profile_fields_preserve_original_display_capabilities(book, data
                 "kind": "business",
                 "entity_id": "item",
                 "source": "明确管理资料",
-                **references,
+                **{key: value for key, value in data.items() if key != "kind"},
             },
             expected_revision=0,
             request_id="profile",
         )
-        assert all(result[key] == value for key, value in references.items())
+        assert all(result[key] == value for key, value in data.items())
     assert database_state(engine)["epochs"]["accounting"] == accounting_epoch
 
 

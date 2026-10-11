@@ -1,8 +1,4 @@
-"""Isolated draft fixtures preserve source ZIPs across forward adjustment.
-
-The shared create_old_company helper explicitly constructs a synthetic draft
-target, independently of the installed production release.
-"""
+"""Current-baseline rollover preserves history and refuses foreign or altered archives."""
 
 import json
 import zipfile
@@ -10,29 +6,38 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from test_development_upgrade import create_old_company, old_business
+from monthly_close_fixture import close_months, ready
 
 from ai_accounting.kernel import backup
-from ai_accounting.kernel.offline_development_upgrade import (
-    INDEX_SOURCE_FINGERPRINT, SOURCE_FINGERPRINT, upgrade_company,
-)
+from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.runtime import connect
+from ai_accounting.kernel.schema_bundle import production_bundle
+from ai_accounting.kernel.storage import Store
 
 
-@pytest.mark.parametrize("after_request", ["after-upgrade", "before-upgrade"])
-@pytest.mark.parametrize("source_fingerprint", [SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT])
-def test_upgraded_draft_rollover_and_restore_keep_identity_and_frozen_history(
-    tmp_path, after_request, source_fingerprint
-):
-    path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
-    )
-    old_business(path, source)
+def current_company(path, *, company_id="synthetic-company", database_id="synthetic-database"):
+    bundle = production_bundle()
+    engine = Engine(Store.create(path, bundle, company_id, "913100000000000001", database_id))
+    proof = engine.register_evidence(
+        b"synthetic no-business close evidence",
+        "text/plain",
+        "close-proof",
+        request_id="source-proof",
+    )["digest"]
+    ready(engine, proof, first="2026-01", last="2026-01")
+    close_months(Periods(engine), proof, first="2026-01", last="2026-01")
+    return path, bundle
+
+
+def test_current_rollover_and_restore_keep_identity_and_retained_history(tmp_path):
+    after_request = "new-request"
+    path, source = current_company(tmp_path / "company.sqlite")
+    target = source
     output = tmp_path / "backups"
     initial = backup.create_portable(path, output, _bundle=source, request_id="before-upgrade")
     original_zip = Path(initial["path"]).read_bytes()
     with closing(connect(path)) as connection:
-        upgrade_company(connection, target)
         history = [tuple(row) for row in connection.execute("SELECT * FROM schema_history")]
         adjustments = [
             tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")
@@ -51,9 +56,6 @@ def test_upgraded_draft_rollover_and_restore_keep_identity_and_frozen_history(
     previous = output / (result["identity"]["taxpayer_id"] + ".previous.finance-company.zip")
     assert previous.read_bytes() == original_zip
     assert backup.verify_portable(previous, _bundle=source)["identity"] == result["identity"]
-    with pytest.raises(backup.BackupError) as source_only:
-        backup.verify_portable(previous, _bundle=target)
-    assert source_only.value.code == "backup_schema_unsupported"
     checked = backup.verify_portable(result["path"], _bundle=target)
     assert checked["verification"]["status"] == "verified"
     restored = tmp_path / "restored.sqlite"
@@ -76,19 +78,15 @@ def test_upgraded_draft_rollover_and_restore_keep_identity_and_frozen_history(
     assert replay["idempotent_replay"] is True
 
 
-@pytest.mark.parametrize("source_fingerprint", [SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT])
-def test_interrupted_upgraded_rollover_verifies_historical_pending_zip(
-    tmp_path, monkeypatch, source_fingerprint,
+def test_interrupted_current_rollover_verifies_pending_zip(
+    tmp_path,
+    monkeypatch,
 ):
-    path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
-    )
-    old_business(path, source)
+    path, source = current_company(tmp_path / "company.sqlite")
+    target = source
     output = tmp_path / "backups"
     initial = backup.create_portable(path, output, _bundle=source, request_id="old")
     original_zip = Path(initial["path"]).read_bytes()
-    with closing(connect(path)) as connection:
-        upgrade_company(connection, target)
     replace_archive = backup._replace_archive
 
     def interrupted(source, destination, **kwargs):
@@ -108,10 +106,10 @@ def test_interrupted_upgraded_rollover_verifies_historical_pending_zip(
     assert not list(output.glob("*.pending-previous*"))
 
 
-def test_historical_rollover_cannot_replace_another_company_archive(tmp_path):
-    path, source, target = create_old_company(tmp_path / "company.sqlite")
-    old_business(path, source)
-    other, _, _ = create_old_company(
+def test_current_rollover_cannot_replace_another_company_archive(tmp_path):
+    path, source = current_company(tmp_path / "company.sqlite")
+    target = source
+    other, _ = current_company(
         tmp_path / "other.sqlite",
         company_id="other-company",
         database_id="other-database",
@@ -119,8 +117,6 @@ def test_historical_rollover_cannot_replace_another_company_archive(tmp_path):
     output = tmp_path / "backups"
     initial = backup.create_portable(other, output, _bundle=source, request_id="other")
     original_zip = Path(initial["path"]).read_bytes()
-    with closing(connect(path)) as connection:
-        upgrade_company(connection, target)
     with pytest.raises(backup.BackupError) as rejected:
         backup.create_portable(path, output, _bundle=target, request_id="new", rollover=True)
     assert rejected.value.code == "backup_identity_mismatch"
@@ -134,10 +130,9 @@ def test_historical_rollover_cannot_replace_another_company_archive(tmp_path):
         ("database_digest", "backup_content_invalid"),
     ],
 )
-def test_retained_source_archive_requires_exact_declared_format_and_content(
-    tmp_path, problem, code
-):
-    path, source, target = create_old_company(tmp_path / "company.sqlite")
+def test_retained_archive_requires_exact_current_format_and_content(tmp_path, problem, code):
+    path, source = current_company(tmp_path / "company.sqlite")
+    target = source
     output = tmp_path / "backups"
     initial = backup.create_portable(path, output, _bundle=source, request_id="old")
     archive_path = Path(initial["path"])
@@ -153,8 +148,6 @@ def test_retained_source_archive_requires_exact_declared_format_and_content(
         for name, content in files.items():
             archive.writestr(name, content)
     rejected_zip = archive_path.read_bytes()
-    with closing(connect(path)) as connection:
-        upgrade_company(connection, target)
     with pytest.raises(backup.BackupError) as rejected:
         backup.create_portable(path, output, _bundle=target, request_id="new", rollover=True)
     assert rejected.value.code == code

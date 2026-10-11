@@ -316,7 +316,9 @@ def _summary(balances, manifest):
     return result
 
 
-def _verify_account_balances(connection, manifest, definitions, balances):
+def _verify_account_balances(
+    connection, manifest, definitions, balances, *, require_index_marker=True
+):
     """Compare each exact account to the verified period-balance source/freeze."""
     if not definitions:
         return
@@ -329,6 +331,7 @@ def _verify_account_balances(connection, manifest, definitions, balances):
             YearMonth(manifest["period"]).ordinal,
             category=("bank", "cash", "platform"),
             keys={item["entity_id"] for item in definitions},
+            require_index_marker=require_index_marker,
         )
     }
     account_types = {item["entity_id"]: item["account_type"] for item in definitions}
@@ -359,7 +362,9 @@ def build_fund_close_snapshot(connection, manifest, *, previous_manifest=None):
     return require_fund_close_snapshot(result)
 
 
-def verify_fund_close_snapshot(connection, manifest, *, previous_manifest=None):
+def verify_fund_close_snapshot(
+    connection, manifest, *, previous_manifest=None, require_index_marker=True
+):
     """Reprove only exact immutable definitions and adopted line IDs from this close."""
     if manifest["format_version"] == 4:
         return
@@ -382,6 +387,8 @@ def verify_fund_close_snapshot(connection, manifest, *, previous_manifest=None):
     if adjustments != saved["adjustments"]:
         _invalid("frozen_fund_identity_adjustment_mismatch")
     balances = _balances(connection, manifest, definitions, sources, previous_manifest, adjustments)
-    _verify_account_balances(connection, manifest, definitions, balances)
+    _verify_account_balances(
+        connection, manifest, definitions, balances, require_index_marker=require_index_marker
+    )
     if balances != saved["balances"] or _summary(balances, manifest) != saved["summary"]:
         _invalid("frozen_fund_balance_source_mismatch")

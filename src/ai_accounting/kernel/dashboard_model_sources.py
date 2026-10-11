@@ -20,9 +20,70 @@ def _invalid():
                        component="dashboard_read_model")
 
 
+class ModelFundSourceReads:
+    """Exact checked model hits for fund attribution in one owned snapshot.
+
+    This is not a full recursive source lease. Any ancestor absent from the
+    displayed batch retains the independent fund attribution reader.
+    """
+
+    def __init__(self, reads, calculations, facts, outcomes):
+        self.reads = reads
+        self.connection = reads.connection
+        self.token = reads._snapshot_token
+        self.changes = self.connection.total_changes
+        self.calculations = calculations
+        self.facts = facts
+        self.outcomes = outcomes
+        self._require_source()
+
+    def _require_source(self):
+        from .query_reads import _owns_current_selector_snapshot
+
+        if (not _owns_current_selector_snapshot(self.reads, self.connection)
+                or self.reads._snapshot_token is not self.token
+                or self.connection.total_changes != self.changes):
+            raise _invalid()
+
+    def raw_facts(self, identifiers):
+        self._require_source()
+        from .fund_line_details import _exact_fact
+
+        result = {}
+        for ident in set(identifiers):
+            row = self.facts.get(ident)
+            if row is None:
+                header = self.connection.execute(
+                    "SELECT s.kind FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                    "WHERE f.id=?", (ident,),
+                ).fetchone()
+                if header is None:
+                    raise _invalid()
+                result[ident] = {"kind": header["kind"],
+                                 "data": _exact_fact(self.connection, header["kind"], ident)}
+            else:
+                result[ident] = {"kind": row["kind"], "data": row["data"]}
+        return result
+
+    def raw_calculations(self, identifiers):
+        self._require_source()
+        from .fund_line_details import _source
+
+        result = {}
+        for ident in set(identifiers):
+            row = self.calculations.get(ident)
+            if row is None:
+                row, outcome, fact = _source(self.connection, ident)
+            else:
+                outcome, fact = self.outcomes[ident], self.facts[row["fact_id"]]["data"]
+            result[ident] = {**dict(row), "outcome": outcome, "fact_data": fact}
+        return result
+
+
 def verify_model_sources(
     engine, connection, *, calculation_ids=(), fact_ids=(), through_period=None,
     normalized_lines=None, expected_sources=None, expected_facts=None,
+    _fund_sources=None, _reads=None,
 ):
     """Check exact bodies, seals and input identities after model authentication.
 
@@ -100,6 +161,11 @@ def verify_model_sources(
     _verify_current_hit_adoptions(connection, calculations, through_period=through_period)
     if normalized_lines is not None:
         normalized_lines.update(checked_lines)
+    if _fund_sources is not None:
+        from .query_reads import _owns_current_selector_snapshot
+
+        if _owns_current_selector_snapshot(_reads, connection):
+            _fund_sources.append(ModelFundSourceReads(_reads, calculations, facts, outcomes))
     return outcomes
 
 

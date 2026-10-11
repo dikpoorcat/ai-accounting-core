@@ -122,7 +122,9 @@ def test_batch_voucher_and_asset_cards_share_exact_amounts_without_double_counti
     assert not cards["checking"]
     assert {"card_net_fen", "reconciled"}.isdisjoint(cards)
     brief = dashboard.brief("2026-03")["data"]
-    owner_vouchers = brief["collections"]["vouchers"]
+    owner_vouchers = dashboard.brief("2026-03", section="vouchers")["data"]["collections"][
+        "vouchers"
+    ]
     assert owner_vouchers["page"]["total_count"] == brief["voucher_count"]
     assert owner_vouchers["page"]["returned_count"] == len(owner_vouchers["items"])
     assert not owner_vouchers["page"]["has_more"]

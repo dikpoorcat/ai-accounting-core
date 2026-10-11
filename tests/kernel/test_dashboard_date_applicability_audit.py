@@ -79,9 +79,9 @@ def test_hidden_employee_day_and_month_boundaries_and_explicit_states(book, monk
             response = Dashboard(engine).employees("2026-09", employee_filter="all", limit=100)
         selected = {item["employee_id"]: item["employment_state"]
                     for item in response["data"]["collections"]["employees"]["items"]}
-        assert selected["hidden-day"] == ("unknown" if day < "2026-10-11" else "departed")
-        assert selected["hidden-month"] == ("unknown" if day < "2026-11-01" else "departed")
-        assert selected["hidden-active"] == ("regular" if day < "2026-10-11" else "unknown")
+        assert selected["hidden-day"] == "unknown"
+        assert selected["hidden-month"] == "unknown"
+        assert selected["hidden-active"] == "unknown"
         assert selected["explicit"] == "unpaid_leave"
     first = observed["2026-10-10"]
     last = observed["2026-10-11"]
@@ -91,7 +91,7 @@ def test_hidden_employee_day_and_month_boundaries_and_explicit_states(book, monk
     last_people = last["employees"]["data"]["collections"]["employees"]
     assert first_people["items"] == last_people["items"]
     assert all(item["employee_id"] != "hidden-active" for item in first_people["items"])
-    assert first_people["page"]["filtered_count"] == 23
+    assert first_people["page"]["filtered_count"] == 22
     assert last_people["page"]["filtered_count"] == 22
     assert observed["2026-10-11"] == observed["2026-11-01"]
     assert state(engine) == before

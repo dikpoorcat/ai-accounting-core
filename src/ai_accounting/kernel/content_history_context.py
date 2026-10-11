@@ -6,6 +6,7 @@ and ordinary service reads continue to use the active package implementation.
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import cache
 
 from . import history_encoding_v1, types
 
@@ -24,6 +25,22 @@ def historical_content(version: int):
 def source_encoding():
     """Choose the fixed v1 source wire format only inside historical verification."""
     return history_encoding_v1 if _version.get() == 1 else types
+
+
+@cache
+def _current_fact_registry():
+    from .service import default_registry
+
+    return default_registry()
+
+
+def source_fact_registry():
+    """Choose the declared saved fact grammar for source verification only."""
+    if _version.get() == 1:
+        from .content_v1 import v1_registry
+
+        return v1_registry()
+    return _current_fact_registry()
 
 
 def source_canonical(value):

@@ -10,6 +10,23 @@ ALL_LANES = frozenset({"accounting", "material", "management"})
 NO_PERIOD_LIMIT = 119988
 
 
+def select_fact_dependencies(versions, select_many, reads_for):
+    """Batch both declared stages in the same caller-owned transaction."""
+    versions = tuple(versions)
+    first = {read for version in versions for read in reads_for(version)}
+    selections = select_many(sorted(first, key=repr))
+    additional = {
+        read for version in versions for read in reads_for(version, selections)
+    } - first
+    for read in additional:
+        validate_read(read)
+        if read.key == "*" or len(additional) > 64 * max(1, len(versions)):
+            raise KernelError("unbounded_read", "第二阶段只允许有界的精确身份依赖")
+    if additional:
+        selections.update(select_many(sorted(additional, key=repr)))
+    return selections
+
+
 def scope_keys(source: str, fact: Fact, subject_id: str) -> frozenset[str]:
     """Return the persisted scope contract for one source kind.
 

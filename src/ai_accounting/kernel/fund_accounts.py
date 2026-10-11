@@ -16,7 +16,7 @@ from .types import evidence_digest_bytes
 PARENTS = {"bank": "1002", "cash": "1001", "platform": "1012"}
 IDENTITY_FIELDS = {
     "bank": ("bank_name", "bank_account_number", "account_holder_name"),
-    "cash": ("display_name",),
+    "cash": (),
     "platform": ("provider_name", "account_identifier", "account_holder_name"),
 }
 SOURCES = [
@@ -44,10 +44,10 @@ def _identity_field(meaning):
 
 @lru_cache(maxsize=1)
 def fund_profile_models():
-    # EntityProfile imports this module only at the registration boundary.
-    from .entities import EntityProfile
+    # Fund identities and management profiles have separate persisted sources.
+    from .entities import FundAccountProfile
 
-    class BankAccountProfile(EntityProfile):
+    class BankAccountProfile(FundAccountProfile):
         bank_name: str = _identity_field("fund_account_bank_name")
         bank_account_number: str = _identity_field("complete_company_bank_account_number")
         account_holder_name: str = _identity_field("explicit_account_holder")
@@ -62,7 +62,7 @@ def fund_profile_models():
         def named(cls, value):
             return require_text(value)
 
-    class PlatformAccountProfile(EntityProfile):
+    class PlatformAccountProfile(FundAccountProfile):
         provider_name: str = _identity_field("payment_platform_provider")
         account_identifier: str = _identity_field("complete_platform_account_identifier")
         account_holder_name: str = _identity_field("explicit_account_holder")
@@ -77,8 +77,14 @@ def fund_profile_models():
         def named(cls, value):
             return require_text(value)
 
-    class CashAccountProfile(EntityProfile):
-        display_name: str = _identity_field("explicit_managed_cash_account")
+    class CashAccountProfile(FundAccountProfile):
+        display_name: str = Field(
+            min_length=1, max_length=200,
+            json_schema_extra={"x-accounting-fact": {
+                "role": "management", "meaning": "explicit_managed_cash_account_label",
+                "reusable_sources": ["owner_confirmation"], "allowed_precision": ["exact"],
+            }},
+        )
 
         @field_validator("display_name")
         @classmethod
@@ -144,6 +150,13 @@ def validate_fund_profile(account_type, data):
             for error in exc.errors(include_input=False, include_url=False)
             if error["loc"] and error["loc"][0] in IDENTITY_FIELDS[account_type]
         ]
+        if account_type == "cash":
+            issues.extend(
+                {**identity_issue("data.display_name", "现金账户登记需要明确管理名称"),
+                 "semantics": "management", "reusable_sources": ["owner_confirmation"]}
+                for error in exc.errors(include_input=False, include_url=False)
+                if error["loc"] and error["loc"][0] == "display_name"
+            )
         if issues:
             raise NeedsInformation(issues) from exc
         raise
@@ -272,13 +285,16 @@ subject_for_account = require_fund_account
 def fund_account_definitions(connection, entity_ids=None):
     if not has_fund_definitions(connection):
         return []
-    rows = connection.execute("SELECT * FROM fund_account_definition ORDER BY entity_id")
-    selected = None if entity_ids is None else set(entity_ids)
-    return [
-        _identity_history(connection, _record(row))[-1]
-        for row in rows
-        if selected is None or row["entity_id"] in selected
-    ]
+    identifiers = None if entity_ids is None else sorted(set(entity_ids))
+    if identifiers == []:
+        return []
+    sql = "SELECT * FROM fund_account_definition"
+    parameters = ()
+    if identifiers is not None:
+        sql += " WHERE entity_id IN(SELECT value FROM json_each(?))"
+        parameters = (canonical(identifiers),)
+    rows = connection.execute(sql + " ORDER BY entity_id", parameters)
+    return [_identity_history(connection, _record(row))[-1] for row in rows]
 
 
 def _revision_payload(entity_id, revision, parent_digest, identity, key, source, evidence):
@@ -302,6 +318,8 @@ def _identity_history(connection, original):
     ):
         try:
             identity = source_json_loads(row["identity"])
+            if original["account_type"] == "cash":
+                raise ValueError("cash labels do not belong to identity history")
             _, normalized = account_identity(original["account_type"], identity)
             evidence = bytes(row["evidence_digest"]).hex()
             parent = bytes(row["parent_digest"]).hex()
@@ -411,6 +429,8 @@ def correct_fund_identity(
     connection, entity_id, account_type, data, *, expected_identity_digest, source, evidence_digest
 ):
     """Append a sourced recording correction; all business and subject identities stay fixed."""
+    if account_type not in ("bank", "platform"):
+        raise ValueError("cash account names are changed through update_entity_profile")
     require_fund_source(source, evidence_digest)
     _, identity = account_identity(account_type, data)
     evidence = evidence_digest_bytes(evidence_digest)

@@ -35,7 +35,9 @@ HOUSING = Matter("housing", "公积金", "payroll", "payroll_payables")
 CONTRIBUTION_COMPONENTS = frozenset({
     "employee_social", "employer_social", "employee_housing", "employer_housing",
 })
-PAYMENT_KINDS = frozenset({"payment", "cash_payment", "platform_payment", "payroll_reserve_payment"})
+PAYMENT_KINDS = frozenset({
+    "payment", "cash_payment", "platform_payment", "payroll_reserve_payment",
+})
 
 
 def owner_uses_standard_text(kind, *, components=(), matter_key=None):

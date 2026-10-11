@@ -303,3 +303,75 @@ def test_historical_fund_sources_do_not_apply_current_fact_models(opening_book, 
             connection.execute("PRAGMA query_only=OFF")
             with pytest.raises(KernelError, match="只读事务"):
                 reads.raw_facts((selected["opening_lines"][0]["source_fact_id"],))
+
+
+@pytest.mark.parametrize(
+    "account_type,parent,kind,account_field,identity,fallback",
+    [
+        (
+            "bank", "1002", "funding", "bank_account_id",
+            {"bank_name": "Synthetic bank", "bank_account_number": "1234567890123456",
+             "account_holder_name": "Formal holder"},
+            "Synthetic bank（尾号3456）",
+        ),
+        (
+            "platform", "1012", "platform_funding", "platform_account_id",
+            {"provider_name": "Synthetic platform", "account_identifier": "platform-123",
+             "account_holder_name": "Formal holder"},
+            "Synthetic platform—platform-123",
+        ),
+        ("cash", "1001", "cash_funding", "cash_account_id", {}, "现金账户"),
+    ],
+)
+def test_fund_display_keeps_identity_separate_from_missing_management_name(
+    opening_book, account_type, parent, kind, account_field, identity, fallback,
+):
+    from ai_accounting.kernel.account_definitions import ACCOUNT_NAMES
+    from ai_accounting.kernel.entities import Entities
+    from ai_accounting.kernel.fund_accounts import require_fund_account
+
+    engine, save, publish, _, proof = opening_book
+    entities = Entities(engine)
+    account = entities.register_entity(
+        "fund_account", {"display_name": "Managed account alias", **identity},
+        account_type=account_type, source="Synthetic account document",
+        evidence_digest=proof, request_id="display-account",
+    )["entity_id"]
+    funding = {
+        "period": "2026-09", "actual_date": "2026-09-01", "owner_id": "owner",
+        account_field: account, "funding_kind": "capital", "amount_fen": 700,
+    }
+    if account_type == "platform":
+        save("platform_movement", "source-row", {
+            "period": "2026-09", "actual_date": "2026-09-01",
+            "platform_account_id": account, "direction": "inflow", "amount_fen": 700,
+            "source_evidence_digest": proof, "source_location": "synthetic platform row 1",
+        })
+        funding["movement_ids"] = ["source-row"]
+    save(kind, "capital", funding)
+    publish(*(("source-row", "capital") if account_type == "platform" else ("capital",)))
+
+    def displayed_account(expected_name):
+        with engine.store.connection(read_only=True) as connection:
+            version = connection.execute("SELECT version_id FROM voucher_current").fetchone()[0]
+            assert require_fund_account(connection, account)["identity"] == identity
+            verified = details.verify_fund_line_details(
+                connection, version_ids=[version], calculation_ids=[],
+            )["lines"]
+            assert len(verified) == 1 and verified[0]["entity_id"] == account
+            lines = [dict(row) for row in connection.execute(
+                "SELECT account,debit,credit,cashflow FROM voucher_line "
+                "WHERE version_id=? ORDER BY line_no", (version,),
+            )]
+            assert lines[0]["account"] == parent and lines[0]["debit"] == 700
+            rendered = details.display_fund_lines(connection, version, lines)
+            assert rendered[0]["account_name"] == ACCOUNT_NAMES[parent] + "—" + expected_name
+            assert "Formal holder" not in rendered[0]["account_name"]
+
+    displayed_account("Managed account alias")
+    for revision, profile in enumerate(({"display_name": None}, {}), start=1):
+        entities.update_entity_profile(
+            account, profile, source="Synthetic management name withdrawal",
+            expected_revision=revision, request_id=f"display-profile-{revision}",
+        )
+        displayed_account(fallback)

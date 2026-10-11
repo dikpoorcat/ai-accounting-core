@@ -62,7 +62,7 @@ def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_ro
         "CREATE INDEX subject_kind ON subject(kind,id);"
         "CREATE TABLE fact_current(subject_id TEXT PRIMARY KEY,fact_id TEXT UNIQUE);"
         "CREATE TABLE fact_material_resolution_v2(revision_id TEXT PRIMARY KEY,source_id TEXT);"
-        "CREATE TABLE fact_material_resolution_v2_links(revision_id TEXT,fact_id TEXT);"
+        "CREATE TABLE fact_material_resolution_v2_links(revision_id TEXT,calculation_id TEXT);"
         + materials.MATERIAL_READ_INDEX_DDL["material_resolution_v2"]
     )
     subjects = [(f"s-{number}", "material_resolution_v2") for number in range(12000)]
@@ -127,7 +127,15 @@ class UncachedReads:
             materials.MaterialPeriodAllocation.kind,
             materials.MaterialGroupResolution.kind,
         }:
-            return tuple(item for item in self.current_facts(kind) if scope in item.fact.scopes())
+            return tuple(
+                item for item in self.current_facts(kind)
+                if scope in (
+                    set(item.fact.scopes())
+                    | set(materials.material_link_scopes(
+                        self.connection, item.fact, registry=self.registry
+                    ))
+                )
+            )
         return materials._facts(self.connection, self.registry, kind, scope)
 
     def current_facts(self, kind):
@@ -137,6 +145,11 @@ class UncachedReads:
             (kind,),
         ).fetchall()
         return tuple(self.fact(row[0]) for row in rows)
+
+    def links(self, links):
+        return materials.resolve_material_links(
+            self.connection, links, registry=self.registry
+        )
 
 
 def full_check(company, period):
@@ -281,14 +294,15 @@ def test_material_check_shares_fact_decoding_with_other_snapshot_consumers(tmp_p
 
     monkeypatch.setattr(Store, "facts", counted)
     with QueryReads.snapshot(company.engine) as reads:
-        reads.fact_versions([source["fact_id"], link["fact_id"]])
+        expense_fact_id = company.engine.store.current_fact(reads.connection, "expense").id
+        reads.fact_versions([source["fact_id"], expense_fact_id])
         actual = materials.check_completeness(
             reads.connection, YearMonth("2026-01").ordinal, company.engine.store.registry,
             _query_reads=reads,
         )
         assert actual == expected
         assert set(loaded.values()) == {1}
-        assert reads.fact_version(link["fact_id"]).id == link["fact_id"]
+        assert reads.fact_version(expense_fact_id).id == expense_fact_id
         assert set(loaded.values()) == {1}
 
 

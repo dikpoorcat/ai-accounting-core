@@ -992,8 +992,9 @@ def _verify_candidate_materials(connection, candidate: Mapping[str, Any]) -> Non
             or connection.execute(
                 "SELECT 1 FROM fact_material_resolution_v2 r "
                 "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                "JOIN calculation linked ON linked.id=l.calculation_id "
                 "WHERE r.revision_id=? AND r.source_id=? AND r.source_fact_id=? "
-                "AND r.location=? AND l.fact_id=?",
+                "AND r.location=? AND linked.fact_id=?",
                 (
                     resolution,
                     location.source_id,
@@ -1017,14 +1018,15 @@ def _material_locations(connection, fact_ids: Iterable[str]) -> dict[str, list[d
         return result
     payload = canonical(identifiers)
     rows = connection.execute(
-        "SELECT l.fact_id,r.revision_id resolution_fact_id,r.source_id,r.source_fact_id,"
+        "SELECT linked.fact_id,r.revision_id resolution_fact_id,r.source_id,r.source_fact_id,"
         "r.location,s.evidence_digest "
         "FROM fact_material_resolution_v2_links l "
+        "JOIN calculation linked ON linked.id=l.calculation_id "
         "JOIN fact_current c ON c.fact_id=l.revision_id "
         "JOIN fact_material_resolution_v2 r ON r.revision_id=c.fact_id "
         "JOIN fact_material_source_v2 s ON s.revision_id=r.source_fact_id "
-        "WHERE l.fact_id IN (SELECT value FROM json_each(?)) "
-        "AND r.treatment='recognize' ORDER BY l.fact_id,r.source_id,r.location",
+        "WHERE linked.fact_id IN (SELECT value FROM json_each(?)) "
+        "AND r.treatment='recognize' ORDER BY linked.fact_id,r.source_id,r.location",
         (payload,),
     )
     for row in rows:
@@ -1147,10 +1149,11 @@ def _strong_location_pair_fact_ids(connection, rows):
             "locations AS ("
             "SELECT scope.fact_id,scope.role,src.evidence_digest evidence_digest,r.location "
             "FROM fact_material_resolution_v2_links l "
+            "CROSS JOIN calculation linked ON linked.id=l.calculation_id "
             "CROSS JOIN fact_current c ON c.fact_id=l.revision_id "
             "CROSS JOIN fact_material_resolution_v2 r ON r.revision_id=c.fact_id "
             "CROSS JOIN fact_material_source_v2 src ON src.revision_id=r.source_fact_id "
-            "CROSS JOIN scoped scope ON scope.fact_id=l.fact_id "
+            "CROSS JOIN scoped scope ON scope.fact_id=linked.fact_id "
             "WHERE r.treatment='recognize' UNION ALL "
             "SELECT scope.fact_id,scope.role,"
             "coalesce(src.evidence_digest,CASE WHEN json_valid(l.location) "
@@ -1636,12 +1639,14 @@ def _review_pair_identity(connection, proposed, candidate):
                 links = [
                     {**dict(link), "fact_digest": link["fact_digest"].hex()}
                     for link in connection.execute(
-                        "SELECT l.subject_id,l.fact_kind,l.amount_field,l.amount_fen,"
-                        "l.recognition_period,f.digest AS fact_digest "
+                        "SELECT linked.subject_id,linked.kind fact_kind,"
+                        "l.amount_field,l.amount_fen,"
+                        "linked.period recognition_period,f.digest AS fact_digest "
                         "FROM fact_material_resolution_v2_links l "
-                        "JOIN fact_revision f ON f.id=l.fact_id WHERE l.revision_id=? "
-                        "ORDER BY l.subject_id,l.fact_kind,l.amount_field,l.amount_fen,"
-                        "l.recognition_period",
+                        "JOIN calculation linked ON linked.id=l.calculation_id "
+                        "JOIN fact_revision f ON f.id=linked.fact_id WHERE l.revision_id=? "
+                        "ORDER BY linked.subject_id,linked.kind,l.amount_field,l.amount_fen,"
+                        "linked.period",
                         (resolution_id,),
                     )
                 ]
@@ -1772,7 +1777,8 @@ class DuplicateCandidates:
             <= self.store.registry.models.keys()
         ):
             scopes.append(
-                "SELECT l.fact_id FROM fact_material_resolution_v2_links l "
+                "SELECT linked.fact_id FROM fact_material_resolution_v2_links l "
+                "JOIN calculation linked ON linked.id=l.calculation_id "
                 "JOIN fact_current mc ON mc.fact_id=l.revision_id "
                 "JOIN fact_material_resolution_v2 r ON r.revision_id=mc.fact_id "
                 "JOIN fact_material_source_v2 ms ON ms.revision_id=r.source_fact_id "

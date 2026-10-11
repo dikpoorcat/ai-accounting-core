@@ -4,6 +4,7 @@ import pytest
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_owner_frozen_scope import amend_activation
 from test_asset_owner_frozen_scope import owner_book as _owner_book
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage, verify
 from test_payroll_corrections import Company
 
@@ -54,9 +55,16 @@ def assert_consumers_reject(engine, subject):
             assert ("asset_owner_identity_selection", MARCH) not in (
                 snap.reads._report_snapshot_cache
             )
+    with raw_read():
+        for consume in (
+            lambda: Dashboard(engine).assets("2026-03", preparation="deferred"),
+            lambda: Dashboard(engine).assets(
+                "2026-03", asset_id="computer", preparation="deferred"
+            ),
+        ):
+            with pytest.raises(KernelError):
+                consume()
     for consume in (
-        lambda: Dashboard(engine).assets("2026-03", preparation="deferred"),
-        lambda: Dashboard(engine).assets("2026-03", asset_id="computer", preparation="deferred"),
         lambda: BusinessQueries(engine).business_status(subject, "2026-03"),
         lambda: verify(engine),
     ):

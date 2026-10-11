@@ -29,6 +29,7 @@ _CHINA = timezone(timedelta(hours=8))
 _PROFILE_FIELDS = (
     "display_name",
     "display_number",
+    "account_number",
     "purpose",
     "note",
     "employment_start",
@@ -37,15 +38,10 @@ _PROFILE_FIELDS = (
     "employment_state",
     "active",
     "category_label",
-    "rights_description",
-    "useful_life_basis",
-    "counterparty_id",
-    "beneficiary_id",
-    "handler_id",
 )
 _PAYROLL_KINDS = {"payroll", "payroll_bounded"}
 _PAYROLL_CONFIRMATION_KINDS = {
-    "monthly_plan": {"payroll_plan_v2", "payroll_plan_bounded"},
+    "monthly_plan": {"payroll_plan_v2"},
     "explicit_no_change": {"payroll_no_change_v2"},
 }
 

@@ -8,7 +8,7 @@ from monthly_close_fixture import ready
 from test_workflow import setup_company
 from test_worklist import view
 
-from ai_accounting.kernel.backup import run_backup_jobs
+from ai_accounting.kernel.backup import portable_result_verified, run_backup_jobs
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.worklist import Worklist
 
@@ -67,8 +67,25 @@ def test_actual_portable_worker_result_is_verified_without_export_sha(
         (("latest_closed_period",), "2026-02"),
         (("evidence_count",), True),
         (("verification", "status"), "unverified"),
+        (("verification", "extra"), "unsupported"),
         (("verification", "limitations"), ["missing source"]),
         (("verification", "coverage", "read_indexes"), "not_checked"),
+        (("verification", "coverage", "extra"), "verified"),
+        (("verification", "coverage", "dashboard_read_models"), None),
+        (("verification", "coverage", "dashboard_read_models"), {}),
+        (("verification", "coverage", "dashboard_read_models"), {"status": "not_applicable"}),
+        (("verification", "coverage", "dashboard_read_models", "status"), "unverified"),
+        (("verification", "coverage", "dashboard_read_models", "derived_content"), "not_checked"),
+        (("verification", "coverage", "dashboard_read_models", "extra"), "unsupported"),
+        (("verification", "coverage", "dashboard_read_models", "receipts"), True),
+        (("verification", "coverage", "dashboard_read_models", "receipts"), -1),
+        (("verification", "coverage", "dashboard_read_models", "receipts"), "7"),
+        (("verification", "coverage", "dashboard_read_models", "receipts"), 7.0),
+        (("verification", "coverage", "dashboard_read_models", "current_compared"), True),
+        (("verification", "coverage", "dashboard_read_models", "current_compared"), -1),
+        (("verification", "coverage", "dashboard_read_models", "current_compared"), "1"),
+        (("verification", "coverage", "dashboard_read_models", "current_compared"), 1.0),
+        (("verification", "coverage", "dashboard_read_models", "current_compared"), 1000000),
         (("verification", "counts", "evidence"), -1),
         (("verification", "counts", "evidence"), 1000000),
         (("verification", "counts", "facts"), True),
@@ -93,3 +110,19 @@ def test_damaged_portable_completion_proof_is_not_verified(completed_backup, pat
     assert item["verified_when_succeeded"] is False
     assert item["result_issue"]["field"] == "job.result"
     assert item["current_file_availability"] == "not_checked"
+
+
+@pytest.mark.parametrize(
+    "field", [None, "status", "receipts", "current_compared", "derived_content"]
+)
+def test_current_portable_proof_requires_complete_dashboard_model_verification(
+    completed_backup, field
+):
+    _, _, original_result = completed_backup
+    result = deepcopy(original_result)
+    coverage = result["verification"]["coverage"]
+    if field is None:
+        del coverage["dashboard_read_models"]
+    else:
+        del coverage["dashboard_read_models"][field]
+    assert portable_result_verified(result) is False

@@ -167,8 +167,10 @@ def test_same_recipient_tax140307_and_social619000_remain_two_matters(opening_bo
 
 def test_same_voucher_many_matters_conserve_money_and_exact_scope(opening_book):
     dashboard = formal_payment_samples(opening_book)
+    profile(dashboard.engine, "business", "combined", 1,
+            purpose="原单用途说明", note="原单业务备注；原单管理备注")
     Periods(dashboard.engine).management(
-        "combined", note="原单管理备注", payment_period=None, payment_category=None,
+        "combined", payment_period=None, payment_category=None,
         expected_revision=0, request_id="combined-management-note",
     )
     before = dashboard.engine.ledger("2026-01")
@@ -186,7 +188,7 @@ def test_same_voucher_many_matters_conserve_money_and_exact_scope(opening_book):
         if member["title"] in {"缴纳社保", "缴纳公积金"}:
             assert "原单" not in member["description"]
         else:
-            assert "整单说明：原单事项说明；原单保留备注；原单管理备注" in member["description"]
+            assert "整单说明：原单用途说明；原单业务备注；原单管理备注" in member["description"]
         vouchers = page["data"]["collections"]["vouchers"]["items"]
         assert len(vouchers) == 1
         versions.add(vouchers[0]["voucher_version_id"])
@@ -236,8 +238,9 @@ def test_payment_member_keeps_management_only_note_without_changing_scope(book):
         "2026-09", section="activity", group_key=group["group_key"]
     )["data"]["collections"]["members"]["items"][0]
     ledger = engine.ledger("2026-09")
+    profile(engine, "business", "paid", note="仅管理资料保留的付款备注")
     Periods(engine).management(
-        "paid", note="仅管理资料保留的付款备注", payment_period=None, payment_category=None,
+        "paid",  payment_period=None, payment_category=None,
         expected_revision=0, request_id="payment-management-only-note",
     )
     member = dashboard.brief_group(

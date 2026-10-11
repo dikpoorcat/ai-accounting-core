@@ -6,6 +6,7 @@ import pytest
 from close_storage_fixture import replace_stored_manifest, stored_manifest
 from stage9_metrics import measure_work
 from test_dashboard_metadata import profile
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_owner_asset_card_page_scope import cards as cards_fixture
 from test_owner_asset_metadata_scope import closed_consumption
@@ -133,8 +134,12 @@ def test_failed_discovery_preserves_only_prior_success_and_retries_actual_source
             assert not reads._verified_source_contents
 
 
-def test_asset_page_profiles_are_batched_after_twenty_next_and_exact_selection(cards, monkeypatch):
+def test_asset_name_sort_and_page_profiles_bind_twenty_next_and_exact_selection(cards, monkeypatch):
     engine, identities = cards
+    names = {ident: f"明确资产 {index}" for index, ident in enumerate(identities)}
+    # The same Chinese prefix has identical pinyin; its numeric suffix sorts
+    # lexically, independently of the asset ID and the production sort helper.
+    ordered = sorted(identities, key=lambda ident: (names[ident], ident))
     selected_profiles = []
     original = DashboardMetadata.prime_profiles
 
@@ -143,40 +148,55 @@ def test_asset_page_profiles_are_batched_after_twenty_next_and_exact_selection(c
             selected_profiles.append(set(identifiers))
         return original(metadata, kind, identifiers)
 
+    for ident in identities:
+        profile(engine, "asset", ident, display_name=names[ident])
+    # Observe only the native read, after profile writes finish model production.
     monkeypatch.setattr(DashboardMetadata, "prime_profiles", prime)
-    for index, ident in enumerate(identities):
-        profile(engine, "asset", ident, display_name=f"明确资产 {index}")
+    selected_profiles.clear()
     dashboard = Dashboard(engine)
-    work, first = measure_work(engine, lambda: dashboard.assets("2026-03"))
+    with raw_read():
+        work, first = measure_work(engine, lambda: dashboard.assets("2026-03"))
     first_page = first["data"]["collections"]["assets"]
-    assert selected_profiles[-1] == set(identities[:20])
+    # Full candidate names are necessary to order cards before page selection.
+    assert selected_profiles.count(set(identities)) == 1
+    assert selected_profiles[-1] == set(ordered[:20])
     assert len(first_page["items"]) == 20
+    assert [item["asset_id"] for item in first_page["items"]] == ordered[:20]
     assert [item["name"] for item in first_page["items"]] == [
-        f"明确资产 {index}" for index in range(20)
+        names[ident] for ident in ordered[:20]
     ]
     assert first_page["page"]["total_count"] == 31
     profile_sql = [item for item in work["sql"] if (
         item["statement"].startswith("SELECT p.* FROM entity_profile_revision")
     )]
-    # The twenty card rows use one batch. A creditor without a display name
-    # keeps the existing employee/counterparty fallback, at most two more reads.
-    # The work recorder groups equal SQL text across asset and party scopes.
+    # All 31 candidate names use one batch; selected card profiles reuse it.
+    # A creditor's employee/counterparty fallback needs at most two more rows.
     assert sum(item["calls"] for item in profile_sql) <= 3
-    assert 20 <= sum(item["returned_rows"] for item in profile_sql) <= 22
-    next_page = dashboard.assets(
-        "2026-03", section="assets", expected_version=first["snapshot_version"],
-        cursor=first_page["page"]["next_cursor"],
-    )["data"]
-    assert selected_profiles[-1] == set(identities[20:])
+    assert 31 <= sum(item["returned_rows"] for item in profile_sql) <= 33
+    selected_profiles.clear()
+    with raw_read():
+        next_page = dashboard.assets(
+            "2026-03", section="assets", expected_version=first["snapshot_version"],
+            cursor=first_page["page"]["next_cursor"],
+        )["data"]
+    assert selected_profiles.count(set(identities)) == 1
+    assert selected_profiles[-1] == set(ordered[20:])
     assert [item["asset_id"] for item in next_page["collections"]["assets"]["items"]] == (
-        identities[20:]
+        ordered[20:]
     )
-    exact = dashboard.assets("2026-03", asset_id=identities[-1])["data"]
-    assert selected_profiles[-1] == {identities[-1]}
+    assert [item["name"] for item in next_page["collections"]["assets"]["items"]] == [
+        names[ident] for ident in ordered[20:]
+    ]
+    selected_profiles.clear()
+    with raw_read():
+        exact = dashboard.assets("2026-03", asset_id=ordered[-1])["data"]
+    assert selected_profiles[-1] == {ordered[-1]}
     assert exact["collections"]["assets"]["items"] == [
         next_page["collections"]["assets"]["items"][-1]
     ]
-    projects = dashboard.assets("2026-03", section="projects")["data"]
+    selected_profiles.clear()
+    with raw_read():
+        projects = dashboard.assets("2026-03", section="projects")["data"]
     assert selected_profiles[-1] == set()
     for data in (first["data"], next_page, exact, projects):
         assert data["ledger_cost_fen"] == 3725580
@@ -216,7 +236,8 @@ def test_closed_page_profiles_preserve_frozen_names_and_fill_only_missing_names(
         return original(reads, identifiers)
 
     monkeypatch.setattr(QueryReads, "calculation_identity_headers", headers)
-    data = Dashboard(engine).assets("2026-02", preparation="deferred")["data"]
+    with raw_read():
+        data = Dashboard(engine).assets("2026-02", preparation="deferred")["data"]
     # The actual page calls full activation selection and card metadata;
     # discovery authenticates their common frozen owner exactly once.
     assert sum(owner_id in scope for scope in header_scopes) == 1

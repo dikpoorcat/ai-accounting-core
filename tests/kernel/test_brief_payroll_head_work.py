@@ -36,7 +36,8 @@ def test_only_unposted_payroll_states_read_line_counts_with_equal_amounts(compan
     if zero:
         company.save(profile(social_insurance_participating=False,
                              social_insurance_base_fen=None), "profile", revision=1)
-        company.save(payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0),
+        company.save(payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0,
+                             profile_revision={"subject_id": "profile", "revision": 2}),
                      "january", revision=1)
         company.confirm_payroll("january")
     company.publish("january")

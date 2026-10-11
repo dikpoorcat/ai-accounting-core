@@ -35,6 +35,9 @@ class _PublicationStore:
         finally:
             connection.close()
 
+    def _snapshot_connection(self):
+        return self.connection(read_only=True)
+
 
 def source(tmp_path, count=4, *, second_period=False, unrelated=0):
     store = _PublicationStore(tmp_path / "publication.sqlite")

@@ -102,7 +102,8 @@ def test_real_frozen_opening_preview_rejects_bad_package_kind(identity_engine, e
     engine, evidence, first, second = identity_engine
     entities = Entities(engine)
     accounts = [entities.register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id=f"cash-{i}"
+        "fund_account", {"display_name": f"合成现金账户 {i + 1}"}, account_type="cash",
+        source="synthetic", evidence_digest=evidence, request_id=f"cash-{i}"
     )["entity_id"] for i in range(2)]
     members = [
         ("opening_cash", "cash-a", dict(cash_account_id=accounts[0], balance_fen=100)),

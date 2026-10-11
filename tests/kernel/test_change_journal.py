@@ -15,6 +15,13 @@ from ai_accounting.kernel.change_journal import (
     verify_journal,
 )
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.query_reads import QueryReads
+
+
+def source_fact_id(company, link):
+    with QueryReads.snapshot(company.engine) as reads:
+        ident = link["calculation_id"]
+        return reads.calculations([ident])[ident]["fact_id"]
 
 
 def test_current_heads_and_exact_historical_heads_follow_real_publication(tmp_path):
@@ -23,7 +30,7 @@ def test_current_heads_and_exact_historical_heads_follow_real_publication(tmp_pa
     with company.engine.store.connection(read_only=True) as connection:
         checkpoint = head(connection)
         first_heads = heads_at(connection, checkpoint)
-        assert first_heads["fact"]["expense"] == first["fact_id"]
+        assert first_heads["fact"]["expense"] == source_fact_id(company, first)
         assert first_heads["calculation"]["expense"] == first["calculation_id"]
         assert verify_journal(connection) == checkpoint
     second = company.expense("expense", 1200, revision=1)
@@ -33,8 +40,8 @@ def test_current_heads_and_exact_historical_heads_follow_real_publication(tmp_pa
         assert len(fact) == 1
         assert (fact[0].target_id, fact[0].before_ref, fact[0].after_ref) == (
             "expense",
-            first["fact_id"],
-            second["fact_id"],
+            source_fact_id(company, first),
+            source_fact_id(company, second),
         )
         assert {row.source for row in changes} == {
             "fact",
@@ -44,7 +51,9 @@ def test_current_heads_and_exact_historical_heads_follow_real_publication(tmp_pa
             "publication",
         }
         assert heads_at(connection, checkpoint) == first_heads
-        assert heads_at(connection, head(connection))["fact"]["expense"] == second["fact_id"]
+        assert heads_at(connection, head(connection))["fact"]["expense"] == source_fact_id(
+            company, second
+        )
         assert verify_journal(connection) == head(connection)
 
 
@@ -79,7 +88,7 @@ def test_first_creation_proof_distinguishes_revision_and_restoration(tmp_path):
         checkpoint = head(connection)
         connection.execute("DELETE FROM fact_current WHERE subject_id='new-business'")
         connection.execute(
-            "INSERT INTO fact_current VALUES('new-business',?)", (first["fact_id"],)
+            "INSERT INTO fact_current VALUES('new-business',?)", (source_fact_id(company, first),)
         )
         assert not first_created_subjects(connection, changes_since(connection, checkpoint))
         connection.rollback()
@@ -92,7 +101,8 @@ def test_first_creation_proof_rejects_missing_or_mismatched_source(tmp_path, own
     with company.engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError, match="资料变化记录"):
             first_created_subjects(
-                connection, [SourceChange(1, "fact", owner, None, reference or saved["fact_id"])]
+                connection,
+                [SourceChange(1, "fact", owner, None, reference or source_fact_id(company, saved))],
             )
 
 

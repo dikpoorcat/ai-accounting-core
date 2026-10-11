@@ -606,7 +606,16 @@ def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, dom
     with pytest.raises(KernelError):
         verify(engine)
     before_reads = database_snapshot(engine)
-    if consumer in {"funds", "quarterly_report", "brief_overview"}:
+    if domain == "bank" and consumer == "funds":
+        # The materialized page consumes the funding's exact voucher head.
+        with pytest.raises(KernelError) as failure:
+            page()
+        assert failure.value.code == "content_integrity_failed"
+        # Native movement rows consume the same exact current voucher head.
+        with raw_read(), pytest.raises(KernelError) as native_failure:
+            page()
+        assert native_failure.value.code == "content_integrity_failed"
+    elif consumer in {"funds", "quarterly_report", "brief_overview"}:
         assert comparable_owner_page(page()) == expected_page
     elif consumer.startswith("brief_"):
         with pytest.raises(KernelError) as failure:

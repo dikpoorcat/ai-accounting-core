@@ -17,7 +17,7 @@ from test_payroll import (
     with_payroll_plan,
 )
 from test_payroll_corrections import Company
-from test_payroll_preparation import plan_references
+from test_payroll_preparation import save_monthly_plan
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
 from ai_accounting.kernel.domains.payroll import (
@@ -28,7 +28,6 @@ from ai_accounting.kernel.domains.payroll import (
 )
 from ai_accounting.kernel.domains.transactions import Allocation, Payment
 from ai_accounting.kernel.payroll_preparation import (
-    BoundedPayrollPlan,
     PayrollChangeNotice,
     PayrollNoChange,
     PayrollPreparation,
@@ -38,6 +37,13 @@ from ai_accounting.kernel.types import YearMonth, canonical
 
 
 def bounded(**changes):
+    for old, field in (
+        ("profile_id", "profile_revision"),
+        ("contribution_policy_id", "contribution_policy_revision"),
+        ("income_tax_policy_id", "income_tax_policy_revision"),
+    ):
+        if old in changes:
+            changes[field] = {"subject_id": changes.pop(old), "revision": 1}
     data = payroll(accounting_gross_salary_fen=500_000, tax_reported_salary_fen=500_000)
     return PayrollBounded(
         **(data.model_dump(mode="json") | dict.fromkeys(UNKNOWN_DEDUCTIONS) | changes)
@@ -244,7 +250,11 @@ def test_zero_proof_checks_reachable_brackets_not_only_the_highest_income_endpoi
 def test_profile_first_withholding_month_is_not_fabricated_as_an_actual_day(tmp_path, kind):
     instance = company(tmp_path)
     instance.save(profile(withholding_start_date="2026-01"), "profile", revision=1)
-    fact = payroll() if kind == "payroll" else bounded()
+    fact = (
+        payroll(profile_revision={"subject_id": "profile", "revision": 2})
+        if kind == "payroll"
+        else bounded(profile_revision={"subject_id": "profile", "revision": 2})
+    )
     instance.save(fact, "january")
     instance.confirm_payroll("january")
     instance.publish("january")
@@ -277,7 +287,13 @@ def test_annual_bonus_requires_exact_state_from_bounded_wage(tmp_path):
 def test_combined_bonus_reuses_complete_month_precision_payroll_without_inventing_a_day(tmp_path):
     instance = company(tmp_path)
     instance.save(profile(withholding_start_date="2026-01"), "profile", revision=1)
-    instance.save(bounded(**dict.fromkeys(UNKNOWN_DEDUCTIONS, 0)), "january")
+    instance.save(
+        bounded(
+            profile_revision={"subject_id": "profile", "revision": 2},
+            **dict.fromkeys(UNKNOWN_DEDUCTIONS, 0),
+        ),
+        "january",
+    )
     for source in bonus_sources():
         if source.subject_id in {"bonus-policy", "bonus-usage"}:
             instance.save(source.fact, source.subject_id)
@@ -300,7 +316,6 @@ def test_preparation_preserves_unknown_deductions_but_never_copies_actual_day(tm
     instance.save(
         PayrollNoChange(
             period="2026-02",
-            prior_period="2026-01",
             employees=tuple(basis["employees"]),
             employee_roster_unchanged=True,
             salary_and_deductions_unchanged=True,
@@ -322,21 +337,13 @@ def test_preparation_preserves_unknown_deductions_but_never_copies_actual_day(tm
         "change",
     )
     assert service.prepare("2026-02")["status"] == "needs_information"
-    instance.save(
-        BoundedPayrollPlan(
-            period="2026-02",
-            employee_id="employee",
-            payroll=bounded(period="2026-02", tax_relief_fen=0),
-            **plan_references(instance),
-        ),
-        "plan",
-    )
+    save_monthly_plan(instance, bounded(period="2026-02", tax_relief_fen=0), "february")
     proposal = service.prepare("2026-02")
     assert proposal["status"] == "ready"
     saved = service.confirm(
         "2026-02", preview_digest=proposal["digest"], request_id=instance.request()
     )
-    subject = saved["results"][0]["subject_id"]
+    subject = saved["publish_subjects"][0]
     instance.publish(subject)
     assert instance.current(subject, "payroll_bounded").values["tax_fen"] == 0
 

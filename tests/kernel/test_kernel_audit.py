@@ -72,7 +72,7 @@ def entry_calculation(version, context):
     lines = (
         (
             Line(expense, debit=amount),
-            Line("1002", credit=amount, cashflow="operating_expense"),
+            Line("2202", credit=amount, cashflow="operating_expense"),
         )
         if amount
         else ()
@@ -556,7 +556,7 @@ def test_net_zero_cashflow_is_absent_but_equal_debit_credit_turnover_is_preserve
     before = projections(engine)
     february = YearMonth("2026-02").ordinal
     assert [row for row in before["monthly_cashflow"] if row[0] == february] == []
-    assert (february, "1002", 100, 100) in before["monthly_account"]
+    assert (february, "2202", 100, 100) in before["monthly_account"]
     engine.rebuild_projections(request_id="rebuild-net-zero")
     assert projections(engine) == before
 

@@ -17,7 +17,7 @@ from .discovery import Discovery
 from .display import Display
 from .duplicates import DuplicateReview, Duplicates, SourceLocation
 from .engine import Engine
-from .entities import Entities, EntityProfile
+from .entities import Entities, entity_profile_models
 from .exports import Exports
 from .fund_accounts import fund_profile_models, require_fund_source, validate_fund_profile
 from .identity_corrections import IdentityCorrections
@@ -213,10 +213,12 @@ def command_models(registry):
         elif name == "resolve_material_group":
             fields["data"] = (MaterialGroupResolution, ...)
         elif name in {"register_entity", "update_entity_profile"}:
-            fields["data"] = (EntityProfile, ...)
+            fields["data"] = (reduce(or_, entity_profile_models().values()), ...)
         if name == "correct_fund_account_identity":
             variants = []
             for account_type, profile in fund_profile_models().items():
+                if account_type == "cash":
+                    continue
                 selected = dict(fields)
                 selected["account_type"] = (Literal[account_type], ...)
                 selected["data"] = (profile, ...)
@@ -230,13 +232,14 @@ def command_models(registry):
             result[name] = TypeAdapter(reduce(or_, variants))
         elif name == "register_entity":
             variants = []
-            ordinary = dict(fields)
-            ordinary["kind"] = (
-                Literal["person", "organization", "asset", "project", "fund_product"],
-                ...,
-            )
-            ordinary["account_type"] = (type(None), None)
-            variants.append(create_model("OrdinaryEntityCommand", __config__=CONFIG, **ordinary))
+            for kind, profile in entity_profile_models().items():
+                if kind == "fund_account":
+                    continue
+                ordinary = dict(fields)
+                ordinary["kind"] = (Literal[kind], ...)
+                ordinary["data"] = (profile, ...)
+                ordinary["account_type"] = (type(None), None)
+                variants.append(create_model(kind + "EntityCommand", __config__=CONFIG, **ordinary))
             for account_type, profile in fund_profile_models().items():
                 selected = dict(fields)
                 selected["kind"] = (Literal["fund_account"], ...)
@@ -380,11 +383,10 @@ def validate_command(models, command, payload, *, registry=None):
             # The model checks the document structure, but a candidate is not
             # yet a complete business input. Never fill omitted draft fields.
             result["draft"] = payload["draft"]
-        elif command in {"register_entity", "update_entity_profile"}:
-            # Omission preserves the historical personnel facts; an explicitly
-            # supplied unknown is a different management confirmation.
-            if "employment_state" not in value.data.model_fields_set:
-                result["data"].pop("employment_state")
+        if command == "update_entity_profile":
+            # Entity identity selects the actual profile kind in Entities.
+            # A shared-name union hit must not supply another kind's defaults.
+            result["data"] = value.data.model_dump(mode="json", exclude_unset=True)
         return result
     except ValidationError as exc:
         errors = exc.errors(include_input=False, include_url=False, include_context=False)

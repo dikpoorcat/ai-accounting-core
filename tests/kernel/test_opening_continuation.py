@@ -330,7 +330,7 @@ def test_asset_depreciation_and_split_loan_interest_continue_without_fake_drawdo
             {
                 "period": "2026-01",
                 "drawdown_id": "loan",
-                "agreement_id": "agreement",
+
                 "period_start": first,
                 "period_end_exclusive": end,
             },
@@ -711,9 +711,9 @@ def test_midyear_payroll_uses_confirmed_cumulative_state_without_recreating_six_
         {
             "period": "2026-07",
             "employee_id": "employee",
-            "profile_id": "employee-profile",
-            "contribution_policy_id": "contribution-policy",
-            "income_tax_policy_id": "tax-policy",
+            "profile_revision": {"subject_id": "employee-profile", "revision": 1},
+            "contribution_policy_revision": {"subject_id": "contribution-policy", "revision": 1},
+            "income_tax_policy_revision": {"subject_id": "tax-policy", "revision": 1},
             "accounting_gross_salary_fen": 1000000,
             "tax_reported_salary_fen": 1000000,
             "tax_exempt_income_fen": 0,

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_payroll_corrections import company as company  # noqa: F401
 from test_report_party_summary import _MeasuredPartyBase, checkpoint_net_book
@@ -86,10 +87,12 @@ def test_public_overview_party_work_ignores_non_reclass_line_growth(company, rec
             company.publish(*(f"position-unrelated-{index}" for index in range(size)))
         full_rows.clear()
         party_rows.clear()
-        with patch.object(report_projection, "_verified_party_source_rows", return_value=None):
+        with raw_read(), patch.object(
+            report_projection, "_verified_party_source_rows", return_value=None
+        ):
             with patch.object(report_projection, "_authoritative_rows", full):
                 before, expected = measure_work(engine, lambda: Dashboard(engine).brief("2026-02"))
-        with patch.object(report_projection, "_verified_party_source_rows", proved):
+        with raw_read(), patch.object(report_projection, "_verified_party_source_rows", proved):
             after, actual = measure_work(engine, lambda: Dashboard(engine).brief("2026-02"))
         actual["data"].pop("generated_at")
         expected["data"].pop("generated_at")
@@ -110,7 +113,8 @@ def test_public_overview_party_work_ignores_non_reclass_line_growth(company, rec
 def test_public_month_proof_reuse_still_rejects_source_damage(book, broken):
     engine, _, _, _ = book
     scenario(book, classification=False, tax=False)
-    assert Dashboard(engine).brief("2026-03")["data"]["financial_position"]["equation_valid"]
+    with raw_read():
+        assert Dashboard(engine).brief("2026-03")["data"]["financial_position"]["equation_valid"]
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute(
             "SELECT c.id,c.fact_id,v.id version_id FROM calculation c "
@@ -125,7 +129,7 @@ def test_public_month_proof_reuse_still_rejects_source_damage(book, broken):
     else:
         damage(engine, "fact_revision", "UPDATE fact_revision SET digest=zeroblob(32) WHERE id=?",
                (row["fact_id"],))
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief("2026-03")
     assert failure.value.code == "content_integrity_failed"
 

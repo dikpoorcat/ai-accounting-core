@@ -63,7 +63,12 @@ from ..contracts import (
     Read,
     Registry,
 )
-from ..payroll_confirmation import confirmation_reads, resolve_payroll_confirmation
+from ..payroll_confirmation import (
+    FactRevisionReference,
+    confirmation_reads,
+    payroll_policy_source,
+    resolve_payroll_confirmation,
+)
 from ..types import (
     ActualDate,
     NonNegativeFen,
@@ -338,24 +343,34 @@ class PayrollFirstWageTreatment(Fact):
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     period: YearMonth = Field(
         description="首次工资处理开始适用的核算月份，不是录入或负责人确认月份",
-        json_schema_extra={"x-accounting-fact": {
-            "role": "accounting", "meaning": "first_wage_treatment_effective_month",
-            "allowed_precision": ["month"],
-            "reusable_sources": ["confirmed_first_wage_treatment_effective_month"],
-            "constraint": "仅工资所属期不早于本月时适用；有源适用月不能改为录入确认月",
-        }},
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "first_wage_treatment_effective_month",
+                "allowed_precision": ["month"],
+                "reusable_sources": ["confirmed_first_wage_treatment_effective_month"],
+                "constraint": "仅工资所属期不早于本月时适用；有源适用月不能改为录入确认月",
+            }
+        },
     )
     employee_id: Identifier
-    standard_deduction_start_month: Annotated[int, Field(
-        ge=1, le=12,
-        description="适用后累计基本减除费用的起算月，不改变本处理的适用首月",
-        json_schema_extra={"x-accounting-fact": {
-            "role": "accounting", "meaning": "cumulative_standard_deduction_clock_start",
-            "allowed_precision": ["month_number"],
-            "reusable_sources": ["confirmed_first_wage_standard_deduction_start_month"],
-            "constraint": "仅决定累计减除费用时钟；不向更早工资月份追溯应用本处理",
-        }},
-    )]
+    standard_deduction_start_month: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=12,
+            description="适用后累计基本减除费用的起算月，不改变本处理的适用首月",
+            json_schema_extra={
+                "x-accounting-fact": {
+                    "role": "accounting",
+                    "meaning": "cumulative_standard_deduction_clock_start",
+                    "allowed_precision": ["month_number"],
+                    "reusable_sources": ["confirmed_first_wage_standard_deduction_start_month"],
+                    "constraint": "仅决定累计减除费用时钟；不向更早工资月份追溯应用本处理",
+                }
+            },
+        ),
+    ]
 
     def scopes(self) -> tuple[str, ...]:
         return (employee_year(self.employee_id, self.period),)
@@ -401,9 +416,34 @@ class Payroll(Fact):
     kind: ClassVar[str] = "payroll"
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     employee_id: Identifier
-    profile_id: SubjectId
-    contribution_policy_id: SubjectId
-    income_tax_policy_id: SubjectId
+    profile_revision: FactRevisionReference = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_wage_profile_version",
+                "reusable_sources": ["payroll_profile"],
+            }
+        }
+    )
+    contribution_policy_revision: FactRevisionReference = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_wage_contribution_rule_version",
+                "reusable_sources": ["payroll_contribution_policy"],
+            }
+        }
+    )
+    income_tax_policy_revision: FactRevisionReference | None = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_adopted_wage_income_tax_rule_version",
+                "reusable_sources": ["payroll_income_tax_policy"],
+                "constraint": "扣缴已开始时必须明确；尚未开始且未采用时为null",
+            }
+        }
+    )
     accounting_gross_salary_fen: NonNegativeFen
     tax_reported_salary_fen: NonNegativeFen
     tax_exempt_income_fen: NonNegativeFen
@@ -416,7 +456,7 @@ class Payroll(Fact):
     def scopes(self) -> tuple[str, ...]:
         return (employee_month(self.employee_id, self.period),)
 
-    def reads(self) -> tuple[Read, ...]:
+    def reads(self, subject_id: str | None = None) -> tuple[Read, ...]:
         from ..identity_corrections import opening_binding_reads
 
         current_scope = employee_month(self.employee_id, self.period)
@@ -428,9 +468,23 @@ class Payroll(Fact):
         )
         reads = (
             *(Read("fact", kind, current_scope) for kind in PAYROLL_KINDS),
-            Read("fact", PayrollProfile.kind, f"@{self.profile_id}"),
-            Read("fact", PayrollContributionPolicy.kind, f"@{self.contribution_policy_id}"),
-            Read("fact", PayrollIncomeTaxPolicy.kind, f"@{self.income_tax_policy_id}"),
+            Read("fact", PayrollProfile.kind, "@" + self.profile_revision.subject_id),
+            Read(
+                "fact",
+                PayrollContributionPolicy.kind,
+                "@" + self.contribution_policy_revision.subject_id,
+            ),
+            *(
+                (
+                    Read(
+                        "fact",
+                        PayrollIncomeTaxPolicy.kind,
+                        "@" + self.income_tax_policy_revision.subject_id,
+                    ),
+                )
+                if self.income_tax_policy_revision is not None
+                else ()
+            ),
             Read("fact", PayrollContributionActual.kind, current_scope),
             Read("fact", PayrollOpeningState.kind, year_scope),
             Read("fact", "opening_payroll_state", year_scope),
@@ -440,7 +494,10 @@ class Payroll(Fact):
             Read("fact", PayrollWithholdingActual.kind, current_scope),
             *prior,
         )
-        return tuple(dict.fromkeys((*reads, *confirmation_reads(self))))
+        return tuple(dict.fromkeys((*reads, *confirmation_reads(self, subject_id))))
+
+    def reads_for(self, subject_id: str) -> tuple[Read, ...]:
+        return self.reads(subject_id)
 
 
 UnknownDeduction = Annotated[
@@ -466,9 +523,34 @@ class PayrollBounded(Fact):
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     material_amount_aliases: ClassVar[dict[str, str]] = Payroll.material_amount_aliases
     employee_id: Identifier
-    profile_id: SubjectId
-    contribution_policy_id: SubjectId
-    income_tax_policy_id: SubjectId
+    profile_revision: FactRevisionReference = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_wage_profile_version",
+                "reusable_sources": ["payroll_profile"],
+            }
+        }
+    )
+    contribution_policy_revision: FactRevisionReference = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_wage_contribution_rule_version",
+                "reusable_sources": ["payroll_contribution_policy"],
+            }
+        }
+    )
+    income_tax_policy_revision: FactRevisionReference | None = Field(
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "exact_adopted_wage_income_tax_rule_version",
+                "reusable_sources": ["payroll_income_tax_policy"],
+                "constraint": "扣缴已开始时必须明确；尚未开始且未采用时为null",
+            }
+        }
+    )
     accounting_gross_salary_fen: NonNegativeFen
     tax_reported_salary_fen: NonNegativeFen
     tax_exempt_income_fen: UnknownDeduction
@@ -498,6 +580,7 @@ class PayrollBounded(Fact):
 
     scopes = Payroll.scopes
     reads = Payroll.reads
+    reads_for = Payroll.reads_for
 
 
 def _unique_subject(version: FactVersion, context: Context, key: str) -> None:
@@ -819,15 +902,15 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
     if withholding is not None:
         if not withholding.evidence:
             raise NeedsInformation("withholding_actual.evidence", "确认实际工资扣税需要依据")
-    profile_version = context.one(PayrollProfile.kind, f"@{fact.profile_id}")
+    profile_version = payroll_policy_source(context, fact, "profile_revision", PayrollProfile.kind)
     profile = profile_version.fact
     if profile.employee_id != fact.employee_id or not (
         profile.effective_from <= fact.period
         and (profile.effective_to is None or fact.period <= profile.effective_to)
     ):
         raise KernelError("payroll_profile_mismatch", "员工工资档案不属于本员工和所属期")
-    contribution_policy = context.one(
-        PayrollContributionPolicy.kind, f"@{fact.contribution_policy_id}"
+    contribution_policy = payroll_policy_source(
+        context, fact, "contribution_policy_revision", PayrollContributionPolicy.kind
     )
     confirmation = resolve_payroll_confirmation(
         version,
@@ -838,7 +921,7 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
     period = _month(fact.period)
     income_day = period.end_date
     if isinstance(fact, PayrollBounded):
-        _assert_month_policy(contribution_policy.fact, fact.period, "contribution_policy_id")
+        _assert_month_policy(contribution_policy.fact, fact.period, "contribution_policy_revision")
         if fact.tax_income_date is not None:
             income_day = date.fromisoformat(fact.tax_income_date)
     actual = _optional_one(context, PayrollContributionActual.kind, scope)
@@ -927,7 +1010,9 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
             ),
             employer_cost_fen=burden.employer_total_fen,
         )
-    tax_policy = context.one(PayrollIncomeTaxPolicy.kind, f"@{fact.income_tax_policy_id}")
+    tax_policy = payroll_policy_source(
+        context, fact, "income_tax_policy_revision", PayrollIncomeTaxPolicy.kind
+    )
     if isinstance(fact, PayrollBounded) and fact.tax_income_date is None:
         _assert_month_policy(tax_policy.fact, fact.period, "tax_income_date")
     prior_basis = _prior_state(fact, context, first_withholding_period)
@@ -957,7 +1042,9 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
             precision=("month",),
         )
     treatment = _optional_one(
-        context, PayrollFirstWageTreatment.kind, employee_year(fact.employee_id, fact.period),
+        context,
+        PayrollFirstWageTreatment.kind,
+        employee_year(fact.employee_id, fact.period),
         read=first_wage_read(fact.employee_id, fact.period),
     )
     if treatment is not None and not treatment.evidence:

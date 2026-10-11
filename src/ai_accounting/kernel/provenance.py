@@ -13,6 +13,7 @@ _ACTIONS = {
     "fact": ("confirm_fact", "confirm_facts", "recording_correction"),
     "display_profile": ("save_display_profile", "register_entity", "update_entity_profile"),
     "payee": ("payee",),
+    "fund_account_identity": ("register_entity", "correct_fund_account_identity"),
     # This result only contains a revision number, shared by many subjects. It
     # cannot identify a management_revision row without inventing an association.
     "management": (),
@@ -75,7 +76,22 @@ def _references(action, result):
             and _nonempty_string(result["profile_id"])
             and _nonempty_string(result["entity_id"])
         ):
-            return (("display_profile", result["profile_id"]),)
+            references = [("display_profile", result["profile_id"])]
+            if fund is not None and _nonempty_string(fund.get("digest")):
+                references.append(("fund_account_identity", fund["digest"]))
+            return tuple(references)
+        return ()
+    if action == "correct_fund_account_identity":
+        fund = result.get("fund_account")
+        if (
+            set(result) == {"status", "entity_id", "previous_identity_digest", "fund_account"}
+            and result["status"] == "corrected"
+            and isinstance(fund, dict)
+            and fund.get("entity_id") == result["entity_id"]
+            and _nonempty_string(fund.get("digest"))
+            and fund["digest"] != result["previous_identity_digest"]
+        ):
+            return (("fund_account_identity", fund["digest"]),)
         return ()
     if action in {"confirm_fact", "recording_correction"}:
         return (_fact_reference(result),)

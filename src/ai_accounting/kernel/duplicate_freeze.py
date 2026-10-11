@@ -235,8 +235,9 @@ class _Authority:
             }
             linked = defaultdict(list)
             for row in self.connection.execute(
-                "SELECT l.revision_id,l.fact_id FROM json_each(?) ids "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=ids.value",
+                "SELECT l.revision_id,linked.fact_id FROM json_each(?) ids "
+                "JOIN fact_material_resolution_v2_links l ON l.revision_id=ids.value "
+                "JOIN calculation linked ON linked.id=l.calculation_id",
                 (payload,),
             ):
                 linked[row[0]].append(row[1])
@@ -827,7 +828,8 @@ def narrowed_duplicate_candidates(
             for row in connection.execute(
                 "SELECT DISTINCT f.subject_id FROM json_each(?) ids "
                 "JOIN fact_material_resolution_v2_links l ON l.revision_id=ids.value "
-                "JOIN fact_revision f ON f.id=l.fact_id",
+                "JOIN calculation linked ON linked.id=l.calculation_id "
+                "JOIN fact_revision f ON f.id=linked.fact_id",
                 (canonical(sorted(after_facts)),),
             )
         )

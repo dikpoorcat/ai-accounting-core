@@ -108,7 +108,6 @@ _CATALOG_RETAINED_ROWS = (
         "id,occurred_at,owner_id,session_id,event,outcome,reason,request_id",
         "id",
     ),
-    ("security_identity_import", "source_catalog_id,owner_id,imported_at", "source_catalog_id"),
 )
 
 

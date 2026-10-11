@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from test_dashboard_model_transactions import raw_read
 from test_identity_corrections import confirm, opening_package
 from test_opening_continuation import _close_without_current_business
 
@@ -53,7 +54,8 @@ def test_forged_employee_role_rejected_by_page_and_close_snapshot_then_repaired(
             "UPDATE entity_reference_current SET role='employee' "
             "WHERE fact_id=? AND path='counterparty_id'", (saved["fact_id"],)
         )
-    with pytest.raises(KernelError) as page_error:
+    # This forged directory role is consumed by the native roster discovery.
+    with raw_read(), pytest.raises(KernelError) as page_error:
         people()
     assert page_error.value.code == "entity_reference_corrupt"
     with engine.store.connection(read_only=True) as connection:
@@ -102,7 +104,8 @@ def test_forged_retired_opening_account_hit_rejected_by_funds_and_repair(book):
     )["entity_id"]
     old, new = [
         directory.register_entity(
-            "fund_account", {}, account_type="cash", source="synthetic", request_id=request
+            "fund_account", {"display_name": f"Synthetic {request} cash account"},
+            account_type="cash", source="synthetic", evidence_digest=proof, request_id=request,
         )["entity_id"]
         for request in ("old", "new")
     ]
@@ -146,7 +149,8 @@ def test_forged_retired_opening_account_hit_rejected_by_funds_and_repair(book):
             "UPDATE entity_reference_current SET entity_id=? WHERE fact_id=? AND path=?",
             (old, row["fact_id"], row["path"]),
         )
-    with pytest.raises(KernelError) as page_error:
+    # Revalidate the actual native opening-account positive index witness.
+    with raw_read(), pytest.raises(KernelError) as page_error:
         page()
     assert page_error.value.code == "entity_reference_corrupt"
     with pytest.raises(KernelError) as integrity_error:

@@ -3,7 +3,9 @@
 from test_engine import close, publish, save
 from test_engine import engine as engine_fixture
 
-from ai_accounting.kernel.close_storage_v1 import decode_close
+# The source fixture uses today's physical close codec; only the fixed SQL
+# selector below is the v1 consumer under test.
+from ai_accounting.kernel.close_storage import decode_close
 from ai_accounting.kernel.report_projection_v1 import selected_voucher_sql
 from ai_accounting.kernel.types import YearMonth
 

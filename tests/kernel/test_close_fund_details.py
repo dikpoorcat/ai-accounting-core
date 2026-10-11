@@ -85,7 +85,10 @@ def fund_sources(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(fund_line_details, "snapshot_fund_details", snapshot)
-    monkeypatch.setattr(close_fund_details, "_verify_account_balances", lambda *args: None)
+    monkeypatch.setattr(
+        close_fund_details, "_verify_account_balances",
+        lambda *args, require_index_marker=True: None,
+    )
     yield connection, definitions
     connection.close()
 
@@ -205,18 +208,31 @@ def test_typed_funds_close_preserves_definitions_and_exact_journal_sources(book)
 
 
 def test_v4_to_v5_activation_uses_original_verified_per_account_balance(book, monkeypatch):
+    from ai_accounting.kernel import dashboard_model_runtime
     from ai_accounting.kernel.fund_line_details import initialize_open_details
 
     engine, _, _, close = book
-    scenario(book)
     with monkeypatch.context() as historical:
+        # Only this synthetic historical producer lacks the current model's
+        # required fund-details section. Its original frozen balances and
+        # subsequent current activation remain independently authenticated.
+        historical.setattr(
+            dashboard_model_runtime, "supports_native_production", lambda _engine: False
+        )
+        scenario(book)
         use_v4_close_manifest(historical)
         close("2026-01")
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         initialize_open_details(engine, connection, "2026-02")
         connection.commit()
-    close("2026-02")
+    # Native activation and the current close retain every historical source
+    # check; UI production would also rebuild an unsupported synthetic v4 frame.
+    with monkeypatch.context() as historical_model:
+        historical_model.setattr(
+            dashboard_model_runtime, "supports_native_production", lambda _engine: False
+        )
+        close("2026-02")
     with engine.store.connection(read_only=True) as connection:
         january = stored_manifest(connection, "2026-01")
         february = stored_manifest(connection, "2026-02")

@@ -540,6 +540,15 @@ def _owns_current_selector_snapshot(reads, connection):
     )
 
 
+def _owns_unchanged_read_snapshot(reads, connection):
+    """Reuse raw storage only while the owned read transaction cannot have changed."""
+    return (
+        _owns_current_selector_snapshot(reads, connection)
+        and connection.total_changes == reads._snapshot_changes
+        and connection.execute("PRAGMA query_only").fetchone()[0] == 1
+    )
+
+
 def _read_exact_source_headers(connection, identifiers):
     """Read exact calculation/fact identities once, without result bodies."""
     columns = (
@@ -962,6 +971,7 @@ class QueryReads:
     def _reset(self):
         self._snapshot_active = False
         self._snapshot_token = object()
+        self._snapshot_changes = self.connection.total_changes
         self._verified_close_references = set()
         self._verified_close_storage_parts = {}
         self._verified_frozen_voucher_headers = {}
@@ -993,6 +1003,7 @@ class QueryReads:
         self._parents = {}
         self._vouchers = {}
         self._lines = {}
+        self._physical_lines = {}
         self._relations = {}
         self._relation_sources = {}
         self._report_direct_relations = {}
@@ -1038,6 +1049,9 @@ class QueryReads:
             yield active
             return
         reads = reads or cls(engine, connection)
+        # An ordinary adapter may have filled caches in an earlier transaction.
+        # Only the active adapter returned above owns reusable proofs/physical rows.
+        reads._reset()
         owned = type(connection) is _OwnedReadConnection
 
         def keep_snapshot(action, *_):
@@ -1052,6 +1066,7 @@ class QueryReads:
             if not owned:
                 connection.set_authorizer(keep_snapshot)
             reads._snapshot_active = True
+            reads._snapshot_changes = connection.total_changes
             token = _active_fact_reads.set(reads)
             try:
                 yield reads
@@ -1087,6 +1102,7 @@ class QueryReads:
                 if not owned:
                     connection.set_authorizer(keep_snapshot)
                 reads._snapshot_active = True
+                reads._snapshot_changes = connection.total_changes
                 token = _active_fact_reads.set(reads)
                 try:
                     yield reads
@@ -2449,16 +2465,39 @@ class QueryReads:
         identifiers = set(identifiers)
         missing = {ident for ident in identifiers if ident not in self._lines}
         if missing:
-            self._lines.update({ident: [] for ident in missing})
+            self._load_physical_voucher_lines(missing)
+            self._lines.update({ident: [dict(zip(
+                ("line_no", "account", "debit", "credit", "cashflow"), line, strict=True,
+            )) for line in self._physical_lines[ident]] for ident in missing})
+        return {ident: self._lines[ident] for ident in identifiers}
+
+    def _load_physical_voucher_lines(self, identifiers):
+        missing = set(identifiers) - self._physical_lines.keys()
+        if missing:
+            staged = {ident: [] for ident in missing}
             for row in self.connection.execute(
                 "SELECT l.* FROM json_each(?) ids JOIN voucher_line l ON l.version_id=ids.value "
                 "ORDER BY l.version_id,l.line_no",
                 (canonical(sorted(missing)),),
             ):
-                self._lines[row["version_id"]].append(
-                    {key: row[key] for key in ("line_no", "account", "debit", "credit", "cashflow")}
+                staged[row["version_id"]].append(
+                    tuple(row[key] for key in ("line_no", "account", "debit", "credit", "cashflow"))
                 )
-        return {ident: self._lines[ident] for ident in identifiers}
+            self._physical_lines.update({ident: tuple(lines) for ident, lines in staged.items()})
+
+    def raw_voucher_lines(self, identifiers):
+        """Reuse physical rows only in this unchanged owned read transaction.
+
+        This supplies original SQL values, never an adoption or source proof.
+        Keep immutable rows apart from the mutable dictionaries used by display.
+        """
+        if not _owns_unchanged_read_snapshot(self, self.connection):
+            raise KernelError("content_integrity_failed", "凭证物理行读取快照已失效")
+        identifiers = set(identifiers)
+        self._load_physical_voucher_lines(identifiers)
+        return {ident: [dict(zip(
+            ("line_no", "account", "debit", "credit", "cashflow"), line, strict=True,
+        )) for line in self._physical_lines[ident]] for ident in identifiers}
 
     def close_rows(self, **scope):
         from .read_indexes import close_rows
@@ -2814,13 +2853,22 @@ class QueryReads:
         )
 
     def close_section(self, row, name):
+        from . import close_storage
         from .content_history_context import close_reader
 
         key = (row["period"], name)
-        if self._snapshot_active and key in self._close_sections:
+        owned = _owns_unchanged_read_snapshot(self, self.connection)
+        if owned and key in self._close_sections:
             return self._close_sections[key]
-        result = close_reader().read_section(self.connection, self.close_header(row), name)
-        if self._snapshot_active:
+        reader = close_reader()
+        options = (
+            {"_verified_parts": self._verified_close_storage_parts}
+            if reader is close_storage and owned
+            else {}
+        )
+        header = self.close_header(row) if owned else reader.verified_header(self.connection, row)
+        result = reader.read_section(self.connection, header, name, **options)
+        if owned:
             self._close_sections[key] = result
         return result
 

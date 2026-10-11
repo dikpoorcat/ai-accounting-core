@@ -1048,7 +1048,7 @@ class FundsRead:
     def account_display(self, category, ident):
         profile = self.profile("fund_account", ident)
         return {
-            "code": profile.get("display_number") or "",
+            "code": profile.get("account_number") or "",
             "name": profile.get("display_name") or "未提供账户名称",
             "active": profile.get("active"),
         }

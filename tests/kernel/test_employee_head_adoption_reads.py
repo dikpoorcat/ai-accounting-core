@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage, verify
 from test_payroll import actual, payroll
 from test_payroll_corrections import company as _company
@@ -10,6 +11,7 @@ from test_settlement_late_reviews import prepared, review
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import PAYROLL_KINDS, Dashboard
+from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.dashboard_reads import payroll_head_metadata, verified_payroll_heads
 from ai_accounting.kernel.types import YearMonth, canonical, digest
 
@@ -71,7 +73,9 @@ def test_frozen_wage_head_bytes_require_authenticated_adoption(tmp_path, change)
     company.save(payroll(period="2026-02"), "february")
     company.confirm_payroll("february")
     company.publish("february")
-    baseline = Dashboard(company.engine).employees("2026-02", preparation="deferred", employee_filter="all")
+    baseline = Dashboard(company.engine).employees(
+        "2026-02", preparation="deferred", employee_filter="all",
+    )
     with company.engine.store.connection(read_only=True) as connection:
         saved = connection.execute(
             "SELECT c.id,c.outcome,c.digest FROM calculation c JOIN calculation_current h "
@@ -138,7 +142,9 @@ def test_employee_default_matches_full_head_selection(company, monkeypatch, clos
     if closed_correction:
         company.save(actual(), "actual")
         company.publish("actual", posting_period="2026-02")
-    original = Dashboard(company.engine).employees("2026-02", employee_filter="all")
+    # Both sides exercise the native head consumers rather than a UI model hit.
+    with raw_read():
+        original = Dashboard(company.engine).employees("2026-02", employee_filter="all")
 
     def full_identity(snap, candidates):
         return snap.calculations.selected(
@@ -149,7 +155,8 @@ def test_employee_default_matches_full_head_selection(company, monkeypatch, clos
     import ai_accounting.kernel.dashboard as dashboard_module
 
     monkeypatch.setattr(dashboard_module, "verified_payroll_heads", full_identity)
-    full = Dashboard(company.engine).employees("2026-02", employee_filter="all")
+    with raw_read():
+        full = Dashboard(company.engine).employees("2026-02", employee_filter="all")
     assert original == full
 
 
@@ -374,8 +381,50 @@ def test_public_employees_reject_damaged_open_historical_wage_identity(company, 
             "UPDATE calculation_publication SET mode='review_no_impact' WHERE calculation_id=?",
             (january["id"],),
         )
-    # The current month's public page must authenticate older open wage heads,
-    # even though it only displays February's cost and one employee card.
-    with pytest.raises(KernelError) as failure:
+    # The native roster consumes every older open wage head's adoption identity.
+    # The certified model independently checks its actual displayed raw hits.
+    with raw_read(), pytest.raises(KernelError) as failure:
         dashboard.employees("2026-02", employee_filter="all")
+    assert failure.value.code == "content_integrity_failed"
+
+
+@pytest.mark.parametrize("seal", ["calculation_seal", "fact_seal"])
+def test_model_wage_seals_bind_displayed_month_not_certified_history(company, monkeypatch, seal):
+    """Model hits check their own seals; old aggregate ancestors need full proof."""
+    company.publish("january", "february")
+    engine = company.engine
+    dashboard = Dashboard(engine)
+    january = dashboard.employees("2026-01", employee_filter="all")
+    february = dashboard.employees("2026-02", employee_filter="all")
+    assert january["data"]["employees"]["gross_salary_fen"] == 1_000_000
+    assert february["data"]["employees"]["gross_salary_fen"] == 1_000_000
+    assert february["data"]["employees"]["outstanding_net_fen"] == 1_814_800
+    with engine.store.connection(read_only=True) as connection:
+        source = connection.execute(
+            "SELECT c.id,c.fact_id FROM calculation c JOIN calculation_current h "
+            "ON h.calculation_id=c.id WHERE c.subject_id='january'",
+        ).fetchone()
+    field = "calculation_id" if seal == "calculation_seal" else "fact_id"
+    ident = source["id"] if seal == "calculation_seal" else source["fact_id"]
+    damage(engine, seal, f"DELETE FROM {seal} WHERE {field}=?", (ident,), foreign_keys=False)
+    import ai_accounting.kernel.dashboard as dashboard_module
+
+    def no_native_fallback(*_args, **_kwargs):
+        pytest.fail("the default model proof must run without a native fallback")
+
+    with monkeypatch.context() as model:
+        model.setattr(dashboard_module, "_employees", no_native_fallback)
+        # February shows its own wage. January contributes only to the signed
+        # aggregate, whose receipt does not re-read that private ancestor.
+        assert stable_payload(dashboard.employees("2026-02", employee_filter="all")) == (
+            stable_payload(february)
+        )
+        with pytest.raises(KernelError) as failure:
+            dashboard.employees("2026-01", employee_filter="all")
+        assert failure.value.code == "content_integrity_failed"
+    with raw_read(), pytest.raises(KernelError) as failure:
+        dashboard.employees("2026-02", employee_filter="all")
+    assert failure.value.code == "content_integrity_failed"
+    with pytest.raises(KernelError) as failure:
+        verify(engine)
     assert failure.value.code == "content_integrity_failed"

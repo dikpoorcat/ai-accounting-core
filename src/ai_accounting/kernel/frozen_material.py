@@ -465,11 +465,12 @@ def _source_dependencies(connection, current):
     for label in ("resolution", "group"):
         kind, table = _KINDS[label]
         branches.append(
-            "SELECT t.source_id,l.subject_id,l.fact_kind,l.fact_id,"
+            "SELECT t.source_id,linked.subject_id,linked.kind fact_kind,linked.fact_id,"
             f"l.calculation_id FROM {table} t "
             "JOIN fact_current c ON c.fact_id=t.revision_id "
             "JOIN subject own ON own.id=c.subject_id AND own.kind=? "
-            f"JOIN {table}_links l ON l.revision_id=t.revision_id"
+            f"JOIN {table}_links l ON l.revision_id=t.revision_id "
+            "LEFT JOIN calculation linked ON linked.id=l.calculation_id"
         )
         kinds.append(kind)
     # Keep every authoritative link in the checks, but return only affected

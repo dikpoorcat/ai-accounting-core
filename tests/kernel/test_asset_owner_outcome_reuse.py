@@ -8,6 +8,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import month
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_payroll_corrections import Company
 
@@ -130,11 +131,15 @@ def test_public_assets_equal_with_less_actual_owner_body_work(tmp_path, closed_h
             return original(reads, ids, _decoded_owners=retained)
         return read
 
-    with patch.object(QueryReads, "asset_members_many", selected_owner_bodies("complete")):
+    with raw_read(), patch.object(
+        QueryReads, "asset_members_many", selected_owner_bodies("complete")
+    ):
         before_work, before = measure_work(
             engine, lambda: Dashboard(engine).assets(period, preparation="deferred"),
         )
-    with patch.object(QueryReads, "asset_members_many", selected_owner_bodies("reused")):
+    with raw_read(), patch.object(
+        QueryReads, "asset_members_many", selected_owner_bodies("reused")
+    ):
         after_work, after = measure_work(
             engine, lambda: Dashboard(engine).assets(period, preparation="deferred"),
         )
@@ -191,7 +196,7 @@ def test_reused_owner_keeps_member_guards_and_failure_atomicity(open_owners, fau
             with pytest.raises(KernelError):
                 reads.asset_members_many(owners, _decoded_owners=decoded)
             assert not reads._asset_members
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-03", preparation="deferred")
 
 

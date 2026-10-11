@@ -124,17 +124,20 @@ def test_missing_owned_current_proof_and_subject_scope_keep_original_locator(boo
         snap.month_journal.account_amounts()
         for subjects in (set(), {"funding"}):
             read = FundsRead(snap)
-            assert read._verified_current_event_rows(
+            selected = read._verified_current_event_rows(
                 current=True, accounts={"1002"}, subjects=subjects,
-            ) is None
-            _effects(read, current=True, subjects=subjects)
-        assert len(calls) == 3
+            )
+            assert selected is not None
+            assert {row["voucher_subject_id"] for row in selected} == subjects
+            actual = _effects(read, current=True, subjects=subjects)
+            assert bool(actual) == bool(subjects)
+        assert len(calls) == 1
         read = FundsRead(snap)
         assert read._verified_current_event_rows(
             current=False, accounts={"1002"}, subjects=None,
         ) is None
         _effects(read, current=False)
-        assert len(calls) == 4
+        assert len(calls) == 2
         token = _active_fact_reads.set(None)
         try:
             assert read._verified_current_event_rows(

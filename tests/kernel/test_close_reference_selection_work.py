@@ -224,6 +224,8 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
 
     def observe_adoptions(reads):
         seen = []
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
         verify = reads.verify_selected_voucher_adoptions
 
         def counted(rows, *, through_period):
@@ -234,7 +236,21 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
             return result
 
         monkeypatch.setattr(reads, "verify_selected_voucher_adoptions", counted)
-        return seen
+        return seen, statements
+
+    def family_reads(statements):
+        return sum(
+            sql.lstrip().upper().startswith("SELECT")
+            and "close_storage_subroot" in sql
+            for sql in statements
+        )
+
+    def voucher_locator_reads(statements):
+        return sum(
+            "CROSS JOIN close_reference r INDEXED BY close_reference_lookup" in sql
+            and "WHERE r.reference_type='voucher'" in sql
+            for sql in statements
+        )
 
     def journal_rows(reads):
         snapshot = SimpleNamespace(
@@ -247,10 +263,14 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
         return journal, rows
 
     with QueryReads.snapshot(engine) as reads:
+        statements = []
+        reads.connection.set_trace_callback(statements.append)
         journal, rows = journal_rows(reads)
         reads.verify_selected_voucher_adoptions(rows, through_period=MONTH)
         assert (MONTH, "accounting") in decoded_families
         assert len(selected_headers) == len(rows)
+        assert family_reads(statements) == 1
+        assert voucher_locator_reads(statements) == 1
         expected_heads = {(MONTH, row["id"]) for row in rows}
         assert set(reads._verified_frozen_voucher_headers) == expected_heads
         assert len(reads._verified_selected_voucher_adoptions) == len(rows)
@@ -258,11 +278,15 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
         reads.voucher_lines({row["id"] for row in rows})
         decoded_families.clear()
         selected_headers.clear()
-        seen = observe_adoptions(reads)
+        seen, statements = observe_adoptions(reads)
         hydrated = journal.hydrate(rows)
         assert len(hydrated) == len(rows)
-        assert len(seen) == len(rows)
+        # Hydration, complete frozen-header scope and adopted-result scope
+        # independently request proof; only missing physical work is repeated.
+        assert len(seen) == len(rows) * 3
         assert set(seen) == {(row["id"], MONTH, MONTH) for row in rows}
+        assert family_reads(statements) == 0
+        assert voucher_locator_reads(statements) == 0
         assert not decoded_families
         assert not selected_headers
         assert set(reads._verified_frozen_voucher_headers) == expected_heads
@@ -276,11 +300,13 @@ def test_journal_reuses_snapshot_leaves_and_checks_again_next_snapshot(monkeypat
         selected_headers.clear()
         assert not reads._verified_selected_voucher_adoptions
         assert not reads._verified_frozen_voucher_headers
-        seen = observe_adoptions(reads)
+        seen, statements = observe_adoptions(reads)
         fresh = [dict(row) for row in journal.hydrate(rows)]
         assert fresh == same_snapshot
-        assert len(seen) == len(rows)
+        assert len(seen) == len(rows) * 3
         assert set(seen) == {(row["id"], MONTH, MONTH) for row in rows}
+        assert family_reads(statements) == 1
+        assert voucher_locator_reads(statements) == 1
         assert (MONTH, "accounting") in decoded_families
         assert len(selected_headers) == len(rows)
         assert set(reads._verified_frozen_voucher_headers) == expected_heads

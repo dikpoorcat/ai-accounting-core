@@ -42,7 +42,7 @@ from ai_accounting.kernel.domains.payroll import (
 )
 from ai_accounting.kernel.domains.transactions import Allocation, Payment, calculate_payment
 from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
-from ai_accounting.kernel.payroll_preparation import BoundedPayrollPlan, PayrollPlan
+from ai_accounting.kernel.payroll_preparation import PayrollPlan
 from ai_accounting.kernel.types import MAX_FEN, YearMonth
 from ai_accounting.payroll import AnnualBonusTaxPolicy, CumulativeIncomeTaxPolicy
 
@@ -55,7 +55,7 @@ def context_for(current, facts=(), calculations=()):
     """Build only the calculator's declared selections, including every empty scope."""
     facts = [item for item in facts if item.subject_id != current.subject_id] + [current]
     selections = {}
-    for read in current.fact.reads():
+    for read in current.fact.reads_for(current.subject_id):
         if read.source == "fact":
             selections[read] = tuple(
                 item
@@ -65,7 +65,8 @@ def context_for(current, facts=(), calculations=()):
                 and (
                     read.key == "*"
                     or read.key == f"#{item.id}"
-                    or read.key in (f"@{item.subject_id}", *item.fact.scopes())
+                    or read.key
+                    in (str(item.fact.period), f"@{item.subject_id}", *item.fact.scopes())
                 )
             )
         else:
@@ -79,6 +80,7 @@ def context_for(current, facts=(), calculations=()):
                     or read.key
                     in (
                         f"@{item.subject_id}",
+                        str(item.period),
                         employee_month(item.values.get("employee_id", ""), item.period),
                     )
                 )
@@ -90,17 +92,11 @@ def with_payroll_plan(current, facts):
     """Add the explicit synthetic owner confirmation required by this wage scenario."""
     wage = current.fact
 
-    def ref(subject):
-        return FactRevisionReference(subject_id=subject, revision=1)
-
-    model = BoundedPayrollPlan if wage.kind == "payroll_bounded" else PayrollPlan
-    plan = model(
+    plan = PayrollPlan(
         period=wage.period,
-        employee_id=wage.employee_id,
-        payroll=wage,
-        profile_revision=ref(wage.profile_id),
-        contribution_policy_revision=ref(wage.contribution_policy_id),
-        income_tax_policy_revision=ref(wage.income_tax_policy_id),
+        payroll_revision=FactRevisionReference(
+            subject_id=current.subject_id, revision=current.revision
+        ),
         change_notice_revisions=(),
     )
     return [*facts, version(plan, f"confirmation:{wage.employee_id}:{wage.period}")]
@@ -199,13 +195,21 @@ def opening(**changes):
 
 
 def payroll(**changes):
+    # Explicit synthetic source identities become exact references at the factory boundary.
+    for old, field in (
+        ("profile_id", "profile_revision"),
+        ("contribution_policy_id", "contribution_policy_revision"),
+        ("income_tax_policy_id", "income_tax_policy_revision"),
+    ):
+        if old in changes:
+            changes[field] = {"subject_id": changes.pop(old), "revision": 1}
     return Payroll(
         **{
             "period": "2026-01",
             "employee_id": "employee",
-            "profile_id": "profile",
-            "contribution_policy_id": "contributions",
-            "income_tax_policy_id": "income-tax",
+            "profile_revision": {"subject_id": "profile", "revision": 1},
+            "contribution_policy_revision": {"subject_id": "contributions", "revision": 1},
+            "income_tax_policy_revision": {"subject_id": "income-tax", "revision": 1},
             "accounting_gross_salary_fen": 1_000_000,
             "tax_reported_salary_fen": 1_000_000,
             "tax_exempt_income_fen": 0,
@@ -343,7 +347,9 @@ def test_regular_payroll_produces_balanced_obligations_and_records_empty_actual_
     )
     assert (
         Read(
-            "fact", "payroll_first_wage_treatment", employee_year("employee", "2026-01"),
+            "fact",
+            "payroll_first_wage_treatment",
+            employee_year("employee", "2026-01"),
             YearMonth("2026-02"),
         )
         in ctx.used

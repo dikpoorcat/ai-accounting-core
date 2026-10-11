@@ -47,8 +47,10 @@ def test_owned_family_parser_preserves_all_frozen_work_and_history(tmp_path, rec
     assert actual["fixed_active_count"] == len(identities)
     assert parsed and all(native for _, native, _ in parsed)
     assert all(set(value) == {"directories", "subject_filter"} for _, _, value in parsed)
-    assert all(set(value["directories"]) == {"adopted_results", "vouchers"}
-               for _, _, value in parsed)
+    assert all(
+        set(value["directories"]) == {"adopted_results", "vouchers", "fund_details"}
+        for _, _, value in parsed
+    )
     for key in ("sql_calls", "returned_rows", "returned_value_bytes", "sqlite_vm_steps",
                 "calculation_result_rows_loaded", "typed_fact_json_decodes",
                 "adoption_accounting_slice_reads"):
@@ -69,7 +71,8 @@ def test_owned_family_parser_preserves_all_frozen_work_and_history(tmp_path, rec
     assert {period for period, _, _ in parsed} == {activation_month}
     with engine.store.connection(read_only=True) as connection:
         raw = connection.execute(
-            "SELECT content,digest FROM close_storage_subroot WHERE period=? AND family='accounting'",
+            "SELECT content,digest FROM close_storage_subroot "
+            "WHERE period=? AND family='accounting'",
             (activation_month,),
         ).fetchone()
         assert hashlib.sha256(raw["content"].encode()).digest() == bytes(raw["digest"])

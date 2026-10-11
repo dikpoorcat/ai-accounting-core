@@ -114,7 +114,6 @@ export const localBusinessNames: Record<string, string> = {
   material_group_resolution: "原始资料联合处理结果",
   material_period_allocation: "原始资料核算月份归属",
   payroll_plan_v2: "工资标准计划",
-  payroll_plan_bounded: "工资标准计划",
   payroll_change_notice_v2: "工资变动通知",
   payroll_no_change_v2: "工资无变动确认",
   tax_import_identity_v2: "个税人员资料",

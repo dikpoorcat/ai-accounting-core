@@ -153,11 +153,152 @@ def _save_frozen_proof(company, proof, *, period="2026-01", anchor=True):
             "approval": None,
             "owner_review": owner_review,
         }
-        close_digest = write_close(connection, ordinal, manifest)
-        connection.execute(
-            "INSERT INTO read_index_source(source_kind,source_id,source_digest) VALUES(?,?,?)",
-            ("close", str(ordinal), close_digest),
+        # This fixture freezes material coverage without the production close
+        # workflow. Its journal basis must still describe the actual adopted
+        # versions so later dashboard reads can verify the frozen month.
+        import json
+
+        for row in connection.execute(
+            "SELECT c.*,p.id publication_id FROM calculation_current h "
+            "JOIN calculation c ON c.id=h.calculation_id "
+            "JOIN calculation_publication p ON p.calculation_id=c.id "
+            "WHERE p.posting_period=? ORDER BY c.subject_id",
+            (ordinal,),
+        ):
+            outcome = json.loads(row["outcome"])
+            manifest["adopted_results"].append(
+                {
+                    "publication_id": row["publication_id"],
+                    "calculation_id": row["id"],
+                    "result_digest": row["digest"].hex(),
+                    "subject_id": row["subject_id"],
+                    "fact_id": row["fact_id"],
+                    "source_period": str(YearMonth.from_ordinal(row["period"])),
+                    "posting_period": period,
+                    "role": "journal_basis" if outcome["lines"] else "state_only",
+                }
+            )
+        adopted = {item["subject_id"]: item for item in manifest["adopted_results"]}
+        for row in connection.execute(
+            "SELECT v.id,v.voucher_id,v.calculation_id,v.total,s.number,v.reverses_id,"
+            "r.subject_id FROM voucher_current c "
+            "JOIN voucher_version v ON v.id=c.version_id JOIN voucher s ON s.id=v.voucher_id "
+            "JOIN calculation r ON r.id=v.calculation_id WHERE v.period=? ORDER BY s.number",
+            (ordinal,),
+        ):
+            voucher = dict(row)
+            basis = adopted[voucher.pop("subject_id")]
+            voucher["adopted_calculation_id"] = basis["calculation_id"]
+            voucher["result_digest"] = basis["result_digest"]
+            manifest["vouchers"].append(voucher)
+        manifest["trial_balance"] = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT account,sum(debit) debit,sum(credit) credit "
+                "FROM (SELECT * FROM monthly_account WHERE period<=? UNION ALL "
+                "SELECT * FROM opening_account WHERE period<=?) GROUP BY account ORDER BY account",
+                (ordinal, ordinal),
+            )
+        ]
+        from ai_accounting.kernel.close_fund_details import build_fund_close_snapshot
+        from ai_accounting.kernel.close_storage import decode_close
+
+        previous_manifest = (
+            decode_close(
+                connection,
+                connection.execute(
+                    "SELECT * FROM period_close WHERE period=?", (previous["period"],)
+                ).fetchone(),
+            )
+            if previous
+            else None
         )
+        manifest["fund_details"] = build_fund_close_snapshot(
+            connection, manifest, previous_manifest=previous_manifest
+        )
+        from ai_accounting.kernel.duplicate_freeze import (
+            persist_duplicate_freeze,
+            prepare_duplicate_freeze,
+        )
+        from ai_accounting.kernel.material_watch import (
+            persist_material_watch,
+            prepare_material_watch,
+        )
+        from ai_accounting.kernel.period_balance_freeze import (
+            persist_balance_freeze,
+            prepare_balance_freeze,
+        )
+        from ai_accounting.kernel.report_classification_directory import (
+            DERIVED_ROOT_NAME,
+            persist_classification_directory,
+            prepare_classification_directory,
+        )
+        from ai_accounting.kernel.report_flow import persist_report_flow, prepare_report_flow
+        from ai_accounting.kernel.report_projection import (
+            persist_report_projection,
+            prepare_report_projection,
+        )
+        from ai_accounting.kernel.report_semantics import (
+            persist_report_semantics,
+            prepare_report_semantics,
+        )
+        from ai_accounting.kernel.settlement_freeze import (
+            persist_freeze_projection,
+            prepare_freeze_projection,
+        )
+
+        logical_digest = digest(manifest)
+        balances = prepare_balance_freeze(
+            connection, ordinal, logical_digest, manifest["publication_sequence"]
+        )
+        settlement = prepare_freeze_projection(
+            connection, ordinal, logical_digest, manifest["publication_sequence"]
+        )
+        report = prepare_report_projection(
+            company.engine, connection, ordinal, manifest, logical_digest
+        )
+        semantics = prepare_report_semantics(
+            company.engine, connection, ordinal, report.rows, logical_digest
+        )
+        flow = prepare_report_flow(company.engine, connection, ordinal, report, semantics)
+        classifications = prepare_classification_directory(
+            connection,
+            ordinal,
+            logical_digest,
+            manifest,
+            flow.content,
+            allow_absent_financial_reports=True,
+        )
+        duplicates = prepare_duplicate_freeze(company.engine, connection, ordinal, logical_digest)
+        watch = prepare_material_watch(
+            company.engine, connection, ordinal, manifest, logical_digest
+        )
+        write_close(
+            connection,
+            ordinal,
+            manifest,
+            projection_roots={
+                "period_balance": balances.root_digest,
+                "settlement": settlement.root_digest,
+                "report": report.root_digest,
+                "report_semantics": semantics.root_digest,
+                "report_flow": flow.root_digest,
+                DERIVED_ROOT_NAME: classifications.root_digest,
+                "duplicate": duplicates.root_digest,
+                "material_watch": watch.root_digest,
+            },
+        )
+        from ai_accounting.kernel.read_indexes import sync_close
+
+        sync_close(connection, ordinal)
+        persist_balance_freeze(connection, balances)
+        persist_freeze_projection(connection, settlement)
+        persist_report_projection(connection, report)
+        persist_report_semantics(connection, semantics)
+        persist_report_flow(connection, flow)
+        persist_classification_directory(connection, classifications)
+        persist_duplicate_freeze(connection, duplicates)
+        persist_material_watch(connection, watch)
         if anchor:
             connection.execute(
                 "INSERT INTO material_close_rule(period,rule_digest) VALUES(?,?)",
@@ -207,23 +348,35 @@ def test_old_complete_template_proof_requires_new_rule_fallback_without_rewritin
         source, _ = company.source(template(), spec=spec().model_dump(mode="json"))
         assignments = tuple(
             PeriodAllocationEntry(
-                sheet="Sheet", column=column, first_row=2, last_row=4,
-                recognition_period="2026-01", basis="confirmed_period",
-                basis_evidence_digest=company.proof, basis_location="L1",
+                sheet="Sheet",
+                column=column,
+                first_row=2,
+                last_row=4,
+                recognition_period="2026-01",
+                basis="confirmed_period",
+                basis_evidence_digest=company.proof,
+                basis_location="L1",
                 basis_excerpt="负责人逐项确认",
-            ) for column in ("AC", "AD", "AE", "AF")
+            )
+            for column in ("AC", "AD", "AE", "AF")
         )
         preview = company.materials.preview_period_allocation(source["subject_id"], assignments)
         company.materials.confirm_period_allocation(
-            source["subject_id"], assignments, preview_digest=preview["digest"],
-            epochs=preview["epochs"], expected_revision=preview["expected_revision"],
+            source["subject_id"],
+            assignments,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            expected_revision=preview["expected_revision"],
             request_id=company.request(),
         )
         for row in range(2, 5):
             for column in ("AC", "AD", "AE", "AF"):
                 company.resolve(
-                    source, f"Sheet!{column}{row}", treatment="no_accounting",
-                    non_accounting_reason="zero_amount", amount_fen=0,
+                    source,
+                    f"Sheet!{column}{row}",
+                    treatment="no_accounting",
+                    non_accounting_reason="zero_amount",
+                    amount_fen=0,
                     reason="合成负责人明确核准未使用模板占位，没有业务金额",
                 )
         with company.engine.store.connection(read_only=True) as connection:
@@ -237,11 +390,14 @@ def test_old_complete_template_proof_requires_new_rule_fallback_without_rewritin
     def saved_history():
         with company.engine.store.connection(read_only=True) as connection:
             return (
-                tuple(connection.execute(
-                    "SELECT period,digest,manifest FROM period_close"
-                ).fetchone()),
-                tuple(connection.execute("SELECT period,rule_digest FROM material_close_rule")
-                      .fetchone()),
+                tuple(
+                    connection.execute("SELECT period,digest,manifest FROM period_close").fetchone()
+                ),
+                tuple(
+                    connection.execute(
+                        "SELECT period,rule_digest FROM material_close_rule"
+                    ).fetchone()
+                ),
             )
 
     original = saved_history()
@@ -254,7 +410,9 @@ def test_old_complete_template_proof_requires_new_rule_fallback_without_rewritin
                 connection, YearMonth("2026-02").ordinal, company.engine.store.registry
             )
             fast = materials.check_completeness(
-                connection, YearMonth("2026-02").ordinal, company.engine.store.registry,
+                connection,
+                YearMonth("2026-02").ordinal,
+                company.engine.store.registry,
                 _allow_frozen_reuse=True,
             )
         assert full["status"] == "needs_information"
@@ -265,10 +423,15 @@ def test_old_complete_template_proof_requires_new_rule_fallback_without_rewritin
     result = _compare_page_checks(company)
     assert result["status"] == "needs_information"
     with company.engine.store.connection(read_only=True) as connection:
-        assert frozen_material.verified_frozen_material_summary(
-            connection, YearMonth("2026-02").ordinal, YearMonth("2026-01").ordinal,
-            company.engine.store.registry,
-        ) is None
+        assert (
+            frozen_material.verified_frozen_material_summary(
+                connection,
+                YearMonth("2026-02").ordinal,
+                YearMonth("2026-01").ordinal,
+                company.engine.store.registry,
+            )
+            is None
+        )
     assert saved_history() == original
     assert original[1][1] == old_rule
 
@@ -287,7 +450,8 @@ def test_verified_frozen_rows_keep_unchanged_source_and_exclude_changed_link(tmp
     with company.engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         subject = connection.execute(
-            "SELECT subject_id FROM fact_material_resolution_v2_links LIMIT 1"
+            "SELECT c.subject_id FROM fact_material_resolution_v2_links l "
+            "JOIN calculation c ON c.id=l.calculation_id LIMIT 1"
         ).fetchone()[0]
         connection.execute("DELETE FROM calculation_current WHERE subject_id=?", (subject,))
         connection.commit()
@@ -648,8 +812,11 @@ def test_close_reuses_verified_old_material_without_changing_manifest(tmp_path, 
     assert readiness_inspections["full"] > 0
     mode[0] = "fast"
     book.periods.close(
-        "2016-02", owner_confirmation=owner, preview_digest=full["digest"],
-        epochs=full["epochs"], request_id="close-with-verified-material-reuse",
+        "2016-02",
+        owner_confirmation=owner,
+        preview_digest=full["digest"],
+        epochs=full["epochs"],
+        request_id="close-with-verified-material-reuse",
     )
 
 

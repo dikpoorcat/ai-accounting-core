@@ -50,9 +50,9 @@ def wage():
         Payroll(
             period="2026-08",
             employee_id="employee",
-            profile_id="profile",
-            contribution_policy_id="contribution",
-            income_tax_policy_id="income-tax",
+            profile_revision={"subject_id": "profile", "revision": 1},
+            contribution_policy_revision={"subject_id": "contribution", "revision": 1},
+            income_tax_policy_revision={"subject_id": "income-tax", "revision": 1},
             accounting_gross_salary_fen=1000,
             tax_reported_salary_fen=1000,
             tax_exempt_income_fen=0,

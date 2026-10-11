@@ -52,11 +52,6 @@
     },
     {
       "type": "table",
-      "name": "security_identity_import",
-      "sql": "CREATE TABLE security_identity_import(\n        source_catalog_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE\n          REFERENCES security_owner(id), imported_at INTEGER NOT NULL\n    ) STRICT"
-    },
-    {
-      "type": "table",
       "name": "security_owner",
       "sql": "CREATE TABLE security_owner(\n        id TEXT PRIMARY KEY, singleton INTEGER NOT NULL UNIQUE CHECK(singleton=1),\n        login_name TEXT NOT NULL, login_key TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL CHECK(status IN ('active','disabled')),\n        password_hash TEXT NOT NULL CHECK(length(password_hash)=97\n          AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=4$%'),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        password_failures INTEGER NOT NULL CHECK(password_failures>=0),\n        password_blocked_until INTEGER,\n        recovery_failures INTEGER NOT NULL CHECK(recovery_failures>=0),\n        recovery_blocked_until INTEGER,\n        created_at INTEGER NOT NULL, password_changed_at INTEGER NOT NULL,\n        last_authenticated_at INTEGER,\n        CHECK(login_key=lower(trim(login_name))),\n        CHECK(length(login_name) BETWEEN 3 AND 100\n          AND login_name=trim(login_name) AND login_name NOT GLOB '*[^A-Za-z0-9._-]*'\n          AND substr(login_name,1,1) GLOB '[A-Za-z0-9]')\n    ) STRICT"
     },
@@ -129,17 +124,7 @@
       "type": "trigger",
       "name": "security_audit_no_update",
       "sql": "CREATE TRIGGER security_audit_no_update BEFORE UPDATE ON security_audit\n        BEGIN SELECT RAISE(ABORT,'immutable security audit'); END"
-    },
-    {
-      "type": "trigger",
-      "name": "security_import_no_delete",
-      "sql": "CREATE TRIGGER security_import_no_delete BEFORE DELETE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
-    },
-    {
-      "type": "trigger",
-      "name": "security_import_no_update",
-      "sql": "CREATE TRIGGER security_import_no_update BEFORE UPDATE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
     }
   ],
-  "sha256": "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+  "sha256": "0ec502b9c9ca75f97097da3abb496b779d325e6afc4210577755d52b7b75060e"
 }

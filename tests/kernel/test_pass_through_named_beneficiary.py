@@ -99,7 +99,10 @@ def test_named_beneficiary_reuses_existing_sources_without_payer_name(book, sour
         ).fetchone()[0] == beneficiary
 
 
-def test_name_lookup_does_not_authenticate_unrelated_profiles(book):
+def test_name_lookup_does_not_authenticate_unrelated_profiles(book, monkeypatch):
+    from ai_accounting.kernel import dashboard_model_runtime
+    from ai_accounting.kernel.entities import employee_entities
+
     engine, _, _, beneficiary = book
     entities = Entities(engine)
     entities.update_entity_profile(
@@ -116,7 +119,30 @@ def test_name_lookup_does_not_authenticate_unrelated_profiles(book):
         "UPDATE entity_profile_revision SET digest=zeroblob(32) WHERE entity_id=?",
         (unrelated,),
     )
-    assert register(book)["status"] == "confirmed"
+    with engine.store.connection(read_only=True) as connection:
+        assert _named_entities(connection, {beneficiary}, store=engine.store) == (
+            {beneficiary}, {}
+        )
+        # A full personnel page must authenticate every candidate, including
+        # this unrelated person's negative roster membership.
+        with pytest.raises(KernelError) as failure:
+            employee_entities(connection, "2026-09", registry=engine.store.registry)
+        assert failure.value.code == "entity_profile_corrupt"
+        before = {table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                  for table in ("subject", "fact_revision", "request", "audit")}
+    # The ordinary writer also refreshes that complete page and must reject
+    # its corruption atomically; it has a broader scope than the name resolver.
+    with pytest.raises(KernelError) as failure:
+        register(book)
+    assert failure.value.code == "entity_profile_corrupt"
+    with engine.store.connection(read_only=True) as connection:
+        assert {table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                for table in before} == before
+    # Isolate only this registration's business-source validation from UI
+    # production, keeping the exact name resolver and its checks unchanged.
+    with monkeypatch.context() as setup:
+        setup.setattr(dashboard_model_runtime, "supports_native_production", lambda _engine: False)
+        assert register(book)["status"] == "confirmed"
 
 
 def test_prior_anonymous_id_cannot_be_newly_calculated(book):

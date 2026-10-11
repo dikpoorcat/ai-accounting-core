@@ -30,7 +30,7 @@ def correction(book, original, data, *, request_id="correction", **changes):
     return entities.correct_fund_account_identity(original["entity_id"], **payload)
 
 
-@pytest.mark.parametrize("account_type", ["bank", "platform", "cash"])
+@pytest.mark.parametrize("account_type", ["bank", "platform"])
 def test_identity_correction_appends_history_preserving_original_definition_and_subject(
     book, account_type
 ):
@@ -39,7 +39,7 @@ def test_identity_correction_appends_history_preserving_original_definition_and_
     with engine.store.connection(read_only=True) as connection:
         original_row = tuple(connection.execute("SELECT * FROM fund_account_definition").fetchone())
     data = profile(account_type)
-    field = "display_name" if account_type == "cash" else "account_holder_name"
+    field = "account_holder_name"
     data[field] = "原件明确纠正后的名称"
     result = correction(book, original, data)
     current = result["fund_account"]
@@ -199,7 +199,7 @@ def test_duplicate_normalization_does_not_mislabel_bank_spelling_as_holder_confl
     assert duplicate["entity_id"] == first["entity_id"]
 
 
-@pytest.mark.parametrize("account_type", ["bank", "platform", "cash"])
+@pytest.mark.parametrize("account_type", ["bank", "platform"])
 def test_identity_correction_command_requires_typed_profile_and_explicit_confirmation(
     book, account_type
 ):

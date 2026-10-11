@@ -669,7 +669,6 @@ def open_group_members(snap, group_key, *, after=None, limit=20):
                 for value in (
                     profile.get("purpose"),
                     profile.get("note"),
-                    (snap.management.get(business.get("subject_id")) or {}).get("note"),
                 )
                 if isinstance(value, str) and value.strip()
             )

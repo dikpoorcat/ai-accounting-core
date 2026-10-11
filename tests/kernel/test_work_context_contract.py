@@ -80,12 +80,16 @@ def test_nested_objects_do_not_accept_unknown_structural_fields(populated, secti
 def test_optional_original_profile_fields_are_not_defaulted(populated):
     actual = deepcopy(populated)
     profile = actual["entities"][0]["profile"]
-    for field in ("active", "employment_status", "external_identifiers", "note"):
+    assert profile["entity_kind"] == "organization"
+    assert "active" not in profile and "employment_status" not in profile
+    for field in ("display_number", "external_identifiers", "note"):
         profile.pop(field)
     validated = WORK_CONTEXT_ADAPTER.validate_python(actual)
     assert validated == actual
     assert "active" not in validated["entities"][0]["profile"]
     assert "employment_status" not in validated["entities"][0]["profile"]
+    assert "external_identifiers" not in validated["entities"][0]["profile"]
+    assert "note" not in validated["entities"][0]["profile"]
 
 
 def test_source_body_is_existing_json_and_not_registration_union(populated):

@@ -152,4 +152,4 @@ def test_future_fixture_defines_employee_management_status_without_changing_owne
         assert connection.execute(
             "SELECT json_extract(content,'$.employment_state') FROM entity_profile_revision "
             "WHERE entity_id=? ORDER BY revision DESC LIMIT 1", (book.owner,),
-        ).fetchone()[0] is None
+        ).fetchone()[0] == "unknown"

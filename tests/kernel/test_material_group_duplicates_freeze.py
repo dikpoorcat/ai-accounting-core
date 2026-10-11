@@ -10,6 +10,7 @@ from ai_accounting.kernel import material_watch
 from ai_accounting.kernel.backup import create_portable, verify_portable
 from ai_accounting.kernel.close_storage import decode_close
 from ai_accounting.kernel.integrity import verify_integrity
+from ai_accounting.kernel.materials import MaterialLink, resolve_material_links
 from ai_accounting.kernel.types import YearMonth
 
 
@@ -125,11 +126,16 @@ def test_group_duplicate_freeze_and_current_followup(tmp_path, change):
         assert group["fact_id"] in coverage["group_versions"]
         assert selector["fact_id"] in coverage["resolution_versions"]
         stored = connection.execute(
-            "SELECT subject_id,amount_fen FROM fact_material_resolution_v2_links "
+            "SELECT calculation_id,amount_field,amount_fen FROM fact_material_resolution_v2_links "
             "WHERE revision_id=?",
             (selector["fact_id"],),
         ).fetchall()
-        assert [tuple(item) for item in stored] == [("pool-second", 2000)]
+        resolved = resolve_material_links(
+            connection,
+            [MaterialLink.model_validate(dict(item)) for item in stored],
+            registry=book.engine.store.registry,
+        )
+        assert [(item.subject_id, item.amount_fen) for item in resolved] == [("pool-second", 2000)]
         heads = material_watch.heads_at(
             connection, material_watch._stored_root(connection, january)["highwater"]
         )

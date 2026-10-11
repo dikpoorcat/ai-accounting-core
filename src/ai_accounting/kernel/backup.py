@@ -250,7 +250,7 @@ _RETAINED_HISTORY_ROWS = (
     # referenced by a period-close manifest.
     (
         "management_revision",
-        "id,subject_id,revision,note,payment_period,payment_category",
+        "id,subject_id,revision,payment_period,payment_category",
         "id",
     ),
     ("payee_revision", "id,party_id,revision,name,account,evidence_digest", "id"),
@@ -263,8 +263,7 @@ _RETAINED_HISTORY_ROWS = (
     ("company_note_revision", "id,revision,text,digest,evidence_digest", "id"),
     (
         "display_profile_revision",
-        "id,kind,entity_id,revision,display_name,display_number,purpose,note,"
-        "counterparty_id,beneficiary_id,handler_id,source,evidence_digest,digest",
+        "id,kind,entity_id,revision,display_name,purpose,note,source,evidence_digest,digest",
         "id",
     ),
     (
@@ -507,35 +506,6 @@ def _clear_rollover(marker: Path, pending: Path) -> None:
     _sync_directory(marker.parent)
 
 
-def _verify_rollover_archive(path, bundle, identity_checks):
-    """Verify a retained source ZIP only for an explicitly declared draft rollover.
-
-    Normal restore and verification still require their exact active contract.
-    This fallback does not rewrite the archive or relabel its original format.
-    """
-    try:
-        return verify_portable(path, _bundle=bundle, **identity_checks)
-    except BackupError as original_error:
-        if original_error.code != "backup_schema_unsupported" or bundle.status != "draft":
-            raise
-        from .offline_development_upgrade import _declared_changes, source_bundle
-
-        # Only the package's two exact, validated forward steps authorize a
-        # rollover source; a loose snapshot or arbitrary transition cannot.
-        steps = _declared_changes(bundle)
-        # The first verifier already checked archive paths, sizes and manifest
-        # shape before rejecting its historical format. Recheck with the exact
-        # source contract, including content, evidence and all identity fields.
-        for source, _, _ in reversed(steps):
-            historical = source_bundle(bundle, source["sha256"])
-            try:
-                return verify_portable(path, _bundle=historical, **identity_checks)
-            except BackupError as source_error:
-                if source_error.code != "backup_schema_unsupported":
-                    raise
-        raise original_error
-
-
 def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -> None:
     marker, pending = _rollover_paths(output, taxpayer_id)
     if not marker.exists():
@@ -586,7 +556,7 @@ def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -
         pending_state = _archive_state(pending)
         if pending_state[-1] != state["old_current"] or previous_digest != state["old_previous"]:
             raise _error("backup_target_changed", "Previous backup changed during rollover")
-        _verify_rollover_archive(pending, bundle, identity_checks)
+        verify_portable(pending, _bundle=bundle, **identity_checks)
         _replace_archive(
             pending,
             previous,
@@ -944,17 +914,56 @@ def portable_result_verified(result: Any) -> bool:
         return False
     if not valid_database_format(result["database_format"]):
         return False
+    bundle = production_bundle()
+    format_value = result["database_format"]
+    contract = bundle.contracts["company"].get(format_value["version"])
+    if (
+        format_value["family"] != bundle.family
+        or format_value["kind"] != "company"
+        or contract is None
+        or format_value["status"] != contract["status"]
+        or format_value["fingerprint"] != contract["sha256"]
+        or format_value["version"] not in bundle.company_verifiers
+    ):
+        return False
+    model_capability = any(
+        item["type"] == "table" and item["name"] == "dashboard_read_model_commit"
+        for item in contract["objects"]
+    )
     verification = result.get("verification")
-    if not isinstance(verification, dict):
+    if not isinstance(verification, dict) or set(verification) != {
+        "status", "coverage", "limitations", "counts",
+    }:
         return False
     if verification.get("status") != "verified" or verification.get("limitations") != []:
         return False
-    if verification.get("coverage") != {
+    required_coverage = {
         "sources": "verified",
         "historical_adoption": "verified",
         "projections": "verified",
         "read_indexes": "verified",
-    }:
+    }
+    coverage = verification.get("coverage")
+    if not isinstance(coverage, dict):
+        return False
+    models = coverage.get("dashboard_read_models")
+    if model_capability:
+        if not isinstance(models, dict) or set(models) != {
+            "status", "receipts", "current_compared", "derived_content",
+        }:
+            return False
+        if (
+            models["status"] != "verified" or models["derived_content"] != "verified"
+            or any(type(models[field]) is not int or models[field] < 0
+                   for field in ("receipts", "current_compared"))
+            or models["current_compared"] > models["receipts"]
+        ):
+            return False
+    elif "dashboard_read_models" in coverage and models != {"status": "not_applicable"}:
+        return False
+    if "dashboard_read_models" in coverage:
+        required_coverage["dashboard_read_models"] = models
+    if coverage != required_coverage:
         return False
     counts = verification.get("counts")
     if not isinstance(counts, dict) or set(counts) != {
@@ -1205,7 +1214,7 @@ def _create_portable_unlocked(
     existing = None
     if final.exists():
         ensure_private_file(final)
-        existing = _verify_rollover_archive(final, bundle, identity_checks)
+        existing = verify_portable(final, _bundle=bundle, **identity_checks)
     if existing is not None:
         if (
             request_id is not None

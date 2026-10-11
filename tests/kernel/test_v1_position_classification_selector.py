@@ -1,8 +1,8 @@
-"""The released position reader keeps its exact classification source set."""
+"""The fixed v1 position rule keeps its exact classification source set."""
 
 import json
 import sqlite3
-from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -10,16 +10,14 @@ from test_integrity_content import damage
 from test_reports import book as book_fixture
 from test_reports import scenario
 
-from ai_accounting.kernel import close_storage_v1, content_v1
-from ai_accounting.kernel.content_history_context import historical_content
-from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel import close_storage, close_storage_v1, content_v1, history_reads_v1
+from ai_accounting.kernel.contracts import KernelError, Registry
 from ai_accounting.kernel.position_v1 import (
     PositionInputsV1,
     _position_classification_ids,
     position_v1,
 )
-from ai_accounting.kernel.storage import Store
+from ai_accounting.kernel.query_reads import QueryReads
 
 book = book_fixture
 
@@ -156,7 +154,7 @@ def test_v1_position_selector_accepts_bundle_without_classification_type():
 
 @pytest.mark.parametrize("damage_kind", ["missing_typed", "bad_child"])
 def test_v1_position_selected_damaged_classification_still_rejects(
-    book, damage_kind, tmp_path, monkeypatch, request
+    book, damage_kind, monkeypatch
 ):
     engine, save, _, close = book
     scenario(book, classification=False)
@@ -183,22 +181,34 @@ def test_v1_position_selected_damaged_classification_still_rejects(
             "JOIN subject s ON s.id=f.subject_id WHERE s.id=?",
             ("party-class-" + voucher_id,),
         ).fetchone()[0]
-    contract_dir = tmp_path / "schema_contracts"
-    contract_dir.mkdir()
-    (contract_dir / "content-v1.json").write_text(
-        json.dumps(content_v1.content_contract(engine.store.registry), ensure_ascii=False),
-        encoding="utf-8",
+    fixed_reads = history_reads_v1.V1Reads
+    classification_sources = Registry()
+    classification_sources.register(engine.store.registry.models["report_classification"])
+    classification_spec = content_v1.registry_descriptor(classification_sources)["models"][
+        "report_classification"
+    ]
+    fixed_registry = SimpleNamespace(
+        models={
+            "report_classification": content_v1._v1_model(
+                "report_classification", classification_spec
+            )
+        }
     )
-    monkeypatch.setattr(content_v1, "__file__", str(tmp_path / "content_v1.py"))
-    content_v1.v1_registry.cache_clear()
-    request.addfinalizer(content_v1.v1_registry.cache_clear)
-    historical_store = Store(
-        engine.store.path,
-        replace(engine.store.bundle, registry=content_v1.v1_registry()),
-        engine.store.company_id,
-        engine.store.database_id,
-    )
-    historical_engine = Engine(historical_store)
+
+    class RuleReads:
+        """Keep fixed classification validation and authenticate current fixture sources."""
+
+        def __init__(self, source_engine, connection):
+            self.current = QueryReads(source_engine, connection)
+            self.classifications = fixed_reads(
+                SimpleNamespace(store=SimpleNamespace(registry=fixed_registry)), connection
+            )
+
+        def fact(self, ident):
+            return self.classifications.fact(ident)
+
+        def __getattr__(self, name):
+            return getattr(self.current, name)
 
     def read_position():
         with engine.store.connection(read_only=True) as connection:
@@ -206,10 +216,16 @@ def test_v1_position_selected_damaged_classification_still_rejects(
             row = connection.execute(
                 "SELECT * FROM period_close WHERE period=(SELECT max(period) FROM period_close)"
             ).fetchone()
-            manifest = close_storage_v1.decode_close(connection, row)
-            with historical_content(1):
+            manifest = close_storage.decode_close(connection, row)
+            # This isolates the fixed position rule on real current-codec
+            # sources. It does not relabel the database or create a v1 contract.
+            # The compatible classification shape is adapted in memory to the
+            # fixed typed loader; no full released registry is synthesized.
+            with monkeypatch.context() as physical_codec:
+                physical_codec.setattr(close_storage_v1, "decode_close", close_storage.decode_close)
+                physical_codec.setattr(history_reads_v1, "V1Reads", RuleReads)
                 assert fact_id in _position_classification_ids(connection, row["period"])
-                return position_v1(PositionInputsV1(historical_engine, connection, manifest))
+                return position_v1(PositionInputsV1(engine, connection, manifest))
 
     baseline = read_position()
     assert baseline["complete"]

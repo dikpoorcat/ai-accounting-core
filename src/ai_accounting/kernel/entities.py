@@ -53,40 +53,70 @@ DisplayDate = Annotated[
 
 
 class EntityProfile(BaseModel):
+    """Shared management vocabulary; subtype models own all specific fields."""
+
     model_config = ConfigDict(extra="forbid", strict=True)
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=50000)
+
+
+class NumberedEntityProfile(EntityProfile):
     display_number: str | None = Field(default=None, min_length=1, max_length=200)
     external_identifiers: dict[str, str] = Field(default_factory=dict)
-    active: bool = True
-    purpose: str | None = Field(default=None, max_length=50000)
-    note: str | None = Field(default=None, max_length=50000)
-    employment_start: DisplayDate | None = None
-    employment_end: DisplayDate | None = None
-    employment_status: Literal["active", "inactive", "unknown"] = "unknown"
-    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"] = Field(
-        default="unknown",
-        description="负责人确认或任职资料明确登记的当前管理状态；不改变工资核算，不从工资或备注推断。历史未记录该字段时沿用已登记的就业状态及明确离职日期。",
-        json_schema_extra={"x-accounting-fact": {
-            "role": "management", "meaning": "explicit_current_employment_state",
-            "reusable_sources": ["owner_confirmation", "employment_document"],
-        }},
-    )
-    category_label: str | None = None
-    rights_description: str | None = None
-    useful_life_basis: str | None = None
 
     @model_validator(mode="after")
-    def validate_explicit_details(self):
+    def validate_external_identifiers(self):
         if any(
             not key.strip() or not value.strip() or len(value) > 500
             for key, value in self.external_identifiers.items()
         ):
             raise ValueError("external identifiers require a name and an explicit value")
+        return self
+
+
+class PersonProfile(NumberedEntityProfile):
+    employment_start: DisplayDate | None = None
+    employment_end: DisplayDate | None = None
+    employment_status: Literal["active", "inactive", "unknown"] = "unknown"
+    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"] = Field(
+        default="unknown",
+        description="负责人确认或任职资料明确登记的当前管理状态；不改变工资核算或历史月份在册事实，不从工资、备注或在册状态推断。缺失保持未确认。",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "management", "meaning": "explicit_current_employment_state",
+            "reusable_sources": ["owner_confirmation", "employment_document"],
+        }},
+    )
+    @model_validator(mode="after")
+    def validate_explicit_details(self):
         if self.employment_start and self.employment_end:
             start, end = self.employment_start, self.employment_end
             if start[:7] > end[:7] or (len(start) == len(end) == 10 and start > end):
                 raise ValueError("employment end precedes start")
         return self
+
+
+class OrganizationProfile(NumberedEntityProfile):
+    pass
+
+
+class FundAccountProfile(EntityProfile):
+    active: bool = True
+
+
+class AssetProfile(NumberedEntityProfile):
+    category_label: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+def entity_profile_models():
+    """Exact new-format management inputs, selected by the actual entity kind."""
+    return {
+        "person": PersonProfile,
+        "organization": OrganizationProfile,
+        "fund_account": FundAccountProfile,
+        "asset": AssetProfile,
+        "project": NumberedEntityProfile,
+        "fund_product": NumberedEntityProfile,
+    }
 
 
 ENTITY_DDL = """
@@ -147,8 +177,8 @@ def _profile_record(row):
     )
 
 
-def display_profile(profile, kind):
-    """Read-only page vocabulary; the entity profile remains the only source."""
+def display_profile(profile, kind, *, fund_account=None):
+    """Project management metadata and separately sourced formal fund identity."""
     result = {
         key: profile.get(key)
         for key in (
@@ -157,7 +187,6 @@ def display_profile(profile, kind):
             "revision",
             "display_name",
             "display_number",
-            "purpose",
             "note",
             "employment_start",
             "employment_end",
@@ -165,19 +194,32 @@ def display_profile(profile, kind):
             "employment_state",
             "active",
             "category_label",
-            "rights_description",
-            "useful_life_basis",
             "source",
             "evidence_digest",
             "digest",
         )
     }
-    if kind == "fund_account" and not result["display_number"]:
-        bank_number = profile.get("external_identifiers", {}).get("bank_account_number")
-        if bank_number:
-            result["display_number"] = bank_number
-            result["display_number_source_field"] = "external_identifiers.bank_account_number"
-    return dict(result, kind=kind, counterparty_id=None, beneficiary_id=None, handler_id=None)
+    if kind == "fund_account":
+        result.pop("display_number")
+        result["account_number"] = None
+        if fund_account is not None:
+            if profile["entity_id"] != fund_account["entity_id"]:
+                raise KernelError("entity_kind_mismatch", "资金账户身份与档案不一致")
+            field = {"bank": "bank_account_number", "platform": "account_identifier"}.get(
+                fund_account["account_type"]
+            )
+            if field is not None:
+                result["account_number"] = fund_account["identity"][field]
+                result["account_number_source"] = {
+                    "source_type": "fund_account_identity",
+                    "id": fund_account["digest"],
+                    "entity_id": fund_account["entity_id"],
+                    "revision": None,
+                    "field": "identity." + field,
+                    "source": fund_account["source"],
+                    "evidence_digest": fund_account["evidence_digest"],
+                }
+    return dict(result, kind=kind)
 
 
 def profiles(connection, *, profile_ids=None):
@@ -336,11 +378,9 @@ class Entities:
         self.engine, self.store = engine, engine.store
 
     @staticmethod
-    def _profile(data, source, evidence_digest):
-        selected = EntityProfile.model_validate_json(canonical(data))
+    def _profile(kind, data, source, evidence_digest):
+        selected = entity_profile_models()[kind].model_validate_json(canonical(data))
         profile = selected.model_dump(mode="json")
-        if "employment_state" not in selected.model_fields_set:
-            profile.pop("employment_state")
         if not isinstance(source, str) or not source.strip() or len(source) > 2000:
             raise ValueError("source must describe the explicit source of the profile")
         evidence = None if evidence_digest is None else evidence_digest_bytes(evidence_digest)
@@ -399,9 +439,8 @@ class Entities:
             require_fund_source(source, evidence_digest)
             data = selected.model_dump(mode="json")
             for key in IDENTITY_FIELDS[account_type]:
-                if key != "display_name":
-                    data.pop(key)
-        profile, evidence = self._profile(data, source, evidence_digest)
+                data.pop(key)
+        profile, evidence = self._profile(kind, data, source, evidence_digest)
 
         def operation(connection):
             if identity is not None:
@@ -463,7 +502,9 @@ class Entities:
         request_id: str,
         evidence_digest: EvidenceDigest | None = None,
     ):
-        profile, evidence = self._profile(data, source, evidence_digest)
+        with self.store.connection(read_only=True) as connection:
+            entity = require_entity(connection, entity_id)
+        profile, evidence = self._profile(entity["kind"], data, source, evidence_digest)
 
         def operation(connection):
             require_entity(connection, entity_id)
@@ -498,7 +539,7 @@ class Entities:
         self,
         entity_id: str,
         *,
-        account_type: Literal["bank", "cash", "platform"],
+        account_type: Literal["bank", "platform"],
         data: dict,
         expected_identity_digest: EvidenceDigest,
         recording_error_confirmed: Literal[True],
@@ -508,6 +549,8 @@ class Entities:
     ):
         if recording_error_confirmed is not True:
             raise ValueError("recording_error_confirmed must be true")
+        if account_type not in ("bank", "platform"):
+            raise ValueError("cash account names are changed through update_entity_profile")
         require_fund_source(source, evidence_digest)
         _, identity = account_identity(account_type, data)
 
@@ -578,9 +621,9 @@ class Entities:
                     continue
                 values = [
                     entity_id,
-                    profile["display_name"],
-                    profile["display_number"],
-                    *profile["external_identifiers"].values(),
+                    profile.get("display_name"),
+                    profile.get("display_number"),
+                    *profile.get("external_identifiers", {}).values(),
                 ]
                 account = (
                     require_fund_account(connection, entity_id)

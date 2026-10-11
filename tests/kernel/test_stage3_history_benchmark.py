@@ -29,10 +29,13 @@ def test_synthetic_history_benchmark_measures_both_dependency_shapes(tmp_path):
     for workload, checkpoints in report["workloads"].items():
         assert [item["months"] for item in checkpoints] == [1, 2]
         final = checkpoints[-1]
-        assert final["calculation_count"] == 4
-        assert final["stored_close_result_references"] == 4
-        assert final["last_close_result_references"] == 2
-        assert final["dependency_edges"] == (4 if workload == "cumulative" else 0)
+        assert final["cash_funding_source_count"] == 4
+        assert final["observer_source_count"] == 4
+        assert final["formal_cash_account_count"] == 3
+        assert final["calculation_count"] == 8
+        assert final["stored_close_result_references"] == 8
+        assert final["last_close_result_references"] == 4
+        assert final["dependency_edges"] == (8 if workload == "cumulative" else 4)
         assert final["manifest_bytes"] > 0
         assert final["database_logical_bytes"] > final["manifest_bytes"]
         for operation in ("full_verify", "funds_history", "settlement_summary", "brief"):

@@ -60,8 +60,8 @@ MATERIAL_READ_INDEX_DDL = {
     kind: (
         f"CREATE INDEX {kind}_source ON fact_{kind}(source_id,revision_id);"
         + (
-            "CREATE INDEX material_resolution_link_fact ON "
-            "fact_material_resolution_v2_links(fact_id,revision_id);"
+            "CREATE INDEX material_resolution_link_calculation ON "
+            "fact_material_resolution_v2_links(calculation_id,revision_id);"
             if kind == "material_resolution_v2"
             else ""
         )
@@ -258,13 +258,149 @@ class MaterialSource(Fact):
 
 
 class MaterialLink(Detail):
-    subject_id: Identifier
-    fact_kind: Identifier
-    fact_id: Identifier
     calculation_id: Identifier
     amount_field: Annotated[str, Field(pattern=r"^(fact|result)\.[a-z][a-z0-9_]*_fen$")]
     amount_fen: Fen
-    recognition_period: YearMonth
+
+
+@dataclass(frozen=True)
+class MaterialLinkBinding:
+    """Authenticated identities and amounts of one exact saved calculation."""
+
+    fact_version: FactVersion
+    calculation: object
+
+
+@dataclass(frozen=True)
+class ResolvedMaterialLink:
+    link: MaterialLink
+    binding: MaterialLinkBinding
+
+    @property
+    def calculation_id(self):
+        return self.link.calculation_id
+
+    @property
+    def amount_field(self):
+        return self.link.amount_field
+
+    @property
+    def amount_fen(self):
+        return self.link.amount_fen
+
+    @property
+    def subject_id(self):
+        return self.binding.fact_version.subject_id
+
+    @property
+    def fact_kind(self):
+        return self.binding.fact_version.fact.kind
+
+    @property
+    def fact_id(self):
+        return self.binding.fact_version.id
+
+    @property
+    def recognition_period(self):
+        return self.binding.calculation.period
+
+
+def resolve_material_links(connection, links, *, registry, _bindings=None, _reads=None):
+    """Resolve exact sealed sources in batches, never substituting current heads.
+
+    The optional binding cache belongs to the caller's one SQLite snapshot.
+    Historical associations keep their original identity after recalculation.
+    """
+    links = tuple(links)
+    bindings = {} if _bindings is None else _bindings
+    missing = sorted({link.calculation_id for link in links} - bindings.keys())
+    if missing:
+        rows = connection.execute(
+            "SELECT c.subject_id,c.kind,f.subject_id original_subject_id,"
+            "s.kind original_kind,f.period original_period,f.digest fact_digest,"
+            "fs.fact_id fact_sealed,cs.calculation_id calculation_sealed,"
+            + _MATERIAL_RESULT_COLUMNS_SQL
+            + " FROM json_each(?) ids LEFT JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id "
+            "LEFT JOIN subject s ON s.id=f.subject_id "
+            "LEFT JOIN fact_seal fs ON fs.fact_id=f.id "
+            "LEFT JOIN calculation_seal cs ON cs.calculation_id=c.id "
+            "ORDER BY c.subject_id,c.id",
+            (canonical(missing),),
+        ).fetchall()
+        if len(rows) != len(missing) or any(row["id"] is None for row in rows):
+            raise NeedsInformation("links.calculation_id", "资料关联的正式计算尚不存在")
+        for row in rows:
+            Store._verify_calculation_identity(row)
+            if row["fact_sealed"] is None or row["calculation_sealed"] is None:
+                raise KernelError("content_integrity_failed", "资料关联来源尚未完整封存")
+        fact_ids = sorted({row["fact_id"] for row in rows})
+        fact_kinds = {row["fact_id"]: row["kind"] for row in rows}
+        query_reads = getattr(_reads, "query_reads", None)
+        reader = (
+            query_reads.store if query_reads is not None else SimpleNamespace(registry=registry)
+        )
+        versions = (
+            _reads.versions(fact_ids)
+            if _reads is not None
+            else Store.facts(reader, connection, fact_ids)
+        )
+        if query_reads is not None:
+            query_reads._verify_selected_fact_bodies(
+                dict(fact_id=row["fact_id"], fact_kind=row["kind"],
+                     fact_period=row["original_period"], fact_digest=row["fact_digest"])
+                for row in rows
+            )
+        else:
+            from .integrity import verify_fact_child_order
+
+            kinds = {}
+            for ident, kind in fact_kinds.items():
+                kinds.setdefault(kind, set()).add(ident)
+            verify_fact_child_order(SimpleNamespace(store=reader), connection, kinds)
+            if getattr(registry, "content_version", None) == 1:
+                raws = Store.fact_data_many(reader, connection, fact_ids)
+            else:
+                raws = Store._fact_data_many_from_headers(
+                    reader, connection,
+                    [dict(id=ident, kind=fact_kinds[ident]) for ident in fact_ids],
+                )
+            for row in rows:
+                raw = raws[row["fact_id"]]
+                expected_period = versions[row["fact_id"]].fact.period
+                source_digest = digest
+                if getattr(registry, "content_version", None) == 1:
+                    from .history_encoding_v1 import digest as source_digest
+                if (
+                    raw.get("period") != str(expected_period)
+                    or expected_period.ordinal != row["original_period"]
+                    or source_digest(raw) != row["fact_digest"]
+                ):
+                    raise KernelError("content_integrity_failed", "资料关联事实内容校验失败")
+        staged = {}
+        for row in rows:
+            staged[row["id"]] = MaterialLinkBinding(
+                versions[row["fact_id"]],
+                _material_result(
+                    row, _sql_outcome_batch=getattr(_reads, "_sql_outcome_batch", None),
+                    _content_version=getattr(registry, "content_version", None),
+                ),
+            )
+        bindings.update(staged)
+    return tuple(ResolvedMaterialLink(link, bindings[link.calculation_id]) for link in links)
+
+
+def material_link_scopes(connection, fact, *, registry):
+    """Derived lookup scopes; no duplicate business identity is stored in links."""
+    if not isinstance(fact, (MaterialResolution, MaterialGroupResolution)):
+        return ()
+    resolved = resolve_material_links(connection, fact.links, registry=registry)
+    return tuple(
+        sorted(
+            {"material-business:" + link.subject_id for link in resolved}
+            | {"material-period:" + str(link.recognition_period) for link in resolved}
+        )
+    )
 
 
 class MaterialResolution(Fact):
@@ -319,8 +455,7 @@ class MaterialResolution(Fact):
                 if self.recognition_period
                 else ()
             ),
-            *("material-period:" + str(link.recognition_period) for link in self.links),
-            *("material-business:" + link.subject_id for link in self.links),
+            *("material-calculation:" + link.calculation_id for link in self.links),
         )
 
 
@@ -367,8 +502,7 @@ class MaterialGroupResolution(Fact):
     def scopes(self):
         return (
             "material-source:" + self.source_id,
-            *("material-period:" + str(link.recognition_period) for link in self.links),
-            *("material-business:" + link.subject_id for link in self.links),
+            *("material-calculation:" + link.calculation_id for link in self.links),
         )
 
 
@@ -1328,6 +1462,21 @@ def _unfrozen_material_heads(connection, kind, excluded_sources):
     ).fetchall()
 
 
+class _LocalMaterialOutcomeProofs:
+    """Reuse exact successful bytes within one check, with no snapshot publication."""
+
+    def __init__(self):
+        self.verified = set()
+
+    def verify(self, row):
+        from .stored_json import verify_outcome_bytes
+
+        key = row["id"], row["stored_outcome"], row["result_digest"]
+        if key not in self.verified:
+            verify_outcome_bytes(key[1], key[2], key[0])
+            self.verified.add(key)
+
+
 class _CompletenessReads:
     """Lazy reads owned by one completeness check on its supplied snapshot."""
 
@@ -1339,8 +1488,15 @@ class _CompletenessReads:
             raise ValueError("material fact reads belong to another snapshot")
         self.query_reads = query_reads
         self._versions, self._scopes, self._current = {}, {}, {}
+        self._link_bindings = {}
         self._indexed_scope_kinds = set()
         self.excluded_sources = frozenset()
+
+    def links(self, links):
+        return resolve_material_links(
+            self.connection, links, registry=self.registry,
+            _bindings=self._link_bindings, _reads=self,
+        )
 
     def fact(self, fact_id):
         if fact_id not in self._versions:
@@ -1370,7 +1526,15 @@ class _CompletenessReads:
                 if kind not in self._indexed_scope_kinds:
                     grouped = {}
                     for item in self.current_facts(kind):
-                        for declared_scope in set(item.fact.scopes()):
+                        scopes = set(item.fact.scopes())
+                        links = self.links(getattr(item.fact, "links", ()))
+                        for declared_scope in (
+                            scopes
+                            | {"material-business:" + link.subject_id
+                               for link in links}
+                            | {"material-period:" + str(link.recognition_period)
+                               for link in links}
+                        ):
                             grouped.setdefault((kind, declared_scope), []).append(item)
                     self._scopes.update((key, tuple(items)) for key, items in grouped.items())
                     self._indexed_scope_kinds.add(kind)
@@ -1484,7 +1648,7 @@ _MATERIAL_RESULT_COLUMNS_SQL = (
 )
 
 
-def _material_result(row, *, _sql_outcome_batch=None):
+def _material_result(row, *, _sql_outcome_batch=None, _content_version=None):
     # This local checker only reads identity, period and amount values. It does
     # not pass results into a calculator, so constructing/freezing a complete
     # calculation dependency tree would only copy data already decoded here.
@@ -1493,7 +1657,16 @@ def _material_result(row, *, _sql_outcome_batch=None):
     # it must not coerce a boolean, float or unknown amount to an integer.
     from .stored_json import verify_outcome_bytes
 
-    if _sql_outcome_batch is None:
+    if _content_version == 1:
+        from .history_encoding_v1 import digest as saved_digest
+        from .stored_json_v1 import load_outcome
+
+        if saved_digest(load_outcome(row["stored_outcome"])) != row["result_digest"]:
+            raise KernelError(
+                "content_integrity_failed", "资料关联的历史核算结果摘要不一致",
+                component="calculation", record_id=row["id"],
+            )
+    elif _sql_outcome_batch is None:
         verify_outcome_bytes(row["stored_outcome"], row["result_digest"], row["id"])
     else:
         _sql_outcome_batch.verify(row)
@@ -1516,12 +1689,13 @@ def _current_material_result(connection, registry, subject):
         return None
     reader = SimpleNamespace(registry=registry)
     return Store.fact(reader, connection, row["current_fact_id"]), (
-        _material_result(row) if row["id"] else None
+        _material_result(row, _content_version=getattr(registry, "content_version", None))
+        if row["id"] else None
     )
 
 
-def _group_periods(version):
-    return frozenset(link.recognition_period for link in version.fact.links)
+def _group_periods(version, reads):
+    return frozenset(link.recognition_period for link in reads.links(version.fact.links))
 
 
 def _groups_cover_unknown(allocation, groups):
@@ -1551,8 +1725,9 @@ def _groups_cover_unknown(allocation, groups):
     return True
 
 
-def _whole_group_duplicate_targets(groups, resolutions):
+def _whole_group_duplicate_targets(groups, resolutions, reads):
     """Derive exact whole-pool copies, without inventing member allocations."""
+    reads.links(link for group in groups for link in group.fact.links)
     by_member, by_resolution = {}, {}
     for group in groups:
         for member in group.fact.members:
@@ -1564,7 +1739,7 @@ def _whole_group_duplicate_targets(groups, resolutions):
     result = {}
     for group in groups:
         fact = group.fact
-        periods = {link.recognition_period for link in fact.links}
+        periods = {link.recognition_period for link in reads.links(fact.links)}
         if len(periods) != 1:
             continue
         targets = set()
@@ -1641,7 +1816,7 @@ def _group_issues(
             if item.subject_id != version.subject_id
         ]
         whole_duplicate_targets = _whole_group_duplicate_targets(
-            [*groups, version], group_reads.current_facts(MaterialResolution.kind)
+            [*groups, version], group_reads.current_facts(MaterialResolution.kind), group_reads
         )
     whole_duplicate = version.id in whole_duplicate_targets
 
@@ -1685,7 +1860,7 @@ def _group_issues(
     items = {item["location"]: item for item in inspection["items"]}
     controls = {item["location"] for item in inspection["control_totals"]}
     selected = {member.location for member in fact.members}
-    linked_periods = {link.recognition_period for link in fact.links}
+    linked_periods = {link.recognition_period for link in group_reads.links(fact.links)}
     for member in fact.members:
         item = items.get(member.location)
         if item is None or member.location in controls:
@@ -1746,7 +1921,7 @@ def _group_issues(
                 )
     current = current or (lambda subject: _current_material_result(connection, registry, subject))
     totals, targets = {}, {}
-    for link in fact.links:
+    for link in group_reads.links(fact.links):
         target = current(link.subject_id)
         if target is None or target[1] is None:
             problem(
@@ -1800,7 +1975,7 @@ def _group_issues(
         key = link.subject_id, basis
         totals[key] = sum_fen((totals.get(key, 0), abs(link.amount_fen)))
         targets[key] = original, calculation, capacity
-    for (subject_id, basis), (original, calculation, capacity) in targets.items():
+    for (subject_id, basis), (_original, _calculation, capacity) in targets.items():
         if whole_duplicate:
             continue
         allocated = totals[subject_id, basis]
@@ -1831,16 +2006,15 @@ def _group_issues(
                     continue
             elif current_sources.get(other.fact.source_id) != other.fact.source_fact_id:
                 continue
-            for used in other.fact.links:
-                if (used.subject_id, used.fact_id, used.fact_kind, used.calculation_id) != (
-                    subject_id,
-                    original.id,
-                    original.fact.kind,
-                    calculation.id,
-                ):
+            for used in group_reads.links(other.fact.links):
+                if used.subject_id != subject_id:
                     continue
                 try:
-                    if _amount_basis(original.fact, calculation, used.amount_field) == basis:
+                    if _amount_basis(
+                        used.binding.fact_version.fact,
+                        used.binding.calculation,
+                        used.amount_field,
+                    ) == basis:
                         allocated = sum_fen((allocated, abs(used.amount_fen)))
                 except KernelError:
                     pass  # Its own active row/group reports the stale invalid association.
@@ -2028,6 +2202,7 @@ def check_completeness_many(
         _query_reads._material_sql_outcome_batch(connection) if _query_reads is not None else None
     )
     reads = _CompletenessReads(connection, registry, query_reads=_query_reads)
+    reads._sql_outcome_batch = sql_outcome_batch or _LocalMaterialOutcomeProofs()
     amount_bases = {}
 
     def amount_basis(version, calculation, path):
@@ -2068,7 +2243,8 @@ def check_completeness_many(
     all_allocations = reads.current_facts(MaterialPeriodAllocation.kind)
     all_groups = reads.current_facts(MaterialGroupResolution.kind)
     all_resolutions = reads.current_facts(MaterialResolution.kind)
-    whole_duplicate_targets = _whole_group_duplicate_targets(all_groups, all_resolutions)
+    reads.links(link for item in (*all_resolutions, *all_groups) for link in item.fact.links)
+    whole_duplicate_targets = _whole_group_duplicate_targets(all_groups, all_resolutions, reads)
     groups_by_source = {}
     for item in all_groups:
         groups_by_source.setdefault(item.fact.source_id, []).append(item)
@@ -2111,7 +2287,9 @@ def check_completeness_many(
         if unknown and _groups_cover_unknown(allocation, groups):
             unknown = False
             known.update(
-                link.recognition_period.ordinal for group in groups for link in group.fact.links
+                link.recognition_period.ordinal
+                for group in groups
+                for link in reads.links(group.fact.links)
             )
         if (
             unknown
@@ -2127,7 +2305,7 @@ def check_completeness_many(
     for item in (*all_resolutions, *all_groups):
         if current_sources.get(item.fact.source_id) != item.fact.source_fact_id:
             continue
-        for link in item.fact.links:
+        for link in reads.links(item.fact.links):
             sources_by_business.setdefault(link.subject_id, set()).add(item.fact.source_id)
 
     by_id = {
@@ -2248,7 +2426,7 @@ def check_completeness_many(
                 enqueue(item.fact.duplicate_source_id)
         group_versions.update((item.id, item) for item in source_groups(source_id))
         for item in (*resolutions_by_source.get(source_id, ()), *source_groups(source_id)):
-            for link in item.fact.links:
+            for link in reads.links(item.fact.links):
                 # The complete set is fixed for this check; expand each business once.
                 for competitor_source_id in sorted(sources_by_business.pop(link.subject_id, ())):
                     enqueue(competitor_source_id)
@@ -2299,7 +2477,11 @@ def check_completeness_many(
             by_group_member.setdefault(key, []).append(group)
             group_amounts[group.id, member.location] = member.amount_fen
     linked_subjects = sorted(
-        {link.subject_id for item in (*all_resolutions, *all_groups) for link in item.fact.links}
+        {
+            link.subject_id
+            for item in (*all_resolutions, *all_groups)
+            for link in reads.links(item.fact.links)
+        }
     )
     current_rows = (
         connection.execute(
@@ -2323,7 +2505,10 @@ def check_completeness_many(
             if row["current_fact_id"] is None
             else (
                 linked_versions[row["current_fact_id"]],
-                _material_result(row, _sql_outcome_batch=sql_outcome_batch) if row["id"] else None,
+                _material_result(
+                    row, _sql_outcome_batch=reads._sql_outcome_batch,
+                    _content_version=getattr(registry, "content_version", None),
+                ) if row["id"] else None,
             )
         )
         for row in current_rows
@@ -2344,7 +2529,7 @@ def check_completeness_many(
     for item in (*all_resolutions, *all_groups):
         if current_sources.get(item.fact.source_id) != item.fact.source_fact_id:
             continue
-        for subject_id in {link.subject_id for link in item.fact.links}:
+        for subject_id in {link.subject_id for link in reads.links(item.fact.links)}:
             competitors_by_subject.setdefault(subject_id, []).append(item)
     capacities, active_capacities, coverage = {}, set(), []
     item_periods, partition_issues = {}, {}
@@ -2604,7 +2789,7 @@ def check_completeness_many(
                             location=key[1],
                         )
                     ]
-                if sum_fen(link.amount_fen for link in fact.links) != amount:
+                if sum_fen(link.amount_fen for link in reads.links(fact.links)) != amount:
                     result.append(
                         _issue(
                             "material_duplicate_amount",
@@ -2613,7 +2798,7 @@ def check_completeness_many(
                         )
                     )
                 expected_period = item_periods.get(key[0], {}).get(key[1])
-                periods = {link.recognition_period for link in fact.links}
+                periods = {link.recognition_period for link in reads.links(fact.links)}
                 if (
                     len(periods) != 1
                     or fact.recognition_period not in periods
@@ -2626,7 +2811,7 @@ def check_completeness_many(
                             location=key[1],
                         )
                     )
-                for link in fact.links:
+                for link in reads.links(fact.links):
                     original, _calculation = current(link.subject_id)
                     try:
                         original.fact.validate_material_amount(
@@ -2665,13 +2850,13 @@ def check_completeness_many(
             return resolve(target, (*trail, key), active=active)
         if not fact.links:
             return [_issue("material_links_missing", "业务原行尚未关联正式处理", location=key[1])]
-        if sum_fen(link.amount_fen for link in fact.links) != amount:
+        if sum_fen(link.amount_fen for link in reads.links(fact.links)) != amount:
             result.append(
                 _issue(
                     "material_split_mismatch", "拆分或关联金额之和必须等于原行金额", location=key[1]
                 )
             )
-        for link in fact.links:
+        for link in reads.links(fact.links):
             target = current(link.subject_id)
             expected_period = item_periods.get(key[0], {}).get(key[1])
             if target is None or target[1] is None:
@@ -2757,7 +2942,7 @@ def check_completeness_many(
             groups = by_group_member.get((source_id, location), ())
             if groups:
                 values.update(
-                    period.ordinal for group in groups for period in _group_periods(group)
+                    period.ordinal for group in groups for period in _group_periods(group, reads)
                 )
                 continue
             value = periods.get(location)
@@ -2860,7 +3045,7 @@ def check_completeness_many(
                 allocated_period = periods[location]
                 groups = by_group_member.get((source_id, location), ())
                 shared_periods = (
-                    frozenset().union(*(_group_periods(group) for group in groups))
+                    frozenset().union(*(_group_periods(group, reads) for group in groups))
                     if groups
                     else frozenset()
                 )
@@ -2999,16 +3184,15 @@ def check_completeness_many(
                     competitor.fact, MaterialResolution
                 ) and competitor.fact.treatment not in {"recognize", "other_period"}:
                     continue
-                for link in competitor.fact.links:
-                    if (
-                        link.subject_id != key[0]
-                        or link.fact_id != fact_version.id
-                        or link.fact_kind != fact_version.fact.kind
-                        or link.calculation_id != calculation.id
-                    ):
+                for link in reads.links(competitor.fact.links):
+                    if link.subject_id != key[0]:
                         continue
                     try:
-                        basis = amount_basis(fact_version, calculation, link.amount_field)
+                        basis = amount_basis(
+                            link.binding.fact_version,
+                            link.binding.calculation,
+                            link.amount_field,
+                        )
                     except KernelError:
                         continue
                     if basis == key[1]:

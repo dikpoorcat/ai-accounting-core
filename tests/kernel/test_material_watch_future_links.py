@@ -16,13 +16,9 @@ from ai_accounting.kernel.types import YearMonth
 
 def _link(book, subject, period, amount):
     return {
-        "subject_id": subject,
-        "fact_kind": "expense",
-        "fact_id": book.facts[subject],
         "calculation_id": book.results[subject],
         "amount_field": "fact.amount_fen",
         "amount_fen": amount,
-        "recognition_period": period,
     }
 
 
@@ -260,7 +256,8 @@ def test_future_open_replace_preserves_january_close_and_full_watch(tmp_path, gr
             for result in connection.execute(
                 "SELECT l.calculation_id FROM json_each(?) ids "
                 f"CROSS JOIN {link_table} l ON l.revision_id=ids.value "
-                "WHERE l.subject_id='cross-feb-expense'",
+                "JOIN calculation c ON c.id=l.calculation_id "
+                "WHERE c.subject_id='cross-feb-expense'",
                 (json.dumps(manifest["material_coverage"][version_label]),),
             )
         ]

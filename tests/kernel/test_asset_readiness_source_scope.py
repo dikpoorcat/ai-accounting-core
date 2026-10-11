@@ -203,7 +203,8 @@ def test_real_selection_does_not_decode_growing_unused_consumption_facts(
 def test_opening_loan_identity_correction_keeps_exact_rule_issues(identity_engine_fixture):
     engine, evidence, first, second = identity_engine_fixture
     cash = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="cash"
+        "fund_account", {"display_name": "合成现金账户"}, account_type="cash",
+        source="synthetic", evidence_digest=evidence, request_id="cash"
     )["entity_id"]
     agreement = {
         "period": "2026-01", "lender_id": first, "lender_is_licensed": True,

@@ -17,6 +17,7 @@ from .contracts import KernelError
 from .discovery import Discovery
 from .entities import profiles_for_entities
 from .entity_references import references_from_data, verify_hits
+from .fund_accounts import fund_account_definitions
 from .materials import PageLimit
 from .query_reads import QueryReads
 from .read_state import repair_revision
@@ -30,7 +31,6 @@ ContextIds = Annotated[list[SubjectId], Field(max_length=500)]
 # They remain management facts; discovery does not change their business lane.
 MANAGEMENT_SOURCE_AREAS = {
     "payroll_plan_v2": "payroll",
-    "payroll_plan_bounded": "payroll",
     "payroll_change_notice_v2": "payroll",
     "payroll_no_change_v2": "payroll",
     "tax_import_identity_v2": "payroll",
@@ -401,12 +401,26 @@ class WorkContext:
                 match["entity_id"] for item in items for match in item["identity_matches"]
             }
             object_profiles = profiles_for_entities(connection, entity_ids)
+            fund_ids = {
+                ident for ident, profile in object_profiles.items()
+                if profile["entity_kind"] == "fund_account"
+            }
+            funds = {
+                account["entity_id"]: account
+                for account in fund_account_definitions(connection, entity_ids=fund_ids)
+            }
+            if set(funds) != fund_ids or any(
+                funds[ident]["account_type"] != object_profiles[ident]["account_type"]
+                for ident in fund_ids
+            ):
+                raise KernelError("content_integrity_failed", "已引用资金账户缺少正式身份来源")
             entities = [
                 {
                     "entity_id": ident,
                     "kind": profile["entity_kind"],
                     "account_type": profile["account_type"],
                     "profile": profile,
+                    **({"fund_account": funds[ident]} if ident in funds else {}),
                 }
                 for ident, profile in object_profiles.items()
             ]

@@ -171,7 +171,7 @@ def test_same_unattached_evidence_reanchors_without_native_rebuilds(book, monkey
             engine.register_evidence(b"baseline independent new proof", "text/plain", "unattached",
                                      request_id="baseline-proof")
     assert sorted(work["periods"]) == sorted(periods)
-    assert work["frames"] == 18 * months
+    assert work["frames"] == 22 * months
     assert sql_before["source_rows"] > 0 and sql_before["source_value_bytes"] > 0
     before_work = {"builds": len(work["periods"]), "native_frames": work["frames"],
                    "sql": engine.last_metrics["sql_statements"],

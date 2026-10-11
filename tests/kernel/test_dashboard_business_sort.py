@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from entity_fixture import seed_entities
 from test_banking import book as _bank_book
+from test_dashboard_model_integrity import raw_read
 from test_dashboard_provenance import profile
 from test_payroll_corrections import Company
 
@@ -90,63 +91,68 @@ def test_business_date_object_order_crosses_pages_and_vouchers_have_separate_str
         return original_hydrate(self, rows, **options)
 
     monkeypatch.setattr(Journal, "hydrate", hydrate)
-    first = dashboard.brief("2026-09")
-    groups = _read_all(dashboard, "brief", first, "activity")
-    assert len(groups) == 2 and sum(row["member_count"] for row in groups) == 44
-    assert "vouchers" not in first["data"]["collections"]
-    first_members = dashboard.brief_group(
-        "2026-09", section="activity", group_key=groups[0]["group_key"]
-    )
-    activity = _read_all(
-        dashboard, "brief_group", first_members, "members", group_key=groups[0]["group_key"]
-    )
-    assert len(activity) == 22
-    assert [(row["date"], row["party"]) for row in activity] == sorted(
-        (row["date"], row["party"]) for row in activity
-    )
-    preview_cards = first_members["data"]["collections"]["vouchers"]["items"]
-    assert [row["voucher_version_id"] for row in preview_cards] == [
-        row["voucher_version_id"] for row in activity[:20]
-    ]
-    assert [int(row["number"]) for row in preview_cards] != list(range(1, 21))
-    independent = dashboard.brief("2026-09", section="vouchers")
-    numbered = _read_all(dashboard, "brief", independent, "vouchers")
-    assert [int(row["number"]) for row in numbered] == list(range(1, 45))
-    paired_cursor = first_members["data"]["collections"]["members"]["page"]["next_cursor"]
-    assert json.loads(base64.urlsafe_b64decode(paired_cursor))["sort"] == "business-date-object/4"
-    assert (
-        json.loads(
-            base64.urlsafe_b64decode(
-                independent["data"]["collections"]["vouchers"]["page"]["next_cursor"]
-            )
-        )["sort"]
-        == "voucher-number/1"
-    )
-    following = dashboard.brief_group(
-        "2026-09",
-        section="activity",
-        group_key=groups[0]["group_key"],
-        cursor=paired_cursor,
-        expected_version=first["snapshot_version"],
-    )
-    assert [
-        row["voucher_version_id"] for row in following["data"]["collections"]["vouchers"]["items"]
-    ] == [row["voucher_version_id"] for row in activity[20:40]]
-    funds = dashboard.funds("2026-09", movement_account_type="bank", movement_account_id="bank-a")
-    movements = _read_all(
-        dashboard,
-        "funds",
-        funds,
-        "movements",
-        movement_account_type="bank",
-        movement_account_id="bank-a",
-    )
-    assert [(row["date"], row["party"]) for row in movements] == [
-        (f"2026-09-{day:02}", name)
-        for day in range(4, 26)
-        for name in ("李四", "张三")
-    ]
-    assert hydrated and max(hydrated) == 20
+    # These probes exercise native page hydration rather than the derived page cache.
+    with raw_read():
+        first = dashboard.brief("2026-09")
+        groups = _read_all(dashboard, "brief", first, "activity")
+        assert len(groups) == 2 and sum(row["member_count"] for row in groups) == 44
+        assert "vouchers" not in first["data"]["collections"]
+        first_members = dashboard.brief_group(
+            "2026-09", section="activity", group_key=groups[0]["group_key"]
+        )
+        activity = _read_all(
+            dashboard, "brief_group", first_members, "members", group_key=groups[0]["group_key"]
+        )
+        assert len(activity) == 22
+        assert [(row["date"], row["party"]) for row in activity] == sorted(
+            (row["date"], row["party"]) for row in activity
+        )
+        preview_cards = first_members["data"]["collections"]["vouchers"]["items"]
+        assert [row["voucher_version_id"] for row in preview_cards] == [
+            row["voucher_version_id"] for row in activity[:20]
+        ]
+        assert [int(row["number"]) for row in preview_cards] != list(range(1, 21))
+        independent = dashboard.brief("2026-09", section="vouchers")
+        numbered = _read_all(dashboard, "brief", independent, "vouchers")
+        assert [int(row["number"]) for row in numbered] == list(range(1, 45))
+        paired_cursor = first_members["data"]["collections"]["members"]["page"]["next_cursor"]
+        assert (
+            json.loads(base64.urlsafe_b64decode(paired_cursor))["sort"] == "business-date-object/4"
+        )
+        assert (
+            json.loads(
+                base64.urlsafe_b64decode(
+                    independent["data"]["collections"]["vouchers"]["page"]["next_cursor"]
+                )
+            )["sort"]
+            == "voucher-number/1"
+        )
+        following = dashboard.brief_group(
+            "2026-09",
+            section="activity",
+            group_key=groups[0]["group_key"],
+            cursor=paired_cursor,
+            expected_version=first["snapshot_version"],
+        )
+        assert [
+            row["voucher_version_id"]
+            for row in following["data"]["collections"]["vouchers"]["items"]
+        ] == [row["voucher_version_id"] for row in activity[20:40]]
+        funds = dashboard.funds(
+            "2026-09", movement_account_type="bank", movement_account_id="bank-a"
+        )
+        movements = _read_all(
+            dashboard,
+            "funds",
+            funds,
+            "movements",
+            movement_account_type="bank",
+            movement_account_id="bank-a",
+        )
+        assert [(row["date"], row["party"]) for row in movements] == [
+            (f"2026-09-{day:02}", name) for day in range(4, 26) for name in ("李四", "张三")
+        ]
+        assert hydrated and max(hydrated) == 20
 
 
 @pytest.mark.parametrize("closed", [False, True])
@@ -155,9 +161,7 @@ def test_open_obligations_order_by_complete_object_before_page_in_open_and_froze
 ):
     company = Company(tmp_path / "ordered.sqlite")
     expected_names = [
-        f"{name}{index:02}"
-        for name in ("李四", "王五", "张三")
-        for index in range(8)
+        f"{name}{index:02}" for name in ("李四", "王五", "张三") for index in range(8)
     ][:23]
     # Reverse identity/registration order makes a key-ordered page visibly wrong.
     for i in range(23):
@@ -192,8 +196,9 @@ def test_open_obligations_order_by_complete_object_before_page_in_open_and_froze
         monkeypatch.setattr(freeze, "_read_states", states)
         monkeypatch.setattr(freeze, "_verified_page_sources", sources)
     dashboard = Dashboard(company.engine)
-    first = dashboard.brief("2026-09", section="open_items")
-    rows = _read_all(dashboard, "brief", first, "open_items")
+    with raw_read():
+        first = dashboard.brief("2026-09", section="open_items")
+        rows = _read_all(dashboard, "brief", first, "open_items")
     assert [row["party"] for row in rows] == expected_names
     assert sum(row["outstanding_fen"] for row in rows) == sum(range(1, 24))
     if closed:
@@ -206,6 +211,7 @@ def test_open_obligations_order_by_complete_object_before_page_in_open_and_froze
 def test_month_confirmation_follows_actual_days_without_making_up_a_date():
     def metadata(date):
         return {"date": date, "party": "甲", "identities": ("person",)}
+
     actual = date_object_key(metadata("2026-09-30"), "2026-09", "actual")
     monthly = date_object_key(metadata(None), "2026-09", "monthly")
     later = date_object_key(metadata("2026-10-01"), "2026-10", "later")
@@ -220,7 +226,8 @@ def test_same_date_objects_follow_pinyin_with_formal_identity_as_tie_breaker():
         "li": {"date": "2026-09-01", "party": "李四", "identities": ("third",)},
     }
     assert sorted(
-        metadata, key=lambda key: date_object_key(metadata[key], "2026-09", key),
+        metadata,
+        key=lambda key: date_object_key(metadata[key], "2026-09", key),
     ) == ["li", "wang", "zhang"]
 
 
@@ -237,8 +244,12 @@ def test_open_item_objects_follow_pinyin_instead_of_unicode_or_identity():
         current_profiles={kind: {} for kind in ("employee", "counterparty")},
     )
     rows = [
-        {"obligation_key": ident, "source_kind": "expense", "component": "primary",
-         "counterparty_id": ident}
+        {
+            "obligation_key": ident,
+            "source_kind": "expense",
+            "component": "primary",
+            "counterparty_id": ident,
+        }
         for ident in names
     ]
     assert open_item_order(snapshot, rows) == ["third", "second", "first"]
@@ -311,9 +322,7 @@ def test_open_sort_uses_formal_identity_group_and_matter_without_hidden_month(mo
         else {"net": "实发工资", "tax": "代扣个人所得税"}[by_key[key]["component"]]
         for key in ordered
     ]
-    assert matters == (
-        ["代扣个人所得税"] * 7 + ["公积金"] * 14 + ["社保"] * 14 + ["实发工资"] * 7
-    )
+    assert matters == (["代扣个人所得税"] * 7 + ["公积金"] * 14 + ["社保"] * 14 + ["实发工资"] * 7)
     for family in ("social", "housing"):
         employees = [
             scalars[by_key[key]["source_fact_id"]]["employee_id"]
@@ -438,7 +447,10 @@ def test_open_sort_uses_adopted_opening_component_and_bonus_matter(monkeypatch):
     [("同名", "同名", "同名、同名"), ("张三", "李四", "李四、张三")],
 )
 def test_multiple_formal_objects_have_the_same_complete_names_in_sort_and_rows(
-    bank_book, first_name, second_name, expected,
+    bank_book,
+    first_name,
+    second_name,
+    expected,
 ):
     engine, save, publish, _ = bank_book
     seed_entities(engine, [("party-a", "person", None), ("party-b", "person", None)])
@@ -612,10 +624,16 @@ def test_old_or_malformed_cursor_is_structured_rejection(payload):
 def test_pre_pinyin_cursor_cannot_continue_reordered_collection(endpoint, section, old_profile):
     snapshot = SimpleNamespace(
         store=SimpleNamespace(company_id="c", database_id="d"),
-        period="2026-09", snapshot_version="v", as_of=None,
+        period="2026-09",
+        snapshot_version="v",
+        as_of=None,
     )
     cursor = seal_page(
-        snapshot, endpoint, section, {"next_cursor": "same-identity"}, {},
+        snapshot,
+        endpoint,
+        section,
+        {"next_cursor": "same-identity"},
+        {},
         sort_profile=old_profile,
     )["next_cursor"]
     with pytest.raises(KernelError) as rejected:

@@ -3,7 +3,7 @@ from types import MappingProxyType
 import pytest
 from pydantic import ValidationError
 
-from ai_accounting.kernel import dashboard, dashboard_funds, query_semantics
+from ai_accounting.kernel import dashboard, dashboard_funds, fund_line_details, query_semantics
 from ai_accounting.kernel.account_definitions import (
     ACCOUNT_NAMES,
     KNOWN_POSITION_ACCOUNTS,
@@ -37,7 +37,7 @@ def _calculation(ident, *, kind, subject_id=None, fact=None, lines=(), values=No
 
 
 def test_account_and_funds_consumers_share_the_canonical_definitions():
-    assert dashboard.ACCOUNT_NAMES is ACCOUNT_NAMES
+    assert fund_line_details.ACCOUNT_NAMES is ACCOUNT_NAMES
     assert query_semantics.KNOWN_POSITION_ACCOUNTS is KNOWN_POSITION_ACCOUNTS
     assert dashboard.FUND_TYPES is FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
     assert dashboard_funds.FUND_TYPES is FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY

@@ -7,8 +7,9 @@ import pytest
 import test_banking as banking
 import test_platforms as platforms
 from stage9_metrics import measure_work
-from test_funds_historical_account_identities import source
 from test_bank_identity_witness_scope import history
+from test_dashboard_model_transactions import raw_read
+from test_funds_historical_account_identities import source
 from test_integrity_content import damage
 from test_opening_continuation import book as _opening_book
 
@@ -17,8 +18,8 @@ from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_funds import FUND_TYPES, FundsRead, _sum, funds
-from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.identity_corrections import IdentityCorrections
+from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.query_reads import QueryReads
 
 bank_book = banking.book
@@ -168,7 +169,7 @@ def test_amount_only_does_not_claim_zero_identity_proof_or_disable_full_checks(b
     # This zero identity has no lines or balances and is outside brief amounts.
     # The full account directory and independent checker still consume it.
     assert summary(engine)["total_fen"] == 1000
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).funds(MONTH)
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)
@@ -242,7 +243,10 @@ def test_amount_scope_keeps_original_reader_when_snapshot_guards_are_incomplete(
     engine, save, publish, _ = bank_book
     banking.opening(save, publish)
     banking.funding(save, publish)
-    with historical_content(1 if boundary == "v1" else None), Dashboard(engine)._snapshot(MONTH) as snap:
+    with (
+        historical_content(1 if boundary == "v1" else None),
+        Dashboard(engine)._snapshot(MONTH) as snap,
+    ):
         if boundary == "unowned":
             snap.reads = QueryReads(engine, snap.connection)
             snap.queries = BusinessQueries(engine, reads=snap.reads)

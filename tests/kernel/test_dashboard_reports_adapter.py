@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import test_opening_continuation as opening_cases
 import test_reports as report_cases
+from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage
+from test_report_open_export import prepare_materials
 
 from ai_accounting.kernel import reports as report_module
 from ai_accounting.kernel.contracts import KernelError
@@ -25,7 +27,7 @@ def test_existing_months_are_not_report_closure_and_owner_contract_is_small(book
     view = dashboard.quarterly_report(2026, 1)
     assert view["schema_version"] == 5
     assert view["close_state"] == "open"
-    assert view["readiness_state"] == "ready"
+    assert view["readiness_state"] == "blocked"
     assert not view["export"]["available"]
     assert {item["key"] for item in view["statements"]} == {
         "balance_sheet",
@@ -33,13 +35,23 @@ def test_existing_months_are_not_report_closure_and_owner_contract_is_small(book
         "cash_flow_statement",
     }
     assert not {"technical", "carry_forward", "checks", "readiness"} & view.keys()
+    prepare_materials(book)
+    prepared = dashboard.quarterly_report(2026, 1)
+    assert prepared["close_state"] == "open"
+    assert prepared["readiness_state"] == "ready"
+    assert prepared["export"]["available"]
+    assert prepared["summary"]["ending_cash_fen"] == 40000
     report_cases.close_quarter(book)
     view = dashboard.quarterly_report(2026, 1)
     assert view["close_state"] == "closed" and view["export"]["available"]
+    assert view["summary"] == prepared["summary"]
 
 
-def test_open_quarter_skips_only_the_unexportable_closed_calculation(book, monkeypatch):
+def test_open_quarter_exports_complete_current_sources_without_closed_calculation(
+    book, monkeypatch
+):
     report_cases.scenario(book)
+    prepare_materials(book)
     dashboard = Dashboard(book[0])
     original = Reports._report
     calls = []
@@ -49,18 +61,22 @@ def test_open_quarter_skips_only_the_unexportable_closed_calculation(book, monke
         return original(self, *args, source=source, **kwargs)
 
     monkeypatch.setattr(Reports, "_report", counted)
-    opened = dashboard.quarterly_report(2026, 1, preparation="deferred")
-    assert calls == [("open", True)]
+    with raw_read():
+        opened = dashboard.quarterly_report(2026, 1, preparation="deferred")
+    assert calls == [("open", False), *[("open", True)] * 3]
     assert opened["close_state"] == "open"
     assert opened["readiness_state"] == "ready"
-    assert not opened["export"]["available"]
+    assert opened["export"]["available"]
+    assert opened["summary"]["ending_cash_fen"] == 40000
 
     report_cases.close_quarter(book)
     calls.clear()
-    closed = dashboard.quarterly_report(2026, 1, preparation="deferred")
-    assert calls == [("open", True), ("closed", False)]
+    with raw_read():
+        closed = dashboard.quarterly_report(2026, 1, preparation="deferred")
+    assert calls == [("closed", False)]
     assert closed["close_state"] == "closed"
     assert closed["export"]["available"]
+    assert closed["summary"] == opened["summary"]
 
 
 def test_empty_quarter_remains_blocked_without_a_closed_calculation(book, monkeypatch):
@@ -72,7 +88,8 @@ def test_empty_quarter_remains_blocked_without_a_closed_calculation(book, monkey
         return original(self, *args, source=source, **kwargs)
 
     monkeypatch.setattr(Reports, "_report", counted)
-    view = Dashboard(book[0]).quarterly_report(2026, 1, preparation="deferred")
+    with raw_read():
+        view = Dashboard(book[0]).quarterly_report(2026, 1, preparation="deferred")
     assert calls == ["open"]
     assert view["close_state"] == "open"
     assert view["readiness_state"] == "blocked"
@@ -102,7 +119,8 @@ def test_owner_report_stops_technical_counts_choices_and_issue_voucher_reads(boo
     monkeypatch.setattr(QueryReads, "snapshot", observed)
     monkeypatch.setattr(BusinessQueries, "_period_readiness", no_full_preparation)
     for preparation in ("complete", "deferred"):
-        view = Dashboard(book[0]).quarterly_report(2026, 1, preparation=preparation)
+        with raw_read():
+            view = Dashboard(book[0]).quarterly_report(2026, 1, preparation=preparation)
         assert "period_preparations" not in view
         assert not view["export"]["available"]
     assert not any("count(*) FILTER" in sql for sql in traced)
@@ -124,7 +142,7 @@ def test_owner_report_keeps_authoritative_source_integrity_boundaries(book):
             "WHERE s.kind='report_classification' LIMIT 1"
         ).fetchone()[0]
     damage(engine, "subject", "UPDATE subject SET kind='report_profile' WHERE id=?", (subject_id,))
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).quarterly_report(2026, 1, preparation="deferred")
 
 

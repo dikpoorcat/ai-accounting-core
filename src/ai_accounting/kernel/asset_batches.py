@@ -653,8 +653,11 @@ class AssetBatches:
                 # Existing dependants remain in one reviewed graph.
                 queue.extend(self.engine._descendants(connection, {sid}) - set(facts))
             facts = {sid: v for sid, v in facts.items() if sid not in removed}
-            reads = {r for v in facts.values() for r in self.engine._reads(v)}
-            selections = {r: select(r) for r in reads}
+            from .dependencies import select_fact_dependencies
+
+            selections = select_fact_dependencies(
+                facts.values(), lambda reads: {r: select(r) for r in reads}, self.engine._reads
+            )
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
             previous, outcomes = {}, {}

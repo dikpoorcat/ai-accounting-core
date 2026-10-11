@@ -118,14 +118,21 @@ def test_reserve_facts_read_as_external_money_on_all_supported_accounts(reserve_
     assert data["outflow_fen"] == 600
     assert data["net_change_fen"] == data["total_fen"] == -540
     assert data["internal_transfer_fen"] == 0
+    with engine.store.connection(read_only=True) as connection:
+        sources = {
+            subject: engine.store.current_fact(connection, subject).fact
+            for _kind, subject, _field, _account, _amount in facts
+        }
     reserve = [
         row
         for row in data["collections"]["movements"]["items"]
-        if row["component_kinds"][0].startswith("managed_reserve_")
+        if row["subject_id"] in sources
     ]
     assert len(reserve) == 6
+    assert {row["subject_id"] for row in reserve} == set(sources)
     assert {
-        (row["component_kinds"][0], row["account_type"], row["direction"]) for row in reserve
+        (sources[row["subject_id"]].kind, row["account_type"], row["direction"])
+        for row in reserve
     } == {
         ("managed_reserve_expense", account_type, "outflow")
         for account_type in ("bank", "cash", "payment_platform")
@@ -136,6 +143,14 @@ def test_reserve_facts_read_as_external_money_on_all_supported_accounts(reserve_
     assert not any(row["internal_transfer"] for row in reserve)
     assert {row["type"] for row in reserve} == {"备用金支出", "备用金退款"}
     assert {row["party"] for row in reserve} == {"未提供往来对象"}
+    for row in reserve:
+        source = sources[row["subject_id"]]
+        expected_type = "备用金支出" if source.kind == "managed_reserve_expense" else "备用金退款"
+        assert row["type"] == expected_type
+        assert row["amount_fen"] == source.amount_fen
+        assert row["signed_amount_fen"] == (
+            -source.amount_fen if source.kind == "managed_reserve_expense" else source.amount_fen
+        )
 
 
 def test_reserve_vouchers_show_actual_amounts_without_settlements(reserve_book):
@@ -162,7 +177,9 @@ def test_reserve_vouchers_show_actual_amounts_without_settlements(reserve_book):
     )
     publish("expense", "refund")
 
-    vouchers = Dashboard(engine).brief("2026-09")["data"]["collections"]["vouchers"]["items"]
+    vouchers = Dashboard(engine).brief("2026-09", section="vouchers")["data"][
+        "collections"
+    ]["vouchers"]["items"]
     reserve = {row["kind"]: row for row in vouchers}
 
     expense = reserve["managed_reserve_expense"]
@@ -170,16 +187,28 @@ def test_reserve_vouchers_show_actual_amounts_without_settlements(reserve_book):
     assert expense["list_summary"] == "支出备用金"
     assert expense["business_amount_fen"] == 300
     assert expense["business_amount_label"] == "备用金实际支出"
-    assert expense["fund_outflow_fen"] == 300
-    assert expense["settlements"] == []
 
     refund = reserve["managed_reserve_refund"]
     assert refund["type"] == "备用金退款"
     assert refund["list_summary"] == "收到备用金退款"
     assert refund["business_amount_fen"] == 100
     assert refund["business_amount_label"] == "备用金实际退款"
-    assert refund["fund_inflow_fen"] == 100
-    assert refund["settlements"] == []
+    dashboard = Dashboard(engine)
+    movements = {
+        row["subject_id"]: row
+        for row in dashboard.funds("2026-09")["data"]["collections"]["movements"]["items"]
+    }
+    assert movements["expense"]["direction"] == "outflow"
+    assert movements["expense"]["amount_fen"] == 300
+    assert movements["refund"]["direction"] == "inflow"
+    assert movements["refund"]["amount_fen"] == 100
+    for subject, amount in (("expense", 300), ("refund", 100)):
+        lines = reserve[f"managed_reserve_{subject}"]["lines"]
+        assert sum(line["debit_fen"] for line in lines) == amount
+        assert sum(line["credit_fen"] for line in lines) == amount
+        settlements = dashboard.business_status("2026-09", subject)["data"]["settlements"]
+        assert settlements["obligations"] == []
+        assert settlements["checking"] is False
 
 
 def test_reserve_refund_reduces_management_expense_without_clipping_report_signs():

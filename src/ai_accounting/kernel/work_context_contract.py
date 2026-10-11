@@ -145,15 +145,56 @@ class ContextEntityProfile(ContextObject):
     display_number: NotRequired[str | None]
     external_identifiers: NotRequired[dict[str, str]]
     active: NotRequired[bool]
-    purpose: NotRequired[str | None]
     note: NotRequired[str | None]
     employment_start: NotRequired[DisplayDate | None]
     employment_end: NotRequired[DisplayDate | None]
     employment_status: NotRequired[Literal["active", "inactive", "unknown"]]
     employment_state: NotRequired[Literal["regular", "unpaid_leave", "departed", "unknown"]]
     category_label: NotRequired[str | None]
-    rights_description: NotRequired[str | None]
-    useful_life_basis: NotRequired[str | None]
+
+
+class ContextBankIdentity(ContextObject):
+    bank_name: str
+    bank_account_number: str
+    account_holder_name: str
+
+
+class ContextPlatformIdentity(ContextObject):
+    provider_name: str
+    account_identifier: str
+    account_holder_name: str
+
+
+class ContextCashIdentity(ContextObject):
+    pass
+
+
+class ContextFundAccountDefinition(ContextObject):
+    entity_id: str
+    detail_code: str
+    sequence: Revision
+    identity_key: str
+    source: str
+    evidence_digest: EvidenceDigest
+    digest: EvidenceDigest
+
+
+class ContextBankAccountDefinition(ContextFundAccountDefinition):
+    account_type: Literal["bank"]
+    parent_account: Literal["1002"]
+    identity: ContextBankIdentity
+
+
+class ContextPlatformAccountDefinition(ContextFundAccountDefinition):
+    account_type: Literal["platform"]
+    parent_account: Literal["1012"]
+    identity: ContextPlatformIdentity
+
+
+class ContextCashAccountDefinition(ContextFundAccountDefinition):
+    account_type: Literal["cash"]
+    parent_account: Literal["1001"]
+    identity: ContextCashIdentity
 
 
 class ContextEntity(ContextObject):
@@ -161,6 +202,14 @@ class ContextEntity(ContextObject):
     kind: EntityKind
     account_type: AccountType | None
     profile: ContextEntityProfile
+    fund_account: NotRequired[
+        Annotated[
+            ContextBankAccountDefinition
+            | ContextPlatformAccountDefinition
+            | ContextCashAccountDefinition,
+            Field(discriminator="account_type"),
+        ]
+    ]
 
 
 class WorkContextResponse(ContextObject):

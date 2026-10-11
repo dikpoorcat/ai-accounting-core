@@ -2,6 +2,7 @@
 
 import pytest
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_reports import book as _book
 from test_reports import close_quarter, scenario
@@ -39,11 +40,16 @@ def test_actual_quarter_page_reuses_party_and_statement_scalar_headers(
         reads._report_snapshot_cache.pop("report_classification_scalar_headers", None)
         return validate(connection, reads, *args, **kwargs)
 
-    with monkeypatch.context() as patch:
+    with raw_read(), monkeypatch.context() as patch:
         patch.setattr(reports_module, "_validated_report_classification_headers", no_scalar_reuse)
         original_work, original = measure_work(engine, lambda: dashboard.quarterly_report(2026, 1))
-    reused_work, reused = measure_work(engine, lambda: dashboard.quarterly_report(2026, 1))
+    with raw_read():
+        reused_work, reused = measure_work(engine, lambda: dashboard.quarterly_report(2026, 1))
     assert {key: value for key, value in original.items() if key != "checked_at"} == {
+        key: value for key, value in reused.items() if key != "checked_at"
+    }
+    assert {key: value for key, value in dashboard.quarterly_report(2026, 1).items()
+            if key != "checked_at"} == {
         key: value for key, value in reused.items() if key != "checked_at"
     }
     prefix = "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period,"
@@ -142,6 +148,6 @@ def test_successful_header_reuse_never_hides_damage_in_a_new_quarter_snapshot(
                     verify_sources(engine, connection, fact_ids={ident})
             assert failure.value.code == "content_integrity_failed"
             continue
-        with pytest.raises(KernelError) as failure:
+        with raw_read(), pytest.raises(KernelError) as failure:
             dashboard.quarterly_report(2026, 1)
         assert failure.value.code == "content_integrity_failed"

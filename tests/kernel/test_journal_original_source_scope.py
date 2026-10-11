@@ -136,7 +136,9 @@ def test_original_reverse_directory_does_not_replace_exact_frozen_authority(engi
            "AND reference_id=?", (original["id"],))
     # The original is authenticated directly against its independent close
     # slice, not selected through this damaged reverse directory. A complete
-    # read-index verification still refuses to bless the directory corruption.
+    # integrity verification still refuses to bless the directory corruption.
+    # Its earlier frozen fund-source validation refuses the missing exact
+    # close storage position before the complete read-index checker runs.
     with Dashboard(engine)._snapshot("2026-03") as snap:
         assert snap.month_journal.account_amounts() == {
             "5602": [410, 340], "2202": [340, 410],
@@ -144,4 +146,6 @@ def test_original_reverse_directory_does_not_replace_exact_frozen_authority(engi
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError) as failure:
             integrity.verify_integrity(engine, connection)
-        assert failure.value.code == "read_index_integrity_failed"
+        assert failure.value.code == "content_integrity_failed"
+        assert failure.value.details["component"] == "close"
+        assert failure.value.details["reason"] == "storage_reference_position_missing"

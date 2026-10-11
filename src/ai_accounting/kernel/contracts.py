@@ -199,6 +199,10 @@ class Fact(BaseModel):
         """Declare identity-scoped reads without duplicating the public subject ID."""
         return self.reads()
 
+    def reads_after(self, subject_id: str, context: Context) -> tuple[Read, ...]:
+        """One bounded second stage derived from the first stage's verified sources."""
+        return ()
+
     def scopes_for(self, subject_id: str) -> tuple[str, ...]:
         """Expose identity-scoped source categories without adding redundant fields."""
         return self.scopes()

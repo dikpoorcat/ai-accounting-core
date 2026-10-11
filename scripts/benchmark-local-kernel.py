@@ -56,7 +56,7 @@ class BenchmarkCharge(Fact):
 def calculate(version, context):
     amount = version.fact.amount
     return Outcome(
-        (Line("5602", debit=amount), Line("1002", credit=amount, cashflow="operating_expense")),
+        (Line("5602", debit=amount), Line("2202", credit=amount)),
         {"amount": amount},
     )
 
@@ -139,7 +139,7 @@ def seed_to(
     ]
     outcome = asdict(
         Outcome(
-            (Line("5602", debit=100), Line("1002", credit=100, cashflow="operating_expense")),
+            (Line("5602", debit=100), Line("2202", credit=100)),
             {"amount": 100},
         )
     )
@@ -245,7 +245,7 @@ def seed_to(
                         for r in rows
                         for line in (
                             (r[5], 1, "5602", 100, 0, None),
-                            (r[5], 2, "1002", 0, 100, "operating_expense"),
+                            (r[5], 2, "2202", 0, 100, None),
                         )
                     ],
                 )

@@ -13,6 +13,7 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 from entity_fixture import seed_registration_entities
 from payroll_plan_fixture import confirm_wage_inputs
+from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 
@@ -317,7 +318,8 @@ def read_probe(layered_book, monkeypatch):
 
 @pytest.mark.parametrize("endpoint", ["brief", "funds", "employees", "assets"])
 def test_dashboard_does_not_decode_unrelated_funding_history(layered_book, read_probe, endpoint):
-    response = getattr(Dashboard(layered_book["engine"]), endpoint)("2026-01", limit=1)
+    with raw_read():
+        response = getattr(Dashboard(layered_book["engine"]), endpoint)("2026-01", limit=1)
     snapshots, transactions, decoded_unrelated = read_probe
     loaded_subjects = snapshots[-1].loaded_subjects
     excluded = layered_book["funding_subjects"]
@@ -552,7 +554,8 @@ def test_employee_list_uses_verified_roles_before_loading_wage_scalars(layered_b
 
     monkeypatch.setattr(dashboard_module, "scalar_facts", measured_scalar)
     dashboard = Dashboard(engine)
-    ordinary = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
+    with raw_read():
+        ordinary = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
     assert ordinary["data"]["collections"]["employees"]["page"]["total_count"] == 5
     all_wage_facts = {layered_book["facts"][f"wage-{index}"] for index in range(4)}
     all_wage_facts.add(layered_book["facts"]["legacy-wage"])
@@ -571,7 +574,8 @@ def test_employee_list_uses_verified_roles_before_loading_wage_scalars(layered_b
         return result
 
     monkeypatch.setattr(references, "current_role_matches", roles_without_one)
-    fallback = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
+    with raw_read():
+        fallback = dashboard.employees("2026-01", preparation="deferred", employee_filter="all")
     assert fallback == ordinary
     assert any(layered_book["facts"]["legacy-wage"] in call for call in scalar_calls)
 
@@ -595,7 +599,7 @@ def test_employee_list_rejects_damaged_wage_role_instead_of_scalar_fallback(
         statement,
         (fact_id,),
     )
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).employees("2026-01", preparation="deferred", employee_filter="all")
     assert failure.value.code == "entity_reference_corrupt"
 
@@ -626,7 +630,8 @@ def test_asset_list_bounds_selected_batch_members(layered_book, monkeypatch):
         )
 
     monkeypatch.setattr(BusinessQueries, "_selected_asset_members", counted)
-    result = Dashboard(layered_book["engine"]).assets("2026-01", preparation="deferred")
+    with raw_read():
+        result = Dashboard(layered_book["engine"]).assets("2026-01", preparation="deferred")
     assert result["data"]["collections"]["assets"]["items"]
     assert not any(
         kinds is None and subjects is None and asset_ids is None
@@ -647,9 +652,10 @@ def test_asset_page_batches_selected_card_facts(layered_book, monkeypatch):
         return original(self, identifiers)
 
     monkeypatch.setattr(QueryReads, "facts", counted)
-    result = Dashboard(layered_book["engine"]).assets(
-        "2026-01", section="assets", limit=4, preparation="deferred"
-    )
+    with raw_read():
+        result = Dashboard(layered_book["engine"]).assets(
+            "2026-01", section="assets", limit=4, preparation="deferred"
+        )
     assert result["data"]["collections"]["assets"]["page"]["returned_count"] == 4
     assert selected in requested
 
@@ -664,9 +670,10 @@ def test_asset_page_stops_reference_only_source_voucher_reads(layered_book, monk
         yield from original(self)
 
     monkeypatch.setattr(Journal, "__iter__", counted)
-    result = Dashboard(layered_book["engine"]).assets(
-        "2026-01", section="assets", limit=4, preparation="deferred"
-    )
+    with raw_read():
+        result = Dashboard(layered_book["engine"]).assets(
+            "2026-01", section="assets", limit=4, preparation="deferred"
+        )
     assert result["data"]["collections"]["assets"]["page"]["returned_count"] == 4
     assert source_scopes == []
     assert {item["asset_id"] for item in result["data"]["collections"]["assets"]["items"]} == {

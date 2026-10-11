@@ -185,7 +185,8 @@ def test_frozen_part_and_later_reversal_keep_exact_money_and_basis(book):
 def test_scope_uses_the_exact_frozen_opening_identity_binding(identity_engine):
     engine, proof, original_party, adopted_party = identity_engine
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="cash-account",
+        "fund_account", {"display_name": "合成现金账户"}, account_type="cash",
+        source="synthetic", evidence_digest=proof, request_id="cash-account",
     )["entity_id"]
     fields = {"counterparty_id": original_party, "nature": "customer_receivable",
               "outstanding_fen": 20000, "business_reference": "confirmed-invoice"}

@@ -1,6 +1,7 @@
 """Month-end unpaid remuneration covers wages and all established personal labor."""
 
 import pytest
+from test_dashboard_model_integrity import raw_read
 from test_labor_accrual import accrual
 from test_labor_assets import cost
 from test_opening_continuation import book as opening_book_fixture
@@ -282,7 +283,10 @@ def test_unknown_labor_outstanding_propagates_without_erasing_known_employee_wag
         "ai_accounting.kernel.settlement_projection.settlement_labor_outstanding_net",
         lambda *_args, **_kwargs: None,
     )
-    data = employee_data(company.engine, "2026-01", employee_id="employee")
+    # The native remuneration consumer must propagate this per-call legal
+    # uncertainty without discarding the independently established wage amount.
+    with raw_read():
+        data = employee_data(company.engine, "2026-01", employee_id="employee")
     assert data["outstanding_remuneration_fen"] is None
     assert data["employees"]["outstanding_net_fen"] == 907400
     assert data["collections"]["employees"]["items"][0]["outstanding_net_fen"] == 907400

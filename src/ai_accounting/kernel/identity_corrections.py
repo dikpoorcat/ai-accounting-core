@@ -489,11 +489,11 @@ class _CorrectionPreparation(_AssetPreparation):
     def _selection_enabled(self, subject_id):
         return subject_id not in self.removed
 
-    def _reads(self, version):
+    def _reads(self, version, selections=None):
         if version.subject_id in self.removed:
             previous = self.previous.get(version.subject_id)
             return (Read("calculation", version.fact.kind, "#" + previous),) if previous else ()
-        return super()._reads(version)
+        return super()._reads(version, selections)
 
     def _snapshot(self, subjects):
         snapshot = Engine._snapshot(self, subjects)
@@ -853,11 +853,17 @@ class IdentityCorrections:
                         if adopted
                         else bool(assignments)
                     )
+                    from .payroll_confirmation import identity_confirmation_companion
+
+                    payroll_companion = identity_confirmation_companion(
+                        self.store, connection, source.fact, fact, typed
+                    )
                     if (
                         not changed_identity
                         and change.subject_id not in replacement_targets
                         and change.subject_id not in reinstated
                         and not redirected
+                        and not payroll_companion
                     ):
                         raise KernelError(
                             "identity_correction_no_change", "该项没有明确的对象身份变更"

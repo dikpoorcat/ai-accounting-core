@@ -85,11 +85,13 @@ def _verify_hits(
     from .dashboard_model_sources import _verify_model_voucher_rows, verify_model_sources
 
     normalized_lines = {}
+    fund_sources = []
     outcomes = verify_model_sources(
         snap.engine, snap.connection, calculation_ids=calc_ids, fact_ids=fact_ids,
         through_period=snap.month,
         normalized_lines=normalized_lines,
         expected_sources=sources, expected_facts=facts,
+        _fund_sources=fund_sources, _reads=snap.reads,
     )
     if vouchers:
         from .query_reads import (
@@ -152,7 +154,10 @@ def _verify_hits(
             raise _invalid()
         from .fund_line_details import fund_line_details
 
-        fund_details = fund_line_details(snap.connection, vouchers)
+        fund_details = fund_line_details(
+            snap.connection, vouchers,
+            _source_reads=fund_sources[0] if fund_sources else None,
+        )
         for item in voucher_items:
             ident = item["voucher_version_id"]
             header = headers[ident]

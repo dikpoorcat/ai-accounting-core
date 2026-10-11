@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 import pytest
 import test_reports as report_cases
 from entity_fixture import seed_entities
+from test_dashboard_model_transactions import raw_read
 from test_dashboard_transport import _publish_expense, authenticated
 from test_integrity_content import damage
 from test_resident_service import resident as resident_fixture
@@ -156,7 +157,9 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
         "SELECT min(account) FROM monthly_account WHERE period=?)",
         (YearMonth("2026-03").ordinal, YearMonth("2026-03").ordinal),
     )
-    with pytest.raises(KernelError) as failure:
+    # The monthly projection is a physical leaf of the native amount reader,
+    # independent of the model's already certified aggregate.
+    with raw_read(), pytest.raises(KernelError) as failure:
         dashboard.brief("2026-03", preparation="deferred")
     assert failure.value.code == "content_integrity_failed"
 

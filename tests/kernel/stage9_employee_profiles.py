@@ -20,7 +20,6 @@ SCENARIO_SOURCE = (
     "regularly employed from 2016-01-01; this is a test definition, not an owner confirmation."
 )
 EMPLOYMENT = {
-    "active": True,
     "employment_status": "active",
     "employment_state": "regular",
     "employment_start": "2016-01-01",
@@ -92,7 +91,7 @@ def supplement_synthetic_employee_profiles(engine, members, *, identity, request
             ):
                 raise ValueError("synthetic employee source profile identity changed")
             data = json.loads(row["content"]) | EMPLOYMENT
-            updated, evidence = Entities._profile(data, SCENARIO_SOURCE, None)
+            updated, evidence = Entities._profile("person", data, SCENARIO_SOURCE, None)
             results.append(Entities._insert_profile(
                 connection, member.entity_id, member.expected_revision + 1,
                 updated, SCENARIO_SOURCE, evidence,

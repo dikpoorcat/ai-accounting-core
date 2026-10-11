@@ -257,6 +257,8 @@ def activity_group_members(snap, group_key, *, after=None, limit=20):
 def vouchers_for_rows(snap, rows):
     """One page-local batch, shared by focused, member and voucher pages."""
     from .dashboard import _brief_prime_activity, _brief_prime_voucher_profiles
+    from .fund_line_details import fund_line_details
+    from .query_reads import _owns_unchanged_read_snapshot
 
     rows = list({row["id"]: row for row in rows}.values())
     # Page reads do not pass through the overview's whole-month money proof.
@@ -266,7 +268,15 @@ def vouchers_for_rows(snap, rows):
     resolutions = _brief_prime_activity(snap, rows)
     _brief_prime_voucher_profiles(snap, rows)
     _prime_selected_voucher_groups(snap, rows)
-    vouchers = [snap.owner_voucher(row) for row in rows]
+    # Verify attribution once for the exact page. Physical lines already read
+    # by its money proof can be reused, without claiming a complete source proof.
+    fund_details = fund_line_details(
+        snap.connection, [row["id"] for row in rows],
+        _voucher_reads=(snap.reads if _owns_unchanged_read_snapshot(
+            snap.reads, snap.connection,
+        ) else None),
+    )
+    vouchers = [snap.owner_voucher(row, fund_details=fund_details) for row in rows]
     own = {
         row["basis"]["subject_id"]
         for row in rows

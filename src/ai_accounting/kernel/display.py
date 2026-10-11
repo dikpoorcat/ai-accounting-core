@@ -33,7 +33,6 @@ class _Profile(BaseModel):
 
     entity_id: ShortText
     display_name: ShortText | None = None
-    display_number: ShortText | None = None
     purpose: NoteText | None = Field(
         default=None,
         description=(
@@ -58,9 +57,6 @@ class _Profile(BaseModel):
 
 class BusinessProfile(_Profile):
     kind: Literal["business"]
-    counterparty_id: ShortText | None = None
-    beneficiary_id: ShortText | None = None
-    handler_id: ShortText | None = None
 
 
 DisplayProfile = BusinessProfile
@@ -71,8 +67,7 @@ DISPLAY_DDL = """
 CREATE TABLE display_profile_revision(id TEXT PRIMARY KEY, kind TEXT NOT NULL
  CHECK(kind='business'),
  entity_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
- display_name TEXT,display_number TEXT,purpose TEXT,note TEXT,
- counterparty_id TEXT,beneficiary_id TEXT,handler_id TEXT,
+ display_name TEXT,purpose TEXT,note TEXT,
  source TEXT NOT NULL,evidence_digest BLOB REFERENCES evidence(digest),
  digest BLOB NOT NULL CHECK(length(digest)=32),
  UNIQUE(kind,entity_id,revision)) STRICT;
@@ -154,19 +149,42 @@ class Display:
             result[row["kind"]][row["entity_id"]] = Display._record(row)
         from .entities import display_profile
         from .entities import profiles as entity_profiles
+        from .fund_accounts import fund_account_definitions
 
         profile_ids = None
         if closed is not None:
             profile_ids = [item["id"] for item in snapshot["entity_profiles"]]
-        for entity_id, profile in entity_profiles(connection, profile_ids=profile_ids).items():
+        entities = entity_profiles(connection, profile_ids=profile_ids)
+        definitions = {
+            item["entity_id"]: item
+            for item in (
+                read_section(connection, verified_header(connection, closed), "fund_details")[
+                    "definitions"
+                ]
+                if closed is not None
+                else fund_account_definitions(
+                    connection,
+                    [
+                        ident
+                        for ident, item in entities.items()
+                        if item["entity_kind"] == "fund_account"
+                    ],
+                )
+            )
+        }
+        for entity_id, profile in entities.items():
             groups = {
                 "person": ("employee", "counterparty"),
                 "organization": ("counterparty",),
                 "fund_account": ("fund_account",),
                 "asset": ("asset",),
+                "project": ("asset",),
+                "fund_product": ("asset",),
             }.get(profile["entity_kind"], ())
             for kind in groups:
-                result[kind][entity_id] = display_profile(profile, kind)
+                result[kind][entity_id] = display_profile(
+                    profile, kind, fund_account=definitions.get(entity_id)
+                )
         return result
 
     @staticmethod
@@ -789,8 +807,6 @@ class Display:
         data = _PROFILE_ADAPTER.validate_python(profile).model_dump(mode="json")
 
         def operation(connection):
-            from .entities import require_entity
-
             if (
                 connection.execute(
                     "SELECT 1 FROM subject WHERE id=?", (data["entity_id"],)
@@ -798,9 +814,6 @@ class Display:
                 is None
             ):
                 raise KernelError("unknown_subject", "业务说明必须指向已登记业务")
-            for key in ("counterparty_id", "beneficiary_id", "handler_id"):
-                if data.get(key) is not None:
-                    require_entity(connection, data[key], kinds=("person", "organization"))
             current = connection.execute(
                 "SELECT coalesce(max(revision),0) FROM display_profile_revision "
                 "WHERE kind=? AND entity_id=?",
@@ -812,12 +825,8 @@ class Display:
             identifier = uuid.uuid4().hex
             fields = (
                 "display_name",
-                "display_number",
                 "purpose",
                 "note",
-                "counterparty_id",
-                "beneficiary_id",
-                "handler_id",
             )
             connection.execute(
                 "INSERT INTO display_profile_revision VALUES("

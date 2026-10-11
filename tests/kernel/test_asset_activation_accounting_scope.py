@@ -10,10 +10,11 @@ from test_asset_batches import month
 from test_asset_owner_frozen_scope import amend_activation
 from test_asset_owner_frozen_scope import owner_book as owner_book  # noqa: F401
 from test_asset_owner_kind_sources import change_owner_kind
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_payroll_corrections import Company
 
-from ai_accounting.kernel import close_storage
+from ai_accounting.kernel import close_storage, dashboard_model_runtime
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
@@ -51,9 +52,12 @@ def physical(work):
 def test_counts_leave_consumption_accounting_unread_with_120_frozen_months(
     tmp_path, record_property,
 ):
-    company = Company(tmp_path / "activation-accounting-growth.sqlite")
-    prepare_batch_assets(company)
-    company.close("2026-02")
+    # This fixture exercises native frozen-leaf reads. Keep every typed write,
+    # publication and real close, without constructing unrelated UI models.
+    with patch.object(dashboard_model_runtime, "supports_native_production", return_value=False):
+        company = Company(tmp_path / "activation-accounting-growth.sqlite")
+        prepare_batch_assets(company)
+        company.close("2026-02")
     engine = company.engine
     original = BusinessQueries._selected_asset_activation_identities
     decoded = []
@@ -69,11 +73,14 @@ def test_counts_leave_consumption_accounting_unread_with_120_frozen_months(
     prepared = 0
     samples = []
     for length in (0, 48, 120):
-        while prepared < length:
-            prepared += 1
-            period = str(YearMonth.from_ordinal(first + prepared))
-            month(engine, company.owner_confirmation, period, f"activation-growth-{prepared}")
-            company.close(period)
+        with patch.object(
+            dashboard_model_runtime, "supports_native_production", return_value=False,
+        ):
+            while prepared < length:
+                prepared += 1
+                period = str(YearMonth.from_ordinal(first + prepared))
+                month(engine, company.owner_confirmation, period, f"activation-growth-{prepared}")
+                company.close(period)
         period = str(YearMonth.from_ordinal(first + length))
         with patch.object(BusinessQueries, "_selected_asset_activation_identities",
                           full_scope(original)):
@@ -125,9 +132,9 @@ def test_leaf_damage_is_rejected_by_its_actual_consumer(owner_book, selected):
             counts(engine, "2026-03")
     else:
         assert counts(engine, "2026-03") == {"fixed": 2}
-    # The complete asset reader consumes both owner kinds in an independent
-    # scope; an earlier successful count cannot authenticate that missing leaf.
-    with pytest.raises(KernelError):
+    # Exercise the complete native asset reader, which consumes both owner kinds
+    # in an independent scope; the count cannot authenticate its damaged leaf.
+    with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-03", preparation="deferred")
     if not selected:
         with Dashboard(engine)._snapshot("2026-03") as snap:

@@ -7,6 +7,7 @@ from test_banking import book as _bank_book
 from test_close_review_transport import prepared_company
 from test_close_review_transport import resident as _resident
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 from test_dashboard_provenance import profile as display_profile
 from test_payroll_corrections import company as payroll_company_fixture
 from test_reimbursement_assets import asset as reimbursed_asset
@@ -18,6 +19,7 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard, _Snapshot
 from ai_accounting.kernel.dashboard_metadata import Records, TaxIdentityCandidates
 from ai_accounting.kernel.exports import Exports
+from ai_accounting.kernel.fund_accounts import require_fund_account
 from ai_accounting.kernel.response_contracts import http_response
 from ai_accounting.kernel.security.window import _owner_review_text
 from ai_accounting.kernel.tax_import import TaxImportIdentity
@@ -56,7 +58,9 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     monkeypatch.setattr(dashboard_module, "_brief_workforce_cost", workforce)
     monkeypatch.setattr(review_module, "business_adopted_basis", forbidden)
     dashboard = Dashboard(engine)
-    response = dashboard.brief("2026-09")
+    # Measure the native brief's summary reads, independent of a stored UI model.
+    with raw_read():
+        response = dashboard.brief("2026-09")
     data = response["data"]
     assert response["schema_version"] == 19
     assert response["scope"] == "overview"
@@ -285,8 +289,10 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
 ):
     engine, _, _, _ = bank_book
     _publish_filter_funding(engine, ["bank-a"] * 31)
+    with engine.store.connection(read_only=True) as connection:
+        account = require_fund_account(connection, "bank-a", "bank")
     display_profile(
-        engine, "fund_account", "bank-a", display_name="经营账户", display_number="尾号1234"
+        engine, "fund_account", "bank-a", display_name="经营账户"
     )
     dashboard = Dashboard(engine)
     first = dashboard.brief("2026-09")
@@ -308,7 +314,7 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
     party_id = f"filter-owner-2026-09-{index:04}"
     display_profile(engine, "counterparty", party_id, display_name="实际出资人")
     display_profile(
-        engine, "business", subject, display_name="单笔资本投入", display_number="业务单号独立"
+        engine, "business", subject, display_name="单笔资本投入"
     )
     _owner_without_technical_reads(monkeypatch)
     response = dashboard.business_status("2026-09", subject)
@@ -320,10 +326,19 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
     assert data["settlements"]["checking"] is False
     assert data["current_followups"]["settlements"]["checking"] is False
     profiles = data["display_profiles"]
-    assert profiles["business"]["values"]["display_number"] == "业务单号独立"
+    assert profiles["business"]["values"]["display_name"] == "单笔资本投入"
     assert [
         (item["entity_id"], item["values"]["display_name"]) for item in profiles["fund_accounts"]
     ] == [("bank-a", "经营账户")]
+    selected_account = profiles["fund_accounts"][0]
+    assert selected_account["values"]["account_number"] == (
+        account["identity"]["bank_account_number"]
+    )
+    assert "field_sources" not in selected_account
+    with dashboard._snapshot("2026-09") as snap:
+        number_source = snap.profile("fund_account", "bank-a")["field_sources"]["account_number"]
+    assert number_source["source_type"] == "fund_account_identity"
+    assert number_source["id"] == account["digest"]
     assert [
         (item["entity_id"], item["values"]["display_name"]) for item in profiles["counterparties"]
     ] == [(party_id, "实际出资人")]
@@ -337,17 +352,22 @@ def test_exact_business_beyond_twenty_uses_explicit_account_and_party_profiles(
     )
 
 
-def test_owner_payroll_objects_use_employee_identity_independent_of_business_number(
+def test_owner_payroll_objects_use_employee_identity_independent_of_business_title(
     payroll_company, monkeypatch
 ):
     payroll_company.publish("january", "february")
     engine = payroll_company.engine
     display_profile(engine, "employee", "employee", display_name="明确员工姓名")
-    display_profile(engine, "business", "january", display_number="工资业务001")
+    display_profile(engine, "business", "january", display_name="一月工资")
+    with Dashboard(engine)._snapshot("2026-01") as snap:
+        assert snap.profile("business", "january")["display_name"] == "一月工资"
     _owner_without_technical_reads(monkeypatch)
     response = Dashboard(engine).business_status("2026-01", "january")
     profiles = response["data"]["display_profiles"]
-    assert profiles["business"]["values"]["display_number"] == "工资业务001"
+    # Payroll owner text uses its typed meaning; the saved custom business title
+    # must not replace the independently confirmed employee identity.
+    assert profiles["business"]["entity_id"] == "january"
+    assert profiles["business"]["values"]["display_name"] is None
     assert [
         (item["entity_id"], item["values"]["display_name"]) for item in profiles["employees"]
     ] == [("employee", "明确员工姓名")]
@@ -476,12 +496,12 @@ def test_owner_asset_objects_use_adopted_asset_and_explicit_creditors(asset_book
     display_profile(engine, "employee", "alice", display_name="员工甲")
     display_profile(engine, "employee", "bob", display_name="员工乙")
     display_profile(
-        engine, "business", "asset-business-independent", display_number="资产验收单001"
+        engine, "business", "asset-business-independent", display_name="研发电脑验收"
     )
     _owner_without_technical_reads(monkeypatch)
     response = Dashboard(engine).business_status("2026-02", "asset-business-independent")
     profiles = response["data"]["display_profiles"]
-    assert profiles["business"]["values"]["display_number"] == "资产验收单001"
+    assert profiles["business"]["values"]["display_name"] == "研发电脑验收"
     assert [(item["entity_id"], item["values"]["display_name"]) for item in profiles["assets"]] == [
         ("computer", "研发电脑")
     ]
@@ -505,7 +525,7 @@ def test_frozen_detail_keeps_adopted_objects_amounts_and_core_proof(bank_book, m
     save("expense", "expense-independent", fields)
     publish("expense-independent")
     display_profile(engine, "counterparty", "adopted-supplier", display_name="原采用供应商")
-    display_profile(engine, "business", "expense-independent", display_number="原业务单001")
+    display_profile(engine, "business", "expense-independent", display_name="原费用业务")
     investments.close(engine, "2026-09")
     save("expense", "expense-independent", fields | {"amount_fen": 140}, revision=1)
     preview = engine.preview(["expense-independent"], posting_period="2026-10")
@@ -521,7 +541,7 @@ def test_frozen_detail_keeps_adopted_objects_amounts_and_core_proof(bank_book, m
         "business",
         "expense-independent",
         1,
-        display_number="新业务单002",
+        display_name="后来修订的费用业务",
         note="后来补齐经营用途",
     )
     display_profile(engine, "counterparty", "adopted-supplier", 1, display_name="原供应商后来改名")
@@ -532,7 +552,7 @@ def test_frozen_detail_keeps_adopted_objects_amounts_and_core_proof(bank_book, m
     assert data["closure"]["state"] == "exact_close"
     assert data["frozen_adoption"]["amount_fen"] == 100
     assert data["current_business_result"]["amount_fen"] == 140
-    assert data["display_profiles"]["business"]["values"]["display_number"] == "原业务单001"
+    assert data["display_profiles"]["business"]["values"]["display_name"] == "原费用业务"
     assert [
         (item["entity_id"], item["values"]["display_name"])
         for item in data["display_profiles"]["counterparties"]

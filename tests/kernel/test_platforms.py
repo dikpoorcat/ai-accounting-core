@@ -640,7 +640,7 @@ def test_platform_principal_repayment_changes_interest_and_period_readiness(book
             subject,
             {
                 "period": "2026-09",
-                "agreement_id": "agreement",
+
                 "drawdown_id": "drawdown",
                 "period_start": start,
                 "period_end_exclusive": end,

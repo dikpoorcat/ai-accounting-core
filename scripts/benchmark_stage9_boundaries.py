@@ -19,6 +19,7 @@ from pathlib import Path
 from stage9_source import configure_source, require_source_module, synthetic_path, workspace_root
 
 MIB = 1024 * 1024
+SYNTHETIC_BANK_ACCOUNT_NUMBER = "6222000000000000001"
 
 
 def _rss_bytes() -> int:
@@ -109,11 +110,12 @@ def _evidence_size(engine, evidence_digest):
 def _bank_csv(rows: int) -> bytes:
     header = "日期,银行流水号,账户,对方,金额,余额,摘要,币种\n"
     body = "".join(
-        f"2026-03-01,txn-{index},bank-main,synthetic-party,1.23,100000.00,receipt,CNY\n"
+        f"2026-03-01,txn-{index},{SYNTHETIC_BANK_ACCOUNT_NUMBER},"
+        "synthetic-party,1.23,100000.00,receipt,CNY\n"
         for index in range(rows)
     )
     total = (
-        f"2026-03-31,total,bank-main,synthetic-party,"
+        f"2026-03-31,total,{SYNTHETIC_BANK_ACCOUNT_NUMBER},synthetic-party,"
         f"{rows * 123 // 100}.{rows * 123 % 100:02d},"
         "100000.00,control-total,CNY\n"
     )
@@ -164,8 +166,13 @@ def _bank_boundary(engine, rows, *, full):
     account = Entities(engine).register_entity(
         "fund_account",
         account_type="bank",
-        data={},
+        data={
+            "bank_name": "合成容量边界测试银行",
+            "bank_account_number": SYNTHETIC_BANK_ACCOUNT_NUMBER,
+            "account_holder_name": "合成容量边界测试公司",
+        },
         source="合成银行账户",
+        evidence_digest=evidence,
         request_id="bank-account",
     )["entity_id"]
     entries = [
@@ -288,8 +295,9 @@ def _batch_boundary(engine, evidence, count, *, full):
     cash = entities.register_entity(
         "fund_account",
         account_type="cash",
-        data={},
+        data={"display_name": "合成容量边界测试现金账户"},
         source="合成现金账户",
+        evidence_digest=evidence,
         request_id="cash-account",
     )["entity_id"]
     # Each typed receipt has a distinct real amount. One registered owner is

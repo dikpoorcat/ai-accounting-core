@@ -173,7 +173,7 @@ CREATE TABLE monthly_cashflow(period INTEGER NOT NULL,category TEXT NOT NULL,
 CREATE TABLE balance(category TEXT NOT NULL,balance_key TEXT NOT NULL,amount INTEGER NOT NULL,
  PRIMARY KEY(category,balance_key)) STRICT;
 CREATE TABLE management_revision(id INTEGER PRIMARY KEY,subject_id TEXT NOT NULL REFERENCES subject,
- revision INTEGER NOT NULL, note TEXT, payment_period INTEGER, payment_category TEXT,
+ revision INTEGER NOT NULL, payment_period INTEGER, payment_category TEXT,
  UNIQUE(subject_id,revision)) STRICT;
 CREATE TABLE payee_revision(id TEXT PRIMARY KEY,party_id TEXT NOT NULL,
  revision INTEGER NOT NULL CHECK(revision>0),name TEXT NOT NULL,account TEXT NOT NULL,

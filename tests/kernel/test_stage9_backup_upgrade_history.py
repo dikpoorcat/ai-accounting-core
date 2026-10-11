@@ -89,8 +89,11 @@ def _released_zip(tmp_path, *, with_completed_job=False):
     publish(engine)
     close_months(Periods(engine), proof, first="2026-01", last="2026-01")
     Periods(engine).management(
-        "charge", note="unclosed management history", payment_period=None,
-        payment_category=None, expected_revision=0, request_id="open-management",
+        "charge",
+        payment_period=None,
+        payment_category=None,
+        expected_revision=0,
+        request_id="open-management",
     )
     with engine.store.connection() as connection:
         content = b"unreferenced synthetic history evidence"
@@ -114,7 +117,10 @@ def _history(connection):
             "calculations": "SELECT id,digest FROM calculation ORDER BY id",
             "closes": "SELECT period,digest FROM period_close ORDER BY period",
             "evidence": "SELECT digest,name FROM evidence ORDER BY digest",
-            "management": "SELECT id,subject_id,revision,note FROM management_revision ORDER BY id",
+            "management": (
+                "SELECT id,subject_id,revision,payment_category "
+                "FROM management_revision ORDER BY id"
+            ),
         }.items()
     }
 
@@ -206,11 +212,12 @@ def test_released_zip_rejects_authoritative_source_rewrite(tmp_path, changed):
 
     trigger_name, update = {
         "request": (
-            "immutable_request_UPDATE", "UPDATE request SET result='{}' WHERE id='evidence'"
+            "immutable_request_UPDATE",
+            "UPDATE request SET result='{}' WHERE id='evidence'",
         ),
         "open_management": (
             "immutable_management_revision_UPDATE",
-            "UPDATE management_revision SET note='rewritten' WHERE subject_id='charge'",
+            "UPDATE management_revision SET payment_category='rewritten' WHERE subject_id='charge'",
         ),
         "fact_scope": (
             "immutable_fact_scope_UPDATE",
@@ -233,8 +240,7 @@ def test_released_zip_rejects_authoritative_source_rewrite(tmp_path, changed):
     altered = replace(
         target,
         steps=tuple(
-            replace(item, apply=replace_source) if item is step else item
-            for item in target.steps
+            replace(item, apply=replace_source) if item is step else item for item in target.steps
         ),
     )
     destination = tmp_path / f"{changed}-altered.sqlite"
@@ -256,21 +262,25 @@ def test_released_zip_rejects_completed_job_receipt_rewrite(tmp_path):
 
     def replace_receipt(connection):
         step.apply(connection)
-        assert connection.execute(
-            "UPDATE jobs SET result='{}' WHERE status='succeeded' AND kind='portable_backup'"
-        ).rowcount == 1
+        assert (
+            connection.execute(
+                "UPDATE jobs SET result='{}' WHERE status='succeeded' AND kind='portable_backup'"
+            ).rowcount
+            == 1
+        )
 
     altered = replace(
         target,
         steps=tuple(
-            replace(item, apply=replace_receipt) if item is step else item
-            for item in target.steps
+            replace(item, apply=replace_receipt) if item is step else item for item in target.steps
         ),
     )
     destination = tmp_path / "job-receipt-altered.sqlite"
     with pytest.raises(backup.BackupError, match="changed retained history"):
         backup.restore_portable(
-            archive, destination, _bundle=altered,
+            archive,
+            destination,
+            _bundle=altered,
             expected_company_id=company["id"],
         )
     assert not destination.exists()

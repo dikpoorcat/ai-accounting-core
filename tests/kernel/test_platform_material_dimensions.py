@@ -81,7 +81,7 @@ def setup_transfer(company, direction="bank_to_platform", *, separate_bank_colum
             "transaction_reference": "actual-reference",
         },
     )
-    saved = save(
+    save(
         company,
         "bank_platform_transfer",
         "transfer",
@@ -98,11 +98,7 @@ def setup_transfer(company, direction="bank_to_platform", *, separate_bank_colum
     results = publish(company, "movement", "transfer")["results"]
     result = next(r for r in results if r["subject_id"] == "transfer")
     link = {
-        "subject_id": "transfer",
-        "fact_kind": "bank_platform_transfer",
-        "fact_id": saved["fact_id"],
         "calculation_id": result["calculation_id"],
-        "recognition_period": "2026-01",
     }
     return bank_source, platform_source, link, bank_sign
 

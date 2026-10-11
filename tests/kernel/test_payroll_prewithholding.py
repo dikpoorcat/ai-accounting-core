@@ -18,6 +18,7 @@ from ai_accounting.kernel import tax_import
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.payroll import UNKNOWN_DEDUCTIONS
 from ai_accounting.kernel.domains.transactions import Allocation, Payment
+from ai_accounting.kernel.payroll_confirmation import revision_reference
 from ai_accounting.kernel.tax_import import TaxImport
 from ai_accounting.kernel.workflow import ExternalCompletion, ExternalObligation, Workflow
 
@@ -42,6 +43,7 @@ def company(tmp_path, *, gross=42_500, shortfall="reject", kind="payroll_bounded
         accounting_gross_salary_fen=gross,
         tax_reported_salary_fen=0,
         contribution_basis="actual_required",
+        income_tax_policy_revision=None,
     )
     instance.save(fact, "july")
     instance.confirm_payroll("july")
@@ -90,6 +92,14 @@ def test_personal_contribution_shortfall_requires_explicit_company_burden(tmp_pa
         "profile",
         revision=1,
     )
+    with instance.engine.store.connection(read_only=True) as connection:
+        wage = instance.engine.store.current_fact(connection, "july")
+        selected_profile = instance.engine.store.current_fact(connection, "profile")
+    revised_wage = type(wage.fact).model_validate(
+        wage.fact.model_dump(mode="json")
+        | {"profile_revision": revision_reference(selected_profile).model_dump(mode="json")}
+    )
+    instance.save(revised_wage, "july", revision=wage.revision)
     instance.confirm_payroll("july")
     instance.publish("july")
     values = instance.current("july", "payroll_bounded").values
@@ -113,6 +123,7 @@ def test_prestart_branch_rejects_nonzero_tax_income_or_unclassified_net_wage(
         accounting_gross_salary_fen=42_500,
         tax_reported_salary_fen=0,
         contribution_basis="actual_required",
+        income_tax_policy_revision=None,
     ).model_copy(update=change)
     instance.save(fact, "july", revision=1)
     instance.confirm_payroll("july")
@@ -275,7 +286,7 @@ def test_mixed_month_exports_only_started_wage_and_retains_contribution_acceptan
         payroll(
             period="2026-07",
             employee_id="other",
-            profile_id="other-profile",
+            profile_revision={"subject_id": "other-profile", "revision": 1},
             tax_reported_salary_fen=500_000,
         ),
         "other-wage",

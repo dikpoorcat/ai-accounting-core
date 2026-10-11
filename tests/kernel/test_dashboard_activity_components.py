@@ -20,6 +20,7 @@ from test_dashboard_activity_classification import (
     _expense,
     _loaded_members,
 )
+from test_dashboard_model_transactions import raw_read
 from test_dashboard_provenance import profile
 from test_dashboard_settlement_parties import batch_company as batch_company
 from test_integrity_content import damage
@@ -227,7 +228,7 @@ def test_damaged_payment_slot_is_rejected_instead_of_becoming_a_residual(book, f
     damage(engine, "calculation", "UPDATE calculation SET outcome=? WHERE id=?", (
         json.dumps(outcome, separators=(",", ":")), row["id"],
     ))
-    with pytest.raises(KernelError) as caught:
+    with raw_read(), pytest.raises(KernelError) as caught:
         Dashboard(engine).brief(PERIOD, limit=1)
     assert caught.value.code == "content_integrity_failed"
 

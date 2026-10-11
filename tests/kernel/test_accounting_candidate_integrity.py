@@ -202,8 +202,9 @@ def test_current_member_owner_batch_is_exact_and_unrelated_growth_keeps_body_sco
     assert len(owner_batches) == 1
     for period in ("2026-01", "2026-02"):
         month(engine, evidence, period, "consume-" + period)
+    owner_batches.clear()
     after_work, actual = measure_work(engine, selected)
-    assert actual == expected and len(owner_batches) == 2
+    assert actual == expected and len(owner_batches) == 1
     for counter in (
         "returned_rows", "returned_value_bytes", "calculation_result_rows_loaded",
         "calculation_result_bytes_loaded", "calculation_result_json_decodes", "sql_calls",

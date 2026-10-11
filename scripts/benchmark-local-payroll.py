@@ -35,6 +35,9 @@ from ai_accounting.kernel.domains.payroll import (
     TaxBracketFact,
 )
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.entities import Entities
+from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
+from ai_accounting.kernel.payroll_preparation import PayrollPlan
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.payroll import CumulativeIncomeTaxPolicy
@@ -165,8 +168,7 @@ def measure(engine, operation):
     }, result
 
 
-def source_facts(employee):
-    identity = f"employee-{employee:04}"
+def source_facts(employee, identity, revisions):
     yield (
         f"profile-{employee:04}",
         PayrollProfile(
@@ -204,9 +206,16 @@ def source_facts(employee):
             Payroll(
                 period=period,
                 employee_id=identity,
-                profile_id=f"profile-{employee:04}",
-                contribution_policy_id="contributions",
-                income_tax_policy_id="income-tax",
+                profile_revision=FactRevisionReference(
+                    subject_id=f"profile-{employee:04}",
+                    revision=revisions[f"profile-{employee:04}"],
+                ),
+                contribution_policy_revision=FactRevisionReference(
+                    subject_id="contributions", revision=revisions["contributions"]
+                ),
+                income_tax_policy_revision=FactRevisionReference(
+                    subject_id="income-tax", revision=revisions["income-tax"]
+                ),
                 accounting_gross_salary_fen=1_000_000 + (employee % 5) * 50_000,
                 tax_reported_salary_fen=1_000_000 + (employee % 5) * 50_000,
                 tax_exempt_income_fen=0,
@@ -340,6 +349,7 @@ def run_scale(size, workspace, progress):
         request_id="proof",
     )["digest"]
     revisions = {}
+    employee_ids = {}
     requests = [0]
 
     def save(sid, fact):
@@ -359,8 +369,26 @@ def run_scale(size, workspace, progress):
         for sid, fact in policies():
             save(sid, fact)
         for employee in range(size):
-            for sid, fact in source_facts(employee):
-                save(sid, fact)
+            identity = Entities(engine).register_entity(
+                "person",
+                {"display_name": f"合成工资员工 {employee:04}"},
+                source="隔离工资性能样本中的明确员工",
+                evidence_digest=proof,
+                request_id=f"employee-{employee:04}",
+            )["entity_id"]
+            employee_ids[employee] = identity
+            for sid, fact in source_facts(employee, identity, revisions):
+                saved = save(sid, fact)
+                if fact.kind == "payroll":
+                    save(
+                        f"confirmation-{sid}",
+                        PayrollPlan(
+                            period=fact.period,
+                            payroll_revision=FactRevisionReference(
+                                subject_id=saved["subject_id"], revision=saved["revision"]
+                            ),
+                        ),
+                    )
             if (employee + 1) % 100 == 0:
                 progress(f"{size} employees: confirmed typed sources for {employee + 1}")
 
@@ -405,7 +433,7 @@ def run_scale(size, workspace, progress):
                     f"actual-{employee:04}",
                     PayrollContributionActual(
                         period="2026-01",
-                        employee_id=f"employee-{employee:04}",
+                        employee_id=employee_ids[employee],
                         items=(
                             ContributionActualItem(
                                 code="pension",

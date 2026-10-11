@@ -598,11 +598,16 @@ class Store:
                     f"VALUES({','.join('?' for _ in range(len(encoded) + 2))})",
                     (version.id, index, *encoded.values()),
                 )
+        fact_scopes = set(scope_keys("fact", fact, version.subject_id))
+        if fact.kind in {"material_resolution_v2", "material_group_resolution"}:
+            from .materials import material_link_scopes
+
+            fact_scopes.update(material_link_scopes(connection, fact, registry=self.registry))
         connection.executemany(
             "INSERT INTO fact_scope VALUES(?,?,?)",
             [
                 (version.id, fact.kind, key)
-                for key in sorted(scope_keys("fact", fact, version.subject_id))
+                for key in sorted(fact_scopes)
             ],
         )
         connection.executemany(

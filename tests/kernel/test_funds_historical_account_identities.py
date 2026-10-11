@@ -6,6 +6,7 @@ import pytest
 import test_banking as banking
 import test_investments as investments
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 
 from ai_accounting.kernel import engine as engine_module
@@ -64,10 +65,16 @@ def public(engine, period="2026-10"):
     return result
 
 
-def brief_business(engine):
-    data = Dashboard(engine).brief("2026-10")["data"]
-    data.pop("generated_at", None)
-    return data
+def assert_bank_identity_totals(response):
+    data = response["funds"]["data"]
+    assert data["bank_account_count"] == 2
+    assert data["total_fen"] == 1000
+    assert {
+        item["account_id"]: (item["type"], item["closing_fen"])
+        for item in data["collections"]["accounts"]["items"]
+    } == {"bank-a": ("bank", 1000), "zero-bank": ("bank", 0)}
+    assert data["bank_statement"]["missing_account_count"] == 2
+    assert response["brief"]["data"]["funds_overview"]["bank_fen"] == 1000
 
 
 def source(engine, subject="statement-bank-a"):
@@ -96,12 +103,14 @@ def test_public_historical_zero_accounts_match_complete_scope_with_less_source_p
     monkeypatch,
 ):
     engine, _, _ = prepared(bank_book)
-    narrow_work, narrow = measure_work(engine, lambda: public(engine))
-    assert narrow["funds"]["data"]["bank_account_count"] == 2
-    assert narrow["funds"]["data"]["total_fen"] == 1000
-    assert narrow["funds"]["data"]["bank_statement"]["missing_account_count"] == 2
-    assert narrow["brief"]["data"]["funds_overview"]["bank_fen"] == 1000
-    with monkeypatch.context() as old:
+    normal = public(engine)
+    # Measure the native identity consumer and its complete-source comparison;
+    # the certified model deliberately does not expand these history bodies.
+    with raw_read():
+        narrow_work, narrow = measure_work(engine, lambda: public(engine))
+    assert normal == narrow
+    assert_bank_identity_totals(narrow)
+    with raw_read(), monkeypatch.context() as old:
         force_complete(old)
         complete_work, complete = measure_work(engine, lambda: public(engine))
     assert narrow == complete
@@ -134,7 +143,10 @@ def test_public_historical_zero_accounts_match_complete_scope_with_less_source_p
 )
 def test_public_historical_identity_rejects_consumed_damage(bank_book, change):
     engine, _, _ = prepared(bank_book)
-    brief = brief_business(engine)
+    before = public(engine)
+    assert_bank_identity_totals(before)
+    with raw_read():
+        assert public(engine) == before
     row = source(engine)
     if change in {"calculation_seal", "fact_seal"}:
         key, ident = (
@@ -204,13 +216,16 @@ def test_public_historical_identity_rejects_consumed_damage(bank_book, change):
             "UPDATE calculation SET outcome=?,digest=? WHERE id=?",
             (raw, saved_digest, row["id"]),
         )
-    # The funds page consumes these exact account identity witnesses. The
-    # brief uses the independently frozen money totals, not statement identity.
+    # Next-month account cards are certified aggregates, not historical raw
+    # statement hits. Preserve their original money, kind and account identity.
+    # Native selection independently authenticates these physical witnesses.
     for _ in range(2):
-        with pytest.raises(KernelError) as failure:
+        after = public(engine)
+        assert after == before
+        assert_bank_identity_totals(after)
+        with raw_read(), pytest.raises(KernelError) as failure:
             Dashboard(engine).funds("2026-10")
         assert failure.value.code == "content_integrity_failed"
-    assert brief_business(engine) == brief
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)
 
@@ -291,7 +306,10 @@ def test_fixed_v1_keeps_complete_historical_source_reader(bank_book, monkeypatch
 
 def test_open_historical_state_still_authenticates_original_rows(bank_book):
     engine, _, _ = prepared(bank_book, closed=False)
-    brief = brief_business(engine)
+    before = public(engine)
+    assert_bank_identity_totals(before)
+    with raw_read():
+        assert public(engine) == before
     row = source(engine)
     damage(
         engine,
@@ -300,10 +318,10 @@ def test_open_historical_state_still_authenticates_original_rows(bank_book):
         (row["fact_id"],),
     )
     for _ in range(2):
-        with pytest.raises(KernelError) as failure:
+        assert public(engine) == before
+        with raw_read(), pytest.raises(KernelError) as failure:
             Dashboard(engine).funds("2026-10")
         assert failure.value.code == "content_integrity_failed"
-    assert brief_business(engine) == brief
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)
 

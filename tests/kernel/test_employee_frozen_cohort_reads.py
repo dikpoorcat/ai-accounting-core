@@ -5,6 +5,7 @@ import copy
 import pytest
 from stage9_book import MixedBook
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_identity_corrections import identity_engine as identity_engine_fixture
 from test_integrity_content import damage
 from test_opening_continuation import _close_without_current_business
@@ -26,14 +27,16 @@ identity_engine = identity_engine_fixture
 
 
 def response(engine, period, **kwargs):
-    result = Dashboard(engine).employees(period, **kwargs, employee_filter="all")
+    kwargs.setdefault("employee_filter", "all")
+    result = Dashboard(engine).employees(period, **kwargs)
     result.pop("generated_at", None)
     result["data"].pop("generated_at", None)
     return result
 
 
 def full_response(engine, monkeypatch, period, **kwargs):
-    with monkeypatch.context() as old:
+    # The complete native reader must execute the injected summary fallback.
+    with monkeypatch.context() as old, raw_read():
         old.setattr(settlement_freeze, "frozen_employee_net_summary", lambda *_a, **_k: None)
         return response(engine, period, **kwargs)
 
@@ -55,9 +58,10 @@ def test_cohorts_preserve_closed_and_late_review_employee_response(tmp_path, mon
     company.publish("february")
     for period in ("2026-01", "2026-02"):
         for kwargs in ({}, {"employee_id": "employee", "section": "employees"}):
-            assert response(company.engine, period, **kwargs) == full_response(
-                company.engine, monkeypatch, period, **kwargs
-            )
+            with raw_read():
+                assert response(company.engine, period, **kwargs) == full_response(
+                    company.engine, monkeypatch, period, **kwargs
+                )
 
 
 @pytest.mark.parametrize("closed_correction", [0, 1, 2])
@@ -72,9 +76,10 @@ def test_cohorts_preserve_actual_closed_correction_and_complete_public_totals(
     if closed_correction == 2:
         company.save(actual(employee=110000, employer=220000), "actual", revision=1)
         company.publish("actual", posting_period="2026-02")
-    assert response(company.engine, "2026-02") == full_response(
-        company.engine, monkeypatch, "2026-02"
-    )
+    with raw_read():
+        assert response(company.engine, "2026-02") == full_response(
+            company.engine, monkeypatch, "2026-02"
+        )
 
 
 @pytest.mark.parametrize("closed", [False, True])
@@ -101,7 +106,9 @@ def test_actual_multi_period_identity_correction_keeps_complete_employee_respons
             self.engine = engine
 
         def employees(self, period, **kwargs):
-            new = Dashboard(self.engine).employees(period, **kwargs, employee_filter="all")
+            kwargs.setdefault("employee_filter", "all")
+            with raw_read():
+                new = Dashboard(self.engine).employees(period, **kwargs)
             expected = full_response(self.engine, monkeypatch, period, **kwargs)
             actual = copy.deepcopy(new)
             actual.pop("generated_at", None)
@@ -162,7 +169,8 @@ def test_verified_incomplete_cohort_contract_preserves_unknown_and_full_wage_che
         summary["issues"] = [{"field": "settlements", "message": "存在尚未确立的清偿关系"}]
         return summary
 
-    with monkeypatch.context() as narrow:
+    # Compare the actual native cohort injection with its complete fallback.
+    with monkeypatch.context() as narrow, raw_read():
         narrow.setattr(settlement_freeze, "_scope", incomplete_scope)
         projected = response(company.engine, "2026-01")
     with monkeypatch.context() as legacy:
@@ -186,8 +194,10 @@ def test_cohort_warm_membership_does_not_enumerate_unrelated_state_cache(tmp_pat
             raise AssertionError("unrelated frozen cache keys must not be enumerated")
 
     original = settlement_freeze._scope
+    warm_calls = []
 
     def warm(*args, **kwargs):
+        warm_calls.append(True)
         reads = kwargs["reads"]
         if not isinstance(reads._frozen_settlement_states, ExactOnly):
             reads._frozen_settlement_states = ExactOnly(
@@ -195,9 +205,12 @@ def test_cohort_warm_membership_does_not_enumerate_unrelated_state_cache(tmp_pat
             )
         return original(*args, **kwargs)
 
-    expected = response(company.engine, "2026-01")
+    with raw_read():
+        expected = response(company.engine, "2026-01")
     monkeypatch.setattr(settlement_freeze, "_scope", warm)
-    assert response(company.engine, "2026-01") == expected
+    with raw_read():
+        assert response(company.engine, "2026-01") == expected
+    assert warm_calls
 
 
 def test_cohort_projection_keeps_fixed_v1_on_the_complete_reader(tmp_path, monkeypatch):
@@ -210,7 +223,7 @@ def test_cohort_projection_keeps_fixed_v1_on_the_complete_reader(tmp_path, monke
         return original(self, **kwargs)
 
     monkeypatch.setattr(dashboard_module._Snapshot, "settlement_summary", observed)
-    with historical_content(1):
+    with historical_content(1), raw_read():
         assert (
             response(company.engine, "2026-01")["data"]["employees"]["outstanding_net_fen"]
             == 907400
@@ -220,10 +233,12 @@ def test_cohort_projection_keeps_fixed_v1_on_the_complete_reader(tmp_path, monke
 
 def test_cohort_public_read_reduces_history_payload_with_identical_amounts(tmp_path, monkeypatch):
     company = prepared(tmp_path)
-    new_work, new = measure_work(company.engine, lambda: response(company.engine, "2026-01"))
-    old_work, old = measure_work(
-        company.engine, lambda: full_response(company.engine, monkeypatch, "2026-01")
-    )
+    # Measure both native consumers, including the full historical fallback.
+    with raw_read():
+        new_work, new = measure_work(company.engine, lambda: response(company.engine, "2026-01"))
+        old_work, old = measure_work(
+            company.engine, lambda: full_response(company.engine, monkeypatch, "2026-01")
+        )
     assert new == old
     assert new_work["counters"]["stdlib_json_loads"] < old_work["counters"]["stdlib_json_loads"]
     assert (
@@ -341,7 +356,9 @@ def test_frozen_net_cohorts_include_employee_beyond_default_page(
             return scope
 
         monkeypatch.setattr(settlement_freeze, "_scope", incomplete)
-    result = response(engine, "2026-01")
+    # The injected unknown cohort belongs to the native off-page aggregate.
+    with raw_read():
+        result = response(engine, "2026-01")
     assert result["data"]["collections"]["employees"]["page"]["returned_count"] == 20
     assert result["data"]["collections"]["employees"]["page"]["total_count"] == 22
     assert "employee-21" not in {
@@ -368,7 +385,8 @@ def test_mixed_closed_month_locates_only_wage_payment_states_and_rejects_missing
         return result
 
     monkeypatch.setattr(settlement_freeze, "_decode_state", observed)
-    new = response(book.engine, "2016-01")
+    with raw_read():
+        new = response(book.engine, "2016-01")
     assert states and all(state["source_kind"] == "payroll" for state in states)
     paid_key = states[0]["obligation_key"]
     monkeypatch.setattr(settlement_freeze, "_decode_state", original)
@@ -381,5 +399,5 @@ def test_mixed_closed_month_locates_only_wage_payment_states_and_rejects_missing
             (paid_key,),
             foreign_keys=False,
         )
-        with pytest.raises(KernelError):
+        with raw_read(), pytest.raises(KernelError):
             response(book.engine, "2016-01")

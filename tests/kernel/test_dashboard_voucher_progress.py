@@ -8,6 +8,7 @@ import pytest
 from stage9_metrics import measure_work
 from test_banking import book as book
 from test_banking import opening
+from test_dashboard_model_integrity import raw_read
 from test_engine import calculate, close, publish, save
 from test_engine import engine as engine
 from test_integrity_content import damage
@@ -314,15 +315,15 @@ def test_page_progress_does_not_expand_offpage_payments_for_checked_source(
     def unexpected(*args, **kwargs):
         raise AssertionError("checked page source must not expand the relation closure")
 
-    monkeypatch.setattr(BusinessQueries, "business_progress", unexpected)
     samples = []
     progress_subjects = []
+    current_progress_subjects = []
     original_profiles = module._brief_prime_voucher_profiles
 
     def checked_profiles(snap, rows):
         result = original_profiles(snap, rows)
         if rows:
-            progress_subjects.append(
+            current_progress_subjects.append(
                 {item["subject_id"] for item in snap.reads._calculations.values()}
             )
         return result
@@ -358,15 +359,19 @@ def test_page_progress_does_not_expand_offpage_payments_for_checked_source(
         paid = sum(range(1, count + 1))
         assert overview["data"]["funds_overview"]["outflow_fen"] == paid
         assert overview["data"]["open_items"]["payable_fen"] == 1000 - paid
-        work, response = measure_work(
-            engine,
-            lambda dashboard=dashboard, overview=overview: dashboard.brief(
-                "2026-09",
-                section="vouchers",
-                limit=1,
-                expected_version=overview["snapshot_version"],
-            )["data"],
-        )
+        current_progress_subjects.clear()
+        with monkeypatch.context() as probe, raw_read():
+            probe.setattr(BusinessQueries, "business_progress", unexpected)
+            work, response = measure_work(
+                engine,
+                lambda dashboard=dashboard, overview=overview: dashboard.brief(
+                    "2026-09",
+                    section="vouchers",
+                    limit=1,
+                    expected_version=overview["snapshot_version"],
+                )["data"],
+            )
+        progress_subjects.extend(current_progress_subjects)
         vouchers = response["collections"]["vouchers"]
         assert [
             (item["subject_id"], item["has_business_progress"]) for item in vouchers["items"]

@@ -65,13 +65,14 @@ def test_evidence_metadata_sorts_pinyin_file_names_without_changing_digests(engi
         ).fetchone()[0] for proof in proofs] == [content for content, _ in files]
 
 
-def test_same_name_multi_role_unnamed_inactive_and_isolation(engine, tmp_path):
+def test_same_name_multi_role_unnamed_and_isolation(engine, tmp_path):
     entities = Entities(engine)
     first = entities.register_entity(
         "person", {"display_name": "张三"}, source="合同", request_id="first"
     )
     second = entities.register_entity(
-        "person", {"display_name": "张三", "active": False}, source="合同", request_id="second"
+        "person", {"display_name": "张三", "note": "独立的同名对象"},
+        source="合同", request_id="second",
     )
     unnamed = entities.register_entity(
         "organization", {}, source="原件只给了编号", request_id="unnamed"

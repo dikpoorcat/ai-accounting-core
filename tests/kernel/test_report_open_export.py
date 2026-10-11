@@ -149,7 +149,7 @@ def test_open_export_old_preview_rejected_after_basis_change(book, tmp_path, lan
     if lane == "management":
         Periods(book[0]).management(
             "cost", payment_period="2026-03", payment_category="transactions",
-            note=None, expected_revision=0, request_id="change-management",
+            expected_revision=0, request_id="change-management",
         )
     elif lane == "accounting":
         book[1]("cash_funding", "later-capital", {

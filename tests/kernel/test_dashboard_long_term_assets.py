@@ -165,18 +165,24 @@ def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_p
     ), "may-source")
     dashboard = Dashboard(company.engine)
     count_queries = []
+    observing_counts = False
     original_execute = _PrivateConnection.execute
 
     def observed(connection, sql, *args, **kwargs):
-        if "acquisition_rows AS" in sql and "GROUP BY asset_type" in sql:
+        if observing_counts and "acquisition_rows AS" in sql and "GROUP BY asset_type" in sql:
             count_queries.append((sql, args[0]))
         return original_execute(connection, sql, *args, **kwargs)
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
 
     def counts():
-        with dashboard._snapshot("2026-05") as snap:
-            return _active_asset_counts(snap)
+        nonlocal observing_counts
+        observing_counts = True
+        try:
+            with dashboard._snapshot("2026-05") as snap:
+                return _active_asset_counts(snap)
+        finally:
+            observing_counts = False
 
     initial_work, initial = measure_work(company.engine, counts)
     for period in ("2026-03", "2026-04", "2026-05"):

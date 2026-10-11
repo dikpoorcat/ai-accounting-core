@@ -609,7 +609,7 @@ def test_cross_file_competitors_keep_material_period_responsibility(company):
     company.resolve(
         future,
         "CSV!B2",
-        [link | {"recognition_period": "2026-03"}],
+        [link],
         subject="future-resolution",
         period="2026-03",
         recognition_period="2026-03",

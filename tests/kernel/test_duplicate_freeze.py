@@ -244,61 +244,6 @@ def test_v1_authority_reuses_already_decoded_fact_without_bulk_rescan():
     assert requested == [("missing",)]
 
 
-def test_nonempty_v1_directory_and_check_reader_survive_current_rule_changes(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    import ai_accounting.kernel.change_journal as current_journal
-    import ai_accounting.kernel.close_storage as current_close
-    import ai_accounting.kernel.duplicate_freeze as current_freeze
-    import ai_accounting.kernel.duplicates as current_duplicates
-    import ai_accounting.kernel.key_membership_filter as current_filter
-    import ai_accounting.kernel.storage as current_storage
-    from ai_accounting.kernel.content_history_context import (
-        duplicate_reader,
-        historical_content,
-        journal_reader,
-    )
-    from ai_accounting.kernel.content_v1 import _v1_model, registry_descriptor
-
-    book = MixedBook(tmp_path / "stage9-duplicate-v1", employees=1, businesses=26)
-    book.add_month(0)
-    models = registry_descriptor(book.engine.store.registry)["models"]
-    historical_engine = SimpleNamespace(
-        store=SimpleNamespace(
-            registry=SimpleNamespace(
-                models={kind: _v1_model(kind, spec) for kind, spec in models.items()}
-            )
-        )
-    )
-    with book.engine.store.connection(read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM business_duplicate_check").fetchone()[0]
-        assert connection.execute("SELECT count(*) FROM duplicate_freeze_bucket").fetchone()[0]
-        with monkeypatch.context() as patch:
-
-            def future_rule(*_args, **_kwargs):
-                raise AssertionError("a v1 reader called a future current rule")
-
-            patch.setattr(current_freeze, "_signals", future_rule)
-            patch.setattr(current_freeze, "build_keys_filter", future_rule)
-            patch.setattr(current_freeze, "decode_keys_filter", future_rule)
-            patch.setattr(current_freeze, "may_contain", future_rule)
-            patch.setattr(current_filter, "build_keys_filter", future_rule)
-            patch.setattr(current_filter, "decode_keys_filter", future_rule)
-            patch.setattr(current_filter, "may_contain", future_rule)
-            patch.setattr(current_duplicates, "_signature", future_rule)
-            patch.setattr(current_duplicates, "_require_check_record", future_rule)
-            patch.setattr(current_duplicates, "verify_duplicate_checks", future_rule)
-            patch.setattr(current_journal, "changes_since", future_rule)
-            patch.setattr(current_close, "verified_header", future_rule)
-            patch.setattr(current_storage, "decode_fields", future_rule)
-            with historical_content(1):
-                journal_reader().verify_journal(connection)
-                duplicate_reader().verify_duplicate_checks(connection)
-                assert not duplicate_reader().compare_duplicate_freeze(
-                    connection, historical_engine
-                )
-
-
 @pytest.mark.parametrize(
     ("raw", "specification", "expected"),
     [

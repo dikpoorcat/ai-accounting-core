@@ -280,8 +280,9 @@ def batch_boundary(engine, evidence, count):
     cash_account = entities.register_entity(
         "fund_account",
         account_type="cash",
-        data={},
+        data={"display_name": "合成现金账户"},
         source="合成现金账户",
+        evidence_digest=evidence,
         request_id="benchmark-cash-account",
     )["entity_id"]
     owners = [

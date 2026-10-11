@@ -1,6 +1,6 @@
 """Explicit real-object directory rows for synthetic accounting unit tests."""
 
-from ai_accounting.kernel.entities import EntityProfile
+from ai_accounting.kernel.entities import entity_profile_models
 from ai_accounting.kernel.types import canonical, digest
 
 
@@ -9,7 +9,10 @@ def seed_entities(engine, definitions):
     definitions = tuple(definitions)
     if not definitions:
         return
-    from ai_accounting.kernel.fund_accounts import has_fund_definitions, install_fund_account_definition
+    from ai_accounting.kernel.fund_accounts import (
+        has_fund_definitions,
+        install_fund_account_definition,
+    )
 
     proofs = {}
     for entity_id, kind, account_type in definitions:
@@ -21,7 +24,9 @@ def seed_entities(engine, definitions):
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         for entity_id, kind, account_type in definitions:
-            profile = EntityProfile().model_dump(mode="json")
+            profile = entity_profile_models()[kind]().model_dump(mode="json")
+            if kind == "fund_account" and account_type == "cash":
+                profile["display_name"] = "合成现金账户 " + entity_id
             existing = connection.execute(
                 "SELECT kind,account_type FROM entity WHERE id=?", (entity_id,)
             ).fetchone()

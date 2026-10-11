@@ -183,11 +183,14 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
     periods = Periods(engine)
     periods.management(
         "charge",
-        note="",
         payment_period=None,
         payment_category=None,
         expected_revision=0,
         request_id="metadata-before-close",
+    )
+    Display(engine).save_display_profile(
+        {"kind": "business", "entity_id": "charge", "note": "", "source": "明确业务说明"},
+        expected_revision=0, request_id="business-note-before-close",
     )
     proof = engine.register_evidence(
         b"synthetic payee", "text/plain", "payee", request_id="payee-proof"
@@ -206,11 +209,14 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
     newer = profile(engine, "fund_account", "bank", 1, active=True, note="后来补齐")
     periods.management(
         "charge",
-        note="后来说明",
         payment_period=None,
         payment_category=None,
         expected_revision=1,
         request_id="metadata-after-close",
+    )
+    Display(engine).save_display_profile(
+        {"kind": "business", "entity_id": "charge", "note": "后来说明", "source": "后补业务说明"},
+        expected_revision=1, request_id="business-note-after-close",
     )
     export.save_payee(
         "party",
@@ -243,76 +249,77 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
         assert selected["note"] == "后来补齐"
         assert selected["field_sources"]["note"]["id"] == newer["id"]
         management = snapshot.management["charge"]
-        assert management["note"] == "后来说明"
-        assert management["field_sources"]["note"]["basis"] == "current_supplement"
+        business = snapshot.profile("business", "charge")
+        assert business["note"] == "后来说明"
+        assert business["field_sources"]["note"]["basis"] == "current_supplement"
         assert management["id"] in snapshot.frozen_management_ids
         party = snapshot.party_details("party")
         assert party["name"] == "原名称" and party["id"] == old_payee["payee_revision_id"]
         assert party["field_sources"]["name"]["basis"] == "frozen"
 
 
-@pytest.mark.parametrize(("frozen_fields", "current_fields", "expected", "field", "basis"), [
-    ({"external_identifiers": {"bank_account_number": "111"}},
-     {"external_identifiers": {"bank_account_number": "222"}},
-     "111", "external_identifiers.bank_account_number", "frozen"),
-    ({}, {"external_identifiers": {"bank_account_number": "222"}},
-     "222", "external_identifiers.bank_account_number", "current_supplement"),
-    ({"external_identifiers": {"bank_account_number": "111"}}, {"display_number": "222"},
-     "111", "external_identifiers.bank_account_number", "frozen"),
-    ({"display_number": "111", "external_identifiers": {"bank_account_number": "999"}},
-     {"external_identifiers": {"bank_account_number": "222"}},
-     "111", "display_number", "frozen"),
-    ({"external_identifiers": {"basic_account_number": "J111"}}, {}, None, None, None),
-])
-def test_bank_account_number_keeps_exact_frozen_or_supplement_source(
-    engine, frozen_fields, current_fields, expected, field, basis,
+@pytest.mark.parametrize("registered_before_close", [True, False])
+def test_bank_account_number_keeps_exact_formal_frozen_or_supplement_source(
+    engine, registered_before_close,
 ):
     save(engine)
     publish(engine)
-    old = profile(engine, "fund_account", "bank", **frozen_fields)
+    proof = engine.register_evidence(
+        b"synthetic sourced bank identity", "text/plain", "bank-identity",
+        request_id="bank-identity-proof",
+    )["digest"]
+    directory = Entities(engine)
+    data = {"bank_name": "合成银行", "bank_account_number": "111",
+            "account_holder_name": "合成公司"}
+    def register_account(number):
+        return directory.register_entity(
+            "fund_account", data | {"bank_account_number": number}, account_type="bank",
+            source="明确合成开户资料", evidence_digest=proof, request_id="bank-" + number,
+        )
+    old = register_account("111") if registered_before_close else None
     close(engine)
-    newer = profile(engine, "fund_account", "bank", 1, **current_fields)
+    if old:
+        directory.correct_fund_account_identity(
+            old["entity_id"], account_type="bank", data=data | {"bank_account_number": "222"},
+            expected_identity_digest=old["fund_account"]["digest"], recording_error_confirmed=True,
+            source="后来有据纠正的账户号码", evidence_digest=proof, request_id="correct-number",
+        )
+        saved, expected, basis = old, "111", "frozen"
+    else:
+        saved, expected, basis = register_account("222"), "222", "current_supplement"
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        selected = detached_snapshot(engine, connection).profile("fund_account", "bank")
-        assert selected["display_number"] == expected
-        if expected is None:
-            assert "display_number" not in selected["field_sources"]
-        else:
-            source = selected["field_sources"]["display_number"]
-            assert (source["field"], source["basis"]) == (field, basis)
-            assert source["id"] == (old if basis == "frozen" else newer)["id"]
+        selected = detached_snapshot(engine, connection).profile("fund_account", saved["entity_id"])
+        assert selected["account_number"] == expected
+        source = selected["field_sources"]["account_number"]
+        assert (source["field"], source["basis"]) == ("identity.bank_account_number", basis)
+        assert source["source_type"] == "fund_account_identity"
+        assert source["id"] == saved["fund_account"]["digest"]
 
 
 @pytest.mark.parametrize("kind", ["asset", "employee", "counterparty"])
-def test_external_bank_account_number_does_not_fill_other_profile_numbers(kind):
-    profile_data = {
-        "display_number": None,
-        "external_identifiers": {"bank_account_number": "622200009876"},
-    }
-    assert entities.display_profile(profile_data, kind)["display_number"] is None
+def test_formal_bank_account_number_does_not_replace_other_profile_numbers(kind):
+    selected = entities.display_profile(
+        {"display_number": "管理编号"}, kind,
+        fund_account={"identity": {"bank_account_number": "622200009876"}},
+    )
+    assert selected["display_number"] == "管理编号" and "account_number" not in selected
 
 
-@pytest.mark.parametrize(("fields", "expected", "field"), [
-    ({"external_identifiers": {"bank_account_number": "111", "basic_account_number": "J999"}},
-     "111", "external_identifiers.bank_account_number"),
-    ({"display_number": "222", "external_identifiers": {"bank_account_number": "111"}},
-     "222", "display_number"),
-    ({"external_identifiers": {"basic_account_number": "J999"}}, None, None),
-])
-def test_current_bank_account_number_uses_actual_registered_field(engine, fields, expected, field):
-    saved = profile(engine, "fund_account", "bank", **fields)
+def test_current_bank_account_number_uses_only_formal_registered_identity(engine):
+    from ai_accounting.kernel.fund_accounts import require_fund_account
+
+    profile(engine, "fund_account", "bank", display_name="负责人管理名称")
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
+        account = require_fund_account(connection, "bank")
         selected = detached_snapshot(engine, connection).profile("fund_account", "bank")
-        assert selected["display_number"] == expected
-        if expected is None:
-            assert "display_number" not in selected["field_sources"]
-        else:
-            source = selected["field_sources"]["display_number"]
-            assert (source["id"], source["field"], source["basis"]) == (
-                saved["id"], field, "current",
-            )
+        assert selected["account_number"] == account["identity"]["bank_account_number"]
+        assert selected["display_name"] == "负责人管理名称"
+        source = selected["field_sources"]["account_number"]
+        assert (source["id"], source["field"], source["basis"]) == (
+            account["digest"], "identity.bank_account_number", "current",
+        )
 
 
 def test_tax_identity_scope_loads_only_requested_employee_candidates(bank_book, monkeypatch):

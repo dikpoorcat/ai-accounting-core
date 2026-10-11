@@ -336,13 +336,9 @@ def reviewed_split_payments(company):
         "recognition_period": "2026-01",
         "links": [
             {
-                "subject_id": s,
-                "fact_kind": "payment",
-                "fact_id": f["fact_id"],
                 "calculation_id": calculations[s],
                 "amount_field": "fact.amount_fen",
                 "amount_fen": 10000,
-                "recognition_period": "2026-01",
             }
             for s, f in facts.items()
         ],
@@ -390,7 +386,7 @@ def reviewed_split_payments(company):
     )
     result = next(r for r in published["results"] if r["subject_id"] == "payment-a")
     resolution["links"][0].update(
-        fact_id=reviewed["fact_id"], calculation_id=result["calculation_id"]
+        calculation_id=result["calculation_id"]
     )
     with engine.store.connection(read_only=True) as connection:
         original_record = dict(
@@ -415,11 +411,6 @@ def test_review_survives_no_impact_publication_and_aggregate_relink(company):
         with engine.store.connection(read_only=True) as connection:
             assert DuplicateCandidates(engine.store).unresolved(connection) == []
             verify_duplicate_checks(connection)
-            from ai_accounting.kernel.duplicate_checks_v1 import (
-                verify_duplicate_checks as frozen_verify,
-            )
-
-            frozen_verify(connection)
             assert (
                 dict(
                     connection.execute(
@@ -1228,13 +1219,9 @@ def test_late_material_resolution_creates_current_strong_candidate_and_binds_ver
         "recognition_period": "2026-02",
         "links": [
             {
-                "subject_id": subject,
-                "fact_kind": "expense",
-                "fact_id": fact_id,
                 "calculation_id": calculation_id,
                 "amount_field": "fact.amount_fen",
                 "amount_fen": 10000,
-                "recognition_period": period,
             }
             for subject, period, fact_id, calculation_id in facts
         ],

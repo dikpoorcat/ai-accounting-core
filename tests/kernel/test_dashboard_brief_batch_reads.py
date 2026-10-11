@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from test_banking import book as _bank_book
 from test_dashboard_funds_alignment import _publish_filter_funding
+from test_dashboard_model_transactions import raw_read
 
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.dashboard import Dashboard
@@ -36,17 +37,20 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
         return original(connection, sql, *args, **kwargs)
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
-    response = Dashboard(engine).brief(
-        "2026-09", section="vouchers", limit=30, preparation="deferred"
-    )
+    # Observe the native voucher proof's page-local batches.
+    with raw_read():
+        response = Dashboard(engine).brief(
+            "2026-09", section="vouchers", limit=30, preparation="deferred"
+        )
     page_calls = calls.copy()
     page_lines = list(line_batches)
     calls.clear()
     line_batches.clear()
-    focused_response = Dashboard(engine).brief(
-        "2026-09", limit=30, voucher_number=31, preparation="deferred",
-        expected_version=response["snapshot_version"],
-    )
+    with raw_read():
+        focused_response = Dashboard(engine).brief(
+            "2026-09", limit=30, voucher_number=31, preparation="deferred",
+            expected_version=response["snapshot_version"],
+        )
     data = response["data"]
     focused = focused_response["data"]["focused_activity"]
     focused_voucher = focused_response["data"]["focused_voucher"]
@@ -279,7 +283,8 @@ def test_brief_asset_counts_do_not_load_consumption_histories(tmp_path, monkeypa
     assert assets["project_cost_fen"] == 0
     monkeypatch.setattr(BusinessQueries, "_selected_asset_member_heads", unexpected_charge_history)
     monkeypatch.setattr("ai_accounting.kernel.dashboard._assets", unexpected_charge_history)
-    brief = dashboard.brief("2026-04")["data"]
+    with raw_read():
+        brief = dashboard.brief("2026-04")["data"]
     assert brief["long_term_assets"] == {
         "net_fen": 120000, "fixed_active_count": 2, "intangible_active_count": 0,
     }
@@ -346,7 +351,9 @@ def test_brief_month_proof_excludes_unconsumed_history_and_withdrawn_versions(
 
     monkeypatch.setattr(json, "loads", loads)
     monkeypatch.setattr(_PrivateConnection, "execute", execute)
-    data = Dashboard(engine).brief("2026-09", preparation="deferred")["data"]
+    # This probe measures which physical month lines the native summary proves.
+    with raw_read():
+        data = Dashboard(engine).brief("2026-09", preparation="deferred")["data"]
     page = data["collections"]["activity"]
     assert len(page["items"]) == page["page"]["returned_count"] == min(20, month_count)
     assert page["page"]["total_count"] == data["activity_count"] == month_count

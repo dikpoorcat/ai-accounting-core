@@ -6,6 +6,7 @@ import pytest
 from material_fixture import supporting_text
 from test_banking import book as book
 from test_banking import close_month, inventories
+from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage
 from test_opening_continuation import book as _opening_book
 from test_reimbursement_acceptance import acceptance, current, source, wage
@@ -381,7 +382,7 @@ def test_corrupt_adopted_source_cannot_supply_pending_classification(book, close
         "WHERE id=?",
         (calculation,),
     )
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief(PERIOD, section="open_items", preparation="deferred", limit=1)
     assert failure.value.code == "content_integrity_failed"
 
@@ -430,7 +431,7 @@ def test_opening_category_rejects_a_damaged_adopted_nature_in_a_mixed_group(open
         "WHERE id=?",
         (calculation,),
     )
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief(PERIOD, section="open_items", preparation="deferred", limit=1)
     assert failure.value.code == "content_integrity_failed"
 

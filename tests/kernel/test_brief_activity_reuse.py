@@ -5,6 +5,7 @@ import json
 import pytest
 import test_cash as cash
 from stage9_metrics import measure_work
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 
 from ai_accounting.kernel.contracts import KernelError
@@ -126,6 +127,6 @@ def test_default_brief_rejects_prior_month_source_outside_first_page(paid_month,
                (canonical(outcome), digest(outcome), row["id"]))
     # A fresh request must re-prove the off-page direct source; a successful
     # earlier month/page read cannot mask the damage or turn it into "other".
-    with pytest.raises(KernelError) as failure:
+    with raw_read(), pytest.raises(KernelError) as failure:
         Dashboard(engine).brief("2026-09")
     assert failure.value.code == "content_integrity_failed"

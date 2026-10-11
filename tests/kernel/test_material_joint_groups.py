@@ -374,7 +374,7 @@ def test_close_freezes_group_members_and_rebuild_changes_no_accounting(book, kno
         [("2026-01", 1200), ("2026-01" if known_period else "2026-02", 1800)]
     ):
         subject = f"cost-{month}-{index}"
-        saved = save(
+        save(
             "expense",
             subject,
             dict(
@@ -388,13 +388,9 @@ def test_close_freezes_group_members_and_rebuild_changes_no_accounting(book, kno
         published = publish(subject)["results"][0]
         links.append(
             dict(
-                subject_id=subject,
-                fact_kind="expense",
-                fact_id=saved["fact_id"],
                 calculation_id=published["calculation_id"],
                 amount_field="fact.amount_fen",
                 amount_fen=amount,
-                recognition_period=month,
             )
         )
     data = dict(
@@ -555,7 +551,7 @@ def test_authenticated_public_command_validates_group_and_blocks_generic_fact_in
             request_id="source",
         ),
     )
-    saved = app.dispatch(
+    app.dispatch(
         "save_fact",
         dict(
             company_id=company_id,
@@ -595,13 +591,9 @@ def test_authenticated_public_command_validates_group_and_blocks_generic_fact_in
         group_amount_fen=3000,
         links=[
             dict(
-                subject_id="cost",
-                fact_kind="expense",
-                fact_id=saved["fact_id"],
                 calculation_id=published["calculation_id"],
                 amount_field="fact.amount_fen",
                 amount_fen=3000,
-                recognition_period="2026-02",
             )
         ],
         joint_basis_confirmed=True,

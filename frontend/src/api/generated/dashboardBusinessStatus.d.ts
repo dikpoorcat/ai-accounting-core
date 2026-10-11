@@ -73,6 +73,7 @@ export namespace DashboardBusinessStatusContract {
   export type EntityId = string;
   export type DisplayName = string | null;
   export type DisplayNumber = string | null;
+  export type AccountNumber = string | null;
   export type Purpose = string | null;
   export type Note = string | null;
   export type EmploymentStart = string | null;
@@ -81,7 +82,6 @@ export namespace DashboardBusinessStatusContract {
   export type EmploymentState = string | null;
   export type Active = boolean | null;
   export type CategoryLabel = string | null;
-  export type RightsDescription = string | null;
   export type Counterparties = OwnerDisplayProfile[];
   export type Employees = OwnerDisplayProfile[];
   export type Assets = OwnerDisplayProfile[];
@@ -221,6 +221,7 @@ export namespace DashboardBusinessStatusContract {
   export interface OwnerProfileValues {
     display_name: DisplayName;
     display_number: DisplayNumber;
+    account_number: AccountNumber;
     purpose: Purpose;
     note: Note;
     employment_start: EmploymentStart;
@@ -229,7 +230,6 @@ export namespace DashboardBusinessStatusContract {
     employment_state: EmploymentState;
     active: Active;
     category_label: CategoryLabel;
-    rights_description: RightsDescription;
   }
   export interface OwnerSettlementFollowups {
     settlements: OwnerSettlements;

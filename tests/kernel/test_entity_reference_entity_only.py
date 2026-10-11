@@ -94,26 +94,28 @@ def test_recorded_source_proof_ignores_unconsumed_business_detail_walks(monkeypa
 def test_entity_only_nested_and_nullable_paths_match_generic_interpreter():
     registry = SimpleNamespace(content_version=2, reference_declarations=references.DECLARATIONS)
     data = {
-        "employees": [
-            {"employee_id": "a", "payroll": {"employee_id": "a", "profile_id": "profile"}},
-            {"employee_id": None, "payroll": {"employee_id": "b", "profile_id": None}},
+        "counterparty_id": "a",
+        "allocations": [
+            {"recipient_id": "a", "source_id": "business-a"},
+            {"recipient_id": None, "source_id": "business-b"},
+            {"recipient_id": "b", "source_id": None},
         ]
     }
     actual = list(
-        references._entity_reference_fields("payroll_no_change_v2", data, registry=registry)
+        references._entity_reference_fields("payment", data, registry=registry)
     )
     generic = [
         (item["path"], item["entity_id"], item["role"])
-        for item in references.references_from_data("payroll_no_change_v2", data, registry=registry)
+        for item in references.references_from_data("payment", data, registry=registry)
         if item["reference_type"] == "entity"
     ]
     assert (
         actual
         == generic
         == [
-            ("employees.0.employee_id", "a", "employee"),
-            ("employees.0.payroll.employee_id", "a", "employee"),
-            ("employees.1.payroll.employee_id", "b", "employee"),
+            ("counterparty_id", "a", "counterparty"),
+            ("allocations.0.recipient_id", "a", "recipient"),
+            ("allocations.2.recipient_id", "b", "recipient"),
         ]
     )
 

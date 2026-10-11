@@ -93,7 +93,11 @@ def test_500_real_hits_reduce_each_header_read_without_reducing_body_work(book, 
         return stable_payload(response), bodies
 
     reused_work, reused = measure_work(engine, read)
-    assert reused_work["counters"]["calculation_result_rows_loaded"] == 500
+    assert reused_work["counters"]["calculation_result_rows_loaded"] == 500, [
+        (row["statement"], row.get("returned_rows", 0), row["calls"])
+        for row in reused_work["sql"]
+        if "outcome" in row["statement"] or "SELECT * FROM calculation " in row["statement"]
+    ]
     results = {}
     for kind in ("bindings", "physical", "publication"):
         with independent_headers(monkeypatch, kind):
@@ -180,9 +184,12 @@ def test_failed_actual_header_batch_does_not_publish_memo(published_sources, tar
     ids = [rows["first-funding"]["id"], selected["id"]]
     with QueryReads.snapshot(engine) as reads:
         for _ in range(2):
+            fund_sources = []
             with pytest.raises(KernelError):
                 sources.verify_model_sources(engine, reads.connection, calculation_ids=ids,
-                                             through_period=YearMonth("2026-09").ordinal)
+                                             through_period=YearMonth("2026-09").ordinal,
+                                             _fund_sources=fund_sources, _reads=reads)
+            assert fund_sources == []
             assert not reads._verified_publication_ids
             assert not reads._verified_current_voucher_publications
             assert not reads._verified_source_contents
@@ -204,7 +211,12 @@ def test_unowned_and_fixed_model_heads_keep_independent_lookup(
     ident = rows["first-funding"]["id"]
     if mode == "unowned":
         with engine.store.connection(read_only=True) as connection:
-            sources.verify_model_sources(engine, connection, calculation_ids=[ident])
+            fund_sources = []
+            sources.verify_model_sources(
+                engine, connection, calculation_ids=[ident], _fund_sources=fund_sources,
+                _reads=QueryReads(engine, connection),
+            )
+            assert fund_sources == []
     else:
         # Source identity encoding is historical too: exercise the exact-head
         # fallback directly against actual SQLite rows, not a current source ID.
@@ -224,6 +236,30 @@ def test_unowned_and_fixed_model_heads_keep_independent_lookup(
             assert not reads._verified_current_voucher_publications
             assert reads._verified_publication_ids == independent_records
     assert len(observed) == 1 and len(observed[0]) == 1
+
+
+@pytest.mark.parametrize("boundary", ["expired", "historical", "replaced_token"])
+def test_checked_model_fund_sources_cannot_cross_snapshot_boundary(published_sources, boundary):
+    engine, rows = published_sources
+    ident = rows["first-funding"]["id"]
+    with QueryReads.snapshot(engine) as reads:
+        fund_sources = []
+        sources.verify_model_sources(
+            engine, reads.connection, calculation_ids=[ident], _fund_sources=fund_sources,
+            _reads=reads,
+        )
+        assert len(fund_sources) == 1
+        assert fund_sources[0].raw_calculations([ident])[ident]["id"] == ident
+        if boundary == "historical":
+            with historical_content(1), pytest.raises(KernelError):
+                fund_sources[0].raw_calculations([ident])
+        elif boundary == "replaced_token":
+            reads._snapshot_token = object()
+            with pytest.raises(KernelError):
+                fund_sources[0].raw_calculations([ident])
+    if boundary == "expired":
+        with pytest.raises(KernelError):
+            fund_sources[0].raw_calculations([ident])
 
 
 def test_later_close_coverage_never_creates_open_normal_relationship(header_engine, monkeypatch):

@@ -188,6 +188,10 @@ def test_first_respects_zero_accounts_empty_source_and_exact_sort(bank_book, mon
 def test_first_keeps_transfer_scope_negative_payment_and_refund(bank_book, monkeypatch):
     engine, save, publish, _ = bank_book
     banking.funding(save, publish, amount=1000)
+    Entities(engine).update_entity_profile(
+        "bank-a", {"display_name": "A selected bank"}, source="synthetic selected bank name",
+        expected_revision=1, request_id="selected-bank-profile",
+    )
     save("funds_transfer", "transfer", {
         "period": MONTH, "actual_date": MONTH + "-02", "amount_fen": 200,
         "source_bank_account_id": "bank-a", "destination_bank_account_id": "bank-b",

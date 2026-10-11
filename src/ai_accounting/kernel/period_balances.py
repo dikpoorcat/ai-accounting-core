@@ -351,7 +351,7 @@ def verify_selected_balances(
         _error("source_reference")
 
 
-def _totals(connection, period, category, keys, movement, reads):
+def _totals(connection, period, category, keys, movement, reads, *, require_index_marker=True):
     close = connection.execute(
         "SELECT * FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
         (period,),
@@ -361,7 +361,7 @@ def _totals(connection, period, category, keys, movement, reads):
         from .period_balance_freeze import read_frozen_balances
 
         header = reads.close_header(close) if reads is not None else close_reader().verified_header(
-            connection, close
+            connection, close, require_marker=require_index_marker
         )
         if movement and close["period"] == period:
             return [
@@ -444,8 +444,13 @@ def _sum_projection_rows(connection, scope, parameters, category, keys, *, perio
     ]
 
 
-def balance_totals(connection, through_period, category=None, keys=None, *, reads=None):
-    return _totals(connection, through_period, category, keys, False, reads)
+def balance_totals(
+    connection, through_period, category=None, keys=None, *, reads=None, require_index_marker=True
+):
+    return _totals(
+        connection, through_period, category, keys, False, reads,
+        require_index_marker=require_index_marker,
+    )
 
 
 def balance_movements(connection, period, category=None, keys=None, *, reads=None):

@@ -4,7 +4,7 @@ Run with the repository virtualenv, for example:
   .tmp-kernel-venv/Scripts/python.exe scripts/benchmark_stage3_history.py \
     --source . --output .tmp/stage3-benchmark/current.json
 
-The same program also accepts a git-archive checkout through --source. It uses
+The source tree must implement the current formal cash-account contract. It uses
 real Engine publication, Periods close and full integrity APIs. Counters describe
 application-issued SQL and rows actually returned to Python, not SQLite's hidden
 virtual-machine scans. Timings include identical instrumentation in both runs.
@@ -173,62 +173,48 @@ def main():
         raise ValueError("--repair-existing requires --read-existing")
     sys.path.insert(0, str(source / "src"))
     from ai_accounting.kernel.business_queries import BusinessQueries
-    from ai_accounting.kernel.contracts import BalanceEffect, Fact, Line, Outcome, Read, Registry
+    from ai_accounting.kernel.contracts import Fact, Outcome, Read
     from ai_accounting.kernel.dashboard import Dashboard, _Snapshot
     from ai_accounting.kernel.dashboard_funds import FundsRead
     from ai_accounting.kernel.engine import Engine
+    from ai_accounting.kernel.entities import Entities
     from ai_accounting.kernel.integrity import verify_close_integrity, verify_integrity
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
     from ai_accounting.kernel.query_reads import QueryReads
+    from ai_accounting.kernel.service import default_registry
     from ai_accounting.kernel.storage import Store
-    from ai_accounting.kernel.types import PositiveFen, YearMonth, canonical
+    from ai_accounting.kernel.types import YearMonth, canonical
 
     spec = importlib.util.spec_from_file_location(
         "stage3_schema_fixture", source / "tests/kernel/schema_fixture.py"
     )
     fixture = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixture)
+    material_spec = importlib.util.spec_from_file_location(
+        "stage3_material_fixture", source / "tests/kernel/material_fixture.py"
+    )
+    material_fixture = importlib.util.module_from_spec(material_spec)
+    material_spec.loader.exec_module(material_fixture)
 
     class Movement(Fact):
         kind: ClassVar[str] = "stage3_benchmark_movement"
-        account_id: str
-        amount_fen: PositiveFen
+        business_activity: ClassVar[bool] = False
+        funding_id: str
         cumulative: bool
 
         def reads(self):
-            return (
+            return (Read("calculation", "cash_funding", "@" + self.funding_id),) + (
                 (Read("calculation", self.kind, "*", before_period=self.period),)
-                if self.cumulative
-                else ()
+                if self.cumulative else ()
             )
 
     def calculate(version, context):
         fact = version.fact
-        parents = context.select(fact.reads()[0]) if fact.cumulative else ()
-        obligation = {
-            "key": "payable:" + version.subject_id,
-            "name": "primary",
-            "amount_fen": fact.amount_fen,
-            "account": "2202",
-            "normal": "credit",
-            "category": "payable",
-            "counterparty_id": "synthetic-supplier",
-            "cashflow": "operating",
-        }
-        return Outcome(
-            (Line("1001", debit=fact.amount_fen), Line("2202", credit=fact.amount_fen)),
-            {
-                "cash_account_id": fact.account_id,
-                "parent_count": len(parents),
-                "obligations": [obligation],
-            },
-            (
-                BalanceEffect(fact.account_id, fact.amount_fen, "cash"),
-                BalanceEffect(obligation["key"], fact.amount_fen, "payable"),
-            ),
-        )
+        assert len(context.calculations("cash_funding", "@" + fact.funding_id)) == 1
+        parents = context.select(fact.reads()[1]) if fact.cumulative else ()
+        return Outcome((), {"parent_count": len(parents)})
 
-    registry = Registry()
+    registry = default_registry()
     registry.register(Movement, calculate)
     bundle = fixture.test_bundle(registry)
 
@@ -260,8 +246,8 @@ def main():
         "read_existing": bool(args.read_existing),
         "measurement": "instrumented wall time; application SQL and Python-returned rows/bytes",
         "dataset": (
-            "2 new typed movements/month, target cash account + distinct unrelated cash account; "
-            "100/300 fen"
+            "2 formal cash loans/month, target cash account + distinct unrelated cash account; "
+            "100/300 fen; 2 state-only observers read exact funding and optional prior observers"
         ),
         "notes": [
             "Cumulative facts explicitly depend on every prior month's calculations.",
@@ -350,6 +336,35 @@ def main():
                 b"synthetic benchmark evidence", "text/plain", "synthetic", request_id="evidence"
             )["digest"]
         )
+        entities = Entities(engine)
+        if not args.read_existing:
+            material_fixture.supporting_text(engine, proof, period="2010-01")
+            owner_id = entities.register_entity(
+                "person", {"display_name": "Synthetic benchmark owner"},
+                source="synthetic benchmark", evidence_digest=proof,
+                request_id="benchmark-owner",
+            )["entity_id"]
+
+        def cash_account(logical, *, register=False):
+            name = "Synthetic benchmark cash " + logical
+            if register:
+                return entities.register_entity(
+                    "fund_account", {"display_name": name}, account_type="cash",
+                    source="synthetic benchmark", evidence_digest=proof,
+                    request_id="benchmark-cash:" + logical,
+                )["entity_id"]
+            with engine.store.connection(read_only=True) as connection:
+                rows = connection.execute(
+                    "SELECT d.entity_id FROM fund_account_definition d "
+                    "JOIN entity_profile_revision p ON p.entity_id=d.entity_id "
+                    "WHERE d.account_type='cash' AND json_extract(p.content,'$.display_name')=? "
+                    "AND p.revision=(SELECT max(revision) FROM entity_profile_revision "
+                    "WHERE entity_id=d.entity_id)", (name,),
+                ).fetchall()
+            assert len(rows) == 1, (logical, rows)
+            return rows[0]["entity_id"]
+
+        target_account = cash_account("target", register=not args.read_existing)
         checkpoints, close_samples, publish_samples = [], [], []
         report["workloads"][workload] = checkpoints
 
@@ -379,14 +394,26 @@ def main():
                 subjects = []
                 for account, amount in (("target", 100), ("other-" + month, 300)):
                     subject = account + ":" + month
-                    subjects.append(subject)
+                    account_id = (
+                        target_account if account == "target"
+                        else cash_account(account, register=True)
+                    )
+                    funding_id = "cash-" + account + "-" + month
+                    subjects.extend((funding_id, subject))
+                    engine.save_fact(
+                        "cash_funding", funding_id,
+                        {"period": month, "actual_date": month + "-01", "owner_id": owner_id,
+                         "funding_kind": "loan", "amount_fen": amount,
+                         "cash_account_id": account_id},
+                        evidence=(proof,), expected_revision=0,
+                        request_id="save:" + funding_id,
+                    )
                     engine.save_fact(
                         Movement.kind,
                         subject,
                         {
                             "period": month,
-                            "account_id": account,
-                            "amount_fen": amount,
+                            "funding_id": funding_id,
                             "cumulative": workload == "cumulative",
                         },
                         evidence=(proof,),
@@ -406,12 +433,13 @@ def main():
                 _, sample = measure(publish)
                 publish_samples.append(sample)
                 for category in MATERIAL_CATEGORIES:
+                    busy = category == "transactions"
                     periods.inventory(
                         month,
                         category,
-                        evidence=[],
-                        expected=0,
-                        no_business=True,
+                        evidence=[proof] if busy else [],
+                        expected=int(busy),
+                        no_business=not busy,
                         confirmation_evidence=proof,
                         request_id=month + ":" + category,
                     )
@@ -436,6 +464,13 @@ def main():
                     connection.execute("BEGIN")
                     result = verify_integrity(engine, connection)
                     assert result["status"] == "verified", result
+                # Whole-journal turnover is a native proof; the owner brief no
+                # longer publishes technical debit/credit aggregate fields.
+                with QueryReads.snapshot(engine) as reads:
+                    snapshot = _Snapshot(engine, reads.connection, month, reads)
+                    assert snapshot.month_journal.totals() == {
+                        "line_count": 4, "debit": 400, "credit": 400,
+                    }
                     return result
 
             def verify_close():
@@ -450,7 +485,7 @@ def main():
                     snapshot = _Snapshot(engine, reads.connection, month, reads)
                     view = FundsRead(snapshot)
                     view.account_summary()
-                    assert view.account_rows["cash", "target"]["closing_fen"] == index * 100
+                    assert view.account_rows["cash", target_account]["closing_fen"] == index * 100
                     assert len(view.account_rows) == index + 1
                     return view.account_rows
 
@@ -476,20 +511,21 @@ def main():
                             reads.connection,
                             YearMonth(month).ordinal,
                             "cash",
-                            ("target",),
+                            (target_account,),
                             reads=reads,
                         )
                         assert len(rows) == 1 and rows[0]["amount"] == index * 100, rows
                     else:
                         view = FundsRead(_Snapshot(engine, reads.connection, month, reads))
                         view.account_summary()
-                        assert view.account_rows["cash", "target"]["closing_fen"] == index * 100
+                        assert (
+                            view.account_rows["cash", target_account]["closing_fen"] == index * 100
+                        )
 
             def brief():
                 result = Dashboard(engine).brief(month, limit=5, preparation="deferred")
                 assert result["data"]["voucher_count"] == 2, result
-                assert result["data"]["total_debit_fen"] == 400, result
-                assert result["data"]["total_credit_fen"] == 400, result
+                assert result["data"]["funds_overview"]["inflow_fen"] == 400, result
                 assert result["data"]["funds_overview"]["cash_fen"] == index * 400, result
                 return result
 
@@ -516,9 +552,6 @@ def main():
                 def review_summary():
                     return CloseReview(None, engine).read(month)
 
-                def review_page():
-                    return CloseReview(None, engine).read(month, section="vouchers", limit=1)
-
                 def review_build():
                     with engine.store.connection(read_only=True) as connection:
                         connection.execute("BEGIN")
@@ -544,15 +577,10 @@ def main():
                 review = review_summary()
                 stats["owner_review_build"] = repeat(review_build)
                 stats["owner_review_summary"] = repeat(review_summary)
-                stats["owner_review_page_1"] = repeat(review_page)
                 stats["owner_review_http_validation"] = repeat(
                     lambda: http_response("dashboard_close_review", review)
                 )
                 stats["owner_review_bytes"] = len(canonical(review["owner_review"]).encode("utf-8"))
-                stats["owner_review_collection_counts"] = {
-                    item["section"]: item["total_count"]
-                    for item in review["owner_review"]["collections"]
-                }
             with engine.store.connection(read_only=True) as connection:
                 close_rows = connection.execute(
                     "SELECT * FROM period_close ORDER BY period"
@@ -596,6 +624,17 @@ def main():
                 ).fetchone()[0]
                 stats["calculation_count"] = connection.execute(
                     "SELECT count(*) FROM calculation"
+                ).fetchone()[0]
+                stats["cash_funding_source_count"] = connection.execute(
+                    "SELECT count(*) FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                    "WHERE s.kind='cash_funding'"
+                ).fetchone()[0]
+                stats["observer_source_count"] = connection.execute(
+                    "SELECT count(*) FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                    "WHERE s.kind=?", (Movement.kind,)
+                ).fetchone()[0]
+                stats["formal_cash_account_count"] = connection.execute(
+                    "SELECT count(*) FROM fund_account_definition WHERE account_type='cash'"
                 ).fetchone()[0]
                 stats["close_reference_rows"] = connection.execute(
                     "SELECT count(*) FROM close_reference"

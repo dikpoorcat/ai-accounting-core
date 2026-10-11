@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from stage9_metrics import measure_work
 from test_asset_batches import month
+from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage
 from test_owner_asset_activation_identity import closed_cards
 from test_payroll_corrections import Company
@@ -62,6 +63,7 @@ def test_many_activation_owners_keep_full_cards_and_consumption_history(tmp_path
         return original_members(reads, owners, _decoded_owners=_decoded_owners)
 
     with (
+        raw_read(),
         patch.object(BusinessQueries, "_selected_asset_member_heads",
                      side_effect=AssertionError("Owner cards do not consume timing heads")),
         patch.object(QueryReads, "asset_members_many", recorded_members),
@@ -137,7 +139,7 @@ def test_off_page_sibling_directory_damage_is_rejected_without_new_success_prefi
         foreign_keys=False,
     )
     view = Dashboard(engine)
-    with pytest.raises(KernelError):
+    with raw_read(), pytest.raises(KernelError):
         view.assets("2026-04", asset_id=ids[0])
     with view._snapshot("2026-04") as snap:
         if kind == "asset_consumption_month":

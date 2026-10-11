@@ -77,21 +77,22 @@ def owner_tasks(snapshot):
         if fact.kind in PAYROLL_KINDS:
             wages.append(version)
         elif fact.kind in PLAN_KINDS:
-            plans.setdefault(fact.employee_id, []).append(version)
+            plans.setdefault(fact.payroll_revision.subject_id, []).append(version)
         elif fact.kind == NO_CHANGE_KIND:
             no_change = True
     for version in sorted(wages, key=lambda item: item.subject_id):
         fact = version.fact
-        if plans.get(fact.employee_id) or no_change:
+        if any(plan.fact.payroll_revision.revision == version.revision
+               for plan in plans.get(version.subject_id, ())) or no_change:
             # Existence is not validity. Official preparation/calculation checks
             # still decide whether an evidenced confirmation can be adopted.
             continue
-        profile = snapshot.profile("employee", fact.employee_id)
+        name = snapshot.party_details(fact.employee_id).get("name")
         tasks.append(
             {
                 "key": f"payroll_confirmation:{version.subject_id}",
                 "title": "确认本月工资",
-                "object": profile.get("display_name") or "员工工资",
+                "object": name if name and name != "未提供" else "员工工资",
                 "period": snapshot.period,
                 "amount_fen": None,
                 "amount_status": "unknown",
@@ -227,7 +228,9 @@ def scope_business_status(value, component, row):
     }
 
 
-def business_profiles(snapshot, value, *, fact=None, entity_kinds=None, calculation=None, matter_key=None):
+def business_profiles(
+    snapshot, value, *, fact=None, entity_kinds=None, calculation=None, matter_key=None
+):
     """Locate business objects through the adopted fact's explicit references."""
     from .entity_references import references_from_data
 
@@ -338,6 +341,7 @@ def _profile_view(profiles):
                 for name in (
                     "display_name",
                     "display_number",
+                    "account_number",
                     "purpose",
                     "note",
                     "employment_start",
@@ -346,7 +350,6 @@ def _profile_view(profiles):
                     "employment_state",
                     "active",
                     "category_label",
-                    "rights_description",
                 )
             },
         }
