@@ -48,7 +48,7 @@ _HTTP_DASHBOARD_COMMANDS = frozenset(
 )
 
 OPERATING_PROTOCOL = {
-    "version": 7,
+    "version": 8,
     "schema_discovery": (
         "finance_local_schema无参读取overview概要。按当前事项用view=selected明确选择"
         "fact_kinds、commands和response_types取得所需详细合同；通用登记命令同时选择事实类型。"
@@ -106,8 +106,13 @@ OPERATING_PROTOCOL = {
             "后续资料查询或翻页省略include_work_draft，不重复读工作稿；true不能与cursor同时使用。"
             "本页未出现或尚未展开的历史依据不表示资料缺失；沿游标或精确来源继续查询。"
             "需要原文细节时按原位置读取inspect_material；解析缓存只供阅读，不代表正式核验完成。"
-            "查清已有来源和精确任务后，再问仍会改变处理的缺项；老板可陆续提供资料，无需一次交齐。"
-            "已有唯一明确依据时直接复用；仍有歧义时说明具体范围和有依据的建议，不能补造同意。"
+            "会计 AI 向老板提问前，必须先自问：“这个问题能否从现有材料和已确认事实中得到明确答案？”"
+            "先查证原件、已有记录和老板此前的答复，进行必要的交叉核对与推理。"
+            "能够得到唯一、明确且有依据的答案时，直接采用并保留来源，不重复询问，"
+            "也不因字段未单独填写或接口提示缺项就机械追问。"
+            "只有查证后仍存在影响处理的事实缺失、冲突或歧义，或确需老板决定、批准时才提问；"
+            "说明已知情况，只问剩余必要问题。不得把猜测当事实，或把推理当作老板授权。"
+            "老板可陆续提供资料，无需一次交齐。"
         ),
         "scope": (
             "老板回答只覆盖刚展示的公司、期间、对象和事项。没有变化须形成精确工资复用依据；"
@@ -160,7 +165,8 @@ OPERATING_PROTOCOL = {
     "recovery": {
         "errors": (
             "依status、code、fact_issues及resolution处理，不解析中文message猜下一步。"
-            "needs_information先查reusable_sources；技术错误、能力限制和待重算不能直接追问老板。"
+            "needs_information先查reusable_sources并按提问自检规则查证与推理；"
+            "技术错误、能力限制和待重算不能直接追问老板。"
             "resolution只说明有依据的处理入口，不意味着缺少的事实已经成立。"
         ),
         "requests": (

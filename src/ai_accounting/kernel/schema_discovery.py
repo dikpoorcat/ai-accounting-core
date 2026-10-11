@@ -110,8 +110,8 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
         result["agent_operating_protocol_version"] = metadata["agent_operating_protocol"]["version"]
         result["error_handling"] = {
             "version": metadata["error_handling"]["version"],
-            "instruction": "按status、code、fact_issues和resolution处理；先查可复用来源，"
-            "技术错误不直接转为业务追问；响应未确认时核对原请求或工作稿版本",
+            "instruction": "按status、code、fact_issues和resolution处理；提问前先查来源并自检"
+            "能否推理出唯一明确答案，技术错误不转为业务追问；响应未确认时核对原请求或工作稿版本",
         }
     else:
         result = dict(metadata)

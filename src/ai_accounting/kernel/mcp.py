@@ -16,7 +16,11 @@ def serve(root: Path):
         instructions=(
             "Call finance_local_schema first and follow its versioned agent_operating_protocol. "
             "Bind each request to the selected company. Submit typed facts and evidence, "
-            "never free journal entries. Do not infer missing accounting facts."
+            "never free journal entries. Before asking the owner, check existing evidence and "
+            "prior answers and reason whether they yield a unique, clear answer. Reuse supported "
+            "answers with sources; ask only about unresolved material gaps, conflicts, ambiguity, "
+            "or required owner decisions/approvals. Do not invent accounting facts or treat "
+            "reasoning as owner authorization."
         ),
     )
 
