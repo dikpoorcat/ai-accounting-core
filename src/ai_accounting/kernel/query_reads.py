@@ -1020,6 +1020,49 @@ class QueryReads:
 
     @classmethod
     @contextmanager
+    def attached_snapshot(cls, engine, connection, *, reads=None):
+        """Scope verification caches to a caller-owned, unchanged transaction."""
+        from .runtime import _owned_read_transaction, _OwnedReadConnection
+
+        if not connection.in_transaction:
+            raise ValueError("attached reads require an existing transaction")
+        if reads is not None and (
+            reads.store is not engine.store or reads.connection is not connection
+        ):
+            raise ValueError("attached reads belong to another transaction")
+        active = _active_fact_reads.get()
+        if (
+            active is not None and active.store is engine.store
+            and active.connection is connection and active._snapshot_active
+        ):
+            yield active
+            return
+        reads = reads or cls(engine, connection)
+        owned = type(connection) is _OwnedReadConnection
+
+        def keep_snapshot(action, *_):
+            return (
+                sqlite3.SQLITE_DENY
+                if action in (sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT)
+                else sqlite3.SQLITE_OK
+            )
+
+        transaction = _owned_read_transaction(connection) if owned else nullcontext()
+        with transaction:
+            if not owned:
+                connection.set_authorizer(keep_snapshot)
+            reads._snapshot_active = True
+            token = _active_fact_reads.set(reads)
+            try:
+                yield reads
+            finally:
+                _active_fact_reads.reset(token)
+                reads._reset()
+                if not owned:
+                    connection.set_authorizer(None)
+
+    @classmethod
+    @contextmanager
     def snapshot(cls, engine):
         """Own one read-only transaction; no memo survives an exit or transaction change."""
         from .runtime import _owned_read_transaction, _OwnedReadConnection

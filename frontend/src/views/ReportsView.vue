@@ -119,14 +119,12 @@ const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
   if (report.value?.export.available) return "已就绪";
   if (report.value?.readiness_state === "blocked") return "AI 会计核对中";
-  if (report.value?.close_state === "open") return "相关月份结账后可下载报表";
   return "本季度报表暂时无法下载";
 });
 const reportNextStep = computed(() => {
   if (needsRegeneration.value) return "请根据提示重新生成。";
   if (report.value?.export.available) return "可下载 Excel 报表，使用前请复核。";
   if (report.value?.readiness_state === "blocked") return "AI 会计正在核对资料，如需您补充资料会另列待办。";
-  if (report.value?.close_state === "open") return "当前为试算金额，相关月份结账后刷新。";
   return report.value?.message ?? "";
 });
 const checkedAt = computed(() => {

@@ -198,8 +198,15 @@ def test_quarter_report_rejects_damage_without_expanding_context(book):
         reports.closed_period_coverage(2026, 1)
     # Context selects a quarter, but does not consume its report profile body.
     assert Dashboard(engine).context()["quarters"]
+    # The authenticated dashboard aggregate does not reconsume report bodies.
+    # Its native fallback and the independent export still prove exact sources.
+    with QueryReads.snapshot(engine) as reads:
+        with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
+            Dashboard(engine)._quarterly_report_in_snapshot(
+                2026, 1, connection=reads.connection, reads=reads, as_of="2026-04-10",
+            )
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
-        Dashboard(engine).quarterly_report(2026, 1)
+        reports.preview_export(2026, 1)
 
 
 def test_readiness_without_profile_still_verifies_adopted_tax_body(book):

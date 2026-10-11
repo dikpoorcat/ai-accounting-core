@@ -44,7 +44,7 @@ OBLIGATION_DEFINITIONS = MappingProxyType(
             check_payroll_population=True,
             exclude_not_started=True,
         ),
-        "quarterly_tax": ObligationDefinition(("tax_assessment",)),
+        "quarterly_tax": ObligationDefinition(("tax_assessment", "income_tax_assessment")),
         "quarterly_financial_report": ObligationDefinition(("*",)),
         "annual_income_tax": ObligationDefinition(("income_tax_assessment",)),
         "annual_business_report": ObligationDefinition(()),
@@ -276,13 +276,6 @@ class ExternalCompletion(Fact):
                 else ()
             ),
         )
-
-    def required_closed_periods(self):
-        if self.obligation_kind != "quarterly_financial_report":
-            return ()
-        # Closing the last covered month also covers preceding empty months.
-        return (self.end_period,)
-
 
 def calculate_completion(version, context):
     fact = version.fact
@@ -585,6 +578,51 @@ def calculate_basis_review(version, context):
     ):
         raise KernelError("invalid_review_source", "核对未引用同一义务及真实办理的精确版本")
     current, issues = _basis_state(obligation.fact, context.select)
+    report_snapshot = None
+    if fact.obligation_kind == "quarterly_financial_report":
+        # The complete report snapshot proves adopted accounting, including
+        # frozen versions whose current heads may now post in a later quarter.
+        issues = []
+        report_snapshot = context.report_snapshot or {
+            "comparison_result": "unestablished",
+            "submitted_report_binding": None,
+            "reviewed_report_signature": None,
+            "current_report_basis": None,
+            "basis_issues": [],
+            "current_calculations": [],
+        }
+        report_calculations = {
+            (item.subject_id, item.id)
+            for read in context.report_reads
+            for item in context.select(read)
+            if read.source == "calculation"
+        }
+        snapshot_calculations = {
+            (item["subject_id"], item["calculation_id"])
+            for item in report_snapshot.get("current_calculations", ())
+        }
+        if report_snapshot["comparison_result"] == "outdated":
+            issues.extend(report_snapshot["basis_issues"])
+        if (
+            report_snapshot.get("current_report_source") != "closed"
+            and report_calculations != snapshot_calculations
+        ):
+            issues.append({
+                "field": "report_basis", "message": "报表核对须在上游正式发布后重新准备",
+            })
+        if report_snapshot["comparison_result"] == "outdated":
+            issues.append({"field": "report_basis", "message": "当前报表核对依据已过期"})
+    report_values = (
+        {
+            key: report_snapshot.get(key)
+            for key in (
+                "submitted_report_binding", "reviewed_report_signature", "current_report_basis",
+            )
+        }
+        if report_snapshot is not None else {}
+    )
+    if report_snapshot is not None and report_snapshot["basis_issues"]:
+        report_values["basis_issues"] = list(report_snapshot["basis_issues"])
     selected = []
     if len({item.subject_id for item in fact.reviewed_calculations}) != len(
         fact.reviewed_calculations
@@ -597,7 +635,7 @@ def calculate_basis_review(version, context):
         selected.append(found[0])
     original_ids = {(item.subject_id, item.id) for item in selected}
     current_ids = {(item.subject_id, item.id) for item in current}
-    if issues or original_ids != current_ids:
+    if issues or (report_snapshot is None and original_ids != current_ids):
         return Outcome(
             (),
             {
@@ -608,6 +646,7 @@ def calculate_basis_review(version, context):
                 "review_result": "outdated",
                 "reviewed_calculations": _reviewed_basis(selected),
                 "review_evidence": list(version.evidence),
+                **report_values,
                 "basis_issues": issues,
             },
         )
@@ -618,7 +657,7 @@ def calculate_basis_review(version, context):
         if len(found) != 1 or found[0].subject_id != ref.subject_id:
             raise NeedsInformation("adopted_calculations", "需要原采用的正式计算精确版本")
         original.append(found[0])
-    if original:
+    if original and report_snapshot is None:
         old_by_subject = {item.subject_id: item for item in original}
         if len(old_by_subject) != len(original) or set(old_by_subject) != {
             item.subject_id for item in current
@@ -632,9 +671,12 @@ def calculate_basis_review(version, context):
                     if context.accounting_signature(old) == context.accounting_signature(item)
                     else "different"
                 )
-    source_result = _compare_reported_sources(fact, completion.fact, current, context)
-    if source_result is not None:
-        comparisons.append(source_result)
+    if report_snapshot is not None:
+        comparisons.append(report_snapshot["comparison_result"])
+    else:
+        source_result = _compare_reported_sources(fact, completion.fact, current, context)
+        if source_result is not None:
+            comparisons.append(source_result)
     proven_result = (
         "different"
         if "different" in comparisons
@@ -658,8 +700,11 @@ def calculate_basis_review(version, context):
             "review_result": fact.review_result,
             "source_facts": [item.model_dump() for item in fact.source_facts],
             "adopted_calculations": [item.model_dump() for item in fact.adopted_calculations],
-            "reviewed_calculations": _reviewed_basis(current),
+            "reviewed_calculations": _reviewed_basis(
+                selected if report_snapshot is not None else current
+            ),
             "review_evidence": list(version.evidence),
+            **report_values,
         },
     )
 
@@ -1037,13 +1082,6 @@ class Workflow:
             basis, issues = _basis_state(fact, selections.__getitem__)
             if pending.intersection(item.subject_id for item in basis):
                 issues.append({"field": "basis_pending", "message": "核算依据尚有待更正事项"})
-            if fact.obligation_kind == "quarterly_financial_report":
-                closed = connection.execute(
-                    "SELECT 1 FROM period_close WHERE period>=? LIMIT 1",
-                    (fact.end_period.ordinal,),
-                ).fetchone()
-                if closed is None:
-                    raise KernelError("awaiting_close", "季度财报准备等待覆盖期末月份关账")
             return {
                 "obligation_id": obligation_id,
                 "obligation_fact_id": version.id,
@@ -1239,6 +1277,20 @@ class Workflow:
                     if calc.values["review_result"] == "matched"
                     else calc.values["review_result"]
                 )
+                if obligation.obligation_kind == "quarterly_financial_report":
+                    from .report_snapshot import review_snapshot_state
+
+                    report_review = review_snapshot_state(
+                        self.engine, reads, obligation, terminal[1], calc,
+                    )
+                    # Frozen report adoption can remain valid after a source
+                    # gets a new current head whose posting is in a later quarter.
+                    # The complete report proof covers pending accounting and
+                    # management changes that actually affect this report.
+                    basis_issue_count -= len(issues)
+                    issues = list(report_review["basis_issues"])
+                    basis_issue_count += len(issues)
+                    review_status = report_review["review_status"]
                 break
             if known_actual and latest_review is None and review_status != "not_applicable":
                 review_status = "not_reviewed"

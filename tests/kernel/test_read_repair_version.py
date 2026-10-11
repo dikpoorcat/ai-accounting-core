@@ -104,6 +104,8 @@ def test_report_export_repair_race_and_successful_idempotent_replay(book, tmp_pa
         reports.confirm_export(2026, 1, request_id="racy-report", **kwargs)
     assert error.value.code == "preview_expired"
     monkeypatch.setattr(reports, "_prepare_export", prepare)
+    preview = reports.preview_export(2026, 1)
+    kwargs.update(preview_digest=preview["digest"], epochs=preview["epochs"])
     result = reports.confirm_export(2026, 1, request_id="report", **kwargs)
     change_revision(engine)
     assert reports.confirm_export(2026, 1, request_id="report", **kwargs) == result

@@ -2549,22 +2549,8 @@ class Dashboard:
                 or not connection.in_transaction):
             raise ValueError("quarterly owner reads belong to another snapshot")
         reports = Reports(self.engine)
-        opened = reports._report(
-            year, quarter, source="open", connection=connection, reads=reads,
-            _issues_only=True,
-        )
-        quarter_end = YearMonth(f"{year:04d}-{quarter * 3:02d}").ordinal
-        if connection.execute(
-            "SELECT 1 FROM period_close WHERE period=?", (quarter_end,),
-        ).fetchone() is None:
-            # The open plan has already checked the visible closed sources.
-            # An absent quarter-end close cannot produce an exportable plan.
-            closed = {"status": "needs_information", "fact_issues": [{"field": "period"}]}
-        else:
-            closed = reports._report(
-                year, quarter, source="closed", connection=connection, reads=reads,
-            )
-        response = _quarterly_view(closed if closed["status"] == "ready" else opened, closed)
+        plan = reports._export_plan(year, quarter, reads=reads)
+        response = _quarterly_view(plan, plan)
         response["read_context"] = self._read_context(connection, as_of)
         return response
 
@@ -5143,9 +5129,9 @@ def _assets(
     }
 
 
-def _quarterly_view(plan, closed):
+def _quarterly_view(plan, export_plan):
     ready = plan["status"] == "ready"
-    exportable = closed["status"] == "ready"
+    exportable = export_plan["status"] == "ready"
     statements = plan["statements"]
     specifications = (
         (
@@ -5187,16 +5173,13 @@ def _quarterly_view(plan, closed):
     ]
     return {
         "schema_version": 5,
-        "close_state": "open" if any(
-            item["field"] in {"period", "closed_periods"} for item in closed["fact_issues"]
-        ) else "closed",
+        "close_state": export_plan["source"],
         "readiness_state": "ready" if ready else "blocked",
         "status": "ready" if exportable else "in_progress" if ready else "blocked",
-        "status_label": "可下载" if exportable else "结账后可下载" if ready else "AI 会计核对中",
+        "status_label": "可下载" if exportable else "AI 会计核对中",
         "headline": "季度财务报表",
         "message": "当前报表已具备下载条件。" if exportable else (
-            "相关月份结账后可下载；当前金额为试算结果。" if ready
-            else "AI 会计正在核对报表资料，如需您补充资料会另列待办。"
+            "AI 会计正在核对报表资料，如需您补充资料会另列待办。"
         ),
         "checked_at": datetime.now(UTC).isoformat(),
         "organization": plan["organization"],
@@ -5216,7 +5199,7 @@ def _quarterly_view(plan, closed):
         "export": {
             "available": exportable,
             "file_name": _workbook_name(plan),
-            "preview_digest": closed["digest"] if exportable else None,
-            "epochs": closed["epochs"] if exportable else None,
+            "preview_digest": export_plan["digest"] if exportable else None,
+            "epochs": export_plan["epochs"] if exportable else None,
         },
     }

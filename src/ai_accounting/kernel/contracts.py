@@ -315,6 +315,9 @@ class Context:
         self,
         selections: dict[Read, tuple[FactVersion | Calculation, ...]],
         accounting: Callable[[str], dict] | None = None,
+        *,
+        report_snapshot: dict | None = None,
+        report_reads: tuple[Read, ...] = (),
     ):
         self._selections = MappingProxyType(
             {read: tuple(items) for read, items in selections.items()}
@@ -322,6 +325,8 @@ class Context:
         self._used: set[Read] = set()
         self._versions: set[str] = set()
         self.accounting = accounting
+        self.report_snapshot = freeze(report_snapshot) if report_snapshot is not None else None
+        self.report_reads = tuple(report_reads)
 
     @property
     def used(self) -> frozenset[Read]:

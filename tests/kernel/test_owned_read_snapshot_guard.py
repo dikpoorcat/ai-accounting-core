@@ -6,8 +6,8 @@ import weakref
 from pathlib import Path
 
 import pytest
-
-from test_engine import engine as engine_fixture, publish, save
+from test_engine import engine as engine_fixture
+from test_engine import publish, save
 from test_resident_read_guard_work import _widen_file_permission
 
 from ai_accounting.kernel import runtime
@@ -19,8 +19,37 @@ from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.resident_reads import READ_PAGE_CACHE_KIB, ResidentReadPool
 from ai_accounting.kernel.runtime import RuntimeConfigurationError
 
-
 engine = engine_fixture
+
+
+def test_attached_snapshot_keeps_callers_transaction_and_resets_its_verification_cache(engine):
+    with engine.store.connection(read_only=True) as connection:
+        with pytest.raises(ValueError, match="existing transaction"):
+            with QueryReads.attached_snapshot(engine, connection):
+                pass
+        connection.execute("BEGIN")
+        with QueryReads.attached_snapshot(engine, connection) as reads:
+            assert reads.connection is connection and reads._snapshot_active
+            reads._report_snapshot_cache["temporary-proof"] = True
+            with QueryReads.attached_snapshot(engine, connection) as nested:
+                assert nested is reads
+            with pytest.raises(sqlite3.DatabaseError):
+                connection.execute("COMMIT")
+        assert connection.in_transaction
+        assert not reads._snapshot_active
+        assert reads._report_snapshot_cache == {}
+        connection.commit()
+
+
+def test_attached_snapshot_reuses_the_existing_owned_adapter(resident_engine):
+    engine, _pool = resident_engine
+    with QueryReads.snapshot(engine) as reads:
+        other_adapter = QueryReads(engine, reads.connection)
+        with QueryReads.attached_snapshot(
+            engine, reads.connection, reads=other_adapter,
+        ) as attached:
+            assert attached is reads
+        assert reads._snapshot_active and reads.connection.in_transaction
 
 
 @pytest.fixture
@@ -71,7 +100,8 @@ def test_compiled_programs_survive_new_snapshot_and_cache_is_bounded(
     # More distinct programs than the explicit budget must evict old programs.
     with QueryReads.snapshot(engine) as reads:
         for number in range(550):
-            assert reads.connection.execute(f"SELECT {number} AS bounded_program").fetchone()[0] == number
+            value = reads.connection.execute(f"SELECT {number} AS bounded_program").fetchone()[0]
+            assert value == number
     with QueryReads.snapshot(engine) as reads:
         before = len(events)
         assert reads.connection.execute("SELECT 549 AS bounded_program").fetchone()[0] == 549

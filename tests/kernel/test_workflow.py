@@ -312,7 +312,7 @@ def test_raw_submitted_document_cannot_be_rubber_stamped_as_matched(tmp_path):
     assert error.value.code == "review_not_proven"
 
 
-def test_financial_report_requires_close_but_quarterly_tax_does_not(tmp_path):
+def test_financial_report_and_quarterly_tax_can_record_completion_before_close(tmp_path):
     company = setup_company(tmp_path)
     tax = company.save(obligation("quarterly_tax"), "tax-obligation")
     report = company.save(obligation("quarterly_financial_report"), "report-obligation")
@@ -334,9 +334,61 @@ def test_financial_report_requires_close_but_quarterly_tax_does_not(tmp_path):
         )
         save_completion(company, fact, subject)
     company.publish("tax-completion")
-    with pytest.raises(KernelError) as error:
-        company.engine.preview(["report-completion"])
-    assert error.value.code == "awaiting_close"
+    company.publish("report-completion")
+    assert company.current("report-completion", "external_completion").values[
+        "completion_status"
+    ] == "submitted"
+    assert workflow.Workflow(company.engine).obligation_basis("report-obligation")[
+        "obligation_kind"
+    ] == "quarterly_financial_report"
+
+
+def test_quarterly_tax_includes_income_tax_and_keeps_october_filing_after_september_change(
+    tmp_path,
+):
+    from ai_accounting.kernel.domains.taxes import IncomeTaxAssessment
+
+    company = setup_company(tmp_path)
+    company.save(
+        workflow.ExternalObligation(
+            period="2026-09", obligation_kind="quarterly_tax", start_period="2026-07",
+            end_period="2026-09", applicability_confirmed=True,
+        ),
+        "obligation",
+    )
+    assessment = IncomeTaxAssessment(
+        period="2026-09", year=2026, cumulative_assessed_fen=120000,
+        assessment_basis="confirmed_provision",
+    )
+    company.save(assessment, "income-tax")
+    service = workflow.Workflow(company.engine)
+    assert any(
+        item["field"] == "unpublished_basis"
+        for item in service.obligation_basis("obligation")["fact_issues"]
+    )
+    company.publish("income-tax")
+    basis = service.obligation_basis("obligation")
+    assert basis["fact_issues"] == []
+    assert {item["subject_id"] for item in basis["candidate_calculations"]} == {"income-tax"}
+    completion = completion_from_basis(
+        basis, period="2026-10", completion_date="2026-10-12",
+    )
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    review = review_from_completion(
+        completion, saved["fact_id"], basis["candidate_calculations"], "matched",
+    ).model_copy(update={"period": completion.period})
+    company.save(review, "review")
+    company.publish("review")
+    item = external_item(company, day="2026-10-12", period="2026-09")
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "reviewed"
+    company.save(assessment.model_copy(update={"cumulative_assessed_fen": 130000}), "income-tax", 1)
+    company.publish("income-tax")
+    item = external_item(company, day="2026-10-12", period="2026-09")
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "outdated"
+    assert item["recorded_completions"][0]["fact_id"] == saved["fact_id"]
 
 
 def test_real_supplemental_submission_links_previous_exact_fact(tmp_path):

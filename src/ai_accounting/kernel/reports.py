@@ -1784,11 +1784,17 @@ class Reports:
                             )
                         )
             if source == "open":
+                accounting_kinds = sorted(
+                    kind for kind in self.store.registry.evaluators
+                    if self.store.registry.models[kind].lane == "accounting"
+                )
                 pending = connection.execute(
                     "SELECT p.subject_id FROM pending p CROSS JOIN fact_current a "
-                    "CROSS JOIN fact_revision f WHERE a.subject_id=p.subject_id "
-                    "AND f.id=a.fact_id AND f.period<=? LIMIT 1",
-                    (end.ordinal,),
+                    "CROSS JOIN fact_revision f CROSS JOIN subject s "
+                    "WHERE a.subject_id=p.subject_id AND s.id=a.subject_id "
+                    "AND f.id=a.fact_id AND f.period<=? "
+                    "AND s.kind IN (SELECT value FROM json_each(?)) LIMIT 1",
+                    (end.ordinal, canonical(accounting_kinds)),
                 ).fetchone()
                 if pending:
                     problems.append(
@@ -1855,23 +1861,80 @@ class Reports:
 
     def _prepare_export(self, year, quarter, *, carry_forward_fact_id=None):
         from .query_reads import QueryReads
-        from .read_state import repair_revision
 
         with QueryReads.snapshot(self.engine) as reads:
-            prepared_revision = repair_revision(reads.connection)
-            plan = self._report(
-                year,
-                quarter,
-                source="closed",
-                carry_forward_fact_id=carry_forward_fact_id,
-                connection=reads.connection,
-                reads=reads,
+            plan = self._export_plan(
+                year, quarter, reads=reads, carry_forward_fact_id=carry_forward_fact_id
             )
         if plan["fact_issues"]:
             raise KernelError(
                 "needs_information", "季度三表尚不具备导出条件", fact_issues=plan["fact_issues"]
             )
-        return plan, prepared_revision
+        return plan, plan["read_repair_revision"]
+
+    def _export_plan(self, year, quarter, *, reads, carry_forward_fact_id=None):
+        """Bind export preparation and its exact report to one owned snapshot."""
+        from .materials import _CompletenessInspectionCache
+        from .periods import Periods
+        from .read_state import repair_revision
+
+        connection = reads.connection
+        _, end, _ = _periods(year, quarter)
+        cutoff = connection.execute("SELECT max(period) FROM period_close").fetchone()[0]
+        source = "closed" if cutoff is not None and cutoff >= end.ordinal else "open"
+        plan = self._report(
+            year,
+            quarter,
+            source=source,
+            carry_forward_fact_id=carry_forward_fact_id,
+            connection=connection,
+            reads=reads,
+        )
+        problems = list(plan["fact_issues"])
+        if source == "open":
+            profile = _applicable_profile(
+                self._report_profiles(connection, set(plan["report_fact_ids"]), end, reads), end
+            )
+            if profile is not None:
+                # Balance-sheet amounts can depend on every earlier open month,
+                # including months before the statement's cumulative flow year.
+                first = max(
+                    profile.fact.bookkeeping_start.ordinal,
+                    cutoff + 1 if cutoff is not None else 0,
+                )
+                periods = Periods(self.engine)
+                inspection = _CompletenessInspectionCache(connection)
+                for ordinal in range(first, end.ordinal + 1):
+                    month = str(YearMonth.from_ordinal(ordinal))
+                    checked = periods.collect_current_readiness(
+                        connection,
+                        month,
+                        closed_through=cutoff,
+                        _inspection_cache=inspection,
+                        _reuse_closed_materials=True,
+                        _query_reads=reads,
+                    )
+                    problems.extend({"period": month, **item} for item in checked["issues"])
+        problems = list({canonical(item): item for item in problems}.values())
+        plan.update(
+            fact_issues=problems,
+            status="needs_information" if problems else "ready",
+            read_repair_revision=repair_revision(connection),
+        )
+        if not problems:
+            from .report_snapshot import snapshot_basis
+
+            try:
+                plan["report_basis"] = snapshot_basis(self.engine, reads, plan)
+            except KernelError as exc:
+                if exc.code != "report_basis_unestablished":
+                    raise
+                plan["fact_issues"].append(issue("report_basis", str(exc)))
+                plan["status"] = "needs_information"
+        plan["digest"] = digest(
+            {key: value for key, value in plan.items() if key not in {"digest", "epochs"}}
+        ).hex()
+        return plan
 
     def confirm_export(
         self,
@@ -2619,7 +2682,7 @@ def run_report_jobs(engine, *, limit: int = 10, fault=None):
                     or plan["company_id"] != engine.store.company_id
                     or plan["database_id"] != engine.store.database_id
                     or plan["status"] != "ready"
-                    or plan["source"] != "closed"
+                    or plan["source"] not in {"closed", "open"}
                     or plan["template"]["sha256"] != TEMPLATE_SHA256.lower()
                 ):
                     raise KernelError("invalid_report_plan", "冻结报表计划身份、摘要或模板不一致")

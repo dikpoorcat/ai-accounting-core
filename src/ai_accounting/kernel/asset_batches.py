@@ -653,7 +653,7 @@ class AssetBatches:
                 # Existing dependants remain in one reviewed graph.
                 queue.extend(self.engine._descendants(connection, {sid}) - set(facts))
             facts = {sid: v for sid, v in facts.items() if sid not in removed}
-            reads = {r for v in facts.values() for r in v.fact.reads_for(v.subject_id)}
+            reads = {r for v in facts.values() for r in self.engine._reads(v)}
             selections = {r: select(r) for r in reads}
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
@@ -706,7 +706,9 @@ class AssetBatches:
                 ).fetchone()
             }
             from .publication import heads
+            from .report_snapshot import prepare_review_snapshots
 
+            report_snapshots = prepare_review_snapshots(self.engine, connection, facts.values())
             snapshot = (
                 epochs,
                 facts,
@@ -716,6 +718,7 @@ class AssetBatches:
                 previous,
                 book,
                 heads(connection, facts),
+                report_snapshots,
             )
             public, prepared = _AssetPreparation(self.engine, snapshot, outcomes)._prepare(
                 [subject_id], posting_period

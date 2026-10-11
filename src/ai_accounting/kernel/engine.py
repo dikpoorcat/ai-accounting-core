@@ -68,7 +68,15 @@ class Engine:
     _allows_asset_graph = False
 
     def _reads(self, version):
-        return version.fact.reads_for(version.subject_id)
+        reads = version.fact.reads_for(version.subject_id)
+        if (
+            version.fact.kind == "external_basis_review"
+            and version.fact.obligation_kind == "quarterly_financial_report"
+        ):
+            from .report_snapshot import report_dependency_reads
+
+            reads += report_dependency_reads(self.store.registry, version.fact.end_period)
+        return tuple(dict.fromkeys(reads))
 
     def _explicit_roots(self, subjects):
         return set(subjects)
@@ -742,14 +750,23 @@ class Engine:
             duplicate_subjects = self._explicit_roots(facts)
             if duplicate_subjects:
                 DuplicateCandidates(self.store).require_publishable(connection, duplicate_subjects)
+            from .report_snapshot import prepare_review_snapshots
+
+            report_snapshots = prepare_review_snapshots(self, connection, facts.values())
             connection.commit()
-        return epochs, facts, selections, pending, closed, previous, accounting, publications
+        return (
+            epochs, facts, selections, pending, closed, previous, accounting, publications,
+            report_snapshots,
+        )
 
     def _evaluate(self, version, context):
         return asdict(self.store.registry.evaluators[version.fact.kind](version, context))
 
     def _prepare(self, subjects, posting_period=None):
-        (epochs, facts, selections, pending, closed, previous, accounting, publications) = (
+        (
+            epochs, facts, selections, pending, closed, previous, accounting, publications,
+            report_snapshots,
+        ) = (
             self._snapshot(subjects)
         )
         if not facts:
@@ -827,7 +844,17 @@ class Engine:
                             values.append(overlays[upstream_id])
                     values.sort(key=lambda item: (item.period.ordinal, item.subject_id))
                 selected[read] = tuple(values)
-            context = Context(selected, accounting=accounting.signature)
+            report_reads = ()
+            if version.id in report_snapshots:
+                from .report_snapshot import report_dependency_reads
+
+                report_reads = report_dependency_reads(self.store.registry, version.fact.end_period)
+            context = Context(
+                selected,
+                accounting=accounting.signature,
+                report_snapshot=report_snapshots.get(version.id),
+                report_reads=report_reads,
+            )
             if dependencies[sid] & blocked:
                 error = compatibility(previous[sid], "upstream_comparison_unavailable")
                 prepared.append(
