@@ -59,7 +59,11 @@ class Discovery:
             "company_note": self._note(connection),
             "epochs": self.store.epochs(connection),
             "source_kinds": sorted(self.store.registry.models),
-            "note_semantics": "公司业务说明是管理背景，不能代替已确认事实或推断缺少的核算信息",
+            "note_semantics": (
+                "公司业务说明用于明确长期业务规则；具体核算事实应从原件及有效确认中查证，"
+                "可以通过交叉核对和有依据的推理确定，不得凭空补造；"
+                "说明和推理不代替资料完整性确认、负责人必须作出的决定、工资确认或关账批准"
+            ),
         }
 
     def _hydrate_fact_records(
