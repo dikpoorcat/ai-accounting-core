@@ -81,6 +81,11 @@ def make_storage():
                 finally:
                     connection.rollback()
 
+            @contextmanager
+            def _snapshot_connection(self):
+                with self.connection(read_only=True) as selected:
+                    yield selected
+
         return SimpleNamespace(store=Store()), headers
 
     yield make

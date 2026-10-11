@@ -446,6 +446,8 @@ def _schema_for_models(models) -> str:
     from .duplicates import DUPLICATE_ACTUAL_INDEX_DDL, DUPLICATE_DDL
     from .entities import ENTITY_DDL
     from .entity_references import ENTITY_REFERENCE_DDL
+    from .fund_accounts import FUND_ACCOUNTS_DDL
+    from .fund_line_details import FUND_LINE_DETAILS_DDL
     from .identity_corrections import IDENTITY_CORRECTION_DDL
     from .material_watch import MATERIAL_WATCH_DDL
     from .materials import MATERIAL_READ_INDEX_DDL
@@ -476,6 +478,8 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + immutable_sql("company_note_revision")
         + DISPLAY_DDL
         + ENTITY_DDL
+        + FUND_ACCOUNTS_DDL
+        + FUND_LINE_DETAILS_DDL
         + ENTITY_REFERENCE_DDL
         + IDENTITY_CORRECTION_DDL
         + DISCOVERY_INDEX_DDL

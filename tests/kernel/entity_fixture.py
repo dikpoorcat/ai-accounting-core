@@ -9,6 +9,15 @@ def seed_entities(engine, definitions):
     definitions = tuple(definitions)
     if not definitions:
         return
+    from ai_accounting.kernel.fund_accounts import has_fund_definitions, install_fund_account_definition
+
+    proofs = {}
+    for entity_id, kind, account_type in definitions:
+        if kind == "fund_account":
+            proofs[entity_id] = engine.register_evidence(
+                canonical(["synthetic fund identity", entity_id, account_type]).encode(),
+                "application/json", "合成资金账户资料", request_id="test-fund-proof-" + entity_id,
+            )["digest"]
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         for entity_id, kind, account_type in definitions:
@@ -26,6 +35,19 @@ def seed_entities(engine, definitions):
                 "INSERT INTO entity(id,kind,account_type) VALUES(?,?,?)",
                 (entity_id, kind, account_type),
             )
+            if kind == "fund_account" and has_fund_definitions(connection):
+                number = str(int.from_bytes(digest(entity_id)[:8], "big"))
+                details = (
+                    {"bank_name": "合成银行", "bank_account_number": number,
+                     "account_holder_name": "合成公司"} if account_type == "bank" else
+                    {"provider_name": "合成平台", "account_identifier": number,
+                     "account_holder_name": "合成公司"} if account_type == "platform" else
+                    {"display_name": "合成现金账户 " + entity_id}
+                )
+                install_fund_account_definition(
+                    connection, entity_id, account_type, details,
+                    source="synthetic test fixture", evidence_digest=proofs[entity_id],
+                )
             connection.execute(
                 "INSERT INTO entity_profile_revision"
                 "(id,entity_id,revision,content,source,evidence_digest,digest) "

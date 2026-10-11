@@ -1018,6 +1018,29 @@ class Engine:
             "database_id": self.store.database_id,
             "checked_lanes": list(checked),
         }
+        from .fund_line_details import preview_fund_details
+
+        preview_facts = {
+            item.version.id: item.version.fact.model_dump(mode="json") for item in prepared
+        }
+        preview_calculations = {}
+        for item in prepared:
+            for read, selections in item.context.trace().selections:
+                if read.source == "fact":
+                    preview_facts.update(
+                        {version.id: version.fact.model_dump(mode="json") for version in selections}
+                    )
+                else:
+                    preview_calculations.update({value.id: value.values for value in selections})
+        with self.store.connection(read_only=True) as connection:
+            for result, item in zip(public["results"], prepared, strict=True):
+                if item.outcome is not None:
+                    result["fund_line_details"] = preview_fund_details(
+                        connection, item.version.fact.kind,
+                        item.version.fact.model_dump(mode="json"), item.outcome,
+                        fact_sources=preview_facts,
+                        calculation_sources=preview_calculations,
+                    )
         public["digest"] = digest(
             {**public, "epochs": {lane: epochs[lane] for lane in checked}}
         ).hex()
@@ -1110,6 +1133,9 @@ class Engine:
                 PROGRAM_VERSION,
             ),
         )
+        from .fund_line_details import store_opening_fund_line_details
+
+        store_opening_fund_line_details(connection, cid)
         connection.executemany(
             "INSERT INTO calculation_scope VALUES(?,?,?)",
             [
@@ -1466,6 +1492,9 @@ class Engine:
             "INSERT INTO voucher_version VALUES(?,?,?,?,?,?)",
             (version_id, voucher_id, calculation_id, period, reverses_id, total),
         )
+        from .fund_line_details import store_voucher_fund_line_details
+
+        store_voucher_fund_line_details(connection, version_id)
         connection.execute(
             "INSERT INTO voucher_current VALUES(?,?) ON CONFLICT(voucher_id) "
             "DO UPDATE SET version_id=excluded.version_id",
@@ -1760,6 +1789,9 @@ class Engine:
                         )
                     ],
                 }
+                from .fund_line_details import display_fund_lines
+
+                voucher["lines"] = display_fund_lines(connection, version["id"], voucher["lines"])
                 # The reversal records the replacement calculation; its basis remains the original.
                 correction = connection.execute(
                     "SELECT reverses_id FROM voucher_version WHERE calculation_id=? "

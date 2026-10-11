@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from development_funds_fixture import upgrade_company, upgrade_root
 from test_development_upgrade import (
     COMPANY,
     DATABASE,
@@ -53,7 +54,7 @@ def test_index_step_preserves_every_original_value_and_existing_history(tmp_path
         history = [tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")]
         retained = _retained_history_digest(connection)
         seen = []
-        result = development.upgrade_company(connection, target, fault=seen.append)
+        result = upgrade_company(connection, target, fault=seen.append)
         assert result["source_fingerprint"] == development.INDEX_SOURCE_FINGERPRINT
         assert result["steps"] == [
             {
@@ -66,15 +67,20 @@ def test_index_step_preserves_every_original_value_and_existing_history(tmp_path
                 "source_fingerprint": development.READ_MODEL_SOURCE_FINGERPRINT,
                 "target_fingerprint": development.READ_MODEL_TARGET_FINGERPRINT,
             },
+            {
+                "sequence": len(history) + 3,
+                "source_fingerprint": development.FUND_DETAIL_SOURCE_FINGERPRINT,
+                "target_fingerprint": development.FUND_DETAIL_TARGET_FINGERPRINT,
+            },
         ]
         assert table_rows(connection, source.current()) == rows
         actual = [tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")]
-        assert actual[:-2] == history
+        assert actual[:-3] == history
         assert _retained_history_digest(connection) == retained
         assert "after_copy" not in seen and "after_drop" not in seen
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert verify_schema(connection, bundle=target) == 0
-        assert development.upgrade_company(connection, target) == {"status": "verified_skip"}
+        assert upgrade_company(connection, target) == {"status": "verified_skip"}
     assert verify_file(path, _bundle=target)["verification"]["status"] == "verified"
 
 
@@ -93,7 +99,7 @@ def test_index_step_failure_rolls_back_index_and_preserves_prior_receipt(tmp_pat
                 raise RuntimeError("synthetic index interruption")
 
         with pytest.raises(RuntimeError, match="synthetic index interruption"):
-            development.upgrade_company(connection, target, fault=interrupt)
+            upgrade_company(connection, target, fault=interrupt)
         assert development._all_existing_rows(connection, source.current()) == before
         assert verify_schema(connection, bundle=source) == 0
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -112,7 +118,7 @@ def test_index_step_rechecks_exact_source_after_taking_write_lock(tmp_path):
 
     with closing(connect(path)) as connection:
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, target, fault=race)
+            upgrade_company(connection, target, fault=race)
         assert error.value.code == "schema_fingerprint_mismatch"
         assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
         assert (
@@ -123,7 +129,7 @@ def test_index_step_rechecks_exact_source_after_taking_write_lock(tmp_path):
         )
 
 
-def test_two_step_chain_is_explicit_and_rejects_shortcut_declarations(tmp_path):
+def test_four_step_chain_is_explicit_and_rejects_shortcut_declarations(tmp_path):
     path, source, target = create_old_company(tmp_path / "company.sqlite")
     shortcut = replace(
         target,
@@ -138,10 +144,10 @@ def test_two_step_chain_is_explicit_and_rejects_shortcut_declarations(tmp_path):
     )
     with closing(connect(path)) as connection:
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, shortcut)
+            upgrade_company(connection, shortcut)
         assert error.value.code == "migration_not_declared"
         assert verify_schema(connection, bundle=source) == 0
-        result = development.upgrade_company(connection, target)
+        result = upgrade_company(connection, target)
         assert [
             (item["sequence"], item["source_fingerprint"], item["target_fingerprint"])
             for item in result["steps"]
@@ -153,6 +159,8 @@ def test_two_step_chain_is_explicit_and_rejects_shortcut_declarations(tmp_path):
                 development.READ_MODEL_SOURCE_FINGERPRINT,
                 development.READ_MODEL_TARGET_FINGERPRINT,
             ),
+            (4, development.FUND_DETAIL_SOURCE_FINGERPRINT,
+             development.FUND_DETAIL_TARGET_FINGERPRINT),
         ]
 
 
@@ -165,7 +173,7 @@ def test_new_target_installation_has_no_fabricated_adjustment_history(tmp_path):
         assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
         assert (
             connection.execute("SELECT hex(fingerprint) FROM schema_history").fetchone()[0].lower()
-            == development.READ_MODEL_TARGET_FINGERPRINT
+            == development.FUND_DETAIL_TARGET_FINGERPRINT
         )
         assert verify_schema(connection, bundle=target) == 0
 
@@ -199,17 +207,19 @@ def test_upgrade_scans_each_segment_before_and_after_without_duplicate_baseline(
     monkeypatch.setattr(development, "_all_existing_rows", observed)
     with closing(connect(path)) as connection:
         before = table_rows(connection, source.current())
-        result = development.upgrade_company(connection, target)
+        result = upgrade_company(connection, target)
         assert table_rows(connection, source.current()) == before
         assert result["original_rows_digest"] == scanned[0][1][0]
         assert verify_schema(connection, bundle=target) == 0
     chain = (
-        [development.INDEX_SOURCE_FINGERPRINT, development.READ_MODEL_SOURCE_FINGERPRINT]
+        [development.INDEX_SOURCE_FINGERPRINT, development.READ_MODEL_SOURCE_FINGERPRINT,
+         development.FUND_DETAIL_SOURCE_FINGERPRINT]
         if source_fingerprint == development.INDEX_SOURCE_FINGERPRINT
         else [
             development.SOURCE_FINGERPRINT,
             development.INDEX_SOURCE_FINGERPRINT,
             development.READ_MODEL_SOURCE_FINGERPRINT,
+            development.FUND_DETAIL_SOURCE_FINGERPRINT,
         ]
     )
     expected = [fingerprint for fingerprint in chain for _ in range(2)]
@@ -251,7 +261,7 @@ def test_each_segment_still_rejects_changed_original_data_and_rolls_back(
                 connection.execute("UPDATE state SET management=management+1 WHERE id=1")
 
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, target, fault=corrupt)
+            upgrade_company(connection, target, fault=corrupt)
         assert error.value.code == "migration_integrity_failed"
         assert development._all_existing_rows(connection, source.current()) == original
         assert verify_schema(connection, bundle=source) == 0
@@ -264,12 +274,14 @@ def test_root_preserves_mixed_exact_sources_and_skips_current_target(tmp_path):
         development.INDEX_SOURCE_FINGERPRINT,
         development.INDEX_TARGET_FINGERPRINT,
         development.READ_MODEL_TARGET_FINGERPRINT,
+        development.FUND_DETAIL_TARGET_FINGERPRINT,
     )
     root, _, target, companies = create_old_root(tmp_path, source_fingerprints=fingerprints)
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         catalog = development._catalog_retained_digest(connection)
-    result = development.upgrade_root(root, bundle=target)
+    result = upgrade_root(root, bundle=target)
     assert [item["status"] for item in result["companies"]] == [
+        "upgraded",
         "upgraded",
         "upgraded",
         "upgraded",
@@ -278,15 +290,15 @@ def test_root_preserves_mixed_exact_sources_and_skips_current_target(tmp_path):
     for source_fingerprint, item in zip(fingerprints, result["companies"], strict=True):
         source = (
             target
-            if source_fingerprint == development.READ_MODEL_TARGET_FINGERPRINT
+            if source_fingerprint == development.FUND_DETAIL_TARGET_FINGERPRINT
             else development.source_bundle(target, source_fingerprint)
         )
         assert (
             verify_portable(item["backup"], _bundle=source)["database_format"]
             == source.database_format()
         )
-    repeated = development.upgrade_root(root, bundle=target)
-    assert [item["status"] for item in repeated["companies"]] == ["verified_skip"] * 4
+    repeated = upgrade_root(root, bundle=target)
+    assert [item["status"] for item in repeated["companies"]] == ["verified_skip"] * 5
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         assert development._catalog_retained_digest(connection) == catalog
     for _, _, _, path in companies:
@@ -315,7 +327,7 @@ def test_catalog_backup_is_standalone_without_copy_wal(tmp_path, monkeypatch):
         return original(source, saved, progress=progress)
 
     monkeypatch.setattr(development, "copy_to_unpublished_database", observed)
-    result = development.upgrade_root(root, bundle=target)
+    result = upgrade_root(root, bundle=target)
     assert samples and max(samples) == 0
     catalog = Path(result["backup_directory"]) / "catalog.sqlite"
     with closing(
@@ -344,6 +356,7 @@ def test_package_inventory_declares_both_exact_development_sources():
     assert contract_file_names(bundle) == (
         "catalog/draft.json",
         "company/draft.json",
+        "development/company/" + development.FUND_DETAIL_SOURCE_FINGERPRINT + ".json",
         "development/company/" + development.READ_MODEL_SOURCE_FINGERPRINT + ".json",
         "development/company/" + development.SOURCE_FINGERPRINT + ".json",
         "development/company/" + development.INDEX_SOURCE_FINGERPRINT + ".json",
@@ -371,7 +384,7 @@ def test_same_schema_identity_race_is_rejected_inside_write_transaction(tmp_path
 
     with closing(connect(path)) as connection:
         with pytest.raises(BackupError) as error:
-            development.upgrade_company(connection, target, fault=race)
+            upgrade_company(connection, target, fault=race)
         assert error.value.code == "backup_identity_mismatch"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert verify_schema(connection, bundle=source) == 0
@@ -384,7 +397,9 @@ def test_root_rejects_same_schema_other_company_file_after_backups(
     monkeypatch,
     victim,
 ):
-    fingerprints = (development.INDEX_SOURCE_FINGERPRINT, development.READ_MODEL_TARGET_FINGERPRINT)
+    fingerprints = (
+        development.INDEX_SOURCE_FINGERPRINT, development.FUND_DETAIL_TARGET_FINGERPRINT
+    )
     root, _, target, companies = create_old_root(tmp_path, source_fingerprints=fingerprints)
     other = tmp_path / "other-company.sqlite"
     if victim == 1:
@@ -412,7 +427,7 @@ def test_root_rejects_same_schema_other_company_file_after_backups(
 
     monkeypatch.setattr(development, "create_portable", replace_after_all_backups)
     with pytest.raises(KernelError) as error:
-        development.upgrade_root(root, bundle=target)
+        upgrade_root(root, bundle=target)
     assert error.value.code == (
         "development_upgrade_failed" if victim == 0 else "development_upgrade_partial"
     )

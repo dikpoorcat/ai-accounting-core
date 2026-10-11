@@ -32,9 +32,15 @@ def test_platform_account_correction_moves_reserve_money_and_keeps_one_consumer(
     accounts = [
         Entities(engine).register_entity(
             "fund_account",
-            {},
+            {
+                "provider_name": "合成支付平台",
+                "account_identifier": f"synthetic-account-{index}",
+                "account_holder_name": "合成公司",
+                "display_name": f"合成平台账户{index}",
+            },
             source="synthetic account",
             account_type="platform",
+            evidence_digest=proof,
             request_id=f"account-{index}",
         )["entity_id"]
         for index in range(2)

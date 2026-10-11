@@ -6,7 +6,7 @@ from .contracts import KernelError
 from .types import YearMonth
 
 CLOSE_FORMAT = "ai-accounting-kernel/2/period-close"
-CLOSE_FORMAT_VERSION = 4
+CLOSE_FORMAT_VERSION = 5
 ADOPTION_ROLES = frozenset({"journal_basis", "state_only", "opening_basis", "asset_batch_owner"})
 APPROVAL_FIELDS = frozenset(
     {
@@ -83,14 +83,21 @@ def require_close_contract(manifest):
         "approval",
         "owner_review",
     }
+    version = manifest.get("format_version") if isinstance(manifest, dict) else None
+    if type(version) is int and version == 5:
+        required.add("fund_details")
     if (
         not isinstance(manifest, dict)
         or set(manifest) != required
         or manifest.get("format") != CLOSE_FORMAT
         or type(manifest.get("format_version")) is not int
-        or manifest.get("format_version") != CLOSE_FORMAT_VERSION
+        or manifest.get("format_version") not in (4, CLOSE_FORMAT_VERSION)
     ):
         _invalid("unsupported_close_contract")
+    if version == 5:
+        from .close_fund_details import require_fund_close_snapshot
+
+        require_fund_close_snapshot(manifest["fund_details"])
     if type(manifest["publication_sequence"]) is not int or manifest["publication_sequence"] < 0:
         _invalid("invalid_publication_boundary")
     if not isinstance(manifest.get("management_snapshot"), dict) or not isinstance(

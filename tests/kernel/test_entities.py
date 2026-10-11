@@ -163,7 +163,17 @@ def test_unknown_object_rejected_and_profile_changes_only_management(engine):
 
 def test_account_kind_is_not_payee_or_another_fund_type(engine):
     entity = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="现金账户", request_id="account"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="现金账户",
+        request_id="account",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("account") + "-identity-proof",
+        )["digest"],
     )
     from ai_accounting.kernel.entities import require_entity
 
@@ -195,7 +205,21 @@ def test_ordinary_amend_cannot_bypass_atomic_identity_correction(engine, nested)
     )
     if nested:
         account = entities.register_entity(
-            "fund_account", {}, account_type="bank", source="账户原件", request_id="bank"
+            "fund_account",
+            {
+                "bank_name": "合成银行",
+                "bank_account_number": "00010001",
+                "account_holder_name": "合成企业",
+            },
+            account_type="bank",
+            source="账户原件",
+            request_id="bank",
+            evidence_digest=engine.register_evidence(
+                b"explicit synthetic account identity",
+                "text/plain",
+                "fund-account-confirmation",
+                request_id=("bank") + "-identity-proof",
+            )["digest"],
         )["entity_id"]
         kind = "payment"
         data = dict(

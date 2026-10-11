@@ -69,9 +69,18 @@ def test_accounts_must_be_registered_as_the_exact_funds_type(book, channel):
     wrong_type = "cash" if channel != "cash" else "bank"
     account = Entities(engine).register_entity(
         "fund_account",
-        {},
+        (
+            {"display_name": "合成现金账户"}
+            if wrong_type == "cash"
+            else {
+                "bank_name": "合成银行",
+                "bank_account_number": "1234567890123456",
+                "account_holder_name": "合成公司",
+            }
+        ),
         source="synthetic account",
         account_type=wrong_type,
+        evidence_digest=proof,
         request_id="account",
     )["entity_id"]
     data = {
@@ -102,9 +111,10 @@ def test_cash_identity_correction_reassigns_current_funds_without_erasing_real_r
     accounts = [
         entities.register_entity(
             "fund_account",
-            {},
+            {"display_name": f"合成现金账户{index}"},
             source="synthetic account",
             account_type="cash",
+            evidence_digest=proof,
             request_id=f"account-{index}",
         )["entity_id"]
         for index in range(2)
@@ -181,9 +191,10 @@ def test_identity_correction_cannot_erase_actual_reserve_money(book, kind):
     for index in range(2):
         account = entities.register_entity(
             "fund_account",
-            {},
+            {"display_name": f"合成现金账户{index}"},
             source="synthetic account",
             account_type="cash",
+            evidence_digest=proof,
             request_id=f"account-{index}",
         )["entity_id"]
         engine.save_fact(

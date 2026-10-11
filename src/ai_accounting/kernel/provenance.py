@@ -58,8 +58,18 @@ def _references(action, result):
     if not isinstance(result, dict):
         return ()
     if action in {"register_entity", "update_entity_profile"}:
+        fields = {"status", "entity_id", "profile_id", "revision"}
+        fund = result.get("fund_account")
         if (
-            set(result) == {"status", "entity_id", "profile_id", "revision"}
+            (
+                set(result) == fields
+                or (
+                    action == "register_entity"
+                    and set(result) == fields | {"fund_account"}
+                    and isinstance(fund, dict)
+                    and fund.get("entity_id") == result["entity_id"]
+                )
+            )
             and result["status"] == "registered"
             and _positive_revision(result["revision"])
             and _nonempty_string(result["profile_id"])

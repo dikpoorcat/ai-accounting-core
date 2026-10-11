@@ -18,7 +18,6 @@ from functools import cached_property
 from typing import Literal, get_args
 
 from .account_definitions import (
-    ACCOUNT_NAMES,
     KNOWN_POSITION_ACCOUNTS,
     PROFIT_ACCOUNTS,
     RECLASS,
@@ -590,7 +589,9 @@ class _Snapshot:
                     else "current"
                 )
                 result["field_sources"][field] = self.source(
-                    "display_profile", selected, basis, field=field
+                    "display_profile", selected, basis,
+                    field=selected.get("display_number_source_field", field)
+                    if field == "display_number" else field,
                 )
         start, end = result.get("employment_start"), result.get("employment_end")
         result["field_conflicts"] = []
@@ -1387,6 +1388,10 @@ class _Snapshot:
         )
         amount, label = self.business_amount(calc)
         recognition = _recognition(calc["fact"]["data"], str(YearMonth.from_ordinal(row["period"])))
+        from .fund_line_details import display_fund_lines
+
+        display_lines = {line["line_no"]: line for line in
+                         display_fund_lines(self.connection, row["id"], row["lines"])}
 
         def owner_asset(reference):
             return {key: value for key, value in reference.items() if key != "field_sources"}
@@ -1409,8 +1414,8 @@ class _Snapshot:
             "asset_members": [owner_asset(member) for member in members],
             "lines": [
                 {
-                    "line_number": line["line_no"], "code": line["account"],
-                    "account": ACCOUNT_NAMES.get(line["account"], "未配置名称的科目"),
+                    "line_number": line["line_no"], "code": display_lines[line["line_no"]]["code"],
+                    "account": display_lines[line["line_no"]]["account_name"],
                     "debit_fen": line["debit"], "credit_fen": line["credit"],
                     "party": self.line_party(line, relations),
                     "source_label": self.asset_reference_label(asset_lines[line["line_no"]])
@@ -1433,6 +1438,10 @@ class _Snapshot:
         return voucher
 
     def voucher(self, row):
+        from .fund_line_details import display_fund_lines
+
+        display_lines = {line["line_no"]: line for line in
+                         display_fund_lines(self.connection, row["id"], row["lines"])}
         calc = row["basis"]
         fact = calc["fact"]
         kind, data = calc["kind"], fact["data"]
@@ -1571,8 +1580,8 @@ class _Snapshot:
             "lines": [
                 {
                     "line_number": line["line_no"],
-                    "code": line["account"],
-                    "account": ACCOUNT_NAMES.get(line["account"], "未配置名称的科目"),
+                    "code": display_lines[line["line_no"]]["code"],
+                    "account": display_lines[line["line_no"]]["account_name"],
                     "debit_fen": line["debit"],
                     "credit_fen": line["credit"],
                     "party": self.line_party(line, relations),

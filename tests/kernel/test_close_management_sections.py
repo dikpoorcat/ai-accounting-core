@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import pytest
+from close_storage_fixture import use_v4_close_manifest
 from schema_fixture import TEST_FAMILY, full_contract, write_contract
 from test_engine import close as close_custom
 from test_engine import engine as custom_engine_fixture
@@ -36,6 +37,8 @@ def test_released_v1_portable_backup_replays_nonempty_history_position(
     request, tmp_path, monkeypatch
 ):
     import test_reports
+
+    use_v4_close_manifest(monkeypatch)
 
     registry = service.default_registry()
     contract_dir = tmp_path / "schema_contracts"
@@ -224,13 +227,25 @@ def test_released_v1_portable_backup_replays_nonempty_history_position(
         content_v1.v1_registry.cache_clear()
 
 
-def test_readiness_section_is_bounded_and_full_logical_close_is_unchanged(book, monkeypatch):
+@pytest.mark.parametrize("close_version", [4, 5])
+def test_readiness_section_is_bounded_and_full_logical_close_is_unchanged(
+    book, monkeypatch, close_version
+):
+    if close_version == 4:
+        use_v4_close_manifest(monkeypatch)
     engine, period = _close_report_book(book)
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT * FROM period_close WHERE period=?", (period,)).fetchone()
         current = close_storage.decode_close(connection, row)
-        historical = close_storage_v1.decode_close(connection, row)
-        assert current == historical
+        assert current["format_version"] == close_version
+        if close_version == 4:
+            historical = close_storage_v1.decode_close(connection, row)
+            assert current == historical
+            assert "fund_details" not in current
+        else:
+            assert "fund_details" in current
+            with pytest.raises(KernelError):
+                close_storage_v1.decode_close(connection, row)
         assert hashlib.sha256(canonical(current).encode("utf-8")).digest() == row["digest"]
         assert current["readiness"]["financial_reports"]["facts"]
 
@@ -266,12 +281,18 @@ def test_readiness_section_is_bounded_and_full_logical_close_is_unchanged(book, 
         )
 
 
-def test_full_close_decode_reads_each_authenticated_family_and_adoption_once(book, monkeypatch):
+@pytest.mark.parametrize("close_version", [4, 5])
+def test_full_close_decode_reads_each_authenticated_family_and_adoption_once(
+    book, monkeypatch, close_version
+):
+    if close_version == 4:
+        use_v4_close_manifest(monkeypatch)
     engine, period = _close_report_book(book)
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute("SELECT * FROM period_close WHERE period=?", (period,)).fetchone()
         results = []
-        for reader in (close_storage, close_storage_v1):
+        readers = (close_storage, close_storage_v1) if close_version == 4 else (close_storage,)
+        for reader in readers:
             families = []
             adopted = []
             original_family = reader._family
@@ -298,7 +319,8 @@ def test_full_close_decode_reads_each_authenticated_family_and_adoption_once(boo
             assert adopted == ["adopted_results"]
             assert hashlib.sha256(canonical(manifest).encode("utf-8")).digest() == row["digest"]
             results.append(manifest)
-        assert results[0] == results[1]
+        if close_version == 4:
+            assert results[0] == results[1]
 
 
 def test_unread_management_damage_is_rejected_by_full_decode(book):

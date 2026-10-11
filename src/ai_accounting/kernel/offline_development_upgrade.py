@@ -31,6 +31,8 @@ INDEX_SOURCE_FINGERPRINT = "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0b
 INDEX_TARGET_FINGERPRINT = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
 READ_MODEL_SOURCE_FINGERPRINT = INDEX_TARGET_FINGERPRINT
 READ_MODEL_TARGET_FINGERPRINT = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
+FUND_DETAIL_SOURCE_FINGERPRINT = READ_MODEL_TARGET_FINGERPRINT
+FUND_DETAIL_TARGET_FINGERPRINT = "cdbdfa36c6513d7c2168edbeb2780692efe883ce7e5b59b63e87702288d79efa"
 _DIRECT_ADOPTION_SQL = (
     "CREATE INDEX close_reference_direct_adoption ON close_reference(\n"
     " reference_type,reference_id,path,close_period,position)\n"
@@ -59,6 +61,7 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
         SOURCE_FINGERPRINT,
         INDEX_SOURCE_FINGERPRINT,
         READ_MODEL_SOURCE_FINGERPRINT,
+        FUND_DETAIL_SOURCE_FINGERPRINT,
     ):
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
     registry = copy.copy(bundle.registry)
@@ -83,18 +86,21 @@ def _declared_changes(bundle):
     source = get_contract_sha(bundle, "company", SOURCE_FINGERPRINT)
     intermediate = get_contract_sha(bundle, "company", INDEX_SOURCE_FINGERPRINT)
     read_model_source = get_contract_sha(bundle, "company", READ_MODEL_SOURCE_FINGERPRINT)
+    fund_source = get_contract_sha(bundle, "company", FUND_DETAIL_SOURCE_FINGERPRINT)
     target = bundle.current("company")
     transitions = (
         (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT),
         (INDEX_SOURCE_FINGERPRINT, INDEX_TARGET_FINGERPRINT),
         (READ_MODEL_SOURCE_FINGERPRINT, READ_MODEL_TARGET_FINGERPRINT),
+        (FUND_DETAIL_SOURCE_FINGERPRINT, FUND_DETAIL_TARGET_FINGERPRINT),
     )
     if (
         bundle.status != "draft"
         or source is None
         or intermediate is None
         or read_model_source is None
-        or target["sha256"] != READ_MODEL_TARGET_FINGERPRINT
+        or fund_source is None
+        or target["sha256"] != FUND_DETAIL_TARGET_FINGERPRINT
         or set(transitions) != bundle.draft_transitions.get("company", frozenset())
     ):
         raise KernelError("migration_not_declared", "开发结构变化缺少明确来源和目标声明")
@@ -139,17 +145,28 @@ def _declared_changes(bundle):
     from .dashboard_read_model import DASHBOARD_READ_MODEL_DDL
     from .versions import contract
 
-    model_differences = diff_contracts(read_model_source, target)
+    model_differences = diff_contracts(read_model_source, fund_source)
     expected_models = [
         {"type": item["type"], "name": item["name"], "old_sql": None, "new_sql": item["sql"]}
         for item in contract(DASHBOARD_READ_MODEL_DDL)
     ]
     if model_differences != expected_models:
         raise KernelError("migration_not_declared", "看板读取结构迁移与逐对象精确声明不一致")
+    from .fund_accounts import FUND_ACCOUNTS_DDL
+    from .fund_line_details import FUND_LINE_DETAILS_DDL
+
+    fund_differences = diff_contracts(fund_source, target)
+    expected_funds = [
+        {"type": item["type"], "name": item["name"], "old_sql": None, "new_sql": item["sql"]}
+        for item in contract(FUND_ACCOUNTS_DDL + FUND_LINE_DETAILS_DDL)
+    ]
+    if fund_differences != expected_funds:
+        raise KernelError("migration_not_declared", "资金明细迁移与逐对象精确声明不一致")
     return (
         (source, intermediate, differences),
         (intermediate, read_model_source, index_differences),
-        (read_model_source, target, model_differences),
+        (read_model_source, fund_source, model_differences),
+        (fund_source, target, fund_differences),
     )
 
 
@@ -239,6 +256,57 @@ def _apply_read_model_step(connection, differences, *, fault=None):
                     fault("after_read_model_object:" + kind + ":" + item["name"])
 
 
+def _initialize_fund_details(connection, bundle, accounts, first_period):
+    from .contracts import NeedsInformation
+    from .engine import Engine
+    from .fund_accounts import identity_issue, install_fund_account_definition
+    from .fund_line_details import initialize_open_details
+    from .storage import Store
+    from .types import YearMonth
+
+    entities = {
+        row["id"]: row["account_type"]
+        for row in connection.execute(
+            "SELECT id,account_type FROM entity WHERE kind='fund_account'"
+        )
+    }
+    provided = {}
+    for item in accounts or ():
+        if not isinstance(item, dict) or item.get("entity_id") in provided:
+            raise KernelError("invalid_command", "资金账户初始化资料重复或无效")
+        provided[item.get("entity_id")] = item
+    if set(provided) != set(entities):
+        raise NeedsInformation(
+            [identity_issue("fund_accounts", "现有受管资金账户必须逐一提供有来源的完整身份资料")]
+        )
+    for entity_id, account_type in sorted(entities.items()):
+        item = provided[entity_id]
+        data = item.get("data", {})
+        install_fund_account_definition(
+            connection,
+            entity_id,
+            account_type,
+            data,
+            source=item.get("source"),
+            evidence_digest=item.get("evidence_digest"),
+        )
+    if first_period is None:
+        previous = connection.execute("SELECT max(period) FROM period_close").fetchone()[0]
+        first = (
+            previous + 1
+            if previous is not None
+            else connection.execute("SELECT min(period) FROM fact_revision").fetchone()[0]
+        )
+        if first is None:
+            return
+        first_period = str(YearMonth.from_ordinal(first))
+    first_period = YearMonth(first_period)
+    identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
+    path = connection.execute("PRAGMA database_list").fetchone()[2]
+    engine = Engine(Store(path, bundle, identity["company_id"], identity["database_id"]))
+    initialize_open_details(engine, connection, first_period)
+
+
 def upgrade_company(
     connection,
     bundle,
@@ -248,6 +316,8 @@ def upgrade_company(
     expected_company_id=None,
     expected_database_id=None,
     expected_taxpayer_id=None,
+    fund_accounts=None,
+    first_fund_period=None,
 ):
     """Atomic explicit source-to-target DDL; no accounting facts are changed."""
     if connection.in_transaction:
@@ -306,6 +376,8 @@ def upgrade_company(
                 connection.execute(differences[0]["new_sql"])
             else:
                 _apply_read_model_step(connection, differences, fault=fault)
+                if step_source["sha256"] == FUND_DETAIL_SOURCE_FINGERPRINT:
+                    _initialize_fund_details(connection, bundle, fund_accounts, first_fund_period)
             if fault:
                 fault(
                     "after_ddl"
@@ -384,14 +456,19 @@ def _company_bundle(connection, bundle):
     if actual == bundle.current("company")["sha256"]:
         verify_schema(connection, bundle=bundle)
         return bundle
-    if actual in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT, READ_MODEL_SOURCE_FINGERPRINT):
+    if actual in (
+        SOURCE_FINGERPRINT,
+        INDEX_SOURCE_FINGERPRINT,
+        READ_MODEL_SOURCE_FINGERPRINT,
+        FUND_DETAIL_SOURCE_FINGERPRINT,
+    ):
         previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)
         return previous
     raise KernelError("schema_fingerprint_mismatch", "当前库不属于本次开发升级的精确来源或目标")
 
 
-def upgrade_root(root, *, bundle=None, fault=None):
+def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
     """Stop is explicit; verified backups precede any registered company upgrade."""
     bundle = bundle or production_bundle()
     _declared_changes(bundle)
@@ -450,6 +527,12 @@ def upgrade_root(root, *, bundle=None, fault=None):
                         expected_company_id=row["id"],
                         expected_database_id=row["database_id"],
                         expected_taxpayer_id=row["taxpayer_id"],
+                        fund_accounts=(fund_account_inputs or {})
+                        .get(row["id"], {})
+                        .get("accounts"),
+                        first_fund_period=(fund_account_inputs or {})
+                        .get(row["id"], {})
+                        .get("first_period"),
                     )
             except Exception as exc:
                 from .diagnostics import error_response

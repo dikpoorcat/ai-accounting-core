@@ -129,7 +129,12 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
             request_id="correct-" + subject,
         )
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic correction", request_id="account"
+        "fund_account",
+        {"display_name": "合成更正现金账户"},
+        account_type="cash",
+        source="synthetic correction",
+        evidence_digest=proof,
+        request_id="account",
     )["entity_id"]
     correction = IdentityCorrections(engine)
     kwargs = dict(

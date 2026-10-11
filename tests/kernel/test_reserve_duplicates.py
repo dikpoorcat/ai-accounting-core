@@ -26,12 +26,27 @@ company = duplicate_company
 def money_company(company):
     engine, party = company
     entities = Entities(engine)
+    identity_proof = evidence(engine, "synthetic fund account identities")
+    identities = {
+        "bank": {
+            "bank_name": "合成银行",
+            "bank_account_number": "1234567890123456",
+            "account_holder_name": "合成公司",
+        },
+        "cash": {"display_name": "合成现金账户"},
+        "platform": {
+            "provider_name": "合成平台",
+            "account_identifier": "synthetic-platform",
+            "account_holder_name": "合成公司",
+        },
+    }
     accounts = {
         category: entities.register_entity(
             "fund_account",
-            {},
+            identities[category],
             account_type=category,
             source=f"合成{category}账户",
+            evidence_digest=identity_proof,
             request_id=f"reserve-duplicate-{category}",
         )["entity_id"]
         for category in ("bank", "cash", "platform")
@@ -344,41 +359,49 @@ def test_close_readiness_money_preselection_matches_exhaustive_pairs(money_compa
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
         write_fact(
-            engine.store, connection, "platform-payment",
+            engine.store,
+            connection,
+            "platform-payment",
             payment(engine, account=accounts["platform"], channel="platform", party=party),
             (proofs[0],),
         )
         write_fact(
-            engine.store, connection, "platform-reserve",
-            reserve(engine, account=accounts["platform"], channel="platform",
-                    movement_ids=("platform-row",)),
+            engine.store,
+            connection,
+            "platform-reserve",
+            reserve(
+                engine,
+                account=accounts["platform"],
+                channel="platform",
+                movement_ids=("platform-row",),
+            ),
             (proofs[1],),
         )
         write_fact(
-            engine.store, connection, "unbound-reserve",
+            engine.store,
+            connection,
+            "unbound-reserve",
             reserve(engine, account=accounts["bank"], channel="bank"),
             (proofs[2],),
         )
         for index in range(2):
             write_fact(
-                engine.store, connection, f"bank-payment-{index}",
+                engine.store,
+                connection,
+                f"bank-payment-{index}",
                 payment(engine, account=accounts["bank"], party=party, amount=1234),
                 (proofs[index + 3],),
             )
         fill_missing_test_checks(engine.store, connection)
         optimized = duplicates.close_readiness(connection, "2026-01")
         monkeypatch.setattr(
-            duplicate_module, "_strong_pair_fact_ids",
-            lambda _connection, rows, _locations, _registry, _period: {
-                row["id"] for row in rows
-            },
+            duplicate_module,
+            "_strong_pair_fact_ids",
+            lambda _connection, rows, _locations, _registry, _period: {row["id"] for row in rows},
         )
         exhaustive = duplicates.close_readiness(connection, "2026-01")
     assert optimized == exhaustive
-    pairs = {
-        frozenset((item["subject_id"], item["candidate_subject_id"]))
-        for item in optimized
-    }
+    pairs = {frozenset((item["subject_id"], item["candidate_subject_id"])) for item in optimized}
     assert frozenset(("platform-payment", "platform-reserve")) in pairs
     assert frozenset(("bank-payment-0", "bank-payment-1")) in pairs
     assert all("unbound-reserve" not in pair for pair in pairs)

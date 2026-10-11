@@ -15,6 +15,18 @@ from .content_history_context import source_canonical as canonical
 from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
+from .fund_accounts import (
+    IDENTITY_FIELDS,
+    account_identity,
+    correct_fund_identity,
+    existing_fund_account,
+    has_fund_definitions,
+    identity_issue,
+    install_fund_account_definition,
+    require_fund_account,
+    require_fund_source,
+    verify_fund_accounts,
+)
 from .text_sort import pinyin_key
 from .types import ActualDate, EvidenceDigest, YearMonth, evidence_digest_bytes
 
@@ -106,6 +118,8 @@ def require_entity(connection, entity_id, *, kinds=(), account_type=None):
         raise KernelError("entity_kind_mismatch", "对象类型与业务引用不一致", entity_id=entity_id)
     if account_type and row["account_type"] != account_type:
         raise KernelError("entity_kind_mismatch", "资金账户类型与业务不一致", entity_id=entity_id)
+    if row["kind"] == "fund_account" and has_fund_definitions(connection):
+        require_fund_account(connection, entity_id, row["account_type"])
     return dict(row)
 
 
@@ -158,6 +172,11 @@ def display_profile(profile, kind):
             "digest",
         )
     }
+    if kind == "fund_account" and not result["display_number"]:
+        bank_number = profile.get("external_identifiers", {}).get("bank_account_number")
+        if bank_number:
+            result["display_number"] = bank_number
+            result["display_number_source_field"] = "external_identifiers.bank_account_number"
     return dict(result, kind=kind, counterparty_id=None, beneficiary_id=None, handler_id=None)
 
 
@@ -295,6 +314,7 @@ def apply_resolution(connection, correction_id, changes, entity_resolution):
 
 
 def verify_entities(connection):
+    verify_fund_accounts(connection)
     for row in connection.execute("SELECT * FROM entity_profile_revision"):
         _profile_record(row)
     for row in connection.execute("SELECT * FROM entity_resolution"):
@@ -373,16 +393,60 @@ class Entities:
             )
         if account_type is not None and account_type not in ("bank", "cash", "platform"):
             raise ValueError("invalid account type")
+        identity = None
+        if kind == "fund_account":
+            selected, identity = account_identity(account_type, data)
+            require_fund_source(source, evidence_digest)
+            data = selected.model_dump(mode="json")
+            for key in IDENTITY_FIELDS[account_type]:
+                if key != "display_name":
+                    data.pop(key)
         profile, evidence = self._profile(data, source, evidence_digest)
 
         def operation(connection):
+            if identity is not None:
+                if not connection.execute(
+                    "SELECT 1 FROM evidence WHERE digest=?", (evidence,)
+                ).fetchone():
+                    raise NeedsInformation(
+                        [identity_issue("evidence_digest", "资金账户身份来源尚未登记")]
+                    )
+                existing = existing_fund_account(connection, account_type, identity)
+                if existing is not None:
+                    current = connection.execute(
+                        "SELECT id,revision FROM entity_profile_revision WHERE entity_id=? "
+                        "ORDER BY revision DESC LIMIT 1",
+                        (existing["entity_id"],),
+                    ).fetchone()
+                    return {
+                        "status": "existing",
+                        "entity_id": existing["entity_id"],
+                        "profile_id": current["id"],
+                        "revision": current["revision"],
+                        "fund_account": existing,
+                    }
             identifier = "entity_" + uuid.uuid4().hex
             connection.execute("INSERT INTO entity VALUES(?,?,?)", (identifier, kind, account_type))
-            return self._insert_profile(connection, identifier, 1, profile, source, evidence)
+            saved = self._insert_profile(connection, identifier, 1, profile, source, evidence)
+            if identity is not None:
+                saved["fund_account"] = install_fund_account_definition(
+                    connection,
+                    identifier,
+                    account_type,
+                    dict(profile, **identity),
+                    source=source,
+                    evidence_digest=evidence_digest,
+                )
+                self.engine.fault("fund_account_registered", connection)
+            return saved
 
         return self.engine._write(
             request_id,
-            digest(["register_entity", kind, account_type, profile, source, evidence_digest]),
+            digest(
+                ["register_entity", kind, account_type, profile, source, evidence_digest, identity]
+            )
+            if identity is not None
+            else digest(["register_entity", kind, account_type, profile, source, evidence_digest]),
             None,
             ("management",),
             "register_entity",
@@ -430,6 +494,61 @@ class Entities:
             operation,
         )
 
+    def correct_fund_account_identity(
+        self,
+        entity_id: str,
+        *,
+        account_type: Literal["bank", "cash", "platform"],
+        data: dict,
+        expected_identity_digest: EvidenceDigest,
+        recording_error_confirmed: Literal[True],
+        source: str,
+        evidence_digest: EvidenceDigest,
+        request_id: str,
+    ):
+        if recording_error_confirmed is not True:
+            raise ValueError("recording_error_confirmed must be true")
+        require_fund_source(source, evidence_digest)
+        _, identity = account_identity(account_type, data)
+
+        def operation(connection):
+            result = correct_fund_identity(
+                connection,
+                entity_id,
+                account_type,
+                identity,
+                expected_identity_digest=expected_identity_digest,
+                source=source,
+                evidence_digest=evidence_digest,
+            )
+            self.engine.fault("fund_account_identity_corrected", connection)
+            return {
+                "status": "corrected",
+                "entity_id": entity_id,
+                "previous_identity_digest": expected_identity_digest,
+                "fund_account": result,
+            }
+
+        return self.engine._write(
+            request_id,
+            digest(
+                [
+                    "correct_fund_account_identity",
+                    entity_id,
+                    account_type,
+                    identity,
+                    expected_identity_digest,
+                    recording_error_confirmed,
+                    source,
+                    evidence_digest,
+                ]
+            ),
+            None,
+            ("management",),
+            "correct_fund_account_identity",
+            operation,
+        )
+
     def find_entities(
         self,
         *,
@@ -463,12 +582,19 @@ class Entities:
                     profile["display_number"],
                     *profile["external_identifiers"].values(),
                 ]
+                account = (
+                    require_fund_account(connection, entity_id)
+                    if profile["entity_kind"] == "fund_account"
+                    else None
+                )
+                if account is not None:
+                    values.extend((*account["identity"].values(), account["detail_code"]))
                 exact = needle is not None and any(
                     needle == value.casefold() for value in values if value
                 )
                 if needle and not any(needle in value.casefold() for value in values if value):
                     continue
-                candidates[entity_id] = profile, exact
+                candidates[entity_id] = profile, exact, account
 
             # Only the latest current references can decide recent_period and
             # its range filter. Prove every tied source before using that
@@ -503,7 +629,7 @@ class Entities:
                     usage = {row["entity_id"]: row["last_period"] for row in latest_rows}
             relationships = list(connection.execute("SELECT * FROM entity_resolution"))
             items = []
-            for entity_id, (profile, exact) in candidates.items():
+            for entity_id, (profile, exact, account) in candidates.items():
                 recent = usage.get(entity_id)
                 if (lower is not None and (recent is None or recent < lower)) or (
                     upper is not None and (recent is None or recent > upper)
@@ -529,11 +655,14 @@ class Entities:
                         if recent is not None
                         else None,
                         "corrections": linked,
+                        **({"fund_account": account} if account is not None else {}),
                     }
                 )
-            items.sort(key=lambda row: (
-                row["match"] != "exact",
-                pinyin_key(row["profile"]["display_name"] or ""),
-                row["entity_id"],
-            ))
+            items.sort(
+                key=lambda row: (
+                    row["match"] != "exact",
+                    pinyin_key(row["profile"]["display_name"] or ""),
+                    row["entity_id"],
+                )
+            )
             return {"schema_version": 1, "items": items[:limit], "has_more": len(items) > limit}

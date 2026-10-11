@@ -31,7 +31,8 @@ def synthetic_draft_bundle(directory, *, development=False):
             "company": (
                 (fingerprints[0], fingerprints[1]),
                 (fingerprints[1], fingerprints[2]),
-                (fingerprints[2], company["sha256"]),
+                (fingerprints[2], fingerprints[3]),
+                (fingerprints[3], company["sha256"]),
             )
         }
     return schema_bundle.load_bundle(

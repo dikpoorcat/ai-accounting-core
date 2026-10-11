@@ -51,6 +51,12 @@ def test_fund_identity_reassignment_is_an_explicit_non_cash_adjustment(
         account_type="cash",
         source="synthetic",
         request_id="old-cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("old-cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     current_account = entities.register_entity(
         "fund_account",
@@ -58,6 +64,12 @@ def test_fund_identity_reassignment_is_an_explicit_non_cash_adjustment(
         account_type="cash",
         source="synthetic",
         request_id="current-cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("current-cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     opening = {"cash_account_id": old_account, "balance_fen": 10000}
     opening_package(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 10,
+    "version": 11,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -214,6 +214,18 @@ OPERATING_PROTOCOL = {
                     "find_facts使用entity_id和可选role、identity_match=current|recorded及不透明"
                     "cursor；返回原事实与匹配归属，不从聊天记忆判断状态；"
                     "游标失效后重新查第一页。"
+                ),
+                "fund_accounts": (
+                    "每个进入内核管理的公司资金账户必须绑定独立、稳定的明细科目。"
+                    "用register_entity的资金账户专用合同登记；银行须完整文本账号、开户名、银行名称"
+                    "及已登记来源证据，平台须平台名称、实际账户标识、归属及来源，现金须明确受管"
+                    "账户名称及来源。先查找复用实际账户，同名不合并，不用掩码、展示编号或付款"
+                    "指令代替账户身份。内核在同一事务内校验、登记档案、自动建立明细科目和审计；"
+                    "回读fund_account确认实际绑定，不能自由指定科目或跳过缺项。改名、停用不改变"
+                    "科目身份；开户资料录错用correct_fund_account_identity，提交完整类型化资料、"
+                    "当前身份digest、明确录错确认及已保全来源，追加修订而不改变实体或科目。"
+                    "业务账户引用错误走有来源的类型化身份纠错。资金分录必须有对应正式明细归属，"
+                    "父级科目只用于汇总；历史关账按原冻结合同读取，不补造历史明细。"
                 ),
                 "duplicate_review": (
                     "save_fact/amend_fact/save_facts自动查重；明显疑点先查既有原件，"
@@ -453,6 +465,7 @@ TOPIC_SELECTORS = {
         "commands": [
             "find_entities",
             "register_entity",
+            "correct_fund_account_identity",
             "update_entity_profile",
             "find_facts",
             "prepare_fact_registration",

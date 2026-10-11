@@ -69,6 +69,26 @@ class VerifiedSourceReads(QueryReads):
             }
         return {ident: self._facts[ident] for ident in requested}
 
+    def raw_facts(self, identifiers):
+        """Present exact checked stored data without applying the current fact model."""
+        self._require_source()
+        requested = set(identifiers)
+        if not requested <= self._source["facts"].keys():
+            raise KernelError("content_integrity_failed", "已核验来源缺少精确事实")
+        return {
+            ident: {
+                "id": ident,
+                "subject_id": row["subject_id"],
+                "revision": row["revision"],
+                "kind": row["kind"],
+                "period": str(YearMonth.from_ordinal(row["period"])),
+                "data": row["data"],
+                "evidence": list(row["evidence"]),
+            }
+            for ident in requested
+            for row in (self._source["facts"][ident],)
+        }
+
     def fact_versions(self, identifiers):
         self._require_source()
         requested = set(identifiers)

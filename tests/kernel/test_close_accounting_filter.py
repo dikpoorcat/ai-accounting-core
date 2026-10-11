@@ -7,6 +7,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 import pytest
+from close_storage_fixture import use_v4_close_manifest
 from test_business_queries import state_review_engine as state_review_engine_fixture
 from test_engine import close, evidence, publish, save
 from test_engine import engine as engine_fixture
@@ -84,6 +85,7 @@ def _reseal_accounting_subroot(engine, period, change):
 
 
 def test_accounting_filter_exact_absence_false_positive_and_v1_reader(engine, monkeypatch):
+    use_v4_close_manifest(monkeypatch)
     period = _closed_charge(engine)
     with engine.store.connection(read_only=True) as connection:
         subroot = json.loads(connection.execute(

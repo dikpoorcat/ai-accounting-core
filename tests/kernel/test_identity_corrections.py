@@ -342,10 +342,30 @@ def test_unfrozen_opening_reassigns_fact_and_recomputes_package(identity_engine,
     engine, evidence, first, second = identity_engine
     data = dict(equity_kind="paid_in_capital", balance_fen=100, holder_or_basis_id=first)
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="opening-cash"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="synthetic",
+        request_id="opening-cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("opening-cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     target_account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="correct-cash"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="synthetic",
+        request_id="correct-cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("correct-cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     opening_package(
         engine,
@@ -405,10 +425,16 @@ def test_frozen_fund_opening_reassigns_without_rewriting_economic_basis(identity
     accounts = [
         entities.register_entity(
             "fund_account",
-            {},
+            {"display_name": "合成现金账户"},
             account_type="cash",
             source="synthetic",
             request_id="account-" + str(i),
+            evidence_digest=engine.register_evidence(
+                b"explicit synthetic account identity",
+                "text/plain",
+                "fund-account-confirmation",
+                request_id=("account-" + str(i)) + "-identity-proof",
+            )["digest"],
         )["entity_id"]
         for i in range(3)
     ]
@@ -668,15 +694,13 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     assert jan["values"]["actual_withholding"]["withheld_tax_fen"] == 12345
     from ai_accounting.kernel.dashboard import Dashboard
 
-    employees = Dashboard(engine).employees("2026-02", preparation="deferred", employee_filter="all")["data"]
-    assert second in {
-        row["employee_id"] for row in employees["collections"]["employees"]["items"]
-    }
+    employees = Dashboard(engine).employees(
+        "2026-02", preparation="deferred", employee_filter="all"
+    )["data"]
+    assert second in {row["employee_id"] for row in employees["collections"]["employees"]["items"]}
     from ai_accounting.kernel.business_queries import BusinessQueries
 
-    retained = BusinessQueries(engine).business_status(
-        "jan-b", "2026-03" if closed else "2026-02"
-    )
+    retained = BusinessQueries(engine).business_status("jan-b", "2026-03" if closed else "2026-02")
     assert retained["identity"]["subject_id"] == "jan-b"
     assert retained["latest_fact"]["data"]["employee_id"] == second
     if closed:
@@ -1269,7 +1293,17 @@ def test_frozen_obligation_binding_payment_uses_exact_binding_and_retains_cash(i
 
     engine, evidence, first, second = identity_engine
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="cash"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="synthetic",
+        request_id="cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     fields = dict(
         counterparty_id=first,
@@ -1426,7 +1460,17 @@ def test_identity_reduction_preserves_actual_payment_and_requires_exact_recovery
     engine, evidence, first, second = identity_engine
     original = expense(engine, evidence, first)
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="cash"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="synthetic",
+        request_id="cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     payment = dict(
         period="2026-01",
@@ -1547,7 +1591,17 @@ def test_frozen_opening_supersession_requires_balanced_named_details_and_is_reve
     entities = Entities(engine)
     accounts = [
         entities.register_entity(
-            "fund_account", {}, account_type="cash", source="synthetic", request_id=f"cash-{i}"
+            "fund_account",
+            {"display_name": "合成现金账户"},
+            account_type="cash",
+            source="synthetic",
+            request_id=f"cash-{i}",
+            evidence_digest=engine.register_evidence(
+                b"explicit synthetic account identity",
+                "text/plain",
+                "fund-account-confirmation",
+                request_id=(f"cash-{i}") + "-identity-proof",
+            )["digest"],
         )["entity_id"]
         for i in range(3)
     ]
@@ -1945,7 +1999,17 @@ def test_opening_asset_economic_supersession_rebuilds_month_owner_without_member
 def test_opening_loan_binding_is_used_by_subsequent_interest(identity_engine):
     engine, evidence, first, second = identity_engine
     account = Entities(engine).register_entity(
-        "fund_account", {}, account_type="cash", source="synthetic", request_id="cash"
+        "fund_account",
+        {"display_name": "合成现金账户"},
+        account_type="cash",
+        source="synthetic",
+        request_id="cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     agreement = dict(
         period="2026-01",

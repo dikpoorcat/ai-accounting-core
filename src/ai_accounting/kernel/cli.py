@@ -24,8 +24,13 @@ def main():
     commands.add_parser("stop", help="安全停止此资料目录的本地服务")
     commands.add_parser("service-info", help="只读核验本资料目录的服务连接信息")
     commands.add_parser("upgrade", help="离线升级已登记的正式版本数据库")
-    commands.add_parser(
+    development = commands.add_parser(
         "upgrade-development", help="备份并显式升级已声明来源的开发库，保留身份和历史"
+    )
+    development.add_argument(
+        "--fund-account-input",
+        type=Path,
+        help="有来源的受管资金账户身份初始化JSON；不接收分录或科目编码",
     )
     daemon = commands.add_parser("daemon", help="运行每个资料根目录唯一的本地服务")
     daemon.add_argument("--port", type=int, default=0)
@@ -77,7 +82,15 @@ def main():
             from .offline_upgrade import upgrade_root
 
         try:
-            print(json.dumps(upgrade_root(args.root), ensure_ascii=False, indent=2))
+            options = {}
+            if args.mode == "upgrade-development" and args.fund_account_input is not None:
+                value = json.loads(args.fund_account_input.read_text(encoding="utf-8"))
+                if not isinstance(value, dict):
+                    raise ValueError(
+                        "fund account input must map company ids to typed account identities"
+                    )
+                options["fund_account_inputs"] = value
+            print(json.dumps(upgrade_root(args.root, **options), ensure_ascii=False, indent=2))
         except Exception as exc:
             print(json.dumps(error_response(exc), ensure_ascii=False))
             raise SystemExit(1) from None

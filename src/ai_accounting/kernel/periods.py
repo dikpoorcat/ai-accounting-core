@@ -408,6 +408,21 @@ class Periods:
             },
         }
 
+        from .close_fund_details import build_fund_close_snapshot
+        from .close_storage import read_section, verified_header
+
+        previous_funds = None
+        if previous_close is not None:
+            previous_row = connection.execute(
+                "SELECT * FROM period_close WHERE period=?", (previous_close["period"],)
+            ).fetchone()
+            header = verified_header(connection, previous_row)
+            if header.root["small"]["format_version"] >= 5:
+                previous_funds = {"fund_details": read_section(connection, header, "fund_details")}
+        manifest["fund_details"] = build_fund_close_snapshot(
+            connection, manifest, previous_manifest=previous_funds
+        )
+
         from .close_review import build_owner_review
 
         # The owner summary is constructed immediately in this same transaction.

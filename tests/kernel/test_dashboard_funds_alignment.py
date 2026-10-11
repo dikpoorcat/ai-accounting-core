@@ -506,10 +506,16 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
     }
 
 
-@pytest.mark.parametrize("display_number", [None, "622200001234"])
+@pytest.mark.parametrize(("display_number", "external_identifiers", "expected_code"), [
+    (None, {}, ""),
+    ("622200001234", {}, "622200001234"),
+    (None, {"bank_account_number": "622200009876"}, "622200009876"),
+    ("622200001234", {"bank_account_number": "622200009876"}, "622200001234"),
+    (None, {"basic_account_number": "J123456789"}, ""),
+])
 @pytest.mark.parametrize("native", [False, True])
 def test_account_display_does_not_invent_monthly_numbers(
-    bank_book, monkeypatch, display_number, native,
+    bank_book, monkeypatch, display_number, external_identifiers, expected_code, native,
 ):
     from ai_accounting.kernel import dashboard_model_reads
 
@@ -528,7 +534,8 @@ def test_account_display_does_not_invent_monthly_numbers(
     })
     publish("new-september-account")
     Entities(engine).update_entity_profile(
-        "bank-z", {"display_name": "兴业银行", "display_number": display_number},
+        "bank-z", {"display_name": "兴业银行", "display_number": display_number,
+                   "external_identifiers": external_identifiers},
         source="synthetic registered account", expected_revision=1, request_id="existing-profile",
     )
     Entities(engine).update_entity_profile(
@@ -542,7 +549,7 @@ def test_account_display_does_not_invent_monthly_numbers(
         data = dashboard.funds(period)["data"]
         account = next(item for item in data["collections"]["accounts"]["items"]
                        if item["account_id"] == "bank-z")
-        assert (account["name"], account["code"]) == ("兴业银行", display_number or "")
+        assert (account["name"], account["code"]) == ("兴业银行", expected_code)
         assert (account["statement"]["account_name"], account["statement"]["account_code"]) == (
             account["name"], account["code"],
         )

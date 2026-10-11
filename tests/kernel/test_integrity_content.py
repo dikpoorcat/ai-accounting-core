@@ -323,10 +323,10 @@ def opening_engine(tmp_path):
         lambda version, _: Outcome(
             (),
             {},
-            balances=(BalanceEffect("bank", version.fact.amount, "cash"),),
+            balances=(BalanceEffect("opening-stock", version.fact.amount, "inventory"),),
             opening=True,
             opening_lines=(
-                Line("1002", debit=version.fact.amount),
+                Line("1405", debit=version.fact.amount),
                 Line("4001", credit=version.fact.amount),
             ),
         ),
@@ -358,7 +358,7 @@ def frozen_opening(engine, *, selected=True, amount=100):
         manifest["opening_calculation_id"] = None
     if amount != 100:
         manifest["trial_balance"] = [
-            {"account": "1002", "debit": amount, "credit": 0},
+            {"account": "1405", "debit": amount, "credit": 0},
             {"account": "4001", "debit": 0, "credit": amount},
         ]
     if not selected or amount != 100:
@@ -456,7 +456,7 @@ def test_independent_opening_and_balances_do_not_create_current_activity(tmp_pat
         projected = compare_projections(connection)
         assert projected["expected"]["monthly_account"] == []
         assert projected["expected"]["monthly_cashflow"] == []
-        assert projected["expected"]["balance"] == [("cash", "bank", 100)]
+        assert projected["expected"]["balance"] == [("inventory", "opening-stock", 100)]
         assert len(projected["expected"]["opening_account"]) == 2
 
 
@@ -618,7 +618,7 @@ def test_cashflow_projection_is_compared_and_restored_independently(engine):
     engine.store.registry.evaluators["test_charge"] = lambda version, _: Outcome(
         (
             Line("5602", debit=version.fact.amount, cashflow="operating"),
-            Line("1002", credit=version.fact.amount),
+            Line("2202", credit=version.fact.amount),
         ),
         {},
     )

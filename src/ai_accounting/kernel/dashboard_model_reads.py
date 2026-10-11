@@ -150,6 +150,9 @@ def _verify_hits(
             return
         if {item["voucher_version_id"] for item in voucher_items} != vouchers:
             raise _invalid()
+        from .fund_line_details import fund_line_details
+
+        fund_details = fund_line_details(snap.connection, vouchers)
         for item in voucher_items:
             ident = item["voucher_version_id"]
             header = headers[ident]
@@ -168,7 +171,12 @@ def _verify_hits(
                     for line in item["lines"]
                 ]
                 != [
-                    (position, line["account"], line["debit"], line["credit"])
+                    (
+                        position,
+                        fund_details.get((ident, position), {}).get("detail_code", line["account"]),
+                        line["debit"],
+                        line["credit"],
+                    )
                     for position, line in enumerate(physical[ident]["lines"], 1)
                 ]
             ):

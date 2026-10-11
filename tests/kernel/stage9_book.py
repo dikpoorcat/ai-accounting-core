@@ -105,7 +105,8 @@ class MixedBook:
         self.cash = self.entity("fund_account", "合成现金账户", account_type="cash")
         self.employees = [
             self.entity(
-                "person", f"合成员工{i + 1:03}",
+                "person",
+                f"合成员工{i + 1:03}",
                 profile=synthetic_employee_profile(f"合成员工{i + 1:03}"),
                 source="合成场景定义：员工自2016-01-01起在职，非真实负责人确认",
             )
@@ -234,9 +235,29 @@ class MixedBook:
         )["digest"]
 
     def entity(self, kind, name, *, profile=None, source="明确的合成规模样本", **options):
+        data = profile if profile is not None else {"display_name": name}
+        if kind == "fund_account":
+            account_type = options["account_type"]
+            identity = (
+                {
+                    "bank_name": "合成规模测试银行",
+                    "bank_account_number": "1234567890123456",
+                    "account_holder_name": self.company["name"],
+                }
+                if account_type == "bank"
+                else {
+                    "provider_name": "合成规模测试平台",
+                    "account_identifier": name,
+                    "account_holder_name": self.company["name"],
+                }
+                if account_type == "platform"
+                else {"display_name": name}
+            )
+            data = {**identity, **data}
+            options["evidence_digest"] = self.proof
         return self.entities.register_entity(
             kind,
-            profile if profile is not None else {"display_name": name},
+            data,
             source=source,
             request_id=self.request("entity"),
             **options,
@@ -987,7 +1008,8 @@ class MixedBook:
             "construction_integrity": {
                 "mode": (
                     "deferred_historical_verification"
-                    if self.deferred_close_checks else "production_per_close_checks"
+                    if self.deferred_close_checks
+                    else "production_per_close_checks"
                 ),
                 "deferred_checks_by_period": dict(self.deferred_close_checks),
                 "final_full_verification_required": True,

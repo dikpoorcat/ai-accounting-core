@@ -10,6 +10,40 @@ from ai_accounting.kernel.close_storage import decode_close, write_close
 from ai_accounting.kernel.types import YearMonth
 
 
+def use_v4_close_manifest(monkeypatch):
+    """Generate synthetic historical v4 inputs without broadening production writes."""
+    from ai_accounting.kernel import close_fund_details
+    from ai_accounting.kernel.close_contract_v1 import require_close_contract
+    from ai_accounting.kernel.periods import Periods
+    from ai_accounting.kernel.types import digest
+
+    original = Periods._manifest
+
+    def unused_funds(_connection, manifest, *, previous_manifest=None):
+        # v4 never adopted this section. Do not make its historical builder
+        # depend on the activation and continuity rules introduced by v5.
+        value = {
+            "contract": close_fund_details.CONTRACT,
+            "definitions": [], "balances": [], "summary": [],
+            "adjustments": [],
+            "sources": {
+                "contract": "ai-accounting-kernel/2/fund-line-details/1",
+                "period": YearMonth(manifest["period"]).ordinal, "activation": None,
+                "opening": [], "lines": [], "opening_lines": [],
+            },
+        }
+        return {**value, "digest": digest(value).hex()}
+
+    def historical_manifest(self, *args, **kwargs):
+        manifest = original(self, *args, **kwargs)
+        manifest.pop("fund_details")
+        manifest["format_version"] = 4
+        return require_close_contract(manifest)
+
+    monkeypatch.setattr(Periods, "_manifest", historical_manifest)
+    monkeypatch.setattr(close_fund_details, "build_fund_close_snapshot", unused_funds)
+
+
 def stored_manifest(connection, period=None):
     if period is None:
         row = connection.execute(

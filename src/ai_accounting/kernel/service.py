@@ -634,6 +634,7 @@ class LocalService:
             "find_entities": entities.find_entities,
             "register_entity": entities.register_entity,
             "update_entity_profile": entities.update_entity_profile,
+            "correct_fund_account_identity": entities.correct_fund_account_identity,
             "preview_identity_correction": identities.preview_identity_correction,
             "confirm_identity_correction": identities.confirm_identity_correction,
             "save_fact": engine.save_fact,

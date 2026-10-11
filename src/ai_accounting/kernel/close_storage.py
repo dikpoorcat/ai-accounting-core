@@ -1,9 +1,9 @@
-"""Private, bounded storage for the unchanged logical period-close v4 contract.
+"""Private, bounded storage for logical period-close v4 and v5 contracts.
 
 The logical close digest remains the identity used by approval, the preceding
 close chain, reports, and read-index markers. Storage SHA commits a compact root
 whose named subroots commit fixed buckets of source records. A partial read is
-explicitly typed; only decode_close returns a complete logical v4 manifest.
+explicitly typed; only decode_close returns a complete logical manifest.
 """
 
 from __future__ import annotations
@@ -351,6 +351,10 @@ def write_close(
         groups = _rows_by_bucket(logical_manifest, field)
         _set(small, field, [])
         directories[field] = _write_field(connection, period, field, groups)
+    if logical_manifest["format_version"] >= 5:
+        directories["fund_details"] = _write_field(
+            connection, period, "fund_details", {0: [[0, small.pop("fund_details")]]}
+        )
     source_summaries = _material_summaries(connection, logical_manifest)
     summary_groups = defaultdict(list)
     for index, value in enumerate(source_summaries):
@@ -392,7 +396,11 @@ def write_close(
 
     families = {
         "accounting": {
-            "directories": {key: directories[key] for key in ACCOUNTING_FIELDS},
+            "directories": {
+                key: directories[key]
+                for key in (*ACCOUNTING_FIELDS, *(("fund_details",)
+                            if logical_manifest["format_version"] >= 5 else ()))
+            },
             "subject_filter": build_keys_filter(
                 item["subject_id"] for item in logical_manifest["adopted_results"]
             ),
@@ -1741,6 +1749,17 @@ def _read_section(
     connection, header: CloseHeader, name: str, *, _subroots=None, _adopted_results=None
 ):
     """Return one *complete* logical v4 field, never a partial manifest dict."""
+    if name == "fund_details" and header.root["small"]["format_version"] >= 5:
+        subroot = _family_once(connection, header, "accounting", _subroots)
+        descriptors = subroot["directories"].get(name)
+        if (not isinstance(descriptors, list) or len(descriptors) != 1
+            or not isinstance(descriptors[0], list) or len(descriptors[0]) != 3
+            or descriptors[0][0] != 0 or descriptors[0][2] != 1):
+            _invalid(header.period, "storage_fund_details_section_invalid")
+        values = _bucket_rows(connection, header, subroot, name, 0)
+        if len(values) != 1 or values[0][0] != 0:
+            _invalid(header.period, "storage_fund_details_section_invalid")
+        return values[0][1]
     if name in ACCOUNTING_FIELDS:
         subroot = _family_once(connection, header, "accounting", _subroots)
         if name == "vouchers":
@@ -1812,6 +1831,7 @@ def decode_close(connection, row, *, require_marker=True, _verified_material_ver
         "management_snapshot",
         "readiness",
         "owner_review",
+        *(("fund_details",) if manifest["format_version"] >= 5 else ()),
     ):
         manifest[name] = _read_section(
             connection,

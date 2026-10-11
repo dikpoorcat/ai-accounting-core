@@ -251,6 +251,70 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
         assert party["field_sources"]["name"]["basis"] == "frozen"
 
 
+@pytest.mark.parametrize(("frozen_fields", "current_fields", "expected", "field", "basis"), [
+    ({"external_identifiers": {"bank_account_number": "111"}},
+     {"external_identifiers": {"bank_account_number": "222"}},
+     "111", "external_identifiers.bank_account_number", "frozen"),
+    ({}, {"external_identifiers": {"bank_account_number": "222"}},
+     "222", "external_identifiers.bank_account_number", "current_supplement"),
+    ({"external_identifiers": {"bank_account_number": "111"}}, {"display_number": "222"},
+     "111", "external_identifiers.bank_account_number", "frozen"),
+    ({"display_number": "111", "external_identifiers": {"bank_account_number": "999"}},
+     {"external_identifiers": {"bank_account_number": "222"}},
+     "111", "display_number", "frozen"),
+    ({"external_identifiers": {"basic_account_number": "J111"}}, {}, None, None, None),
+])
+def test_bank_account_number_keeps_exact_frozen_or_supplement_source(
+    engine, frozen_fields, current_fields, expected, field, basis,
+):
+    save(engine)
+    publish(engine)
+    old = profile(engine, "fund_account", "bank", **frozen_fields)
+    close(engine)
+    newer = profile(engine, "fund_account", "bank", 1, **current_fields)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        selected = detached_snapshot(engine, connection).profile("fund_account", "bank")
+        assert selected["display_number"] == expected
+        if expected is None:
+            assert "display_number" not in selected["field_sources"]
+        else:
+            source = selected["field_sources"]["display_number"]
+            assert (source["field"], source["basis"]) == (field, basis)
+            assert source["id"] == (old if basis == "frozen" else newer)["id"]
+
+
+@pytest.mark.parametrize("kind", ["asset", "employee", "counterparty"])
+def test_external_bank_account_number_does_not_fill_other_profile_numbers(kind):
+    profile_data = {
+        "display_number": None,
+        "external_identifiers": {"bank_account_number": "622200009876"},
+    }
+    assert entities.display_profile(profile_data, kind)["display_number"] is None
+
+
+@pytest.mark.parametrize(("fields", "expected", "field"), [
+    ({"external_identifiers": {"bank_account_number": "111", "basic_account_number": "J999"}},
+     "111", "external_identifiers.bank_account_number"),
+    ({"display_number": "222", "external_identifiers": {"bank_account_number": "111"}},
+     "222", "display_number"),
+    ({"external_identifiers": {"basic_account_number": "J999"}}, None, None),
+])
+def test_current_bank_account_number_uses_actual_registered_field(engine, fields, expected, field):
+    saved = profile(engine, "fund_account", "bank", **fields)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        selected = detached_snapshot(engine, connection).profile("fund_account", "bank")
+        assert selected["display_number"] == expected
+        if expected is None:
+            assert "display_number" not in selected["field_sources"]
+        else:
+            source = selected["field_sources"]["display_number"]
+            assert (source["id"], source["field"], source["basis"]) == (
+                saved["id"], field, "current",
+            )
+
+
 def test_tax_identity_scope_loads_only_requested_employee_candidates(bank_book, monkeypatch):
     engine, save, _, _ = bank_book
     expected = set()

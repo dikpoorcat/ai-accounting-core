@@ -15,6 +15,40 @@ from ai_accounting.kernel.read_indexes import sync_audit
 RECORDED = "2026-09-11T10:00:00.000Z"
 
 
+def test_fund_identity_receipt_keeps_original_profile_registration_time(tmp_path, monkeypatch):
+    company = setup_company(tmp_path)
+    entities = Entities(company.engine)
+    data = {
+        "bank_name": "合成银行",
+        "bank_account_number": "0001234567",
+        "account_holder_name": "合成公司",
+    }
+    confirmation_clock(monkeypatch, company.engine, RECORDED)
+    saved = entities.register_entity(
+        "fund_account",
+        data,
+        account_type="bank",
+        source="明确的合成开户资料",
+        evidence_digest=company.owner_confirmation,
+        request_id=company.request(),
+    )
+    reference = ("display_profile", saved["profile_id"])
+    with company.engine.store.connection(read_only=True) as connection:
+        assert recorded_times(connection, [reference]) == {reference: RECORDED}
+    confirmation_clock(monkeypatch, company.engine, "2026-09-12T10:00:00.000Z")
+    repeated = entities.register_entity(
+        "fund_account",
+        data,
+        account_type="bank",
+        source="复用已核实账户",
+        evidence_digest=company.owner_confirmation,
+        request_id=company.request(),
+    )
+    assert repeated["entity_id"] == saved["entity_id"]
+    with company.engine.store.connection(read_only=True) as connection:
+        assert recorded_times(connection, [reference]) == {reference: RECORDED}
+
+
 @pytest.mark.parametrize("actor", [False, True])
 def test_batch_uses_exact_profile_payee_and_fact_versions_and_keeps_management_unknown(
     tmp_path, monkeypatch, actor

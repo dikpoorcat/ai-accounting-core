@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from .contracts import KernelError, Read
 from .diagnostics import job_error_message, public_job_code
 from .display import _KINDS, Display
+from .fund_line_details import display_fund_lines
 from .periods import Periods
 from .provenance import recorded_times
 from .query_reads import QueryReads, selected_voucher_sql, verify_current_publication_voucher_heads
@@ -383,14 +384,14 @@ class BusinessQueries:
             "direction": -1 if role == "reversal" else 1,
             "reverses_voucher_version_id": row["reverses_id"],
             "selection_source": selection_source,
-            "lines": [
+            "lines": display_fund_lines(connection, row["id"], [
                 dict(item)
                 for item in connection.execute(
                     "SELECT line_no,account,debit,credit,cashflow FROM voucher_line "
                     "WHERE version_id=? ORDER BY line_no",
                     (row["id"],),
                 )
-            ],
+            ]),
         }
 
     def _selected_accounting(
@@ -654,7 +655,8 @@ class BusinessQueries:
                         "direction": -1 if role == "reversal" else 1,
                         "reverses_voucher_version_id": row["reverses_id"],
                         "selection_source": row["selection_source"],
-                        **({"lines": lines[row["id"]]} if include_lines else {}),
+                        **({"lines": display_fund_lines(connection, row["id"], lines[row["id"]])}
+                           if include_lines else {}),
                     }
                 )
         closed_states = []

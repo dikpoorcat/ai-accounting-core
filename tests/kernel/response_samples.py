@@ -47,16 +47,26 @@ def public_bank_book(path):
         )["entity_id"],
         "bank-a": entities.register_entity(
             "fund_account",
-            {},
+            {
+                "bank_name": "合成银行甲",
+                "bank_account_number": "1234567890123456",
+                "account_holder_name": "合成公司",
+            },
             account_type="bank",
             source="合成银行资料",
+            evidence_digest=proof,
             request_id="bank-a",
         )["entity_id"],
         "bank-b": entities.register_entity(
             "fund_account",
-            {},
+            {
+                "bank_name": "合成银行乙",
+                "bank_account_number": "1234567890123457",
+                "account_holder_name": "合成公司",
+            },
             account_type="bank",
             source="合成银行资料",
+            evidence_digest=proof,
             request_id="bank-b",
         )["entity_id"],
     }
@@ -113,10 +123,16 @@ def native_samples(root):
     brief = call("dashboard_brief", period="2026-01")
     add("brief", "dashboard_brief", brief)
     for section in ("activity", "open_items"):
-        add(f"brief_{section}", "dashboard_brief", call(
-            "dashboard_brief", period="2026-01", section=section,
-            expected_version=brief["snapshot_version"],
-        ))
+        add(
+            f"brief_{section}",
+            "dashboard_brief",
+            call(
+                "dashboard_brief",
+                period="2026-01",
+                section=section,
+                expected_version=brief["snapshot_version"],
+            ),
+        )
     add(
         "brief_vouchers",
         "dashboard_brief",
@@ -175,7 +191,8 @@ def native_samples(root):
         ),
     )
     add(
-        "employees", "dashboard_employees",
+        "employees",
+        "dashboard_employees",
         call("dashboard_employees", period="2026-01", employee_filter="all"),
     )
     add("assets", "dashboard_assets", call("dashboard_assets", period="2026-01"))
@@ -317,14 +334,18 @@ def native_samples(root):
         ),
     )
     add(
-        "employees_month_dates", "dashboard_employees",
+        "employees_month_dates",
+        "dashboard_employees",
         personnel_dashboard.employees("2026-01", employee_filter="all"),
     )
     add(
         "employees_focused",
         "dashboard_employees",
         personnel_dashboard.employees(
-            "2026-01", employee_id="employee", section="employees", employee_filter="all",
+            "2026-01",
+            employee_id="employee",
+            section="employees",
+            employee_filter="all",
         ),
     )
     personnel.close("2026-01")
@@ -337,7 +358,8 @@ def native_samples(root):
         employment_end="2026-04-20",
     )
     add(
-        "employees_mixed_dates", "dashboard_employees",
+        "employees_mixed_dates",
+        "dashboard_employees",
         personnel_dashboard.employees("2026-01", employee_filter="all"),
     )
     add(
@@ -354,7 +376,8 @@ def native_samples(root):
         employment_end="2025-11-01",
     )
     add(
-        "employees_date_conflict", "dashboard_employees",
+        "employees_date_conflict",
+        "dashboard_employees",
         personnel_dashboard.employees("2026-01", employee_filter="all"),
     )
 
@@ -377,7 +400,9 @@ def native_samples(root):
         "employees_labor_sources",
         "dashboard_employees",
         Dashboard(labor.engine).employees(
-            "2026-01", section="labor_sources", employee_filter="all",
+            "2026-01",
+            section="labor_sources",
+            employee_filter="all",
         ),
     )
     from test_workflow import (

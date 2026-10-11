@@ -192,7 +192,21 @@ def reviewed_split_payments(company):
         "organization", {"display_name": "供应商乙"}, source="合成拆分依据", request_id="party-b"
     )["entity_id"]
     bank = Entities(engine).register_entity(
-        "fund_account", {}, account_type="bank", source="合成银行", request_id="bank"
+        "fund_account",
+        {
+            "bank_name": "合成银行",
+            "bank_account_number": "00010001",
+            "account_holder_name": "合成企业",
+        },
+        account_type="bank",
+        source="合成银行",
+        request_id="bank",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("bank") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     proof = evidence(engine, "two-distinct-creditors-split")
     source_proof = engine.register_evidence(
@@ -1271,10 +1285,16 @@ def test_actual_money_tuple_is_strong_without_shared_evidence(company):
     ]
     cash = entities.register_entity(
         "fund_account",
-        {},
+        {"display_name": "合成现金账户"},
         account_type="cash",
         source="合成现金账户",
         request_id="cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     model = engine.store.registry.models["cash_funding"]
     fact = model.model_validate(
@@ -1336,10 +1356,16 @@ def test_batch_candidate_indexes_cover_signature_location_and_actual_money(compa
     )["entity_id"]
     cash = entities.register_entity(
         "fund_account",
-        {},
+        {"display_name": "合成现金账户"},
         account_type="cash",
         source="批量候选现金账户",
         request_id="batch-index-cash",
+        evidence_digest=engine.register_evidence(
+            b"explicit synthetic account identity",
+            "text/plain",
+            "fund-account-confirmation",
+            request_id=("batch-index-cash") + "-identity-proof",
+        )["digest"],
     )["entity_id"]
     money = engine.store.registry.models["cash_funding"].model_validate(
         {
@@ -1945,7 +1971,7 @@ def test_business_status_exposes_review_and_exact_registered_entity(company):
         request_id="save-status",
     )
     response = Dashboard(engine).business_status("2026-01", "expense-status")
-    assert response["schema_version"] == 7
+    assert response["schema_version"] == 10
     assert {"duplicate_checks", "identity_corrections", "entity_references"}.isdisjoint(
         response["data"]
     )

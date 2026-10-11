@@ -282,6 +282,11 @@
     },
     {
       "type": "index",
+      "name": "fund_line_detail_account",
+      "sql": "CREATE INDEX fund_line_detail_account ON fund_line_detail(entity_id,version_id,line_no)"
+    },
+    {
+      "type": "index",
       "name": "identity_correction_calculation",
       "sql": "CREATE INDEX identity_correction_calculation ON identity_correction_item(calculation_id)"
     },
@@ -1392,6 +1397,31 @@
     },
     {
       "type": "table",
+      "name": "fund_account_definition",
+      "sql": "CREATE TABLE fund_account_definition(\n entity_id TEXT PRIMARY KEY REFERENCES entity(id),\n account_type TEXT NOT NULL CHECK(account_type IN('bank','cash','platform')),\n parent_account TEXT NOT NULL CHECK(parent_account IN('1001','1002','1012')),\n detail_code TEXT NOT NULL UNIQUE,sequence INTEGER NOT NULL CHECK(sequence>0),\n identity TEXT NOT NULL CHECK(json_valid(identity)),identity_key TEXT NOT NULL,\n source TEXT NOT NULL,evidence_digest BLOB NOT NULL REFERENCES evidence(digest),\n digest BLOB NOT NULL CHECK(length(digest)=32),\n UNIQUE(parent_account,sequence),\n CHECK((account_type='bank' AND parent_account='1002') OR\n (account_type='cash' AND parent_account='1001') OR\n (account_type='platform' AND parent_account='1012'))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fund_account_identity_revision",
+      "sql": "CREATE TABLE fund_account_identity_revision(\n entity_id TEXT NOT NULL REFERENCES fund_account_definition(entity_id),\n revision INTEGER NOT NULL CHECK(revision>0),\n parent_digest BLOB NOT NULL CHECK(length(parent_digest)=32),\n identity TEXT NOT NULL CHECK(json_valid(identity)),identity_key TEXT NOT NULL,\n source TEXT NOT NULL,evidence_digest BLOB NOT NULL REFERENCES evidence(digest),\n digest BLOB NOT NULL UNIQUE CHECK(length(digest)=32),\n PRIMARY KEY(entity_id,revision)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fund_detail_activation",
+      "sql": "CREATE TABLE fund_detail_activation(id INTEGER PRIMARY KEY CHECK(id=1),first_period INTEGER NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fund_detail_opening",
+      "sql": "CREATE TABLE fund_detail_opening(\n first_period INTEGER NOT NULL,entity_id TEXT NOT NULL REFERENCES entity(id),detail_code TEXT NOT NULL,\n parent_account TEXT NOT NULL,amount INTEGER NOT NULL,source_period INTEGER NOT NULL,\n source_digest BLOB NOT NULL CHECK(length(source_digest)=32),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(first_period,entity_id)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fund_line_detail",
+      "sql": "CREATE TABLE fund_line_detail(\n version_id TEXT NOT NULL REFERENCES voucher_version(id),line_no INTEGER NOT NULL CHECK(line_no>0),\n entity_id TEXT NOT NULL REFERENCES entity(id),detail_code TEXT NOT NULL,parent_account TEXT NOT NULL,\n basis_calculation_id TEXT NOT NULL REFERENCES calculation(id),source_fact_id TEXT NOT NULL REFERENCES fact_revision(id),\n rule_version INTEGER NOT NULL CHECK(rule_version=1),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(version_id,line_no),FOREIGN KEY(version_id,line_no) REFERENCES voucher_line(version_id,line_no)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "identity",
       "sql": "CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,\n taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL) STRICT"
     },
@@ -1464,6 +1494,11 @@
       "type": "table",
       "name": "opening_account",
       "sql": "CREATE TABLE opening_account(period INTEGER NOT NULL, account TEXT NOT NULL,\n debit INTEGER NOT NULL CHECK(debit>=0),credit INTEGER NOT NULL CHECK(credit>=0),\n PRIMARY KEY(period,account)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "opening_fund_line_detail",
+      "sql": "CREATE TABLE opening_fund_line_detail(\n calculation_id TEXT NOT NULL REFERENCES calculation(id),line_no INTEGER NOT NULL CHECK(line_no>0),\n entity_id TEXT NOT NULL REFERENCES entity(id),detail_code TEXT NOT NULL,parent_account TEXT NOT NULL,\n basis_calculation_id TEXT NOT NULL REFERENCES calculation(id),source_fact_id TEXT NOT NULL REFERENCES fact_revision(id),\n rule_version INTEGER NOT NULL CHECK(rule_version=1),digest BLOB NOT NULL CHECK(length(digest)=32),\n PRIMARY KEY(calculation_id,line_no)) STRICT"
     },
     {
       "type": "table",
@@ -3682,6 +3717,56 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_fund_account_definition_DELETE",
+      "sql": "CREATE TRIGGER immutable_fund_account_definition_DELETE BEFORE DELETE ON fund_account_definition\n BEGIN SELECT RAISE(ABORT,'immutable fund account definition'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_account_definition_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fund_account_definition_UPDATE BEFORE UPDATE ON fund_account_definition\n BEGIN SELECT RAISE(ABORT,'immutable fund account definition'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_account_identity_revision_DELETE",
+      "sql": "CREATE TRIGGER immutable_fund_account_identity_revision_DELETE\n BEFORE DELETE ON fund_account_identity_revision\n BEGIN SELECT RAISE(ABORT,'immutable fund account identity revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_account_identity_revision_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fund_account_identity_revision_UPDATE\n BEFORE UPDATE ON fund_account_identity_revision\n BEGIN SELECT RAISE(ABORT,'immutable fund account identity revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_detail_activation_DELETE",
+      "sql": "CREATE TRIGGER immutable_fund_detail_activation_DELETE BEFORE DELETE ON fund_detail_activation BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_detail_activation_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fund_detail_activation_UPDATE BEFORE UPDATE ON fund_detail_activation BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_detail_opening_DELETE",
+      "sql": "CREATE TRIGGER immutable_fund_detail_opening_DELETE BEFORE DELETE ON fund_detail_opening BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_detail_opening_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fund_detail_opening_UPDATE BEFORE UPDATE ON fund_detail_opening BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_line_detail_DELETE",
+      "sql": "CREATE TRIGGER immutable_fund_line_detail_DELETE BEFORE DELETE ON fund_line_detail BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fund_line_detail_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fund_line_detail_UPDATE BEFORE UPDATE ON fund_line_detail BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_identity_DELETE",
       "sql": "CREATE TRIGGER immutable_identity_DELETE BEFORE DELETE ON identity BEGIN SELECT RAISE(ABORT,'immutable identity'); END"
     },
@@ -3739,6 +3824,16 @@
       "type": "trigger",
       "name": "immutable_material_revision_UPDATE",
       "sql": "CREATE TRIGGER immutable_material_revision_UPDATE BEFORE UPDATE ON material_revision BEGIN SELECT RAISE(ABORT,'immutable material_revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_opening_fund_line_detail_DELETE",
+      "sql": "CREATE TRIGGER immutable_opening_fund_line_detail_DELETE BEFORE DELETE ON opening_fund_line_detail BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_opening_fund_line_detail_UPDATE",
+      "sql": "CREATE TRIGGER immutable_opening_fund_line_detail_UPDATE BEFORE UPDATE ON opening_fund_line_detail BEGIN SELECT RAISE(ABORT,'immutable fund detail attribution'); END"
     },
     {
       "type": "trigger",
@@ -5306,5 +5401,5 @@
       "sql": "CREATE TRIGGER source_change_retained BEFORE DELETE ON source_change BEGIN SELECT RAISE(ABORT,'retained source change'); END"
     }
   ],
-  "sha256": "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
+  "sha256": "cdbdfa36c6513d7c2168edbeb2780692efe883ce7e5b59b63e87702288d79efa"
 }

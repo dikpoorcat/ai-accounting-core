@@ -68,8 +68,8 @@ def test_complete_bucket_reads_preserve_leaves_with_linear_descriptor_work(
     counted = []
     original_decode = close_storage._decode_family
 
-    def decode(*args):
-        subroot = original_decode(*args)
+    def decode(*args, **kwargs):
+        subroot = original_decode(*args, **kwargs)
         entries = CountedDescriptors(subroot["directories"][field])
         subroot["directories"][field] = entries
         counted.append(entries)

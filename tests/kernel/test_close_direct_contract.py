@@ -6,6 +6,8 @@ from copy import deepcopy
 from typing import ClassVar, Literal
 
 import pytest
+from entity_fixture import seed_entities
+from material_fixture import supporting_text
 from monthly_close_fixture import close_months, ready
 from pydantic import ValidationError
 from schema_fixture import test_bundle
@@ -29,7 +31,8 @@ from ai_accounting.kernel.contracts import (
     Read,
     Registry,
 )
-from ai_accounting.kernel.domains.transactions import Expense
+from ai_accounting.kernel.domains.cash import CashPayment
+from ai_accounting.kernel.domains.transactions import Expense, calculate_expense, calculate_payment
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.integrity import verify_integrity
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
@@ -65,20 +68,6 @@ def calculate_party_movement(version, _context):
         ),
         {"amount": fact.amount, "obligations": [obligation]},
         (BalanceEffect(obligation["key"], fact.amount, fact.side),),
-    )
-
-
-class CashSpend(Fact):
-    kind: ClassVar[str] = "test_cash_spend"
-    amount: PositiveFen
-
-
-def calculate_cash_spend(version, _context):
-    fact = version.fact
-    return Outcome(
-        (Line("5602", debit=fact.amount), Line("1001", credit=fact.amount)),
-        {"amount_fen": fact.amount},
-        (BalanceEffect(f"cash:{version.subject_id}", -fact.amount, "cash"),),
     )
 
 
@@ -343,9 +332,14 @@ def test_owner_review_pages_bind_and_cross_fixed_blocks(engine, monkeypatch):
     loaded_keys = []
     render_keys = close_review._render_keys
 
-    def render_with_damaged_second_block(connection, target_engine, target_manifest, section, keys):
+    def render_with_damaged_second_block(
+        connection, target_engine, target_manifest, section, keys, *, _source_reads=None
+    ):
         loaded_keys.append((section, tuple(keys)))
-        cards = render_keys(connection, target_engine, target_manifest, section, keys)
+        cards = render_keys(
+            connection, target_engine, target_manifest, section, keys,
+            _source_reads=_source_reads,
+        )
         if section == "vouchers" and second_key in keys:
             cards = [
                 ({**card, "title": card["title"] + "（模拟源损坏）"})
@@ -439,8 +433,12 @@ def test_owner_review_financial_position_keeps_opposite_parties_separate(tmp_pat
 
 
 def test_closed_month_cash_correction_is_not_reported_as_new_receipt_or_payment(tmp_path):
+    from ai_accounting.kernel.materials import register as register_materials
+
     registry = Registry()
-    registry.register(CashSpend, calculate_cash_spend)
+    register_materials(registry)
+    registry.register(Expense, calculate_expense)
+    registry.register(CashPayment, calculate_payment)
     engine = Engine(
         Store.create(
             tmp_path / "cash-correction.sqlite",
@@ -451,11 +449,33 @@ def test_closed_month_cash_correction_is_not_reported_as_new_receipt_or_payment(
         )
     )
     proof = evidence(engine)
+    seed_entities(engine, [("cash", "fund_account", "cash"),
+                           ("supplier", "organization", None)])
+    supporting_text(engine, proof)
     ready(engine, proof)
+    for month in ("2026-01", "2026-02", "2026-03"):
+        Periods(engine).inventory(
+            month, "transactions", evidence=[proof], expected=1, no_business=False,
+            confirmation_evidence=proof, request_id="typed-cash-inventory-" + month,
+        )
     engine.save_fact(
-        CashSpend.kind,
+        Expense.kind, "cash-obligation",
+        {"period": "2026-01", "counterparty_id": "supplier", "amount_fen": 200,
+         "expense_class": "administration", "creditor_kind": "supplier"},
+        evidence=(proof,), expected_revision=0, request_id="save-cash-obligation",
+    )
+    publish(engine, ["cash-obligation"], request="publish-cash-obligation")
+    def cash_payment(amount):
+        return {
+            "period": "2026-01", "actual_date": "2026-01-05", "direction": "outflow",
+            "cash_account_id": "cash", "counterparty_id": "supplier", "amount_fen": amount,
+            "allocations": [{"source_kind": "expense", "source_id": "cash-obligation",
+                             "obligation": "primary", "amount_fen": amount}],
+        }
+    engine.save_fact(
+        CashPayment.kind,
         "bank-cost",
-        {"period": "2026-01", "amount": 100},
+        cash_payment(100),
         evidence=(proof,),
         expected_revision=0,
         request_id="save-cash-original",
@@ -466,12 +486,13 @@ def test_closed_month_cash_correction_is_not_reported_as_new_receipt_or_payment(
     january = periods.closed_report("2026-01")["owner_review"]["accounting_summary"]
     assert january["actual_payments_fen"] == 100
 
-    engine.save_fact(
-        CashSpend.kind,
+    engine.amend_fact(
+        CashPayment.kind,
         "bank-cost",
-        {"period": "2026-01", "amount": 120},
+        cash_payment(120),
         evidence=(proof,),
         expected_revision=1,
+        recording_error_confirmed=True,
         request_id="save-cash-correction",
     )
     publish(

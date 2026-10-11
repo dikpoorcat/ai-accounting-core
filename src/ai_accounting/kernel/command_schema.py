@@ -19,6 +19,7 @@ from .duplicates import DuplicateReview, Duplicates, SourceLocation
 from .engine import Engine
 from .entities import Entities, EntityProfile
 from .exports import Exports
+from .fund_accounts import fund_profile_models, require_fund_source, validate_fund_profile
 from .identity_corrections import IdentityCorrections
 from .maintenance import Maintenance
 from .materials import (
@@ -87,6 +88,7 @@ def command_models(registry):
         "find_entities": Entities.find_entities,
         "register_entity": Entities.register_entity,
         "update_entity_profile": Entities.update_entity_profile,
+        "correct_fund_account_identity": Entities.correct_fund_account_identity,
         "preview_identity_correction": IdentityCorrections.preview_identity_correction,
         "confirm_identity_correction": IdentityCorrections.confirm_identity_correction,
         "create_company": Catalog.create_company,
@@ -212,7 +214,72 @@ def command_models(registry):
             fields["data"] = (MaterialGroupResolution, ...)
         elif name in {"register_entity", "update_entity_profile"}:
             fields["data"] = (EntityProfile, ...)
-        result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
+        if name == "correct_fund_account_identity":
+            variants = []
+            for account_type, profile in fund_profile_models().items():
+                selected = dict(fields)
+                selected["account_type"] = (Literal[account_type], ...)
+                selected["data"] = (profile, ...)
+                variants.append(
+                    create_model(
+                        account_type + "FundIdentityCorrectionCommand",
+                        __config__=CONFIG,
+                        **selected,
+                    )
+                )
+            result[name] = TypeAdapter(reduce(or_, variants))
+        elif name == "register_entity":
+            variants = []
+            ordinary = dict(fields)
+            ordinary["kind"] = (
+                Literal["person", "organization", "asset", "project", "fund_product"],
+                ...,
+            )
+            ordinary["account_type"] = (type(None), None)
+            variants.append(create_model("OrdinaryEntityCommand", __config__=CONFIG, **ordinary))
+            for account_type, profile in fund_profile_models().items():
+                selected = dict(fields)
+                selected["kind"] = (Literal["fund_account"], ...)
+                selected["account_type"] = (Literal[account_type], ...)
+                selected["data"] = (profile, ...)
+                source_fact = {
+                    "role": "accounting",
+                    "allowed_precision": ["exact"],
+                    "reusable_sources": [
+                        "bank_account_document",
+                        "bank_statement",
+                        "platform_account_document",
+                        "owner_confirmation",
+                    ],
+                }
+                selected["source"] = (
+                    str,
+                    Field(
+                        min_length=1,
+                        max_length=2000,
+                        json_schema_extra={
+                            "x-accounting-fact": dict(
+                                source_fact, meaning="fund_account_identity_source"
+                            )
+                        },
+                    ),
+                )
+                selected["evidence_digest"] = (
+                    EvidenceDigest,
+                    Field(
+                        json_schema_extra={
+                            "x-accounting-fact": dict(
+                                source_fact, meaning="registered_fund_account_identity_evidence"
+                            )
+                        }
+                    ),
+                )
+                variants.append(
+                    create_model(account_type + "FundEntityCommand", __config__=CONFIG, **selected)
+                )
+            result[name] = TypeAdapter(reduce(or_, variants))
+        else:
+            result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
     records = {}
     for kind, model in registry.models.items():
         if model.registration_command:
@@ -298,6 +365,12 @@ def validate_command(models, command, payload, *, registry=None):
         raise KernelError("unknown_command", "不支持该业务命令")
     if not isinstance(payload, dict):
         raise KernelError("invalid_command", "命令必须是 JSON 对象")
+    if (
+        command == "register_entity" and payload.get("kind") == "fund_account"
+    ) or command == "correct_fund_account_identity":
+        if payload.get("account_type") in fund_profile_models():
+            validate_fund_profile(payload["account_type"], payload.get("data", {}))
+            require_fund_source(payload.get("source"), payload.get("evidence_digest"))
     try:
         value = models[command].validate_json(canonical(payload), strict=True)
         result = value.model_dump(

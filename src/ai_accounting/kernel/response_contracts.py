@@ -1454,6 +1454,8 @@ class VoucherEventLine(ResponseObject):
     debit: WireFen
     credit: WireFen
     cashflow: str | None
+    code: NotRequired[str]
+    account_name: NotRequired[str]
 
 
 class VoucherEvent(ResponseObject):

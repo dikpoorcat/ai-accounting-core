@@ -377,8 +377,8 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             _invalid("calculation", ident, "invalid_calculation_dependency")
         if ident not in publications and ident not in member_ids:
             _invalid("calculation", ident, "publication_or_adoption_missing")
-        row["decoded"], outcome_encoding, normalized_calculation_lines[ident] = (
-            _outcome_with_lines(row)
+        row["decoded"], outcome_encoding, normalized_calculation_lines[ident] = _outcome_with_lines(
+            row
         )
         # The released calculation identity seals saved reads and version IDs.
         # dependency_fact additionally always contains the owning fact; that
@@ -396,9 +396,13 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
         identity["prefix"] = calculation_identity_prefix(**identity)
         first_key = "c_" + calculation_identity_digest(**identity, versions=sorted(versions)).hex()
         if ident != first_key:
-            second_key = "c_" + calculation_identity_digest(
-                **identity, versions=sorted(versions | {row["fact_id"]}),
-            ).hex()
+            second_key = (
+                "c_"
+                + calculation_identity_digest(
+                    **identity,
+                    versions=sorted(versions | {row["fact_id"]}),
+                ).hex()
+            )
             if ident != second_key:
                 _invalid("calculation", ident, "calculation_input_digest_mismatch")
     # Iterative graph traversal also handles long legitimate cumulative chains.
@@ -529,9 +533,9 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
                 _invalid("calculation", ident, "asset_membership_mismatch")
     from .query_reads import verify_open_voucher_scope
 
-    current_subjects = (None if identifiers is None else {
-        row["subject_id"] for row in calculations.values()
-    })
+    current_subjects = (
+        None if identifiers is None else {row["subject_id"] for row in calculations.values()}
+    )
     from . import publication as current_publication
 
     if publication_reader() is current_publication:
@@ -996,6 +1000,7 @@ def _check_closes(
     ):
         current_vouchers_by_period[item[0]].add(item[1])
     verified_position_prefix = []
+    previous_fund_manifest = None
     for row, packed in closes:
         manifest = unpack_verified_close(packed)
         period = row["period"]
@@ -1189,6 +1194,14 @@ def _check_closes(
             baseline = previous_trial
         if _merge(baseline, _totals(voucher_lines, "close", period)) != trial:
             _invalid("close", period, "trial_balance_source_mismatch")
+        from .close_fund_details import verify_fund_close_snapshot
+
+        verify_fund_close_snapshot(connection, manifest, previous_manifest=previous_fund_manifest)
+        previous_fund_manifest = (
+            {"fund_details": manifest["fund_details"]}
+            if manifest.get("format_version") == 5
+            else None
+        )
         from .content_history_context import owner_review_reader
 
         owner_reader = owner_review_reader()
@@ -1270,7 +1283,11 @@ def _check_heads(connection):
 
 
 def verify_integrity(
-    engine, connection, *, include_projections=True, include_indexes=True,
+    engine,
+    connection,
+    *,
+    include_projections=True,
+    include_indexes=True,
     include_dashboard_models=True,
 ):
     """Check all preserved versions in the caller's snapshot, including old ones."""
@@ -1279,14 +1296,21 @@ def verify_integrity(
 
     with verification_snapshot(connection), readonly_verification(connection):
         return _verify_integrity_in_snapshot(
-            engine, connection,
-            include_projections=include_projections, include_indexes=include_indexes,
+            engine,
+            connection,
+            include_projections=include_projections,
+            include_indexes=include_indexes,
             include_dashboard_models=include_dashboard_models,
         )
 
 
 def _verify_integrity_in_snapshot(
-    engine, connection, *, include_projections, include_indexes, include_dashboard_models,
+    engine,
+    connection,
+    *,
+    include_projections,
+    include_indexes,
+    include_dashboard_models,
 ):
     if include_projections and connection.in_transaction:
         from .verified_source_lease import verified_source_lease
@@ -1309,7 +1333,12 @@ def _verify_integrity_in_snapshot(
 
 
 def _verify_integrity_snapshot(
-    engine, connection, *, include_projections, include_indexes, include_dashboard_models,
+    engine,
+    connection,
+    *,
+    include_projections,
+    include_indexes,
+    include_dashboard_models,
 ):
     try:
         ignored_tables = set()
@@ -1421,6 +1450,11 @@ def _verify_integrity_snapshot(
         from .identity_corrections import verify_identity_corrections
 
         verify_entities(connection)
+        from .fund_accounts import has_fund_definitions
+        from .fund_line_details import verify_fund_line_details
+
+        if has_fund_definitions(connection):
+            verify_fund_line_details(connection, _source_reads=source_reads)
         verify_identity_corrections(engine, connection)
         duplicate_reader().verify_duplicate_checks(connection)
         if include_projections:
@@ -1524,7 +1558,9 @@ def _verify_integrity_snapshot(
             if source_reads is not None:
                 source_reads._require_source()
             verify_entity_references(
-                connection, registry=engine.store.registry, _verified_source=source_token,
+                connection,
+                registry=engine.store.registry,
+                _verified_source=source_token,
             )
             verify_discovery_indexes(connection)
 
@@ -1541,7 +1577,9 @@ def _verify_integrity_snapshot(
         from .dashboard_model_integrity import verify_models
 
         dashboard_models = verify_models(
-            engine, connection, compare_content=include_dashboard_models,
+            engine,
+            connection,
+            compare_content=include_dashboard_models,
         )
         if source_reads is not None:
             source_reads._require_source()
@@ -1603,9 +1641,7 @@ def verify_sources(engine, connection, *, calculation_ids=(), fact_ids=(), _retu
         # One verification owns the union of dependency facts and explicitly
         # requested facts. Its evidence union is read once as well. No proof
         # survives this call or bypasses either side of a publication write.
-        source = _check_sources(
-            engine, connection, calculation_ids, extra_fact_ids=requested_facts
-        )
+        source = _check_sources(engine, connection, calculation_ids, extra_fact_ids=requested_facts)
         if not requested_facts <= source["facts"].keys():
             _invalid("fact", "*", "referenced_fact_missing")
         if _return_facts:

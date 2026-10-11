@@ -38,14 +38,25 @@ function requireSchemaMap(value) {
 }
 
 function generatedValidator(schema, key, name) {
-  const ajv = new Ajv2020({ allErrors: true, inlineRefs: false, code: { esm: true, source: true }, strict: true, validateFormats: false });
+  const ajv = new Ajv2020({ allErrors: true, inlineRefs: false, discriminator: true, code: { esm: true, source: true }, strict: true, validateFormats: false });
+  // Ajv derives these four scope routes from their required, unique consts.
+  // Its discriminator does not accept Pydantic's equivalent OpenAPI mapping.
+  // Keep the exported schema and types intact; change only compilation input.
+  const validationSchema = key === "dashboard_brief"
+    ? { ...schema, type: "object", discriminator: { propertyName: schema.discriminator.propertyName } }
+    : schema;
   ajv.addKeyword({
     keyword: "x-fen-int64", schemaType: "boolean", type: "string", errors: false,
     code(context) {
-      if (context.schema) context.fail(_`!/^(0|-?[1-9][0-9]*)$/.test(${context.data}) || String(BigInt(${context.data})) !== ${context.data} || BigInt(${context.data}) < -9223372036854775808n || BigInt(${context.data}) > 9223372036854775807n`);
+      if (context.schema) {
+        context.gen.if(_`!/^(0|-?[1-9][0-9]*)$/.test(${context.data})`, () => context.fail(_`true`), () => {
+          const amount = context.gen.const("fenAmount", _`BigInt(${context.data})`);
+          context.fail(_`${amount} < -9223372036854775808n || ${amount} > 9223372036854775807n`);
+        });
+      }
     },
   });
-  ajv.addSchema(schema, key);
+  ajv.addSchema(validationSchema, key);
   return banner + standaloneCode(ajv, { [`validate${name}Response`]: key });
 }
 

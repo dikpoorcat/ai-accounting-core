@@ -4,6 +4,7 @@ from contextlib import closing
 from dataclasses import replace
 
 import pytest
+from development_funds_fixture import upgrade_company
 from test_development_upgrade import create_old_company, old_business
 from test_direct_adoption_development_upgrade import table_rows
 
@@ -30,13 +31,18 @@ def test_read_model_step_preserves_every_business_identity_and_history_value(tmp
             tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")
         ]
         retained = _retained_history_digest(connection)
-        result = development.upgrade_company(connection, target)
+        result = upgrade_company(connection, target)
         assert result["steps"] == [
             {
                 "sequence": len(original_draft_history) + 1,
                 "source_fingerprint": development.READ_MODEL_SOURCE_FINGERPRINT,
                 "target_fingerprint": development.READ_MODEL_TARGET_FINGERPRINT,
-            }
+            },
+            {
+                "sequence": len(original_draft_history) + 2,
+                "source_fingerprint": development.FUND_DETAIL_SOURCE_FINGERPRINT,
+                "target_fingerprint": development.FUND_DETAIL_TARGET_FINGERPRINT,
+            },
         ]
         assert table_rows(connection, source.current()) == before
         assert [
@@ -45,7 +51,7 @@ def test_read_model_step_preserves_every_business_identity_and_history_value(tmp
         actual_history = [
             tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")
         ]
-        assert actual_history[:-1] == original_draft_history
+        assert actual_history[:-2] == original_draft_history
         assert _retained_history_digest(connection) == retained
         for table in (
             "dashboard_read_model_commit",
@@ -54,7 +60,7 @@ def test_read_model_step_preserves_every_business_identity_and_history_value(tmp
         ):
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
         assert verify_schema(connection, bundle=target) == 0
-        assert development.upgrade_company(connection, target) == {"status": "verified_skip"}
+        assert upgrade_company(connection, target) == {"status": "verified_skip"}
     assert verify_file(path, _bundle=target)["verification"]["status"] == "verified"
 
 
@@ -78,7 +84,7 @@ def test_read_model_ddl_failure_rolls_back_every_new_object_and_retains_source(t
                 raise RuntimeError("synthetic read model DDL interruption")
 
         with pytest.raises(RuntimeError, match="synthetic read model DDL interruption"):
-            development.upgrade_company(connection, target, fault=interrupt)
+            upgrade_company(connection, target, fault=interrupt)
         assert development._all_existing_rows(connection, source.current()) == before
         assert verify_schema(connection, bundle=source) == 0
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -104,19 +110,20 @@ def test_read_model_step_rejects_changed_original_rows_and_rolls_back(tmp_path):
                 connection.execute("UPDATE state SET management=management+1 WHERE id=1")
 
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, target, fault=corrupt)
+            upgrade_company(connection, target, fault=corrupt)
         assert error.value.code == "migration_integrity_failed"
         assert development._all_existing_rows(connection, source.current()) == before
         assert verify_schema(connection, bundle=source) == 0
 
 
-def test_three_declared_steps_reject_read_model_shortcuts(tmp_path):
+def test_four_declared_steps_reject_read_model_shortcuts(tmp_path):
     path, source, target = create_old_company(tmp_path / "company.sqlite")
     declared = development._declared_changes(target)
     assert [(before["sha256"], after["sha256"]) for before, after, _ in declared] == [
         (development.SOURCE_FINGERPRINT, development.INDEX_SOURCE_FINGERPRINT),
         (development.INDEX_SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
         (development.READ_MODEL_SOURCE_FINGERPRINT, development.READ_MODEL_TARGET_FINGERPRINT),
+        (development.FUND_DETAIL_SOURCE_FINGERPRINT, development.FUND_DETAIL_TARGET_FINGERPRINT),
     ]
     third = declared[2][2]
     assert third == [
@@ -140,6 +147,6 @@ def test_three_declared_steps_reject_read_model_shortcuts(tmp_path):
     )
     with closing(connect(path)) as connection:
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, shortcut)
+            upgrade_company(connection, shortcut)
         assert error.value.code == "migration_not_declared"
         assert verify_schema(connection, bundle=source) == 0

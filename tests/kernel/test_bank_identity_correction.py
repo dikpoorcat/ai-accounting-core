@@ -15,7 +15,21 @@ def test_frozen_bank_opening_correction_connects_reconciliation_and_next_month(b
     engine, save, publish, proof = book
     accounts = [
         Entities(engine).register_entity(
-            "fund_account", {}, account_type="bank", source="explicit bank records", request_id=name
+            "fund_account",
+            {
+                "bank_name": "合成银行",
+                "bank_account_number": ("00010001" if name == "original-bank" else "00010002"),
+                "account_holder_name": "合成企业",
+            },
+            account_type="bank",
+            source="explicit bank records",
+            request_id=name,
+            evidence_digest=engine.register_evidence(
+                b"explicit synthetic account identity",
+                "text/plain",
+                "fund-account-confirmation",
+                request_id=(name) + "-identity-proof",
+            )["digest"],
         )["entity_id"]
         for name in ("original-bank", "correct-bank")
     ]

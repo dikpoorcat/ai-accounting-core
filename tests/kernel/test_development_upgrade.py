@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from close_storage_fixture import use_v4_close_manifest
+from development_funds_fixture import upgrade_company, upgrade_root
 from draft_bundle_fixture import synthetic_draft_bundle
 from entity_fixture import seed_registration_entities
 from monthly_close_fixture import close_months, ready
@@ -96,7 +98,9 @@ def old_business(path: Path, source):
         request_id="synthetic-upgrade-evidence",
     )["digest"]
     ready(engine, proof, first="2026-01", last="2026-01")
-    close_months(Periods(engine), proof, first="2026-01", last="2026-01")
+    with pytest.MonkeyPatch.context() as historical:
+        use_v4_close_manifest(historical)
+        close_months(Periods(engine), proof, first="2026-01", last="2026-01")
 
     def save(kind, subject, data):
         seed_registration_entities(engine, kind, data)
@@ -242,7 +246,7 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
         history = _retained_history_digest(connection)
         frozen = connection.execute("SELECT manifest,digest FROM period_close").fetchall()
         allocations = connection.execute("SELECT * FROM fact_payment_allocations").fetchall()
-        result = development.upgrade_company(connection, target)
+        result = upgrade_company(connection, target)
         assert result["status"] == "upgraded"
         assert result["source_fingerprint"] == development.SOURCE_FINGERPRINT
         assert result["target_fingerprint"] == target.current("company")["sha256"]
@@ -251,7 +255,7 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
             connection.execute("SELECT version,hex(fingerprint) FROM schema_history").fetchall()
             == original
         )
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 3
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 4
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert snapshot_rows(connection, source) == rows
         assert _retained_history_digest(connection) == history
@@ -277,7 +281,7 @@ def test_each_fault_rolls_back_whole_company_upgrade(tmp_path, point):
     with closing(connect(path)) as connection:
         rows = snapshot_rows(connection, source)
         with pytest.raises(RuntimeError, match="synthetic interrupted upgrade"):
-            development.upgrade_company(connection, target, fault=interrupt)
+            upgrade_company(connection, target, fault=interrupt)
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert verify_schema(connection, bundle=source) == 0
         assert (
@@ -299,7 +303,7 @@ def test_unknown_source_fingerprint_is_not_declared(tmp_path):
         )
         connection.commit()
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, target)
+            upgrade_company(connection, target)
         assert error.value.code == "schema_fingerprint_mismatch"
 
 
@@ -308,7 +312,7 @@ def test_undeclared_target_and_corrupt_source_reject_before_any_ddl(tmp_path):
     undeclared = replace(target, draft_transitions={})
     with closing(connect(path)) as connection:
         with pytest.raises(KernelError) as error:
-            development.upgrade_company(connection, undeclared)
+            upgrade_company(connection, undeclared)
         assert error.value.code == "migration_not_declared"
         assert verify_schema(connection, bundle=source) == 0
         connection.execute("PRAGMA foreign_keys=OFF")
@@ -320,7 +324,7 @@ def test_undeclared_target_and_corrupt_source_reject_before_any_ddl(tmp_path):
         connection.commit()
         connection.execute("PRAGMA foreign_keys=ON")
         with pytest.raises(BackupError) as error:
-            development.upgrade_company(connection, target)
+            upgrade_company(connection, target)
         assert error.value.code == "backup_content_invalid"
         assert (
             connection.execute(
@@ -338,7 +342,7 @@ def test_grouped_payment_required_beneficiary_and_internal_reserve_work_after_up
     assert "managed_reserve_internal_movement" not in source.registry.models
     with closing(connect(path)) as connection:
         frozen = connection.execute("SELECT manifest,digest FROM period_close").fetchall()
-        development.upgrade_company(connection, target)
+        upgrade_company(connection, target)
 
     engine = Engine(Store(path, target, COMPANY, DATABASE, taxpayer_id=TAXPAYER))
 
@@ -466,7 +470,7 @@ def test_root_preserves_catalog_owner_and_verifies_each_company_backup(tmp_path)
     root, source, target, companies = create_old_root(tmp_path)
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         catalog_digest = development._catalog_retained_digest(connection)
-    result = development.upgrade_root(root, bundle=target)
+    result = upgrade_root(root, bundle=target)
     assert result["catalog"] == "verified_unchanged"
     assert len(result["companies"]) == 2
     for item, (company_id, database_id, taxpayer_id, path) in zip(
@@ -486,7 +490,7 @@ def test_root_preserves_catalog_owner_and_verifies_each_company_backup(tmp_path)
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         assert development._catalog_retained_digest(connection) == catalog_digest
 
-    repeated = development.upgrade_root(root, bundle=target)
+    repeated = upgrade_root(root, bundle=target)
     assert [item["status"] for item in repeated["companies"]] == ["verified_skip", "verified_skip"]
 
 
@@ -495,7 +499,7 @@ def test_root_refuses_active_resident_lock(tmp_path):
     with private_file_lock(root / ".resident.lock") as acquired:
         assert acquired
         with pytest.raises(KernelError) as error:
-            development.upgrade_root(root, bundle=target)
+            upgrade_root(root, bundle=target)
         assert error.value.code == "service_active"
     for _, _, _, path in companies:
         with closing(connect(path, read_only=True)) as connection:
@@ -517,7 +521,7 @@ def test_root_partial_failure_reports_exact_prefix_and_retry(tmp_path, fail_on_c
                 raise RuntimeError("synthetic company interruption")
 
     with pytest.raises(KernelError) as failure:
-        development.upgrade_root(root, bundle=target, fault=interrupt)
+        upgrade_root(root, bundle=target, fault=interrupt)
     assert failure.value.code == (
         "development_upgrade_failed" if fail_on_company == 1 else "development_upgrade_partial"
     )
@@ -537,7 +541,7 @@ def test_root_partial_failure_reports_exact_prefix_and_retry(tmp_path, fail_on_c
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         assert development._catalog_retained_digest(connection) == catalog_digest
 
-    retried = development.upgrade_root(root, bundle=target)
+    retried = upgrade_root(root, bundle=target)
     assert [item["status"] for item in retried["companies"]] == (
         ["upgraded", "upgraded"] if fail_on_company == 1 else ["verified_skip", "upgraded"]
     )
