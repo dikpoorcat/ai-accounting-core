@@ -4348,6 +4348,32 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "BriefActivityCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "activity": {
+            "$ref": "#/$defs/Collection_BriefActivityDisplayGroup_"
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "BriefActivityCollections",
+        "type": "object"
+      },
+      "BriefActivityData": {
+        "additionalProperties": false,
+        "properties": {
+          "collections": {
+            "$ref": "#/$defs/BriefActivityCollections"
+          }
+        },
+        "required": [
+          "collections"
+        ],
+        "title": "BriefActivityData",
+        "type": "object"
+      },
       "BriefActivityDisplayGroup": {
         "additionalProperties": false,
         "properties": {
@@ -4670,6 +4696,10 @@
             "$ref": "#/$defs/Collection_BriefOpenDisplayGroup_"
           }
         },
+        "required": [
+          "activity",
+          "open_items"
+        ],
         "title": "BriefCollections",
         "type": "object"
       },
@@ -4803,6 +4833,9 @@
           "focused_voucher",
           "activity_groups",
           "position",
+          "financial_position",
+          "workforce_cost",
+          "long_term_assets",
           "funds_overview",
           "open_items",
           "risks",
@@ -5376,6 +5409,32 @@
         "title": "BriefOpenCategory",
         "type": "object"
       },
+      "BriefOpenCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "open_items": {
+            "$ref": "#/$defs/Collection_BriefOpenDisplayGroup_"
+          }
+        },
+        "required": [
+          "open_items"
+        ],
+        "title": "BriefOpenCollections",
+        "type": "object"
+      },
+      "BriefOpenData": {
+        "additionalProperties": false,
+        "properties": {
+          "collections": {
+            "$ref": "#/$defs/BriefOpenCollections"
+          }
+        },
+        "required": [
+          "collections"
+        ],
+        "title": "BriefOpenData",
+        "type": "object"
+      },
       "BriefOpenDisplayGroup": {
         "additionalProperties": false,
         "properties": {
@@ -5762,6 +5821,32 @@
         "title": "BriefRisk",
         "type": "object"
       },
+      "BriefVoucherCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "vouchers": {
+            "$ref": "#/$defs/Collection_OwnerBriefVoucher_"
+          }
+        },
+        "required": [
+          "vouchers"
+        ],
+        "title": "BriefVoucherCollections",
+        "type": "object"
+      },
+      "BriefVoucherData": {
+        "additionalProperties": false,
+        "properties": {
+          "collections": {
+            "$ref": "#/$defs/BriefVoucherCollections"
+          }
+        },
+        "required": [
+          "collections"
+        ],
+        "title": "BriefVoucherData",
+        "type": "object"
+      },
       "BriefWorkforceCost": {
         "additionalProperties": false,
         "properties": {
@@ -5921,6 +6006,258 @@
           "page"
         ],
         "title": "Collection",
+        "type": "object"
+      },
+      "DashboardBriefActivityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 19,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "selected_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DashboardPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read_semantics": {
+            "$ref": "#/$defs/ReadSemantics"
+          },
+          "read_context": {
+            "$ref": "#/$defs/DashboardReadContext"
+          },
+          "scope": {
+            "const": "activity",
+            "title": "Scope",
+            "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BriefActivityData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "snapshot_version",
+          "selected_period",
+          "read_semantics",
+          "read_context",
+          "scope",
+          "data"
+        ],
+        "title": "DashboardBriefActivityResponse",
+        "type": "object"
+      },
+      "DashboardBriefOpenResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 19,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "selected_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DashboardPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read_semantics": {
+            "$ref": "#/$defs/ReadSemantics"
+          },
+          "read_context": {
+            "$ref": "#/$defs/DashboardReadContext"
+          },
+          "scope": {
+            "const": "open_items",
+            "title": "Scope",
+            "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BriefOpenData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "snapshot_version",
+          "selected_period",
+          "read_semantics",
+          "read_context",
+          "scope",
+          "data"
+        ],
+        "title": "DashboardBriefOpenResponse",
+        "type": "object"
+      },
+      "DashboardBriefOverviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 19,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "selected_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DashboardPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read_semantics": {
+            "$ref": "#/$defs/ReadSemantics"
+          },
+          "read_context": {
+            "$ref": "#/$defs/DashboardReadContext"
+          },
+          "scope": {
+            "const": "overview",
+            "title": "Scope",
+            "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BriefData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "snapshot_version",
+          "selected_period",
+          "read_semantics",
+          "read_context",
+          "scope",
+          "data"
+        ],
+        "title": "DashboardBriefOverviewResponse",
+        "type": "object"
+      },
+      "DashboardBriefVoucherResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 19,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "selected_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DashboardPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read_semantics": {
+            "$ref": "#/$defs/ReadSemantics"
+          },
+          "read_context": {
+            "$ref": "#/$defs/DashboardReadContext"
+          },
+          "scope": {
+            "const": "vouchers",
+            "title": "Scope",
+            "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BriefVoucherData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "snapshot_version",
+          "selected_period",
+          "read_semantics",
+          "read_context",
+          "scope",
+          "data"
+        ],
+        "title": "DashboardBriefVoucherResponse",
         "type": "object"
       },
       "DashboardPeriod": {
@@ -6737,61 +7074,29 @@
         "type": "object"
       }
     },
-    "additionalProperties": false,
-    "properties": {
-      "schema_version": {
-        "const": 18,
-        "title": "Schema Version",
-        "type": "integer"
+    "discriminator": {
+      "mapping": {
+        "activity": "#/$defs/DashboardBriefActivityResponse",
+        "open_items": "#/$defs/DashboardBriefOpenResponse",
+        "overview": "#/$defs/DashboardBriefOverviewResponse",
+        "vouchers": "#/$defs/DashboardBriefVoucherResponse"
       },
-      "snapshot_version": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Snapshot Version"
-      },
-      "selected_period": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/DashboardPeriod"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "read_semantics": {
-        "$ref": "#/$defs/ReadSemantics"
-      },
-      "read_context": {
-        "$ref": "#/$defs/DashboardReadContext"
-      },
-      "data": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/BriefData"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      }
+      "propertyName": "scope"
     },
-    "required": [
-      "schema_version",
-      "snapshot_version",
-      "selected_period",
-      "read_semantics",
-      "read_context",
-      "data"
-    ],
-    "title": "DashboardBriefResponse",
-    "type": "object"
+    "oneOf": [
+      {
+        "$ref": "#/$defs/DashboardBriefOverviewResponse"
+      },
+      {
+        "$ref": "#/$defs/DashboardBriefActivityResponse"
+      },
+      {
+        "$ref": "#/$defs/DashboardBriefOpenResponse"
+      },
+      {
+        "$ref": "#/$defs/DashboardBriefVoucherResponse"
+      }
+    ]
   },
   "dashboard_brief_group": {
     "$defs": {

@@ -79,7 +79,8 @@ def test_mixed_batch_objects_belong_only_to_their_own_exact_category(book):
     assert all(item["is_batch"] for item in parts)
     response = dashboard.brief(PERIOD, voucher_number=3)
     validate_response("dashboard_brief", response)
-    assert response["schema_version"] == 18
+    assert response["schema_version"] == 19
+    assert response["scope"] == "overview"
     data = response["data"]
     assert data["focused_activity"] is None
     assert data["focused_activity_group"] is None

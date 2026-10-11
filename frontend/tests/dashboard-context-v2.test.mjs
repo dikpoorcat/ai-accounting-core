@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -6,7 +7,8 @@ import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { validateDashboardEmployeesResponse } from "../src/api/generated/dashboardValidators.js";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { validateDashboardFundsResponse } from "../src/api/generated/dashboardFunds.js";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 const contractSamples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 
@@ -23,15 +25,15 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-01", ...initialQuery }, hash: "" });
   const calls = [], unmount = [], replaces = [];
   const dashboardContext = Vue.ref(initialContext);
-  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  globalThis[key] = { Vue, route, refreshContext, dashboardContext, unmount, replaces, appendDashboardCollection, prepareDashboardCollections, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   globalThis.window = { removeEventListener() {}, addEventListener() {} };
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
-  const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "")
+  const source = readFileSync(new URL(`../src/views/${name}View.vue`, import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT))
     .replace("let mounted = true", "let mounted = false");
   const prefix = `
     const environment = globalThis.${key};
     const { ref, shallowReactive, shallowRef, computed, nextTick, watch } = environment.Vue;
-    const { appendDashboardCollection } = environment;
+    const { appendDashboardCollection, prepareDashboardCollections } = environment;
     const onMounted = () => {}; const onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route;
     const useRouter = () => ({ replace: async value => environment.replaces.push(value), push: async () => {} });
@@ -61,6 +63,7 @@ function result(name, marker) {
   }
   const briefContract = contractSamples.deferred_brief.response;
   return { marker, ...(name === "Brief" ? {
+    scope: "overview",
     schema_version: briefContract.schema_version, snapshot_version: briefContract.snapshot_version,
     read_context: { ...briefContract.read_context, company_id: "company-a" },
   } : {}), selected_period: { key: "2026-01" }, data: { workforce_cost: { has_activity: false }, vouchers: [], activity_groups: [], voucher_page: { has_more: false }, collections: {} } };
@@ -309,6 +312,46 @@ test("actual API consumers reject stale schemas, missing page metadata and misma
     const malformed = structuredClone(valid);
     mutate(malformed);
     assert.equal(validateDashboardEmployeesResponse(malformed), false);
+  }
+});
+
+test("funds API keeps the displayed first account associated with its movement page", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false,
+    optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  const savedWindow = globalThis.window, savedFetch = globalThis.fetch;
+  try {
+    const { fetchFundsDashboard } = await server.ssrLoadModule("/src/api/funds.ts");
+    const response = structuredClone(contractSamples.first_account_funds.response);
+    const accounts = response.data.collections.accounts;
+    const first = accounts.items[0];
+    first.account_id = "account-z"; first.name = "安徽现金";
+    const other = { ...structuredClone(first), account_id: "account-a", name: "浙江现金",
+      opening_fen: "0", inflow_fen: "0", outflow_fen: "0", net_change_fen: "0",
+      attribution_adjustment_fen: "0", closing_fen: "0", movement_count: 0 };
+    accounts.items.push(other);
+    Object.assign(accounts.page, { total_count: 2, filtered_count: 2, returned_count: 2 });
+    response.data.selected_movement_account = { type: first.type, account_id: first.account_id };
+    const movements = response.data.collections.movements.items;
+    for (const row of movements) { row.account_id = first.account_id; row.account_name = first.name; }
+    globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${response.read_context.company_id}` } };
+    globalThis.fetch = async () => new Response(JSON.stringify(response));
+    const query = { movement_account_selection: "first" };
+    assert(validateDashboardFundsResponse(response));
+    const result = await fetchFundsDashboard(response.selected_period.key, undefined, query);
+    assert.deepEqual(result.data.selected_movement_account, { type: first.type, account_id: first.account_id });
+    assert(result.data.collections.movements.items.every(row => row.account_id === first.account_id));
+    for (const row of movements) { row.account_id = other.account_id; row.account_name = other.name; }
+    assert(validateDashboardFundsResponse(response), "the wrong account page still has a valid structure");
+    await assert.rejects(fetchFundsDashboard(response.selected_period.key, undefined, query),
+      error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+    movements.length = 0;
+    Object.assign(response.data.collections.movements.page,
+      { filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null });
+    const empty = await fetchFundsDashboard(response.selected_period.key, undefined, query);
+    assert.equal(empty.data.collections.movements.items.length, 0);
+  } finally {
+    globalThis.window = savedWindow; globalThis.fetch = savedFetch;
+    await server.close();
   }
 });
 

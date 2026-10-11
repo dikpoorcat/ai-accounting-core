@@ -111,6 +111,22 @@ def _obligation(calculation: Mapping[str, Any], item: Mapping[str, Any]) -> dict
     }
 
 
+def _obligation_index(items):
+    """Index immutable string locators without changing exceptional equality."""
+    keyed, named, paired = defaultdict(list), defaultdict(list), defaultdict(list)
+    for index, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            return None
+        key, name = item.get("key"), item.get("name")
+        if any(value is not None and type(value) is not str for value in (key, name)):
+            return None
+        entry = index, item
+        keyed[key].append(entry)
+        named[name].append(entry)
+        paired[key, name].append(entry)
+    return keyed, named, paired
+
+
 def resolve_calculation_relations(
     calculation: Mapping[str, Any],
     *,
@@ -118,8 +134,15 @@ def resolve_calculation_relations(
     load_parents: Callable[[str], Iterable[str]],
     source_cache: dict | None = None,
     collect_ancestry: bool = True,
+    settlement_only: bool = False,
+    _obligation_indexes: dict | None = None,
 ) -> dict:
     """Resolve supported frozen calculations to stable obligations and exact source lines."""
+
+    if settlement_only and (
+        collect_ancestry or calculation.get("kind") not in SETTLEMENT_PAYMENT_KINDS
+    ):
+        raise ValueError("settlement-only projection requires a direct payment")
 
     issues: list[dict] = []
     calculations: dict[str, Mapping[str, Any]] = {}
@@ -150,6 +173,7 @@ def resolve_calculation_relations(
         return parents[ident]
 
     source_records_cache = {} if source_cache is None else source_cache
+    obligation_indexes = {} if _obligation_indexes is None else _obligation_indexes
 
     def cached_own(record, count):
         """Reuse this exact source's resolved obligations, never an ancestor's."""
@@ -247,6 +271,7 @@ def resolve_calculation_relations(
         if source is None:
             return None
         source_values = _values(source)
+        binding = None
         if binding_id is not None:
             binding = loaded(binding_id)
             if (
@@ -266,12 +291,42 @@ def resolve_calculation_relations(
                 return None
             source_values = _values(binding)["basis_values"]
         source_items = source_values.get("obligations", ())
-        candidates = [
-            (index, item)
-            for index, item in enumerate(source_items)
-            if (key is None or item.get("key") == key)
-            and (name is None or item.get("name") == name)
-        ]
+        # A binding supplies a different immutable basis. Keep it separate from
+        # the original source and from another version or decoded value object.
+        locator = (source.get("id"), source.get("result_digest"), source.get("fact_id"),
+                   binding.get("id") if binding else None,
+                   binding.get("result_digest") if binding else None,
+                   binding.get("fact_id") if binding else None, id(source_values))
+        indexed = None
+        if (isinstance(source_items, (list, tuple))
+                and all(value is None or type(value) is str for value in (key, name))):
+            try:
+                cached_index = obligation_indexes.get(locator)
+                if cached_index is None:
+                    # Most ordinary sources are used by one slot. Preserve its
+                    # original scan and build maps only when this basis repeats.
+                    obligation_indexes[locator] = (source_values,)
+                elif len(cached_index) == 1:
+                    indexed = _obligation_index(source_items)
+                    # Retain the basis object so object IDs cannot be recycled
+                    # during this local batch. No resolved item is shared.
+                    obligation_indexes[locator] = source_values, indexed
+                else:
+                    indexed = cached_index[1]
+            except TypeError:
+                # Exceptional non-scalar source metadata keeps the old path.
+                indexed = None
+        if indexed is None or key is None and name is None:
+            candidates = [
+                (index, item)
+                for index, item in enumerate(source_items)
+                if (key is None or item.get("key") == key)
+                and (name is None or item.get("name") == name)
+            ]
+        else:
+            keyed, named, paired = indexed
+            candidates = (paired.get((key, name), ()) if key is not None and name is not None
+                          else keyed.get(key, ()) if key is not None else named.get(name, ()))
         if len(candidates) != 1:
             return None
         index, raw_item = candidates[0]
@@ -307,6 +362,8 @@ def resolve_calculation_relations(
         return item
 
     def add_relation(line_no: int, role: str, amount: int, source, item, **extra):
+        if settlement_only:
+            return
         line_relations.append(
             {
                 "line_no": line_no,
@@ -694,6 +751,11 @@ def resolve_calculation_relations(
             source,
             item if valid else None,
         )
+
+    if settlement_only:
+        # All original allocation, exact source/binding, money and saved-line
+        # checks have completed. Activity parts consume no party-line display.
+        return {"settlements": settlements, "issues": issues}
 
     # A calculation's own obligations can share one aggregate line.  Expand only
     # when their stable amounts exactly conserve that line.

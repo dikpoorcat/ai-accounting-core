@@ -1,4 +1,4 @@
-"""The index-only draft step preserves both valid c9 installation ancestries."""
+"""The original index step preserves both c9 ancestries in the current draft chain."""
 
 import shutil
 from contextlib import closing
@@ -30,9 +30,10 @@ from ai_accounting.kernel.versions import verify_schema
 
 def table_rows(connection, contract):
     return {
-        item["name"]: [tuple(row) for row in connection.execute(
-            'SELECT * FROM "' + item["name"] + '" ORDER BY rowid'
-        )]
+        item["name"]: [
+            tuple(row)
+            for row in connection.execute('SELECT * FROM "' + item["name"] + '" ORDER BY rowid')
+        ]
         for item in contract["objects"]
         if item["type"] == "table" and item["name"] != "schema_draft_history"
     }
@@ -41,7 +42,8 @@ def table_rows(connection, contract):
 @pytest.mark.parametrize("prior_adjustment", [False, True])
 def test_index_step_preserves_every_original_value_and_existing_history(tmp_path, prior_adjustment):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
+        tmp_path / "company.sqlite",
+        source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
         prior_adjustment=prior_adjustment,
     )
     old_business(path, source)
@@ -53,14 +55,21 @@ def test_index_step_preserves_every_original_value_and_existing_history(tmp_path
         seen = []
         result = development.upgrade_company(connection, target, fault=seen.append)
         assert result["source_fingerprint"] == development.INDEX_SOURCE_FINGERPRINT
-        assert result["steps"] == [{
-            "sequence": len(history) + 1,
-            "source_fingerprint": development.INDEX_SOURCE_FINGERPRINT,
-            "target_fingerprint": development.INDEX_TARGET_FINGERPRINT,
-        }]
+        assert result["steps"] == [
+            {
+                "sequence": len(history) + 1,
+                "source_fingerprint": development.INDEX_SOURCE_FINGERPRINT,
+                "target_fingerprint": development.INDEX_TARGET_FINGERPRINT,
+            },
+            {
+                "sequence": len(history) + 2,
+                "source_fingerprint": development.READ_MODEL_SOURCE_FINGERPRINT,
+                "target_fingerprint": development.READ_MODEL_TARGET_FINGERPRINT,
+            },
+        ]
         assert table_rows(connection, source.current()) == rows
         actual = [tuple(row) for row in connection.execute("SELECT * FROM schema_draft_history")]
-        assert actual[:-1] == history
+        assert actual[:-2] == history
         assert _retained_history_digest(connection) == retained
         assert "after_copy" not in seen and "after_drop" not in seen
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -72,7 +81,8 @@ def test_index_step_preserves_every_original_value_and_existing_history(tmp_path
 @pytest.mark.parametrize("point", ["after_index_ddl", "before_commit"])
 def test_index_step_failure_rolls_back_index_and_preserves_prior_receipt(tmp_path, point):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
+        tmp_path / "company.sqlite",
+        source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
         prior_adjustment=True,
     )
     with closing(connect(path)) as connection:
@@ -91,7 +101,8 @@ def test_index_step_failure_rolls_back_index_and_preserves_prior_receipt(tmp_pat
 
 def test_index_step_rechecks_exact_source_after_taking_write_lock(tmp_path):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
+        tmp_path / "company.sqlite",
+        source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
     )
 
     def race(point):
@@ -104,27 +115,44 @@ def test_index_step_rechecks_exact_source_after_taking_write_lock(tmp_path):
             development.upgrade_company(connection, target, fault=race)
         assert error.value.code == "schema_fingerprint_mismatch"
         assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name='close_reference_direct_adoption'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='close_reference_direct_adoption'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_two_step_chain_is_explicit_and_rejects_shortcut_declarations(tmp_path):
     path, source, target = create_old_company(tmp_path / "company.sqlite")
-    shortcut = replace(target, draft_transitions={"company": frozenset({
-        (development.SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
-        (development.INDEX_SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
-    })})
+    shortcut = replace(
+        target,
+        draft_transitions={
+            "company": frozenset(
+                {
+                    (development.SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
+                    (development.INDEX_SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
+                }
+            )
+        },
+    )
     with closing(connect(path)) as connection:
         with pytest.raises(KernelError) as error:
             development.upgrade_company(connection, shortcut)
         assert error.value.code == "migration_not_declared"
         assert verify_schema(connection, bundle=source) == 0
         result = development.upgrade_company(connection, target)
-        assert [(item["sequence"], item["source_fingerprint"], item["target_fingerprint"])
-                for item in result["steps"]] == [
+        assert [
+            (item["sequence"], item["source_fingerprint"], item["target_fingerprint"])
+            for item in result["steps"]
+        ] == [
             (1, development.SOURCE_FINGERPRINT, development.INDEX_SOURCE_FINGERPRINT),
             (2, development.INDEX_SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT),
+            (
+                3,
+                development.READ_MODEL_SOURCE_FINGERPRINT,
+                development.READ_MODEL_TARGET_FINGERPRINT,
+            ),
         ]
 
 
@@ -137,19 +165,27 @@ def test_new_target_installation_has_no_fabricated_adjustment_history(tmp_path):
         assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
         assert (
             connection.execute("SELECT hex(fingerprint) FROM schema_history").fetchone()[0].lower()
-            == development.INDEX_TARGET_FINGERPRINT
+            == development.READ_MODEL_TARGET_FINGERPRINT
         )
         assert verify_schema(connection, bundle=target) == 0
 
 
-@pytest.mark.parametrize("source_fingerprint", [
-    development.INDEX_SOURCE_FINGERPRINT, development.SOURCE_FINGERPRINT,
-])
+@pytest.mark.parametrize(
+    "source_fingerprint",
+    [
+        development.INDEX_SOURCE_FINGERPRINT,
+        development.SOURCE_FINGERPRINT,
+    ],
+)
 def test_upgrade_scans_each_segment_before_and_after_without_duplicate_baseline(
-    tmp_path, monkeypatch, record_property, source_fingerprint,
+    tmp_path,
+    monkeypatch,
+    record_property,
+    source_fingerprint,
 ):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
+        tmp_path / "company.sqlite",
+        source_fingerprint=source_fingerprint,
     )
     old_business(path, source)
     original = development._all_existing_rows
@@ -167,32 +203,44 @@ def test_upgrade_scans_each_segment_before_and_after_without_duplicate_baseline(
         assert table_rows(connection, source.current()) == before
         assert result["original_rows_digest"] == scanned[0][1][0]
         assert verify_schema(connection, bundle=target) == 0
-    expected = ([source_fingerprint, source_fingerprint] if
-                source_fingerprint == development.INDEX_SOURCE_FINGERPRINT else
-                [source_fingerprint, source_fingerprint,
-                 development.INDEX_SOURCE_FINGERPRINT, development.INDEX_SOURCE_FINGERPRINT])
+    chain = (
+        [development.INDEX_SOURCE_FINGERPRINT, development.READ_MODEL_SOURCE_FINGERPRINT]
+        if source_fingerprint == development.INDEX_SOURCE_FINGERPRINT
+        else [
+            development.SOURCE_FINGERPRINT,
+            development.INDEX_SOURCE_FINGERPRINT,
+            development.READ_MODEL_SOURCE_FINGERPRINT,
+        ]
+    )
+    expected = [fingerprint for fingerprint in chain for _ in range(2)]
     assert [fingerprint for fingerprint, _ in scanned] == expected
     assert scanned[0][1] == scanned[1][1]
-    if len(scanned) == 4:
-        assert scanned[2][1] == scanned[3][1]
-        # The second segment must bind the first real receipt and new tables.
-        assert scanned[2][1][1]["schema_draft_history"] == 1
+    for index in range(2, len(scanned), 2):
+        assert scanned[index][1] == scanned[index + 1][1]
+        # Every next segment binds the actual preceding receipts and tables.
+        assert scanned[index][1][1]["schema_draft_history"] == index // 2
     record_property("upgrade_original_rows", sum(scanned[0][1][1].values()))
-    record_property("upgrade_retention_rows_scanned", sum(
-        sum(value[1].values()) for _, value in scanned
-    ))
+    record_property(
+        "upgrade_retention_rows_scanned", sum(sum(value[1].values()) for _, value in scanned)
+    )
 
 
-@pytest.mark.parametrize("source_fingerprint,point", [
-    (development.INDEX_SOURCE_FINGERPRINT, "after_index_ddl"),
-    (development.SOURCE_FINGERPRINT, "after_ddl"),
-    (development.SOURCE_FINGERPRINT, "after_index_ddl"),
-])
+@pytest.mark.parametrize(
+    "source_fingerprint,point",
+    [
+        (development.INDEX_SOURCE_FINGERPRINT, "after_index_ddl"),
+        (development.SOURCE_FINGERPRINT, "after_ddl"),
+        (development.SOURCE_FINGERPRINT, "after_index_ddl"),
+    ],
+)
 def test_each_segment_still_rejects_changed_original_data_and_rolls_back(
-    tmp_path, source_fingerprint, point,
+    tmp_path,
+    source_fingerprint,
+    point,
 ):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=source_fingerprint,
+        tmp_path / "company.sqlite",
+        source_fingerprint=source_fingerprint,
     )
     old_business(path, source)
     with closing(connect(path)) as connection:
@@ -211,22 +259,34 @@ def test_each_segment_still_rejects_changed_original_data_and_rolls_back(
 
 
 def test_root_preserves_mixed_exact_sources_and_skips_current_target(tmp_path):
-    fingerprints = (development.SOURCE_FINGERPRINT, development.INDEX_SOURCE_FINGERPRINT,
-                    development.INDEX_TARGET_FINGERPRINT)
+    fingerprints = (
+        development.SOURCE_FINGERPRINT,
+        development.INDEX_SOURCE_FINGERPRINT,
+        development.INDEX_TARGET_FINGERPRINT,
+        development.READ_MODEL_TARGET_FINGERPRINT,
+    )
     root, _, target, companies = create_old_root(tmp_path, source_fingerprints=fingerprints)
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         catalog = development._catalog_retained_digest(connection)
     result = development.upgrade_root(root, bundle=target)
     assert [item["status"] for item in result["companies"]] == [
-        "upgraded", "upgraded", "verified_skip",
+        "upgraded",
+        "upgraded",
+        "upgraded",
+        "verified_skip",
     ]
     for source_fingerprint, item in zip(fingerprints, result["companies"], strict=True):
-        source = (target if source_fingerprint == development.INDEX_TARGET_FINGERPRINT
-                  else development.source_bundle(target, source_fingerprint))
-        assert verify_portable(item["backup"], _bundle=source)["database_format"] \
+        source = (
+            target
+            if source_fingerprint == development.READ_MODEL_TARGET_FINGERPRINT
+            else development.source_bundle(target, source_fingerprint)
+        )
+        assert (
+            verify_portable(item["backup"], _bundle=source)["database_format"]
             == source.database_format()
+        )
     repeated = development.upgrade_root(root, bundle=target)
-    assert [item["status"] for item in repeated["companies"]] == ["verified_skip"] * 3
+    assert [item["status"] for item in repeated["companies"]] == ["verified_skip"] * 4
     with closing(connect(root / "catalog.sqlite", read_only=True)) as connection:
         assert development._catalog_retained_digest(connection) == catalog
     for _, _, _, path in companies:
@@ -237,7 +297,8 @@ def test_catalog_backup_is_standalone_without_copy_wal(tmp_path, monkeypatch):
     import sqlite3
 
     root, _, target, _ = create_old_root(
-        tmp_path, source_fingerprints=(development.INDEX_SOURCE_FINGERPRINT,),
+        tmp_path,
+        source_fingerprints=(development.INDEX_SOURCE_FINGERPRINT,),
     )
     original = development.copy_to_unpublished_database
     samples = []
@@ -257,10 +318,13 @@ def test_catalog_backup_is_standalone_without_copy_wal(tmp_path, monkeypatch):
     result = development.upgrade_root(root, bundle=target)
     assert samples and max(samples) == 0
     catalog = Path(result["backup_directory"]) / "catalog.sqlite"
-    with closing(connect(
-        catalog, read_only=True,
-        validator=lambda connection: verify_schema(connection, bundle=target, kind="catalog"),
-    )) as connection:
+    with closing(
+        connect(
+            catalog,
+            read_only=True,
+            validator=lambda connection: verify_schema(connection, bundle=target, kind="catalog"),
+        )
+    ) as connection:
         assert [tuple(row) for row in connection.execute("SELECT * FROM company")] == source_rows
     catalog_wal = Path(str(catalog) + "-wal")
     assert not catalog_wal.exists() or catalog_wal.stat().st_size == 0
@@ -278,7 +342,9 @@ def test_package_inventory_declares_both_exact_development_sources():
 
     bundle = production_bundle()
     assert contract_file_names(bundle) == (
-        "catalog/draft.json", "company/draft.json",
+        "catalog/draft.json",
+        "company/draft.json",
+        "development/company/" + development.READ_MODEL_SOURCE_FINGERPRINT + ".json",
         "development/company/" + development.SOURCE_FINGERPRINT + ".json",
         "development/company/" + development.INDEX_SOURCE_FINGERPRINT + ".json",
     )
@@ -287,7 +353,8 @@ def test_package_inventory_declares_both_exact_development_sources():
 @pytest.mark.parametrize("field", ["company_id", "database_id", "taxpayer_id"])
 def test_same_schema_identity_race_is_rejected_inside_write_transaction(tmp_path, field):
     path, source, target = create_old_company(
-        tmp_path / "company.sqlite", source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
+        tmp_path / "company.sqlite",
+        source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
     )
 
     def race(point):
@@ -313,17 +380,22 @@ def test_same_schema_identity_race_is_rejected_inside_write_transaction(tmp_path
 
 @pytest.mark.parametrize("victim", [0, 1])
 def test_root_rejects_same_schema_other_company_file_after_backups(
-    tmp_path, monkeypatch, victim,
+    tmp_path,
+    monkeypatch,
+    victim,
 ):
-    fingerprints = (development.INDEX_SOURCE_FINGERPRINT, development.INDEX_TARGET_FINGERPRINT)
+    fingerprints = (development.INDEX_SOURCE_FINGERPRINT, development.READ_MODEL_TARGET_FINGERPRINT)
     root, _, target, companies = create_old_root(tmp_path, source_fingerprints=fingerprints)
     other = tmp_path / "other-company.sqlite"
     if victim == 1:
         Store.create(other, target, "other-company", "913100000000000099", "other-database")
     else:
         create_old_company(
-            other, target, source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
-            company_id="other-company", taxpayer_id="913100000000000099",
+            other,
+            target,
+            source_fingerprint=development.INDEX_SOURCE_FINGERPRINT,
+            company_id="other-company",
+            taxpayer_id="913100000000000099",
             database_id="other-database",
         )
     create_portable = development.create_portable
@@ -341,13 +413,19 @@ def test_root_rejects_same_schema_other_company_file_after_backups(
     monkeypatch.setattr(development, "create_portable", replace_after_all_backups)
     with pytest.raises(KernelError) as error:
         development.upgrade_root(root, bundle=target)
-    assert error.value.code == ("development_upgrade_failed" if victim == 0
-                                else "development_upgrade_partial")
+    assert error.value.code == (
+        "development_upgrade_failed" if victim == 0 else "development_upgrade_partial"
+    )
     assert error.value.details["cause_code"] == "backup_identity_mismatch"
     assert error.value.details["failed_company_id"] == companies[victim][0]
-    expected = (target if victim == 1 else development.source_bundle(
-        target, development.INDEX_SOURCE_FINGERPRINT,
-    ))
+    expected = (
+        target
+        if victim == 1
+        else development.source_bundle(
+            target,
+            development.INDEX_SOURCE_FINGERPRINT,
+        )
+    )
     with closing(connect(companies[victim][3], read_only=True)) as connection:
         assert verify_schema(connection, bundle=expected) == 0
         assert connection.execute("SELECT company_id FROM identity").fetchone()[0] == (
@@ -355,13 +433,24 @@ def test_root_rejects_same_schema_other_company_file_after_backups(
         )
         assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 0
     for company_id, database_id, taxpayer_id, _ in companies:
-        source = target if company_id == companies[1][0] else development.source_bundle(
-            target, development.INDEX_SOURCE_FINGERPRINT,
+        source = (
+            target
+            if company_id == companies[1][0]
+            else development.source_bundle(
+                target,
+                development.INDEX_SOURCE_FINGERPRINT,
+            )
         )
         archive = Path(error.value.details["backup_directory"]) / (
             taxpayer_id + ".finance-company.zip"
         )
-        assert verify_portable(
-            archive, _bundle=source, expected_company_id=company_id,
-            expected_database_id=database_id, expected_taxpayer_id=taxpayer_id,
-        )["verification"]["status"] == "verified"
+        assert (
+            verify_portable(
+                archive,
+                _bundle=source,
+                expected_company_id=company_id,
+                expected_database_id=database_id,
+                expected_taxpayer_id=taxpayer_id,
+            )["verification"]["status"]
+            == "verified"
+        )

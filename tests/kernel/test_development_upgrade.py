@@ -48,7 +48,7 @@ def create_old_company(
         path.parent / (path.stem + "-draft-contracts"), development=True
     )
     source = development.source_bundle(target, source_fingerprint)
-    original = (development.source_bundle(target) if prior_adjustment else source)
+    original = development.source_bundle(target) if prior_adjustment else source
     objects = original.current("company")["objects"]
 
     def initialize(connection):
@@ -71,9 +71,11 @@ def create_old_company(
                 connection.execute(
                     "INSERT INTO schema_draft_history(sequence,source_fingerprint,"
                     "target_fingerprint,retained_history_digest) VALUES(1,?,?,?)",
-                    (bytes.fromhex(development.SOURCE_FINGERPRINT),
-                     bytes.fromhex(source_fingerprint),
-                     bytes.fromhex(_retained_history_digest(connection))),
+                    (
+                        bytes.fromhex(development.SOURCE_FINGERPRINT),
+                        bytes.fromhex(source_fingerprint),
+                        bytes.fromhex(_retained_history_digest(connection)),
+                    ),
                 )
             connection.commit()
         except BaseException:
@@ -249,7 +251,7 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
             connection.execute("SELECT version,hex(fingerprint) FROM schema_history").fetchall()
             == original
         )
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 2
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 3
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert snapshot_rows(connection, source) == rows
         assert _retained_history_digest(connection) == history
@@ -261,7 +263,8 @@ def test_packaged_old_contract_upgrades_without_rewriting_original_schema_histor
 
 
 @pytest.mark.parametrize(
-    "point", ["after_copy", "after_drop", "after_ddl", "after_index_ddl", "before_commit"],
+    "point",
+    ["after_copy", "after_drop", "after_ddl", "after_index_ddl", "before_commit"],
 )
 def test_each_fault_rolls_back_whole_company_upgrade(tmp_path, point):
     path, source, target = create_old_company(tmp_path / "company.sqlite")

@@ -97,7 +97,7 @@ def test_current_and_closed_payroll_details_retain_exact_obligation_classificati
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
     before = dashboard.business_status("2026-01", "january")
-    assert before["schema_version"] == 9
+    assert before["schema_version"] == 10
     historical = before["data"]["settlements"]["obligations"]
     assert historical
     assert all(

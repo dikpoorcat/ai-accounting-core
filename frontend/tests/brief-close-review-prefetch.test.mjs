@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -7,7 +8,7 @@ import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 const source = readFileSync(new URL("../src/components/CloseReviewPanel.vue", import.meta.url), "utf8");
-const script = parse(source).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "");
+const script = parse(source).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
 const briefContract = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8")).deferred_brief.response;
 let sequence = 0;
 
@@ -107,7 +108,7 @@ test("closing the details cancels the request and ignores its late response", as
 });
 async function briefHarness() {
   const briefSource = readFileSync(new URL("../src/views/BriefView.vue", import.meta.url), "utf8");
-  const briefScript = parse(briefSource).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const briefScript = parse(briefSource).descriptor.scriptSetup.content.replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02" } });
   const calls = [], unmount = [];
   const context = Vue.ref({ current_company: { company_id: "a" }, periods: [{ key: "2026-02" }] });
@@ -137,6 +138,7 @@ async function briefHarness() {
   return { ...brief, calls, route, close() { unmount.forEach(callback => callback()); scope.stop(); } };
 }
 const briefResult = (monthState, request = null) => ({
+  scope: "overview",
   schema_version: briefContract.schema_version, snapshot_version: briefContract.snapshot_version,
   read_context: { ...briefContract.read_context, company_id: "a" },
   selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request, collections: {} },

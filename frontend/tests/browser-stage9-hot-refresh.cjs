@@ -13,15 +13,17 @@ const responseSchemas = JSON.parse(fs.readFileSync(
   path.join(__dirname, "../src/api/generated/dashboardResponseSchemas.json"), "utf8"));
 const responseVersions = Object.freeze(Object.fromEntries([
   "dashboard_context", "dashboard_brief", "dashboard_funds", "dashboard_employees",
-  "dashboard_assets", "dashboard_business_status", "dashboard_quarterly_report",
+  "dashboard_assets", "dashboard_brief_group", "dashboard_business_status", "dashboard_quarterly_report",
   "dashboard_period_preparation", "dashboard_close_review", "report_export_status",
 ].map(name => {
   const schema = responseSchemas?.[name];
-  const version = schema?.properties?.schema_version;
+  const branches = schema?.oneOf?.map(branch => schema.$defs?.[branch.$ref?.split("/").at(-1)]) ?? [schema];
+  const version = branches[0]?.properties?.schema_version;
   const expected = version?.const ?? (Array.isArray(version?.enum) && version.enum.length === 1
     ? version.enum[0] : undefined);
-  assert(schema?.type === "object" && Array.isArray(schema.required)
-    && schema.required.includes("schema_version")
+  assert(branches.length > 0 && branches.every(branch => branch?.type === "object"
+    && Array.isArray(branch.required) && branch.required.includes("schema_version")
+    && JSON.stringify(branch.properties?.schema_version) === JSON.stringify(version))
     && version?.type === "integer" && Number.isSafeInteger(expected) && expected > 0
     && (!Object.hasOwn(version, "const") || version.const === expected)
     && (!Object.hasOwn(version, "enum")
@@ -42,7 +44,7 @@ const modules = [
   { key: "reports", path: "/reports", action: "quarterly-report", heading: "季度财务报表", visible: "#report-overview, .summary-grid, #report-statements" },
 ];
 const defaultCollections = {
-  brief: responseVersions.dashboard_brief >= 16 ? ["activity", "open_items"] : ["activity", "vouchers", "open_items"],
+  brief: ["activity", "open_items"],
   funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
   employees: ["employees", "labor_sources"],
   assets: ["assets", "projects"],
@@ -126,6 +128,7 @@ const observeHotRefresh = new Function("button", "selection", `
           || url.searchParams.get("company_id") !== selection.companyId
           || entry.responseEnd <= started) return false;
         if (action === "context") return true;
+        if (selection.requireRoot && (url.searchParams.has("section") || url.searchParams.has("cursor"))) return false;
         if (action === "quarterly-report") {
           return url.searchParams.get("year") === selection.quarter.slice(0, 4)
             && url.searchParams.get("quarter") === selection.quarter.slice(-1);
@@ -156,7 +159,518 @@ const observeHotRefresh = new Function("button", "selection", `
 const captureRefreshProjection = new Function("selection",
   `return (${readRefreshProjection.toString()})(document, selection.root);`);
 
+function resultHasVisibleContent(document, root) {
+  if (!root) return false;
+  const style = document.defaultView.getComputedStyle(root);
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  // Result wrappers intentionally use display: contents and have no box.
+  // Require an actually rendered child; the wrapper's existence is insufficient.
+  if (style.display === "contents")
+    return Array.from(root.children).some(child => resultHasVisibleContent(document, child));
+  return Boolean(root.getClientRects().length);
+}
+
+function readInteractionPosition(document, position) {
+  const target = document.querySelector(position.selector), view = document.defaultView;
+  if (!target || !resultHasVisibleContent(document, target)
+    || position.require_focus && target !== document.activeElement && !target.contains(document.activeElement)) return null;
+  const rect = target.getBoundingClientRect();
+  const values = [rect.left, rect.top, rect.right, rect.bottom, view.scrollX, view.scrollY, view.innerWidth, view.innerHeight];
+  if (!values.every(Number.isFinite) || rect.right <= rect.left || rect.bottom <= rect.top
+    || Math.min(rect.right, view.innerWidth) <= Math.max(rect.left, 0)
+    || Math.min(rect.bottom, view.innerHeight) <= Math.max(rect.top, 0)) return null;
+  // A tall card on a phone only needs a visible portion, rather than fitting
+  // wholly inside the viewport. Its calibrated position must still be reached.
+  return values;
+}
+
+function interactionPositionReady(position, current) {
+  if (!position) return true;
+  return Array.isArray(current) && Array.isArray(position.expected)
+    && current.length === position.expected.length
+    && current.every((value, index) => Number.isFinite(position.expected[index]) && Math.abs(value - position.expected[index]) <= 1);
+}
+
+const calibrateInteractionPosition = new Function("position", `
+  const resultHasVisibleContent = ${resultHasVisibleContent.toString()};
+  const readPosition = ${readInteractionPosition.toString()};
+  return new Promise((resolve, reject) => {
+    const started = performance.now();
+    let previous = null, frames = 0;
+    const frame = () => {
+      const current = readPosition(document, position);
+      const stable = current && JSON.stringify(current) === JSON.stringify(previous);
+      frames = stable ? frames + 1 : current ? 1 : 0;
+      previous = current;
+      if (frames >= 2) resolve(current);
+      else if (performance.now() - started < 30000) requestAnimationFrame(frame);
+      else reject(new Error('interaction target positioning calibration timeout'));
+    };
+    requestAnimationFrame(frame);
+  });
+`);
+
+function verifiedReadCycleReady(cycle, proof) {
+  if (typeof cycle.cycle_id !== "string" || !cycle.cycle_id || !proof || proof.cycle_id !== cycle.cycle_id || proof.status !== "verified"
+    || proof.pending !== 0 || proof.failed !== 0) return false;
+  if (!["action", "company_id", "period", "snapshot"].every(key => typeof cycle.scope?.[key] === "string"
+    && cycle.scope[key].length > 0 && proof.scope?.[key] === cycle.scope[key])) return false;
+  if (!Array.isArray(proof.required_reads) || proof.required_reads.some(read => read.status !== "verified")) return false;
+  return proof.required_reads.length > 0 || !cycle.require_new_response && proof.cache_verified === true;
+}
+
+function verifyEmployeeRootRows(visibleRows, rootRows, allowContinuation = false) {
+  if (allowContinuation) assert(visibleRows >= rootRows, "employees: expanded refresh lost root employee rows");
+  else assert.equal(visibleRows, rootRows, "employees: default employee rows incomplete");
+}
+
+function interactionReadUrl(value) {
+  const url = new URL(value); url.hash = ""; url.searchParams.sort();
+  return url.href;
+}
+
+const retainedRefreshKeys = Object.freeze([
+  "brief_activity_retained_detail_refresh", "brief_open_items_retained_detail_refresh",
+  "funds_book_retained_detail_refresh", "funds_bank_retained_refresh",
+  "assets_fixed_list_retained_detail_refresh", "reports_statement_retained_detail_refresh",
+  "employees_automatic_continuation_refresh", "employees_expanded_detail_refresh",
+]);
+function retainedRefreshSelection(config, environment = process.env) {
+  const enabled = environment.STAGE9_RETAINED_REFRESH_ONLY === "1";
+  assert(!enabled || config.interaction_only === true && !config.layout_only,
+    "retained refresh requires interaction_only, without layout_only");
+  return enabled;
+}
+function createRetainedResponseBodies() {
+  const owners = new WeakMap(), snapshots = new WeakMap(), outstanding = new Map();
+  return {
+    start(request, generation, pageUrl) { owners.set(request, { generation, page_url: pageUrl, request_url: request.url() }); },
+    capture(reply) {
+      if (snapshots.has(reply)) return;
+      const owner = owners.get(reply.request());
+      // Capture bytes immediately, but parse/validate only in the original
+      // validation phase. Rejections become owned data, never unhandled promises.
+      let reading;
+      try { reading = reply.body(); } catch (error) { reading = Promise.reject(error); }
+      const promise = Promise.resolve(reading).then(body => ({ body }), error => ({ error }));
+      const record = { owner, promise, url: reply.url() };
+      snapshots.set(reply, record); outstanding.set(reply, record);
+    },
+    async read(reply, generation) {
+      this.capture(reply);
+      const record = snapshots.get(reply);
+      assert(record.owner && record.owner.generation === generation && record.owner.request_url === reply.url(),
+        "retained response: body belongs to another navigation generation or URL");
+      const result = await record.promise;
+      outstanding.delete(reply);
+      if (result.error) throw result.error;
+      return JSON.parse(result.body.toString("utf8"));
+    },
+    consumed(reply) { outstanding.delete(reply); },
+    retire(generation) {
+      assert(![...outstanding.values()].some(record => record.owner?.generation === generation),
+        "retained response: navigation attempted before prior response validation/obsolete classification");
+    },
+  };
+}
+function verifyRetainedVisibleOrder(expectedIds, actualCount, label) {
+  assert.equal(actualCount, expectedIds.length, `${label}: DOM differs from the complete verified current ordered collection`);
+  assert.equal(new Set(expectedIds).size, expectedIds.length, `${label}: duplicate current ordered identity`);
+}
+function stage9RequestPageLimit(target) {
+  const value = target.searchParams.get("limit"), cursor = target.searchParams.get("cursor");
+  if (!cursor) { assert(value === null || value === "20", "first page must retain default 20"); return 20; }
+  assert(target.searchParams.get("section") && target.searchParams.get("expected_version"), "continuation requires exact section and snapshot");
+  assert(value === null || /^[1-9][0-9]*$/.test(value) && Number(value) <= 500, "continuation limit must be bounded to 500");
+  return value === null ? 20 : Number(value);
+}
+function verifyRetainedResponseContract(validators, target, payload) {
+  const suffix = { context: "Context", brief: "Brief", funds: "Funds", employees: "Employees", assets: "Assets",
+    "quarterly-report": "QuarterlyReport", "brief-group": "BriefGroup", "business-status": "BusinessStatus" }[target.pathname.split("/").at(-1)];
+  const validator = validators[`validateDashboard${suffix}Response`];
+  assert(validator && validator(payload), `generated response contract rejected ${target.pathname}`);
+}
+function retainedItemIdentity(pathname, section, item, payload) {
+  let identity;
+  if (pathname === "/api/dashboard/brief-group" && section === "members") identity = payload.data.section === "activity" ? item.key : item.id;
+  else if (pathname === "/api/dashboard/brief" && ["activity", "open_items"].includes(section)) identity = item.group_key;
+  else if (section === "vouchers") identity = item.voucher_version_id;
+  else identity = { employees: item.employee_id, assets: item.asset_id, projects: item.source_id,
+    labor_sources: item.source_id, accounts: item.account_id && `${item.type}:${item.account_id}`,
+    movements: item.id, statements: item.id, investment_products: item.fund_id, investment_events: item.id,
+    settlement_events: item.id }[section];
+  assert(typeof identity === "string" && identity.length, `${pathname}:${section}: missing actual collection identity`);
+  return identity;
+}
+function retainedResource(url, payload, section) {
+  const target = new URL(url), pathname = target.pathname;
+  const scope = pathname === "/api/dashboard/brief-group" ? `${payload.data.section}:${target.searchParams.get("group_key")}:`
+    : pathname === "/api/dashboard/business-status" ? `${target.searchParams.get("subject_id")}:` : "";
+  return `${pathname}:${scope}${section}`;
+}
+function retainedCollectionIdentities(reads) {
+  const groups = new Map();
+  for (const { url, payload } of reads) {
+    for (const [section, collection] of Object.entries(payload.data?.collections ?? {})) {
+      const pathname = new URL(url).pathname, resource = retainedResource(url, payload, section);
+      const identities = new URL(url).searchParams.has("cursor") ? groups.get(resource) ?? [] : [];
+      for (const item of collection.items) {
+        const identity = retainedItemIdentity(pathname, section, item, payload);
+        if (section === "vouchers" && identities.includes(identity)) continue; // Shared vouchers may accompany multiple member pages.
+        assert(!identities.includes(identity), `${resource}: duplicate identity across continuation pages`);
+        identities.push(identity);
+      }
+      groups.set(resource, identities);
+    }
+  }
+  return Object.fromEntries(groups);
+}
+function verifyRetainedAuxiliaryComplete(reads) {
+  const chains = new Map();
+  for (const { url, payload } of reads) {
+    const target = new URL(url);
+    if (!["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(target.pathname)) continue;
+    const requiredSection = target.pathname === "/api/dashboard/brief-group" ? "members" : "settlement_events";
+    assert(payload.data.collections?.[requiredSection], `${target.pathname}: missing required detail collection`);
+    for (const [section, collection] of Object.entries(payload.data.collections)) {
+      if (section !== requiredSection) continue;
+      const resource = retainedResource(url, payload, section), ids = collection.items.map(item => retainedItemIdentity(target.pathname, section, item, payload));
+      const old = target.searchParams.has("cursor") ? chains.get(resource) : null;
+      assert(!target.searchParams.has("cursor") || old, `${resource}: continuation has no verified first page`);
+      if (old) assert.equal(target.searchParams.get("cursor"), old.next_cursor, `${resource}: continuation cursor is not the prior verified cursor`);
+      const chain = old ?? { ids: [], filtered_count: collection.page.filtered_count };
+      assert.equal(collection.page.filtered_count, chain.filtered_count, `${resource}: continuation total changed`);
+      for (const id of ids) { assert(!chain.ids.includes(id), `${resource}: duplicate continuation identity`); chain.ids.push(id); }
+      chain.has_more = collection.page.has_more; chain.next_cursor = collection.page.next_cursor;
+      chains.set(resource, chain);
+    }
+  }
+  for (const [resource, chain] of chains) {
+    assert.equal(chain.ids.length, chain.filtered_count, `${resource}: incomplete unique detail count`);
+    assert.equal(chain.has_more, false, `${resource}: detail continuation has not reached its terminal page`);
+    assert.equal(chain.next_cursor, null, `${resource}: terminal detail retains a cursor`);
+  }
+  return Object.fromEntries(chains);
+}
+function retainedOrderedItems(reads, pathname, section) {
+  let items = [];
+  for (const read of reads) if (new URL(read.url).pathname === pathname && read.payload.data?.collections?.[section])
+    items = new URL(read.url).searchParams.has("cursor") ? [...items, ...read.payload.data.collections[section].items] : [...read.payload.data.collections[section].items];
+  return items;
+}
+function verifyRetainedTargetBinding(before, after, close = false) {
+  assert(before?.ordered_ids?.length && before.open_indices.length, "retained target: no real pre-refresh expanded identity");
+  assert.deepEqual(after, close ? { ...before, open_indices: [] } : before, "retained target: expanded identity/order/subject/selected resource changed");
+}
+function verifiedFundsDetailCache(priorReads, currentMain, binding) {
+  assert(currentMain && binding?.subject_id && binding?.account && binding.open_indices.length === 1, "funds cache: missing current target proof");
+  assert.equal(binding.ordered_ids[binding.open_indices[0]], binding.target_id, "funds cache: current expanded row identity is not bound");
+  assert.equal(currentMain.contract_verified, true, "funds cache: current main was not contract verified");
+  const target = new URL(currentMain.url), payload = currentMain.payload;
+  assert.equal(target.pathname, "/api/dashboard/funds");
+  assert.deepEqual(payload.data.selected_movement_account, binding.account, "funds cache: selected account changed");
+  assert.equal(payload.snapshot_version, binding.snapshot, "funds cache: current main snapshot changed");
+  const reads = priorReads.filter(read => new URL(read.url).pathname === "/api/dashboard/business-status");
+  assert(reads.length, "funds cache: no previously verified detail");
+  for (const read of reads) {
+    assert.equal(read.contract_verified, true, "funds cache: prior detail was not contract verified");
+    const url = new URL(read.url), detail = read.payload;
+    assert.equal(url.searchParams.get("company_id"), target.searchParams.get("company_id"));
+    assert.equal(url.searchParams.get("period"), target.searchParams.get("period"));
+    assert.equal(detail.read_context.company_id, target.searchParams.get("company_id"));
+    assert.equal(detail.selected_period.key, target.searchParams.get("period"));
+    assert.equal(detail.snapshot_version, binding.snapshot);
+    assert.equal(url.searchParams.get("expected_version"), binding.snapshot);
+    assert.equal(url.searchParams.get("subject_id"), binding.subject_id);
+    assert.equal(detail.data.identity.subject_id, binding.subject_id);
+    assert.equal(url.searchParams.get("settlement_view"), "historical");
+    assert.equal(detail.data.settlement_view, "historical");
+    assert.equal(detail.data.detail_scope, null);
+    assert(!url.searchParams.has("detail_scope_key") && !url.searchParams.has("voucher_version_id"), "funds cache: unrelated detail sub-scope");
+  }
+  verifyRetainedAuxiliaryComplete(reads);
+  return reads;
+}
+function verifyRetainedCollectionIdentities(before, after, { closeActivityMembers = false } = {}) {
+  for (const [resource, identities] of Object.entries(before)) {
+    // Only the explicitly closing activity-member subtree has no refresh read.
+    // Do not exempt main brief content, open-items members, or another resource.
+    if (closeActivityMembers && resource.startsWith("/api/dashboard/brief-group:activity:")) continue;
+    assert.deepEqual(after[resource], identities, `${resource}: refresh changed verified visible collection identities`);
+  }
+}
+function interactionScopeAllows(url, scope) {
+  const action = url.pathname.replace("/api/dashboard/", "");
+  const auxiliary = scope.retained_refresh === true && ["brief-group", "business-status"].includes(action)
+    && (scope.action === "brief" || scope.action === "funds" && action === "business-status");
+  return url.searchParams.get("company_id") === scope.company_id
+    && (action === "context" || (action === scope.action || auxiliary)
+      && (action === "quarterly-report"
+        ? `${url.searchParams.get("year")}-Q${url.searchParams.get("quarter")}` === scope.quarter
+        : url.searchParams.get("period") === scope.period))
+    && (!auxiliary || url.searchParams.get("expected_version") === scope.snapshot)
+    && (!url.searchParams.has("expected_version") || url.searchParams.get("expected_version") === scope.snapshot);
+}
+function verifyRetainedRefreshState(before, after, label) {
+  assert(before && before.rows.length && before.projection, `${label}: no real pre-refresh content`);
+  const expected = before.behavior === "close_activity_members_retain_category" ? { ...before, expanded: [] } : before;
+  if (before.behavior === "close_activity_members_retain_category") assert(before.expanded.length, `${label}: activity was not expanded before refresh`);
+  assert.deepEqual(after, expected, `${label}: refresh lost previously visible identities, content, selection, mode or expected expanded target`);
+}
+function readRetainedRefreshState(document, selection) {
+  const root = document.querySelector(selection.root);
+  const visible = node => node.getClientRects().length && document.defaultView.getComputedStyle(node).visibility !== "hidden";
+  const closing = selection.behavior === "close_activity_members_retain_category";
+  const memberText = closing ? Array.from(root.querySelectorAll("#activity .group-members")).map(node => node.innerText) : [];
+  const clean = text => {
+    for (const detail of memberText) text = text.replace(detail, "");
+    return text.replace(/\s+/g, " ").trim();
+  };
+  const rows = Array.from(root?.querySelectorAll(selection.rows) ?? []).filter(visible).map(node => {
+    const summary = node.querySelector(":scope > summary") ?? node;
+    // The complete row summary identifies the visible record; actual source IDs
+    // are recorded separately from verified response collections, never invented.
+    return closing ? clean(summary.innerText) : summary.innerText;
+  });
+  let projection = selection.projection;
+  if (closing) {
+    const value = JSON.parse(projection);
+    value.content = value.content.map(clean);
+    value.controls = Array.from(root.querySelectorAll(".select-trigger, [aria-current], [aria-pressed], [aria-selected], details"))
+      .filter(node => !node.closest("#activity .group-members"))
+      .map(node => [node.tagName, node.getAttribute("data-value") ?? node.value ?? null, node.open ?? null,
+        node.getAttribute("aria-current"), node.getAttribute("aria-pressed"), node.getAttribute("aria-selected")]);
+    projection = JSON.stringify(value);
+  }
+  return { projection, rows, behavior: selection.behavior ?? "retain_same_snapshot_visible_state",
+    selected: Array.from(root?.querySelectorAll('.select-trigger, [aria-pressed="true"], [aria-selected="true"], [aria-current="true"]') ?? [])
+      .filter(visible).map(node => [node.id, node.getAttribute("data-value"), node.innerText]),
+    expanded: Array.from(root?.querySelectorAll('details[open], [aria-expanded="true"]') ?? [])
+      .filter(node => visible(node) && (!closing || !node.closest("#activity .group-members")))
+      .map(node => [node.id, closing ? clean((node.querySelector(":scope > summary") ?? node).innerText) : (node.querySelector(":scope > summary") ?? node).innerText]),
+  };
+}
+
+function voucherTailDiagnosticSelection(config, environment = process.env) {
+  const enabled = config.diagnostic_voucher_tail === true || environment.STAGE9_DIAGNOSTIC_VOUCHER_TAIL === "1";
+  if (!enabled) return false;
+  assert(config.diagnostic_voucher_tail === true, "voucher tail diagnostic must be explicitly labelled by the benchmark");
+  assert(config.interaction_only === true && !config.layout_only && !config.navigation_only
+    && environment.STAGE9_RETAINED_REFRESH_ONLY !== "1", "voucher tail diagnostic requires only existing interactions");
+  assert(config.warmups === 1 && config.repeats === 3, "voucher tail diagnostic requires one warmup and three samples");
+  return true;
+}
+
+async function startVoucherTailTrace(context, page, filename) {
+  const client = await context.newCDPSession(page), events = [];
+  client.on("Tracing.dataCollected", value => events.push(...value.value));
+  await client.send("Tracing.start", { categories: "devtools.timeline,v8.execute,disabled-by-default-v8.cpu_profiler", transferMode: "ReportEvents" });
+  return { async finish() {
+    try {
+      const completed = new Promise(resolve => client.once("Tracing.tracingComplete", resolve));
+      await client.send("Tracing.end");
+      await waitForStage9(() => completed, "voucher diagnostic renderer trace", Date.now() + 10000);
+      fs.writeFileSync(filename, JSON.stringify({ diagnostic_only: true, sla_eligible: false, traceEvents: events }), { flag: "wx" });
+      return { path: filename, event_count: events.length, diagnostic_only: true, sla_eligible: false };
+    } finally { await client.detach(); }
+  } };
+}
+
+function interactionReadMultiset(reads) {
+  const counts = new Map();
+  for (const read of reads) {
+    const url = interactionReadUrl(typeof read === "string" ? read : read.url);
+    counts.set(url, (counts.get(url) ?? 0) + 1);
+  }
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([url, count]) => ({ url, count }));
+}
+
+function indexInteractionReads(fetches, resources, start) {
+  const requests = new Map(), downloads = new Map();
+  for (const item of fetches) {
+    if (!(item.start >= start)) continue;
+    const record = requests.get(item.url) ?? { count: 0, successful: 0 };
+    record.count += 1;
+    if (item.state === "response" && item.status === 200) record.successful += 1;
+    requests.set(item.url, record);
+  }
+  for (const item of resources) {
+    if (!(item.startTime >= start && item.responseEnd > start)) continue;
+    const url = interactionReadUrl(item.name);
+    const record = downloads.get(url) ?? { count: 0, end: start };
+    record.count += 1; record.end = Math.max(record.end, item.responseEnd);
+    downloads.set(url, record);
+  }
+  return { requests, downloads };
+}
+
+function interactionReadPlanReady(selection, fetches, resources, start, index = null) {
+  const plan = selection.read_plan;
+  if (!plan || plan.cycle_id !== selection.cycle_id || !["action", "company_id", "period", "snapshot"].every(key => selection.scope?.[key]
+    && plan.scope?.[key] === selection.scope[key])) return false;
+  if (!Array.isArray(plan.required)) return false;
+  if (!plan.required.length) return !selection.require_new_response && plan.cache_verified === true;
+  index ??= indexInteractionReads(fetches, resources, start);
+  const seen = new Set();
+  return plan.required.every(read => {
+    if (!Number.isInteger(read.count) || read.count < 1 || seen.has(read.url)) return false;
+    seen.add(read.url);
+    const url = new URL(read.url);
+    if (selection.scope.retained_refresh === true ? !interactionScopeAllows(url, selection.scope) : url.searchParams.get("company_id") !== selection.scope.company_id
+      || url.pathname !== "/api/dashboard/context" && (url.pathname !== `/api/dashboard/${selection.scope.action}`
+        || url.searchParams.get("period") !== selection.scope.period)
+      || url.searchParams.has("expected_version") && url.searchParams.get("expected_version") !== selection.scope.snapshot) return false;
+    const requests = index.requests.get(read.url), downloads = index.downloads.get(read.url);
+    return requests?.count === read.count && requests.successful === read.count && downloads?.count === read.count;
+  });
+}
+
+// Independent interaction endpoint. The expected complete DOM is calibrated
+// from the same real service/snapshot outside timing, never from fixture data.
+const observeInteraction = new Function("selection", `
+  if (selection.navigation && location.href !== selection.url) return;
+  const projection = ${readRefreshProjection.toString()};
+  const resultHasVisibleContent = ${resultHasVisibleContent.toString()};
+  const interactionReadUrl = ${interactionReadUrl.toString()};
+  const interactionScopeAllows = ${interactionScopeAllows.toString()};
+  const indexInteractionReads = ${indexInteractionReads.toString()};
+  const interactionReadPlanReady = ${interactionReadPlanReady.toString()};
+  const readPosition = ${readInteractionPosition.toString()};
+  const positionReady = ${interactionPositionReady.toString()};
+  window.__stage9InteractionCleanup?.();
+  let observer, trigger, active = true;
+  const originalFetch = window.fetch;
+  const monitoredFetch = function(input, ...args) {
+    const state = window.__stage9Interaction;
+    const url = interactionReadUrl(new URL(typeof input === 'string' ? input : input.url, location.href).href);
+    const required = state?.started && active && selection.read_plan.required.some(read => read.url === url);
+    const read = required ? { url, start: performance.now(), state: 'pending', status: null } : null;
+    if (read) state.fetches.push(read);
+    return originalFetch.call(this, input, ...args).then(response => {
+      if (read) { read.status = response.status; read.state = 'response'; }
+      if (selection.diagnostic_voucher_tail && read) {
+        const originalJson = response.json;
+        response.json = function(...args) {
+          const diagnostic = window.__stage9VoucherTailMetrics;
+          const span = { url, start: performance.now(), end: null, status: 'pending' };
+          diagnostic?.json_reads.push(span);
+          return originalJson.apply(this, args).then(value => {
+            span.end = performance.now(); span.status = 'complete'; return value;
+          }, error => { span.end = performance.now(); span.status = 'failed'; throw error; });
+        };
+      }
+      return response;
+    }, error => { if (read) read.state = 'failed'; throw error; });
+  };
+  window.fetch = monitoredFetch;
+  performance.setResourceTimingBufferSize(2000);
+  window.__stage9InteractionCleanup = () => {
+    active = false; observer?.disconnect();
+    if (trigger) { document.removeEventListener('click', trigger, true); document.removeEventListener('keydown', trigger, true); }
+    if (window.fetch === monitoredFetch) window.fetch = originalFetch;
+  };
+  const start = () => {
+    if (!active) return;
+    if (window.__stage9Interaction?.started) return;
+    const header = document.querySelector('.module-header');
+    const state = window.__stage9Interaction = { started: true, start: selection.navigation ? 0 : performance.now(), end: null, flashes: [], cycle_id: selection.cycle_id, fetches: [] };
+    if (selection.diagnostic_voucher_tail) {
+      state.diagnostic = window.__stage9VoucherTailMetrics = {
+        time_origin_epoch_ms: performance.timeOrigin,
+        json_reads: [], frames: [], projections: [], observers: {
+          interaction: { callbacks: 0, records: 0, added_nodes: 0, milliseconds: 0 },
+          local: { callbacks: 0, records: 0, added_nodes: 0, milliseconds: 0 },
+        },
+        attribution: 'JSON spans include async body consumption; frame work includes observation. Neither isolates Ajv/Vue/layout CPU; use the independent CDP trace. Instrumentation overhead is retained, never subtracted.',
+      };
+    }
+    let frames = 0, previous = null, previousPosition = null;
+    const observeMutations = records => {
+      if (!selection.navigation && !selection.refresh && (!header?.isConnected || header.getAttribute('aria-busy') !== 'false'
+        || records.some(record => record.target === header && record.attributeName === 'aria-busy' && record.oldValue === 'true'))) state.flashes.push('whole-page loading');
+    };
+    observer = new MutationObserver(selection.diagnostic_voucher_tail ? records => {
+      const started = performance.now(), metric = state.diagnostic.observers.interaction;
+      try { observeMutations(records); }
+      finally { metric.callbacks++; metric.records += records.length;
+        metric.added_nodes += records.reduce((count, record) => count + record.addedNodes.length, 0);
+        metric.milliseconds += performance.now() - started; }
+    } : observeMutations);
+    if (!selection.navigation && !selection.refresh) observer.observe(document.body, { subtree: true, attributes: true, attributeOldValue: true, childList: true });
+    const frame = () => {
+      if (!active) return;
+      const diagnosticFrame = selection.diagnostic_voucher_tail ? { start: performance.now(), network_ready: false, basic_ready: false } : null;
+      const root = document.querySelector(selection.root);
+      const resources = performance.getEntriesByType('resource');
+      const index = indexInteractionReads(state.fetches, resources, state.start);
+      const networkReady = interactionReadPlanReady(selection, state.fetches, resources, state.start, index);
+      if (networkReady) state.network_complete_at = selection.read_plan.required.reduce((end, read) => Math.max(end, index.downloads.get(read.url).end), state.start);
+      const basicReady = networkReady && resultHasVisibleContent(document, root) && document.querySelector('.module-header')?.getAttribute('aria-busy') === 'false'
+        && !Array.from(root.querySelectorAll('[role=status], [aria-busy=true]')).some(node => node.getClientRects().length && /正在读取|正在加载/.test(node.textContent ?? ''))
+        && selection.counts.every(([selector, count]) => document.querySelectorAll(selector).length === count);
+      // No complete-list text/control walk while downloads or local loading
+      // are unfinished. The same complete projection is still required twice.
+      const projectionStarted = selection.diagnostic_voucher_tail && basicReady ? performance.now() : null;
+      const current = basicReady ? projection(document, selection.root) : null;
+      if (selection.diagnostic_voucher_tail && basicReady) {
+        const finished = performance.now();
+        state.diagnostic.projections.push({ start: projectionStarted, end: finished,
+          milliseconds: finished - projectionStarted, utf8_bytes: new TextEncoder().encode(current).length });
+      }
+      const position = basicReady && selection.position ? readPosition(document, selection.position) : null;
+      const ready = basicReady && current === selection.projection && positionReady(selection.position, position);
+      frames = ready && current === previous && JSON.stringify(position) === JSON.stringify(previousPosition) ? frames + 1 : ready ? 1 : 0;
+      previous = current;
+      previousPosition = position;
+      if (diagnosticFrame) { diagnosticFrame.end = performance.now(); diagnosticFrame.network_ready = networkReady;
+        diagnosticFrame.basic_ready = basicReady; diagnosticFrame.ready = ready; state.diagnostic.frames.push(diagnosticFrame); }
+      if (frames >= 2) { state.end = performance.now(); if (selection.position) state.position = position; observer.disconnect(); }
+      else if (performance.now() - state.start < 30000) requestAnimationFrame(frame);
+      else { state.error = 'interaction completion timeout'; observer.disconnect(); }
+    };
+    requestAnimationFrame(frame);
+  };
+  if (selection.navigation) {
+    if (location.href === selection.url) start();
+  } else {
+    window.__stage9Interaction = null;
+    trigger = event => {
+      if (event.type === 'keydown' && event.key !== 'Enter') return;
+      if (!event.target.closest(selection.trigger)) return;
+      document.removeEventListener('click', trigger, true); document.removeEventListener('keydown', trigger, true);
+      start();
+    };
+    document.addEventListener('click', trigger, true); document.addEventListener('keydown', trigger, true);
+  }
+`);
+
+function verifyExactInteractionTarget(payload, target, selected, section, identity) {
+  const field = section === "employees" ? "employee_id" : "asset_id";
+  assert.equal(target.pathname, `/api/dashboard/${section}`);
+  assert.equal(target.searchParams.get("company_id"), selected.id);
+  assert.equal(target.searchParams.get("period"), selected.period);
+  assert.equal(target.searchParams.get(field), identity);
+  assert(!target.searchParams.has("cursor") && !target.searchParams.has("section"), "exact interaction: paginated target search");
+  assert.equal(payload.data?.[field], identity, "exact interaction: response selected another identity");
+  const items = payload.data?.collections?.[section]?.items;
+  assert(Array.isArray(items) && items.length === 1 && items[0][field] === identity, "exact interaction: target missing or unrelated rows");
+}
+
 const percentile = (sorted, proportion) => sorted[Math.ceil(sorted.length * proportion) - 1];
+function stage9TimingSummary(timings, targetMs, complete = true) {
+  assert(targetMs === 500 || targetMs === 600, "unknown Stage 9 timing target");
+  const sorted = complete ? [...timings].sort((a, b) => a - b) : [];
+  return {
+    target_ms: targetMs,
+    median_ms: complete ? percentile(sorted, .5) : null,
+    p95_ms: complete ? percentile(sorted, .95) : null,
+    max_ms: complete ? sorted.at(-1) : null,
+    over_target_count: timings.filter(value => Number.isFinite(value) && value >= targetMs).length,
+    // Preserve the original diagnostic counter for comparison with old reports.
+    over_500_ms: timings.filter(value => Number.isFinite(value) && value >= 500).length,
+    ...(targetMs === 600 ? { over_600_ms: timings.filter(value => Number.isFinite(value) && value >= 600).length } : {}),
+  };
+}
 const sanitize = value => String(value)
   .replace(/https?:\/\/[^\s"']+/g, "[browser URL]")
   .replace(/[A-Za-z]:\\[^\s"']+/g, "[local path]")
@@ -169,6 +683,323 @@ function waitForLater(promise) {
   return promise;
 }
 
+async function waitForStage9(operation, phase, deadline = Date.now() + 30000) {
+  const remaining = deadline - Date.now();
+  assert(remaining > 0, `${phase}: stage9 wait deadline exceeded`);
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${phase}: stage9 wait deadline exceeded`)), remaining);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function waitForStage9Frames(page, phase, deadline) {
+  return waitForStage9(() => page.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)))), phase, deadline);
+}
+
+function selectStage9Option(page, label, value, deadline) {
+  const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
+  return waitForStage9(() => selectDashboardOption(page, label, value), `select ${label}=${value}`, deadline);
+}
+
+async function closeStage9Browser(context, browser, failureReport) {
+  const cleanupErrors = [];
+  for (const [phase, operation] of [["context close", () => context.close()], ["browser close", () => browser.close()]]) {
+    try { await waitForStage9(operation, phase, Date.now() + 5000); }
+    catch (error) { cleanupErrors.push(sanitize(error.message)); }
+  }
+  if (cleanupErrors.length) {
+    if (failureReport) failureReport.cleanup_errors = cleanupErrors;
+    else throw new Error(cleanupErrors.join("; "));
+  }
+}
+
+// Keep filter and cursor identity in diagnostics; never report login material.
+function verifySelectedFilter(selection, target, payload, section, expected) {
+  const employee = section === "employees";
+  const label = employee ? "筛选员工" : "筛选资产";
+  const field = employee ? "employee_filter" : "asset_filter";
+  assert.equal(selection.filters.find(item => item.label === label)?.value, expected, `${section}: wrong selected UI filter`);
+  assert.equal(target.searchParams.get(field), expected, `${section}: wrong requested filter`);
+  assert.equal(payload.data?.[field], expected, `${section}: wrong response filter`);
+}
+
+// An action number marks listener entrance, not the actual selection change.
+// A queued continuation of the previous selection can start inside that number.
+function localReadMatchesSelection(record, action, snapshot, requestedSection = null, { fresh = false, cached = false } = {}) {
+  if (!record || !action?.after || (!cached && record.started_action !== action.action_id)) return false;
+  const target = new URL(record.url), selected = new URL(action.after.url);
+  if (target.origin !== selected.origin || target.pathname !== `/api/dashboard/${action.page}`
+    || !snapshot || target.searchParams.get("expected_version") !== snapshot
+    || ["company_id", "period"].some(key => !selected.searchParams.get(key)
+      || target.searchParams.get(key) !== selected.searchParams.get(key))) return false;
+  const section = target.searchParams.get("section");
+  if (!section || requestedSection && section !== requestedSection || fresh && target.searchParams.has("cursor")) return false;
+  if (action.page === "employees" || action.page === "assets") {
+    const employee = action.page === "employees", field = employee ? "employee_filter" : "asset_filter";
+    const identity = employee ? "employee_id" : "asset_id";
+    const label = employee ? "筛选员工" : "筛选资产";
+    const expected = selected.searchParams.get(identity) ? "all"
+      : action.after.filters?.find(item => item.label === label)?.value;
+    if (!expected || target.searchParams.get(field) !== expected
+      || (target.searchParams.get(identity) ?? "") !== (selected.searchParams.get(identity) ?? "")) return false;
+    if (!employee && (target.searchParams.get("project_id") ?? "") !== (selected.searchParams.get("project_id") ?? "")) return false;
+  }
+  if (action.page === "funds" && section === "movements") {
+    if (action.after.funds_view !== "fund-detail-tab-book") return false;
+    const account = action.after.movement_account;
+    if (!account || ["movement_account_type", "movement_account_id"].some(key => target.searchParams.get(key) !== account[key])) return false;
+  }
+  if (action.page === "funds" && section === "statements"
+    && (action.after.funds_view !== "fund-detail-tab-bank"
+      || (target.searchParams.get("statement_account_id") ?? "") !== (action.after.statement_account_id ?? ""))) return false;
+  if (action.page === "brief") {
+    // Collection pages never carry an overview's exact-voucher request.
+    if (target.searchParams.has("voucher_version_id") || target.searchParams.has("voucher_number")) return false;
+    if (section === "vouchers" && action.after.brief_view !== "按凭证") return false;
+    if (section === "activity" && action.after.brief_view !== "按业务") return false;
+  }
+  return true;
+}
+
+async function verifyLocalActionReplies(replies, { isCurrent, verify, isObsolete, onCurrent }) {
+  const processed = new Set(), payloads = [];
+  while (processed.size < replies.length) {
+    // Current complete bodies establish replacement proof before an aborted
+    // old body is considered. Successful old bodies still receive validation.
+    const entry = replies.find(item => !processed.has(item) && isCurrent(item))
+      ?? replies.find(item => !processed.has(item));
+    processed.add(entry);
+    if (await isObsolete(entry)) continue;
+    const payload = await verify(entry);
+    if (isCurrent(entry)) { await onCurrent(entry, payload); payloads.push(payload); }
+  }
+  return payloads;
+}
+
+async function localReplyIsObsolete(reply, { failureFor, classifyObsolete, finish }) {
+  const classify = failure => {
+    assert(classifyObsolete(failure), `${failure.path ?? "dashboard"}: unapproved response failure ${failure.error ?? failure.status}`);
+    return true;
+  };
+  // A cancelled response may already have a failed Request while its body
+  // completion promise never resolves. Exact replacement proof, rather than
+  // the action's entrance time, decides whether this old continuation is safe.
+  const recorded = failureFor(reply);
+  if (recorded) return classify(recorded);
+  await finish(reply);
+  const completed = failureFor(reply);
+  return completed ? classify(completed) : false;
+}
+function verifyBriefGroup(payload, target, selected, snapshot) {
+  assert.equal(payload.schema_version, responseVersions.dashboard_brief_group, "brief group: outdated contract");
+  assert.equal(target.searchParams.get("company_id"), selected.id);
+  assert.equal(target.searchParams.get("period"), selected.period);
+  assert.equal(payload.read_context?.company_id, selected.id);
+  assert.equal(payload.selected_period?.key, selected.period);
+  assert.equal(payload.snapshot_version, snapshot);
+  assert.equal(target.searchParams.get("expected_version"), snapshot);
+  assert.equal(payload.data?.section, target.searchParams.get("section"));
+  assert.equal(payload.data?.group_key, target.searchParams.get("group_key"));
+  const { members, vouchers } = payload.data.collections;
+  const limit = stage9RequestPageLimit(target);
+  verifyCollection(members, "brief group members", { cursor: target.searchParams.has("cursor"), limit }); verifyCollection(vouchers, "brief group vouchers", { cursor: true, limit });
+  assert(members.items.every(item => item.group_key === payload.data.group_key), "brief group: member outside selected group");
+  if (payload.data.section === "activity") assert(members.items.every(item => item.detail_scope_key === null || item.detail_scope_key === item.key), "brief group: progress association mismatch");
+  const ids = [...new Set(members.items.flatMap(item => item.voucher_version_id ? [item.voucher_version_id] : []))];
+  assert.deepEqual(vouchers.items.map(item => item.voucher_version_id), ids, "brief group: voucher association mismatch");
+  for (const item of vouchers.items) verifyVoucher(item);
+  return payload;
+}
+function diagnosticUrl(value) {
+  const url = new URL(value);
+  url.username = ""; url.password = "";
+  for (const key of [...url.searchParams.keys()]) {
+    if (/ticket|capability|token|password|secret|credential/i.test(key)) url.searchParams.set(key, "[redacted]");
+  }
+  url.hash = "";
+  return url.href;
+}
+
+function createRequestDiagnostics() {
+  const records = new Map();
+  // The cycle retains Request objects until it validates their responses. Keep
+  // completion identity available without retaining every historical request.
+  const completed = new WeakMap();
+  let sequence = 0;
+  return {
+    get(request) { return records.get(request) ?? completed.get(request); },
+    start(request, action, pageUrl) {
+      const record = { request_id: ++sequence, url: diagnosticUrl(request.url()),
+        started_action: action, started_page_url: diagnosticUrl(pageUrl), state: "pending" };
+      records.set(request, record);
+      return record;
+    },
+    finish(request, state, action, pageUrl) {
+      const record = records.get(request);
+      if (!record) return null;
+      record.state = state;
+      record.finished_action = action;
+      record.finished_page_url = diagnosticUrl(pageUrl);
+      records.delete(request);
+      completed.set(request, record);
+      return { ...record };
+    },
+    pending() { return [...records.values()].map(record => ({ ...record })); },
+  };
+}
+
+function verifiedRequestRecord(diagnostics, verifiedRequests, request, label) {
+  const record = diagnostics.get(request);
+  assert(verifiedRequests.has(request) && record?.state === "finished", `${label}: required response not successfully verified`);
+  return record;
+}
+
+function obsoleteLocalCancellation(failure, action, snapshot, previousActions = []) {
+  if (failure.error !== "net::ERR_ABORTED" || failure.status || !action?.after || !snapshot) return null;
+  const record = failure.request;
+  if (!record || record.url !== failure.url || record.state !== "failed"
+    || !Number.isInteger(record.request_id) || !(record.started_action === null || Number.isInteger(record.started_action))) return null;
+  const observedPending = item => item.request_id === record.request_id && item.url === record.url && item.state === "pending"
+    && item.started_action === record.started_action && item.started_page_url === record.started_page_url;
+  const delayedFinish = (record.finished_action === null || (Number.isInteger(record.finished_action) && record.finished_action > action.action_id))
+    && action.status === "passed" && action.pending_after?.some(observedPending);
+  if (record.finished_action !== action.action_id && !delayedFinish) return null;
+  const old = action.pending_before?.find(item => item.request_id === record.request_id);
+  const previouslyPending = old && old.url === record.url && old.state === "pending"
+    && old.started_action === record.started_action && old.started_page_url === record.started_page_url
+    && (record.started_action === null || record.started_action < action.action_id);
+  // Queued old continuations can start after entrance, including account changes
+  // whose selection is local state. Resource identity proves which account was
+  // superseded; a same-action number or an abort by itself proves nothing.
+  const requestUrl = new URL(record.url);
+  const previousAccountResource = action.page === "funds" && action.section === "movements"
+    && requestUrl.pathname === "/api/dashboard/funds" && requestUrl.searchParams.get("section") === "movements"
+    && ["movement_account_type", "movement_account_id"].every(key => action.before.movement_account?.[key]
+      && requestUrl.searchParams.get(key) === action.before.movement_account[key])
+    && ["movement_account_type", "movement_account_id"].some(key => action.before.movement_account?.[key] !== action.after.movement_account?.[key]);
+  const beforeClickPage = !old && record.started_action === action.action_id
+    && record.started_page_url === action.before.url && record.finished_page_url === action.after.url
+    && (action.before.url !== action.after.url || previousAccountResource);
+  if (!previouslyPending && !beforeClickPage) return null;
+  if (record.finished_page_url !== action.after.url) return null;
+  let startedInPreviousSelection = record.started_page_url === action.before.url;
+  if (!startedInPreviousSelection && previouslyPending && action.page === "funds") {
+    const display = previousActions.find(item => item.action_id === record.started_action);
+    const withoutView = value => { const scoped = new URL(value); scoped.searchParams.delete("funds_view"); return scoped.href; };
+    const views = { "fund-detail-tab-bank": "statements", "fund-detail-tab-book": "movements" };
+    startedInPreviousSelection = display?.status === "passed" && display.page === "funds" && display.after
+      && display.before.url === record.started_page_url && display.after.url === action.before.url
+      && withoutView(display.before.url) === withoutView(display.after.url)
+      && views[display.before.funds_view] && views[display.after.funds_view]
+      && display.before.funds_view !== display.after.funds_view
+      && ["movement_account_type", "movement_account_id"].every(key => action.before.movement_account?.[key]
+        && display.before.movement_account?.[key] === action.before.movement_account[key]
+        && display.after.movement_account?.[key] === action.before.movement_account[key])
+      && (new URL(display.before.url).searchParams.get("funds_view") ?? "book") === (display.before.funds_view === "fund-detail-tab-bank" ? "bank" : "book")
+      && (new URL(display.after.url).searchParams.get("funds_view") ?? "book") === (display.after.funds_view === "fund-detail-tab-bank" ? "bank" : "book")
+      && display.pending_after?.some(item => item.request_id === record.request_id && item.url === record.url && item.state === "pending"
+        && item.started_action === record.started_action && item.started_page_url === record.started_page_url)
+      && [...(display.verified_reads ?? []), ...(display.verified_cached_reads ?? [])].some(read => {
+        const target = new URL(read.url), oldTarget = new URL(record.url);
+        return read.action_id === display.action_id && read.section === views[display.after.funds_view]
+          && target.origin === oldTarget.origin && target.pathname === oldTarget.pathname
+          && ["company_id", "period", "expected_version"].every(key => target.searchParams.get(key) === oldTarget.searchParams.get(key));
+      });
+  }
+  if (!startedInPreviousSelection) return null;
+  const url = new URL(record.url), before = new URL(action.before.url), after = new URL(action.after.url);
+  const started = new URL(record.started_page_url), finished = new URL(record.finished_page_url);
+  if ([url, after, started, finished].some(value => value.origin !== before.origin)
+    || [after, started, finished].some(value => value.pathname !== before.pathname)) return null;
+  for (const key of ["company_id", "period"]) {
+    const selected = before.searchParams.get(key);
+    if (!selected || [url, after, started, finished].some(value => value.searchParams.get(key) !== selected)) return null;
+  }
+  if (url.searchParams.get("expected_version") !== snapshot || !url.searchParams.get("cursor")) return null;
+  const section = url.searchParams.get("section");
+  const replacementVerified = targetSection => [...(action.verified_reads ?? []), ...(action.verified_cached_reads ?? [])]
+    .some(read => {
+      const current = new URL(read.url);
+      return read.action_id === action.action_id && read.section === targetSection
+        && current.origin === url.origin && current.pathname === url.pathname
+        && ["company_id", "period", "expected_version"].every(key => current.searchParams.get(key) === url.searchParams.get(key));
+    });
+  if (action.page === "funds" && url.pathname === "/api/dashboard/funds") {
+    const views = { "fund-detail-tab-bank": "statements", "fund-detail-tab-book": "movements" };
+    if (views[action.before.funds_view] === section && views[action.after.funds_view]
+      && action.before.funds_view !== action.after.funds_view
+      && (started.searchParams.get("funds_view") ?? "book") === (section === "statements" ? "bank" : "book")
+      && (finished.searchParams.get("funds_view") ?? "book") === (action.after.funds_view === "fund-detail-tab-bank" ? "bank" : "book")
+      && replacementVerified(views[action.after.funds_view])) return "previous_funds_view_page";
+    if (section === "movements" && action.section === "movements"
+      && action.before.funds_view === "fund-detail-tab-book" && action.after.funds_view === "fund-detail-tab-book"
+      && action.before.movement_account_index >= 0 && action.after.movement_account_index >= 0
+      && action.before.movement_account_index !== action.after.movement_account_index) {
+      const replaced = action.verified_reads?.some(read => {
+        if (read.section !== section || read.action_id !== action.action_id) return false;
+        const current = new URL(read.url);
+        const keys = ["movement_account_type", "movement_account_id"];
+        const otherScope = target => {
+          const params = new URLSearchParams(target.searchParams);
+          for (const key of [...keys, "cursor"]) params.delete(key);
+          params.sort(); return params.toString();
+        };
+        return otherScope(current) === otherScope(url)
+          && !current.searchParams.has("cursor")
+          && ["company_id", "period", "expected_version"].every(key => current.searchParams.get(key) === url.searchParams.get(key))
+          && current.pathname === url.pathname && current.origin === url.origin
+          && keys.every(key => url.searchParams.get(key) && current.searchParams.get(key))
+          && keys.every(key => url.searchParams.get(key) === action.before.movement_account?.[key])
+          && keys.every(key => current.searchParams.get(key) === action.after.movement_account?.[key])
+          && keys.some(key => url.searchParams.get(key) !== current.searchParams.get(key));
+      });
+      if (replaced) return "previous_movement_account_page";
+    }
+  }
+  if (["employees", "assets"].includes(action.page) && section === action.page && url.pathname === `/api/dashboard/${action.page}`) {
+    const field = action.page === "employees" ? "employee_filter" : "asset_filter";
+    const defaultFilter = action.page === "employees" ? "employment_active" : "active";
+    const label = action.page === "employees" ? "筛选员工" : "筛选资产";
+    const previous = action.before.filters?.find(item => item.label === label)?.value;
+    const current = action.after.filters?.find(item => item.label === label)?.value;
+    const otherScope = target => {
+      const params = new URLSearchParams(target.searchParams);
+      for (const key of [field, "cursor", "limit"]) params.delete(key);
+      params.sort(); return params.toString();
+    };
+    if (previous && current && previous !== current && url.searchParams.get(field) === previous
+      && (before.searchParams.get(field) ?? defaultFilter) === previous
+      && (after.searchParams.get(field) ?? defaultFilter) === current
+      && (started.searchParams.get(field) ?? defaultFilter) === previous
+      && (finished.searchParams.get(field) ?? defaultFilter) === current
+      && action.verified_reads?.some(read => read.action_id === action.action_id && read.section === section
+        && !new URL(read.url).searchParams.has("cursor")
+        && ["company_id", "period", "expected_version"].every(key => new URL(read.url).searchParams.get(key) === url.searchParams.get(key))
+        && new URL(read.url).pathname === url.pathname && new URL(read.url).origin === url.origin
+        && otherScope(new URL(read.url)) === otherScope(url)
+        && new URL(read.url).searchParams.get(field) === current)) return action.page === "employees" ? "previous_employee_filter_page" : "previous_asset_filter_page";
+  }
+  if (action.page === "brief" && url.pathname === "/api/dashboard/brief") {
+    const sections = { "本月发生": "activity", "应收应付": "open_items" };
+    if (sections[action.before.active_section] === section && sections[action.after.active_section]
+      && action.before.active_section !== action.after.active_section
+      && replacementVerified(sections[action.after.active_section])) return "previous_brief_section_page";
+    if (action.before.active_section === "本月发生" && action.after.active_section === "本月发生"
+      && ((section === "activity" && action.before.brief_view === "按业务" && action.after.brief_view === "按凭证")
+        || (section === "vouchers" && action.before.brief_view === "按凭证" && action.after.brief_view === "按业务"))
+      && replacementVerified(action.after.brief_view === "按凭证" ? "vouchers" : "activity")) return "previous_brief_display_page";
+  }
+  return null;
+}
+
 async function recordRefreshAttempt(attempts, metadata, operation, failureTiming) {
   const attempt = { ...metadata, status: "preparing", phase: "prepare", elapsed_ms: null };
   attempts.push(attempt);
@@ -178,7 +1009,10 @@ async function recordRefreshAttempt(attempts, metadata, operation, failureTiming
     attempt.elapsed_ms = elapsed;
     return elapsed;
   } catch (error) {
-    const timing = await failureTiming().catch(() => null);
+    const timing = await waitForStage9(failureTiming, "failed attempt timing", Date.now() + 1000).catch(error => {
+      attempt.timing_error = sanitize(error.message);
+      return null;
+    });
     attempt.status = timing?.started ? "failed" : "preparation_failed";
     if (timing?.started && Number.isFinite(timing.elapsed_ms)) attempt.elapsed_ms = timing.elapsed_ms;
     attempt.error = { type: error?.name || "Error", message: sanitize(error?.message || error) };
@@ -196,9 +1030,7 @@ function verifyLocalRead(url, module, selected, snapshot, requestedSection = nul
   assert.equal(url.searchParams.get("period"), selected.period, "local filter: month changed");
   assert(snapshot && url.searchParams.get("expected_version") === snapshot,
     "local filter: snapshot boundary changed or missing");
-  const limit = url.searchParams.get("limit");
-  assert(limit === null || (/^[1-9][0-9]*$/.test(limit) && Number(limit) <= 20),
-    "local filter: unbounded collection read");
+  stage9RequestPageLimit(url);
 }
 
 // Pure association/value extraction, also serialized into the final browser
@@ -307,12 +1139,12 @@ function sumFen(first, second) {
   return left === null || right === null ? null : (left + right).toString();
 }
 function employeeOutstandingFen(data, schemaVersion) {
-  assert(schemaVersion === 9 || schemaVersion === 10, "employees: unsupported outstanding response version");
-  const value = schemaVersion === 9 ? data.employees.outstanding_net_fen : data.outstanding_remuneration_fen;
+  assert.equal(schemaVersion, responseVersions.dashboard_employees, "employees: unsupported outstanding response version");
+  const value = data.outstanding_remuneration_fen;
   wireFen(value, "unpaid remuneration", true);
   return value;
 }
-function verifyCollection(collection, label, { cursor = false } = {}) {
+function verifyCollection(collection, label, { cursor = false, limit = 20 } = {}) {
   assert(collection && Array.isArray(collection.items) && collection.page, `${label}: collection missing`);
   const { page, items } = collection;
   for (const key of ["total_count", "filtered_count", "returned_count"]) {
@@ -320,7 +1152,8 @@ function verifyCollection(collection, label, { cursor = false } = {}) {
   }
   assert(page.filtered_count <= page.total_count, `${label}: filtered count exceeds full count`);
   assert.equal(items.length, page.returned_count, `${label}: incomplete collection`);
-  assert(items.length <= 20, `${label}: page exceeds default 20`);
+  assert(Number.isInteger(limit) && limit >= 1 && limit <= 500 && (cursor || limit === 20), `${label}: invalid exact request page bound`);
+  assert(items.length <= limit, `${label}: page exceeds exact request bound`);
   if (!cursor) assert.equal(items.length, Math.min(20, page.filtered_count), `${label}: first page was truncated`);
   assert.equal(typeof page.has_more, "boolean", `${label}: missing continuation state`);
   assert(page.has_more ? typeof page.next_cursor === "string" && page.next_cursor.length > 0
@@ -406,22 +1239,21 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
   assert(payload.data, `${key}: missing main data`);
   if (target.searchParams.has("expected_version")) assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), `${key}: local read crossed snapshots`);
   const section = target.searchParams.get("section"), cursor = target.searchParams.has("cursor");
-  for (const name of section ? [section] : defaultCollections[key]) verifyCollection(payload.data.collections?.[name], `${key}/${name}`, { cursor });
+  for (const name of section ? [section] : defaultCollections[key]) verifyCollection(payload.data.collections?.[name], `${key}/${name}`, { cursor, limit: stage9RequestPageLimit(target) });
   if (key === "brief") {
-    verifyBriefState(payload.data, selected);
+    assert.equal(payload.scope, section ?? "overview", "brief: response scope does not match request");
     const { vouchers, activity } = payload.data.collections;
     if (!section) {
+      verifyBriefState(payload.data, selected);
       assert(payload.data.financial_position && payload.data.workforce_cost, "brief: main financial/workforce summaries missing");
       verifyLongTermAssets(payload.data.long_term_assets);
-      if (payload.schema_version >= 16) {
-        assert.equal(vouchers, undefined, "brief: default refresh preloaded independent vouchers");
-        assert.equal(activity.page.total_count, payload.data.group_count, "brief: activity group total lost");
-        assert.equal(payload.data.collections.open_items.page.total_count, payload.data.open_items.group_count, "brief: open group total lost");
-      } else {
-        assert.equal(vouchers.page.total_count, payload.data.voucher_count, "brief: voucher total lost");
-        assert.equal(activity.page.total_count, payload.data.activity_count, "brief: activity total lost");
-      }
+      assert.equal(vouchers, undefined, "brief: default refresh preloaded independent vouchers");
+      assert.equal(activity.page.total_count, payload.data.group_count, "brief: activity group total lost");
+      assert.equal(payload.data.collections.open_items.page.total_count, payload.data.open_items.group_count, "brief: open group total lost");
       if (requireVouchers) assert(payload.data.voucher_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
+    } else {
+      assert.deepEqual(Object.keys(payload.data), ["collections"], "brief: partial read repeated overview data");
+      assert.deepEqual(Object.keys(payload.data.collections), [section], "brief: partial read returned unrelated collections");
     }
     for (const voucher of vouchers?.items ?? []) verifyVoucher(voucher);
     if (payload.data.focused_voucher) verifyVoucher(payload.data.focused_voucher);
@@ -429,7 +1261,13 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
 }
 
 async function run(config) {
-  const { selectDashboardOption } = require("./helpers/dashboard-select.cjs");
+  const voucherTailDiagnostic = voucherTailDiagnosticSelection(config);
+  const retainedRefreshOnly = retainedRefreshSelection(config);
+  const generatedValidators = retainedRefreshOnly ? await import("../src/api/generated/dashboardValidators.js") : null;
+  const retainedPayloads = [];
+  const retainedBodies = createRetainedResponseBodies();
+  let retainedGeneration = 0, retainedCaptureActive = false;
+  const selectDashboardOption = selectStage9Option;
   assert(config?.origin && config?.ticket_url && config?.playwright_module);
   assert(Array.isArray(config.companies) && config.companies.length >= 1);
   const company = config.companies.find(item => item.state === "prepared")
@@ -438,14 +1276,26 @@ async function run(config) {
   assert(company.id && company.period && company.state !== "empty");
   const quarter = config.quarter ?? `${company.period.slice(0, 4)}-Q${Math.ceil(Number(company.period.slice(5)) / 3)}`;
   const warmups = config.warmups ?? 3, samples = config.repeats ?? 30;
-  assert(Number.isInteger(warmups) && warmups >= 1);
+  assert(Number.isInteger(warmups) && warmups >= (config.interaction_only ? 0 : 1));
   assert(Number.isInteger(samples) && samples >= 1);
   const { chromium } = require(config.playwright_module);
   const browser = await chromium.launch({ channel: config.channel, headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  if (voucherTailDiagnostic) await page.addInitScript(() => { window.__stage9VoucherTailDiagnosticEnabled = true; });
   const refreshProjections = new Map();
   const refreshAttempts = [];
+  const verifiedRequests = new WeakSet();
+  const verifiedPayloads = new WeakMap();
+  let interactionEndpointPending = false;
+  async function waitForInteractionCandidate() {
+    if (!interactionEndpointPending) return;
+    await page.waitForFunction(() => window.__stage9Interaction?.error || Number.isFinite(window.__stage9Interaction?.end));
+    const candidate = await page.evaluate(() => ({ end: window.__stage9Interaction?.end, error: window.__stage9Interaction?.error }));
+    assert(!candidate.error && Number.isFinite(candidate.end), candidate.error ?? "missing browser interaction candidate");
+    interactionEndpointPending = false;
+  }
+  const interactionAttempts = [], interactionResults = {};
   page.setDefaultTimeout(30000);
   await page.addInitScript(({ selectedCompany, selectedPeriod, selectedQuarter }) => {
     performance.setResourceTimingBufferSize(1000);
@@ -505,30 +1355,48 @@ async function run(config) {
     selectedCompany: company.id, selectedPeriod: company.period, selectedQuarter: quarter,
   });
   const pageErrors = [], apiFailures = [], closeReviewRequests = [], legacyJobsRequests = [];
+  const requestDiagnostics = createRequestDiagnostics(), localActions = [], obsoleteCancellations = [], layoutPageReplies = [];
+  const layoutVerifiedReads = [];
+  let layoutMovementAccount = null;
+  const layoutAccounts = [];
+  const allowedLocalAborts = new Set();
+  let currentLocalAction = null;
   const allowedCloseReviewRequests = new Set();
   page.on("request", request => {
+    if (retainedRefreshOnly) retainedBodies.start(request, retainedGeneration, diagnosticUrl(page.url()));
+    if (new URL(request.url()).pathname.startsWith("/api/")) requestDiagnostics.start(request, currentLocalAction, page.url());
     if (new URL(request.url()).pathname === "/api/dashboard/close-review") closeReviewRequests.push(request.url());
     if (new URL(request.url()).pathname === "/api/local/jobs") legacyJobsRequests.push("/api/local/jobs");
   });
   const allowedNavigationAborts = new Set();
   page.on("pageerror", error => pageErrors.push(sanitize(error.message)));
   page.on("response", response => {
+    const target = new URL(response.url());
+    if (retainedRefreshOnly && retainedCaptureActive && target.pathname.startsWith("/api/dashboard/")) retainedBodies.capture(response);
+    if ((config.layout_only || config.interaction_only) && target.pathname.startsWith("/api/dashboard/")
+      && (target.searchParams.has("section") || target.searchParams.has("cursor")
+        || retainedRefreshOnly && ["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(target.pathname))) layoutPageReplies.push(response);
     if (new URL(response.url()).pathname.startsWith("/api/") && response.status() >= 400) {
-      apiFailures.push({ path: new URL(response.url()).pathname, status: response.status() });
+      apiFailures.push({ path: new URL(response.url()).pathname, status: response.status(),
+        url: diagnosticUrl(response.url()), request: requestDiagnostics.finish(response.request(), "http_error", currentLocalAction, page.url()) });
     }
   });
+  page.on("requestfinished", request => requestDiagnostics.finish(request, "finished", currentLocalAction, page.url()));
   page.on("requestfailed", request => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/api/")) apiFailures.push({
       path: url.pathname, company_id: url.searchParams.get("company_id"),
       period: url.searchParams.get("period"),
       error: sanitize(request.failure()?.errorText ?? "network_failed"),
+      url: diagnosticUrl(request.url()),
+      request: requestDiagnostics.finish(request, "failed", currentLocalAction, page.url()),
     });
   });
   const result = {};
   const partialNavigation = {};
   const layoutChecks = [];
   let layoutProgress = null;
+  let failureReport = null;
 
   function address(module) {
     const url = new URL(module.path, config.origin);
@@ -553,18 +1421,44 @@ async function run(config) {
     }));
   }
   function assertNoBrowserFailures() {
+    for (const failure of apiFailures) {
+      if (allowedLocalAborts.has(failure)) continue;
+      for (const action of localActions.filter(item => item.status === "passed").reverse()) {
+        const reason = obsoleteLocalCancellation(failure, action, refreshProjections.get(action.page)?.snapshot, localActions);
+        if (reason) {
+          allowedLocalAborts.add(failure); obsoleteCancellations.push({ ...failure, reason, superseded_by_action: action.action_id });
+          break;
+        }
+      }
+    }
     assert.deepEqual(legacyJobsRequests, [], "default page requested the retired task list");
     assert.deepEqual(closeReviewRequests.filter(url => !allowedCloseReviewRequests.has(url)), [], "default page requested close-review");
     assert.deepEqual(pageErrors, [], "browser error");
-    assert.deepEqual(apiFailures.filter(failure => !allowedNavigationAborts.has(failure)), [], "API error");
+    assert.deepEqual(apiFailures.filter(failure => !allowedNavigationAborts.has(failure) && !allowedLocalAborts.has(failure)), [], "API error");
   }
-  async function verifyReply(reply, module, selected = company, { requireVouchers = true } = {}) {
+  async function verifyReply(reply, module, selected = company, { requireVouchers = true, allowEmployeeContinuation = false } = {}) {
+    await waitForInteractionCandidate();
     const target = new URL(reply.url());
+    const cached = verifiedPayloads.get(reply.request());
+    if (cached && (target.searchParams.has("section") || target.searchParams.has("cursor"))) {
+      assert.equal(reply.status(), 200, `${module.key}: cached response failed`);
+      assert.equal(target.searchParams.get("company_id"), selected.id, `${module.key}: cached response scope changed`);
+      assert.equal(target.searchParams.get("period"), selected.period, `${module.key}: cached response period changed`);
+      if (retainedRefreshOnly) retainedBodies.consumed(reply);
+      return cached;
+    }
     assert.equal(reply.status(), 200, `${module.key}: ${target.pathname} failed`);
-    const payload = await reply.json();
+    const payload = cached ?? await waitForStage9(() => retainedRefreshOnly && retainedCaptureActive
+      ? retainedBodies.read(reply, retainedGeneration) : reply.json(), `${module.key}: response JSON body`);
+    if (cached && retainedRefreshOnly) retainedBodies.consumed(reply);
+    if (retainedRefreshOnly) {
+      verifyRetainedResponseContract(generatedValidators, target, payload);
+    }
     const auxiliaryContract = {
       "/api/dashboard/context": "dashboard_context",
       "/api/dashboard/close-review": "dashboard_close_review",
+      "/api/dashboard/business-status": "dashboard_business_status",
+      "/api/dashboard/brief-group": "dashboard_brief_group",
     }[target.pathname];
     if (auxiliaryContract) assert.equal(payload.schema_version, responseVersions[auxiliaryContract],
       `${auxiliaryContract}: outdated response contract`);
@@ -577,13 +1471,49 @@ async function run(config) {
     } else if (target.pathname !== "/api/dashboard/context") {
       assert.equal(target.searchParams.get("period"), selected.period);
     }
+    if (target.pathname === "/api/dashboard/business-status") {
+      assert.equal(payload.data?.identity?.subject_id, target.searchParams.get("subject_id"), "business detail: wrong subject");
+      assert.equal(payload.selected_period?.key, selected.period, "business detail: wrong period");
+      assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), "business detail: wrong snapshot");
+      if (retainedRefreshOnly) {
+        assert.equal(payload.data.settlement_view, target.searchParams.get("settlement_view") ?? "current", "business detail: wrong settlement view");
+        const key = target.searchParams.get("detail_scope_key"), voucher = target.searchParams.get("voucher_version_id");
+        if (key === null) assert(payload.data.detail_scope === null && voucher === null, "business detail: unrelated detail sub-scope");
+        else assert(payload.data.detail_scope?.key === key && voucher !== null && payload.data.detail_scope.voucher_version_id === voucher, "business detail: wrong exact detail sub-scope");
+        verifyCollection(payload.data.collections?.settlement_events, "business detail settlement events",
+          { cursor: target.searchParams.has("cursor"), limit: stage9RequestPageLimit(target) });
+      }
+    }
+    if (target.pathname === "/api/dashboard/brief-group") verifyBriefGroup(payload, target, selected, refreshProjections.get("brief")?.snapshot);
     if (target.pathname === `/api/dashboard/${module.action}`) {
-      const requestedLimit = target.searchParams.get("limit");
-      assert(requestedLimit === null || requestedLimit === "20", `${module.key}: default page limit changed`);
+      stage9RequestPageLimit(target);
       verifyMainPayload(payload, module.key, selected, target, { requireVouchers });
+      if (config.layout_only || config.interaction_only) {
+        if (module.key === "funds" && (!target.searchParams.has("section") || target.searchParams.get("section") === "accounts") && payload.data.collections.accounts) {
+          if (!target.searchParams.has("cursor")) layoutAccounts.length = 0;
+          for (const account of payload.data.collections.accounts.items)
+            if (!layoutAccounts.some(item => item.account_id === account.account_id && item.type === account.type)) layoutAccounts.push(account);
+        }
+        if (module.key === "funds" && (!target.searchParams.has("section") || target.searchParams.get("section") === "movements")
+          && !target.searchParams.has("cursor")) {
+          const account = payload.data.selected_movement_account;
+          layoutMovementAccount = account ? { movement_account_type: account.type, movement_account_id: account.account_id } : null;
+        }
+        for (const section of target.searchParams.has("section") ? [target.searchParams.get("section")] : defaultCollections[module.key] ?? []) {
+          const scoped = new URL(target);
+          scoped.searchParams.set("section", section);
+          scoped.searchParams.set("expected_version", payload.snapshot_version);
+          if (module.key === "funds" && section === "movements" && payload.data.selected_movement_account) {
+            scoped.searchParams.delete("movement_account_selection");
+            scoped.searchParams.set("movement_account_type", payload.data.selected_movement_account.type);
+            scoped.searchParams.set("movement_account_id", payload.data.selected_movement_account.account_id);
+          }
+          layoutVerifiedReads.push({ section, url: diagnosticUrl(scoped.href) });
+        }
+      }
       if (!target.searchParams.has("section") && !target.searchParams.has("cursor")) {
         await rendered(module, selected);
-        await verifyMainVisible(payload, module);
+        await verifyMainVisible(payload, module, { allowEmployeeContinuation });
         if (selected.id === company.id && selected.period === company.period) {
           const snapshot = module.key === "reports" ? payload.read_context.read_version : payload.snapshot_version;
           const established = refreshProjections.get(module.key);
@@ -599,9 +1529,13 @@ async function run(config) {
         }
       }
     }
+    verifiedRequests.add(reply.request());
+    verifiedPayloads.set(reply.request(), payload);
+    if (retainedRefreshOnly && !retainedPayloads.some(item => item.request === reply.request()))
+      retainedPayloads.push({ request: reply.request(), url: diagnosticUrl(reply.url()), payload, contract_verified: true });
     return payload;
   }
-  async function verifyMainVisible(payload, module) {
+  async function verifyMainVisible(payload, module, { allowEmployeeContinuation = false } = {}) {
     const data = module.key === "reports" ? payload : payload.data;
     const amounts = module.key === "brief" ? [
       ["#overview .hero strong", data.position.month_result_fen],
@@ -632,15 +1566,17 @@ async function run(config) {
         : data.activity_groups.find(group => group.label === selectedLabel);
       assert(selectedLabel === "全部" || selectedGroup, "brief: selected business group missing");
       const expectedItems = data.collections.activity.items.filter(item => !selectedGroup || item.group === selectedGroup.key);
-      assert.equal(await page.locator("#activity .event-row").count(), expectedItems.length, "brief: selected business rows incomplete");
+      if (!retainedRefreshOnly) assert.equal(await page.locator("#activity .event-row").count(), expectedItems.length, "brief: selected business rows incomplete");
       assert.equal(await page.locator("#owner-tasks > article:not(.owner-review-request)").count(), data.owner_tasks.length, "brief: owner tasks incomplete");
     } else if (module.key === "funds") {
-      assert.equal(await page.locator(".account-grid .account-card").count(), data.collections.accounts.items.length, "funds: default accounts incomplete");
-      assert.equal(await page.locator(".investment-summary-table tbody tr").count(), data.collections.investment_products.items.length, "funds: default investments incomplete");
+      if (!retainedRefreshOnly) {
+        assert.equal(await page.locator(".account-grid .account-card").count(), data.collections.accounts.items.length, "funds: default accounts incomplete");
+        assert.equal(await page.locator(".investment-summary-table tbody tr").count(), data.collections.investment_products.items.length, "funds: default investments incomplete");
+      }
       const selected = data.selected_movement_account;
       const current = page.locator(".fund-account-index button[aria-current=true]");
       assert.equal(await current.count(), selected === null ? 0 : 1, "funds: automatic account selection missing");
-      assert.equal(await page.locator(".book-activity-row").count(), data.collections.movements.items.length, "funds: selected account rows incomplete");
+      if (!retainedRefreshOnly) assert.equal(await page.locator(".book-activity-row").count(), data.collections.movements.items.length, "funds: selected account rows incomplete");
       if (selected) for (const item of data.collections.movements.items) {
         assert.equal(item.account_id, selected.account_id, "funds: another account leaked into movements");
         assert.equal(item.account_type, selected.type, "funds: another account type leaked into movements");
@@ -648,11 +1584,16 @@ async function run(config) {
     } else if (module.key === "employees") {
       assert.equal((await page.locator("#employees-count-value").textContent())?.replace(/\s/g, ""),
         `${data.employees.in_period_count}人`, "employees: confirmed in-period headcount differs from full summary");
-      assert.equal(await page.locator(".employee-grid").first().locator(".employee-card").count(), data.collections.employees.items.length, "employees: default employee rows incomplete");
-      assert.equal(await page.locator("[aria-label='个人劳务明细记录'] .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
+      const employeeRows = await page.locator(".employee-grid").first().locator(".employee-card").count();
+      if (!retainedRefreshOnly) {
+        verifyEmployeeRootRows(employeeRows, data.collections.employees.items.length, allowEmployeeContinuation);
+        assert.equal(await page.locator("[aria-label='个人劳务明细记录'] .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
+      }
     } else if (module.key === "assets") {
-      assert.equal(await page.locator(".asset-grid .asset-card").count(), data.collections.assets.items.length, "assets: default asset rows incomplete");
-      assert.equal(await page.locator(".project-card").count(), data.collections.projects.items.length, "assets: default project rows incomplete");
+      if (!retainedRefreshOnly) {
+        assert.equal(await page.locator(".asset-grid .asset-card").count(), data.collections.assets.items.length, "assets: default asset rows incomplete");
+        assert.equal(await page.locator(".project-card").count(), data.collections.projects.items.length, "assets: default project rows incomplete");
+      }
     } else if (module.key === "reports") {
       const summary = data.summary;
       assert.equal(await page.locator(".summary-grid article").count(), summary === null ? 0 : 3, "reports: default summary incomplete");
@@ -754,7 +1695,7 @@ async function run(config) {
         "brief: monthly review remains in the default page");
     }
     assert.equal(await page.locator("main [role=alert], .state-panel[role=alert], .state-panel.error, .error-state, .review-error, .preparation-state[role=alert], .report-error, .voucher-load-status[role=alert]").count(), 0, `${module.key}: technical error rendered`);
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await waitForStage9Frames(page, `${module.key}: rendered stable frames`);
   }
   async function navigationRendered(module) {
     await rendered(module);
@@ -764,7 +1705,7 @@ async function run(config) {
       epoch_ms: window.__stage9NavigationRenderedEpochMs,
     }));
   }
-  async function measure(module, resourceSamples, requireProjection = Boolean(resourceSamples)) {
+  async function measure(module, resourceSamples, requireProjection = Boolean(resourceSamples), options = {}) {
     return recordRefreshAttempt(refreshAttempts, {
       page: module.key, kind: resourceSamples ? "sample" : config.foreground_stream ? "foreground" : "warmup",
       iteration: refreshAttempts.filter(attempt => attempt.page === module.key
@@ -773,12 +1714,14 @@ async function run(config) {
     if (requireProjection) assert(refreshProjections.has(module.key),
       `${module.key}: formal refresh requires a validated default DOM projection`);
     const contextReply = waitForLater(response("context"));
-    const mainReply = waitForLater(response(module.action));
+    const mainReply = options.requireRoot ? waitForLater(page.waitForResponse(reply => {
+      const url = new URL(reply.url()); return matchesAction(url, module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+    })) : waitForLater(response(module.action));
     const refreshButton = page.locator(".module-header button.refresh");
     await refreshButton.evaluate(observeHotRefresh, { action: module.action, key: module.key, companyId: company.id,
       period: company.period, quarter,
       visible: module.visible.split(", "), root: refreshRoots[module.key],
-      projection: refreshProjections.get(module.key)?.dom });
+      projection: refreshProjections.get(module.key)?.dom, requireRoot: Boolean(options.requireRoot) });
     attempt.phase = "click";
     await refreshButton.click();
     attempt.phase = "render";
@@ -790,7 +1733,9 @@ async function run(config) {
     attempt.elapsed_ms = measurement.measured;
     attempt.phase = "validate";
     for (const pending of [contextReply, mainReply]) {
-      await verifyReply(await pending, module);
+      const reply = await pending;
+      const payload = await verifyReply(reply, module);
+      if (options.requireRoot) (attempt.verified_responses ??= []).push({ url: diagnosticUrl(reply.url()), snapshot_version: payload.snapshot_version });
     }
     await rendered(module);
     assertNoBrowserFailures();
@@ -931,6 +1876,32 @@ async function run(config) {
       first_render_epoch_ms: firstNavigation.epoch_ms,
     };
     Object.assign(partialNavigation, navigationBase);
+    async function expandActivityGroup(row, snapshot, activate = () => row.locator(".event-copy").click()) {
+      const replies = [];
+      const listener = reply => { if (new URL(reply.url()).pathname === "/api/dashboard/brief-group") replies.push(reply); };
+      page.on("response", listener);
+      try {
+        const pending = response("brief-group");
+        await activate();
+        const first = await pending;
+        assert.equal(first.status(), 200, "brief group: required read failed");
+        await row.locator(".group-members .member-row").first().waitFor();
+        await row.locator(".group-members .dashboard-pagination").waitFor({ state: "hidden" });
+        await waitForStage9Frames(page, "brief group: stable frames");
+        const payloads = [];
+        const groupKey = new URL(first.url()).searchParams.get("group_key");
+        for (const reply of replies) {
+          assert.equal(reply.status(), 200, "brief group: member continuation failed");
+          assert.equal(new URL(reply.url()).searchParams.get("group_key"), groupKey, "brief group: continuation changed selection");
+          payloads.push(verifyBriefGroup(await waitForStage9(() => reply.json(), "brief group: response JSON body"), new URL(reply.url()), company, snapshot));
+        }
+        assert(payloads.length && payloads.at(-1).data.collections.members.page.has_more === false,
+          "brief group: required member pages incomplete");
+        assert.equal(await row.locator("[role=alert]").count(), 0, "brief group: member read failed");
+        assertNoBrowserFailures();
+        return payloads;
+      } finally { page.off("response", listener); }
+    }
     if (config.activity_interactions) {
       const requests = [];
       page.on("request", request => {
@@ -940,10 +1911,12 @@ async function run(config) {
       const businessRows = page.locator("#activity .event-row");
       assert(await businessRows.count(), "activity: no business row to inspect");
       const row = businessRows.first();
-      const button = row.locator(".event-voucher-button");
+      const groupPayloads = await expandActivityGroup(row, firstBriefPayload.snapshot_version);
+      requests.length = 0;
+      const button = row.locator(".event-voucher-button:not(:disabled)").first();
       const number = (await button.textContent()).trim().match(/^凭证 ([1-9][0-9]*)$/)?.[1];
       assert(number, "activity: public voucher number missing");
-      const voucher = firstBriefPayload.data.collections.vouchers.items.find(item => item.number === number);
+      const voucher = groupPayloads.flatMap(payload => payload.data.collections.vouchers.items).find(item => item.number === number);
       assert(voucher, "activity: displayed voucher is outside the authenticated page");
       const tooltip = page.locator("#activity [role=tooltip]");
       assert.equal(await tooltip.count(), 0, "activity: hidden voucher details eagerly mounted");
@@ -951,13 +1924,13 @@ async function run(config) {
       await button.hover();
       await tooltip.waitFor({ state: "visible" });
       assert.equal(await tooltip.count(), 1, "activity: multiple voucher popovers mounted");
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await waitForStage9Frames(page, "brief voucher tooltip: stable frames");
       const previewBounds = await tooltip.boundingBox();
       assert(previewBounds && previewBounds.y >= 11 && previewBounds.y + previewBounds.height <= page.viewportSize().height - 11,
         "activity: voucher popover is clipped by the viewport");
-      assert.equal((await tooltip.locator(".voucher-preview-heading strong").textContent()).trim(), voucher.list_summary);
-      assert.equal((await tooltip.locator(".voucher-preview-amount b").textContent()).trim(), formatFen(voucher.business_amount_fen));
-      const lines = tooltip.locator(".voucher-preview-lines > span");
+      assert.equal((await tooltip.locator(".heading strong").textContent()).trim(), voucher.list_summary);
+      assert.equal((await tooltip.locator(".amount b").textContent()).trim(), formatFen(voucher.business_amount_fen));
+      const lines = tooltip.locator(".lines > span");
       assert.equal(await lines.count(), voucher.lines.length);
       for (let index = 0; index < voucher.lines.length; index++) {
         const saved = voucher.lines[index];
@@ -979,12 +1952,12 @@ async function run(config) {
       assert.equal(await page.locator("#activity .voucher-card.is-open .voucher-inline-detail").count(), 1);
       assert.equal((await page.locator("#activity .voucher-card.is-open .voucher-reference strong").textContent()).trim(), `凭证 ${number}`);
       assert.deepEqual(requests, [], "activity: loaded voucher click fetched data");
-      await page.getByRole("button", { name: "按业务", exact: true }).click();
+      await expandActivityGroup(row, firstBriefPayload.snapshot_version, () => page.getByRole("button", { name: "按业务", exact: true }).click());
       const businessReply = page.waitForResponse(reply => new URL(reply.url()).pathname === "/api/dashboard/business-status");
-      await businessRows.first().locator(".event-copy").click();
+      await row.getByRole("button", { name: "业务进展", exact: true }).first().click();
       const reply = await businessReply;
       assert.equal(reply.status(), 200);
-      const payload = await reply.json();
+      const payload = await verifyReply(reply, modules.find(module => module.key === "brief"));
       const target = new URL(reply.url());
       assert.equal(target.searchParams.get("company_id"), company.id);
       assert.equal(target.searchParams.get("period"), company.period);
@@ -998,16 +1971,16 @@ async function run(config) {
       await businessRows.first().locator(".event-copy").click();
       assert.equal(await businessRows.first().getAttribute("aria-expanded"), "false");
       await businessRows.first().focus();
-      await businessRows.first().press("Enter");
-      await panel.waitFor({ state: "visible" });
+      await expandActivityGroup(row, firstBriefPayload.snapshot_version, () => businessRows.first().press("Enter"));
       assert.equal(await businessRows.first().getAttribute("aria-expanded"), "true");
       await businessRows.first().press("Space");
       assert.equal(await businessRows.first().getAttribute("aria-expanded"), "false");
-      assert(requests.length && requests.every(url => url.pathname === "/api/dashboard/business-status"),
+      assert(requests.length && requests.every(url => ["/api/dashboard/business-status", "/api/dashboard/brief-group"].includes(url.pathname)),
         "activity: row expansion reloaded unrelated page data");
       assert.equal(await page.locator(".module-header").getAttribute("aria-busy"), "false");
       await page.setViewportSize({ width: 375, height: 812 });
-      await businessRows.first().locator(".event-voucher-button").click();
+      await expandActivityGroup(row, firstBriefPayload.snapshot_version);
+      await row.locator(".event-voucher-button:not(:disabled)").first().click();
       await page.waitForFunction(() => document.querySelector(".view-switch button[aria-pressed=true]")?.textContent.trim() === "按凭证");
       assert.equal(await page.locator("#activity [role=tooltip]:visible").count(), 0);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "activity: mobile horizontal overflow");
@@ -1016,51 +1989,204 @@ async function run(config) {
       return { status: "passed", activity_interactions: { hover: true, focus: true, local_voucher: true,
         row_toggle: true, keyboard: true, mobile: true, requests: requests.length }, navigation: navigationBase };
     }
-    if (config.layout_only) {
+    if (config.layout_only || config.interaction_only) {
       const layouts = layoutChecks;
+      async function settleRequiredReads(module) {
+        const deadline = Date.now() + 30000;
+        const wait = (phase, operation) => waitForStage9(operation, `${module.key}: settle ${phase}`, deadline);
+        while (true) {
+          await waitForStage9Frames(page, `${module.key}: settle stable frames`, deadline);
+          assertNoBrowserFailures();
+          assert.equal(await wait("alerts", () => page.locator("[role=alert]").count()), 0, `${module.key}: final required read failed`);
+          while (layoutPageReplies.length) {
+            const reply = layoutPageReplies.shift();
+            const pathname = new URL(reply.url()).pathname;
+            if (config.interaction_only && !retainedRefreshOnly && pathname !== `/api/dashboard/${module.action}`) continue;
+            const owner = modules.find(item => pathname === `/api/dashboard/${item.action}`) ?? module;
+            const failure = apiFailures.find(item => item.request?.request_id === requestDiagnostics.get(reply.request())?.request_id);
+            if (failure && allowedLocalAborts.has(failure)) {
+              if (retainedRefreshOnly) retainedBodies.consumed(reply);
+              continue;
+            }
+            if ((config.layout_only || retainedRefreshOnly) && await localReplyIsObsolete(reply, {
+              failureFor: response => apiFailures.find(item => item.request?.request_id === requestDiagnostics.get(response.request())?.request_id),
+              classifyObsolete: item => allowedLocalAborts.has(item),
+              finish: response => wait("response body finish", () => response.finished()),
+            })) { if (retainedRefreshOnly) retainedBodies.consumed(reply); continue; }
+            await wait("response validation", () => verifyReply(reply, owner));
+          }
+          const pending = requestDiagnostics.pending().filter(read => retainedRefreshOnly || !config.interaction_only
+            || ["/api/dashboard/context", `/api/dashboard/${module.action}`].includes(new URL(read.url).pathname));
+          if (!pending.length) {
+            if (retainedRefreshOnly && retainedCaptureActive) await verifyRetainedVisibleCollections(module);
+            return;
+          }
+          assert(Date.now() < deadline, `${module.key}: necessary API requests did not finish`);
+        }
+      }
+      async function verifyRetainedVisibleCollections(module) {
+        const pathname = `/api/dashboard/${module.action}`;
+        const main = retainedPayloads.findLast(read => new URL(read.url).pathname === pathname && !new URL(read.url).searchParams.has("section"));
+        assert(main, `${module.key}: complete DOM validation lacks the current verified root`);
+        const check = async (section, selector, filter = () => true) => {
+          const items = retainedOrderedItems(retainedPayloads, pathname, section).filter(filter);
+          const ids = items.map(item => retainedItemIdentity(pathname, section, item, main.payload));
+          verifyRetainedVisibleOrder(ids, await page.locator(selector).count(), `${module.key}/${section}`);
+        };
+        if (module.key === "brief") {
+          const index = await page.evaluate(() => Array.from(document.querySelectorAll('#activity .index button'))
+            .findIndex(node => node.getAttribute('aria-pressed') === 'true'));
+          const group = main.payload.data.activity_groups[index];
+          assert(group, "brief: selected activity category lacks current response identity");
+          await check("activity", "#activity .event-row", item => item.group === group.key);
+          const openIndex = await page.evaluate(() => Array.from(document.querySelectorAll('#open-items .open-index button'))
+            .findIndex(node => node.getAttribute('aria-current') === 'true'));
+          const category = main.payload.data.open_items.categories.filter(item => item.count)[openIndex];
+          if (category) await check("open_items", "#open-items .open-event-row", item => item.category_key === category.key);
+          else assert.equal(await page.locator("#open-items .open-event-row").count(), 0, "brief: rows without selected open category");
+        } else if (module.key === "funds") {
+          for (const [section, selector] of [["accounts", ".account-grid .account-card"], ["investment_products", ".investment-summary-table tbody tr"],
+            ["movements", ".book-activity-row"], ["statements", ".bank-activity-item"]]) await check(section, selector);
+        } else if (module.key === "employees") {
+          await check("employees", '[aria-label="员工明细记录"] .employee-card');
+          await check("labor_sources", '[aria-label="个人劳务明细记录"] .employee-card');
+        } else if (module.key === "assets") {
+          await check("assets", ".asset-grid .asset-card"); await check("projects", ".project-card");
+        }
+      }
       // These interaction checks are outside every default/cold/refresh timing.
-      async function localChange(module, action, section = null) {
+      async function localChange(module, action, section = null, label = "display", expectedFilter = null) {
         const requests = [], replies = [];
+        const actionId = localActions.length + 1;
+        const deadline = Date.now() + 30000;
+        const wait = (phase, operation) => waitForStage9(operation, `${module.key}/action ${actionId} ${label}: ${phase}`, deadline);
+        const readSelection = async () => {
+          const selection = await page.evaluate(() => ({
+          url: location.href,
+          funds_view: Array.from(document.querySelectorAll('#fund-detail-tab-bank, #fund-detail-tab-book')).find(node => node.getAttribute('aria-selected') === 'true')?.id ?? null,
+          movement_account_index: Array.from(document.querySelectorAll('.fund-account-index > button')).findIndex(node => node.getAttribute('aria-current') === 'true'),
+          active_section: document.querySelector('.section-nav [aria-current="location"]')?.textContent.trim() ?? null,
+          brief_view: document.querySelector('.view-switch button[aria-pressed="true"]')?.textContent.trim() ?? null,
+          filters: Array.from(document.querySelectorAll('.select-trigger')).map(node => ({ label: node.getAttribute('aria-label'), value: node.getAttribute('data-value') })),
+          statement_account_id: document.querySelector('[aria-label="筛选银行流水账户"].select-trigger')?.getAttribute('data-value') ?? '',
+        }));
+          const accounts = layoutAccounts.map(item => ({ movement_account_type: item.type, movement_account_id: item.account_id }));
+          if (layoutMovementAccount && !accounts.some(item => item.movement_account_type === layoutMovementAccount.movement_account_type
+            && item.movement_account_id === layoutMovementAccount.movement_account_id)) accounts.unshift(layoutMovementAccount);
+          selection.movement_account = accounts[selection.movement_account_index] ?? null;
+          return selection;
+        };
+        const before = await wait("selection before", readSelection); before.url = diagnosticUrl(before.url);
+        const diagnostic = { action_id: actionId, page: module.key, section, label,
+          before, pending_before: requestDiagnostics.pending(), verified_reads: [], verified_cached_reads: [], status: "running" };
+        localActions.push(diagnostic); currentLocalAction = actionId;
         const requestListener = request => {
           const url = new URL(request.url());
           if (url.pathname.startsWith("/api/dashboard/")) requests.push(url);
         };
         const replyListener = reply => {
-          if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) replies.push(reply);
+          if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) replies.push({ reply });
         };
-        await page.evaluate(() => {
+        await wait("install observer", () => page.evaluate(() => {
           const header = document.querySelector(".module-header");
           window.__stage9LocalRoot = header;
           window.__stage9LocalFailures = [];
-          window.__stage9LocalObserver = new MutationObserver(() => {
+          const observeLocal = () => {
             if (!header.isConnected || header.getAttribute("aria-busy") !== "false") window.__stage9LocalFailures.push("whole-page loading");
-          });
+          };
+          window.__stage9LocalObserver = new MutationObserver(window.__stage9VoucherTailDiagnosticEnabled ? records => {
+            const metric = window.__stage9Interaction?.end === null ? window.__stage9VoucherTailMetrics?.observers.local : null, started = performance.now();
+            try { observeLocal(); }
+            finally { if (metric) { metric.callbacks++; metric.records += records.length;
+              metric.added_nodes += records.reduce((count, record) => count + record.addedNodes.length, 0);
+              metric.milliseconds += performance.now() - started; } }
+          } : observeLocal);
           window.__stage9LocalObserver.observe(document.body, { subtree: true, attributes: true, childList: true });
-        });
+        }));
         page.on("request", requestListener); page.on("response", replyListener);
         try {
-          const pending = section ? waitForLater(page.waitForResponse(reply => {
-            const url = new URL(reply.url());
-            return matchesAction(url, module.action) && url.searchParams.get("section") === section;
-          })) : null;
-          await action();
-          if (pending) await pending;
-          await page.waitForFunction(() => !Array.from(document.querySelectorAll("[role=status], .empty"))
-            .some(node => node.getClientRects().length && /正在读取所选|正在读取资金明细|正在读取银行流水|正在读取凭证/.test(node.textContent ?? "")));
-          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          await wait("perform action", action);
+          await wait("interaction candidate", waitForInteractionCandidate);
+          diagnostic.after = await wait("selection after action", readSelection); diagnostic.after.url = diagnosticUrl(diagnostic.after.url);
+          const snapshot = refreshProjections.get(module.key)?.snapshot;
+          const fresh = expectedFilter !== null || section === "movements" && before.movement_account_index !== diagnostic.after.movement_account_index
+            || section === "vouchers" && before.brief_view !== diagnostic.after.brief_view;
+          const currentRead = (entry, required = false) => localReadMatchesSelection(requestDiagnostics.get(entry.reply.request()), diagnostic, snapshot,
+            required ? section : null, { fresh: required && fresh });
+          if (section && !replies.some(entry => currentRead(entry, true))) await wait("current selected response", () => page.waitForResponse(reply => currentRead({ reply }, true)));
+          await wait("local loading", () => page.waitForFunction(() => !Array.from(document.querySelectorAll("[role=status], .empty"))
+            .some(node => node.getClientRects().length && /正在读取所选|正在读取资金明细|正在读取银行流水|正在读取凭证/.test(node.textContent ?? ""))));
+          await waitForStage9Frames(page, `${module.key}/action ${actionId} ${label}: stable frames`, deadline);
+          diagnostic.after = await wait("settled selection", readSelection); diagnostic.after.url = diagnosticUrl(diagnostic.after.url);
           for (const url of requests) {
             verifyLocalRead(url, module, company, refreshProjections.get(module.key)?.snapshot, section);
           }
-          const payloads = [];
-          for (const reply of replies) payloads.push(await verifyReply(reply, module));
-          assert.deepEqual(await page.evaluate(() => window.__stage9LocalFailures), [], `${module.key}: local change flashed whole page`);
-          assert.equal(await page.locator(".module-header").getAttribute("aria-busy"), "false");
-          assert.equal(await page.locator("[role=alert]").count(), 0, `${module.key}: local read failed`);
+          // A view change can reuse a completely validated collection, after
+          // the actual selected UI has settled. Specific filters/accounts are
+          // matched too, so an old cache cannot prove a changed selection.
+          diagnostic.verified_cached_reads = layoutVerifiedReads.filter(read => localReadMatchesSelection(read, diagnostic, snapshot, null, { cached: true }))
+            .map(read => ({ ...read, action_id: actionId }));
+          const classifyObsolete = failure => {
+            if (allowedLocalAborts.has(failure)) return true;
+            for (const candidate of [diagnostic, ...localActions.filter(item => item.status === "passed").reverse()]) {
+              const reason = obsoleteLocalCancellation(failure, candidate, refreshProjections.get(candidate.page)?.snapshot, localActions);
+              if (reason) {
+                allowedLocalAborts.add(failure); obsoleteCancellations.push({ ...failure, reason, superseded_by_action: candidate.action_id });
+                return true;
+              }
+            }
+            return false;
+          };
+          const payloads = await wait("response validation", () => verifyLocalActionReplies(replies, {
+            isCurrent: entry => currentRead(entry),
+            isObsolete: ({ reply }) => localReplyIsObsolete(reply, {
+              failureFor: response => apiFailures.find(item => item.request?.request_id === requestDiagnostics.get(response.request())?.request_id),
+              classifyObsolete,
+              finish: response => wait("response body finish", () => response.finished()),
+            }),
+            verify: ({ reply }) => verifyReply(reply, module),
+            onCurrent: async ({ reply }, payload) => {
+              verifiedRequestRecord(requestDiagnostics, verifiedRequests, reply.request(), `${module.key}: local response`);
+              const url = new URL(reply.url());
+              const readSection = url.searchParams.get("section");
+              if (module.key === "funds" && readSection === "movements") {
+                assert.equal(payload.data?.selected_movement_account?.account_id, url.searchParams.get("movement_account_id"), "local account response: wrong selected account");
+                assert.equal(payload.data?.selected_movement_account?.type, url.searchParams.get("movement_account_type"), "local account response: wrong selected type");
+              }
+              if (module.key === "employees" && readSection === "employees") assert.equal(payload.data?.employee_filter, url.searchParams.get("employee_filter"), "local employee response: wrong selected filter");
+              if (expectedFilter !== null && readSection === section) verifySelectedFilter(diagnostic.after, url, payload, section, expectedFilter);
+              diagnostic.verified_reads.push({ action_id: actionId, section: readSection, url: diagnosticUrl(reply.url()) });
+            },
+          }));
+          if (section) assert(diagnostic.verified_reads.some(read => localReadMatchesSelection({ ...read, started_action: actionId }, diagnostic, snapshot, section, { fresh })),
+            `${module.key}: current selected response missing or incomplete`);
+          diagnostic.after = await wait("final selection", readSelection); diagnostic.after.url = diagnosticUrl(diagnostic.after.url);
+          assert.deepEqual(await wait("observer failures", () => page.evaluate(() => window.__stage9LocalFailures)), [], `${module.key}: local change flashed whole page`);
+          assert.equal(await wait("header state", () => page.locator(".module-header").getAttribute("aria-busy")), "false");
+          assert.equal(await wait("final alerts", () => page.locator("[role=alert]").count()), 0, `${module.key}: local read failed`);
+          // Include newly validated complete bodies in the final cache proof.
+          diagnostic.verified_cached_reads = layoutVerifiedReads.filter(read => localReadMatchesSelection(read, diagnostic, snapshot, null, { cached: true }))
+            .map(read => ({ ...read, action_id: actionId }));
+          for (const failure of apiFailures) {
+            if (allowedLocalAborts.has(failure)) continue;
+            classifyObsolete(failure);
+          }
           assertNoBrowserFailures();
+          diagnostic.status = "passed";
           return payloads;
+        } catch (error) {
+          diagnostic.status = "failed";
+          diagnostic.error = sanitize(error?.message || error);
+          throw error;
         } finally {
+          diagnostic.pending_after = requestDiagnostics.pending();
+          currentLocalAction = null;
           page.off("request", requestListener); page.off("response", replyListener);
-          await page.evaluate(() => window.__stage9LocalObserver.disconnect());
+          await waitForStage9(() => page.evaluate(() => window.__stage9LocalObserver?.disconnect()),
+            `${module.key}/action ${actionId} ${label}: observer cleanup`, Date.now() + 1000).catch(error => {
+            diagnostic.cleanup_error = sanitize(error.message);
+            if (diagnostic.status !== "failed") throw error;
+          });
         }
       }
       async function checkOwnerLayout(module, scenario) {
@@ -1146,11 +2272,521 @@ async function run(config) {
             `${module.key}/${scenario}: excessive blank space after the movements`);
         }
       }
+      if (config.interaction_only) {
+        retainedCaptureActive = retainedRefreshOnly;
+        let previousRetainedModule = modules[0];
+        const specs = [];
+        async function openModule(module, query = {}) {
+          if (retainedRefreshOnly) {
+            await settleRequiredReads(previousRetainedModule);
+            retainedBodies.retire(retainedGeneration);
+            assert(!requestDiagnostics.pending().length, "retained response: navigation has unfinished prior requests");
+            retainedGeneration += 1; previousRetainedModule = module;
+          }
+          retainedPayloads.length = 0;
+          layoutVerifiedReads.length = 0; layoutMovementAccount = null; layoutAccounts.length = 0;
+          const pending = [response("context"), response(module.action)];
+          const destination = new URL(address(module));
+          for (const [key, value] of Object.entries(query)) destination.searchParams.set(key, value);
+          await page.goto(destination.href);
+          let main;
+          for (const reply of await Promise.all(pending)) {
+            const payload = await verifyReply(reply, module);
+            if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) main = payload;
+          }
+          await rendered(module); await settleRequiredReads(module);
+          return main;
+        }
+        async function retainedState(spec) {
+          const projection = await page.evaluate(captureRefreshProjection, { root: spec.root });
+          return page.evaluate(({ source, selection }) => new Function("document", "selection", `return (${source})(document, selection)`)(document, selection),
+            { source: readRetainedRefreshState.toString(), selection: { root: spec.root, rows: spec.rows, projection, behavior: spec.expected_refresh_behavior } });
+        }
+        async function targetBinding(spec, reads) {
+          const section = spec.module.key === "brief" ? spec.category_section : spec.module.key === "funds" ? "movements" : spec.module.key;
+          let items = retainedOrderedItems(reads, `/api/dashboard/${spec.module.action}`, section);
+          if (spec.module.key === "brief") items = items.filter(item => (section === "activity" ? item.group : item.category_key) === spec.category_key);
+          if (spec.module.key === "reports") items = reads.findLast(read => read.payload.statements)?.payload.statements ?? [];
+          const selector = spec.module.key === "reports" ? ".statement-buttons > button" : spec.rows;
+          const open_indices = await page.evaluate(selector => Array.from(document.querySelectorAll(selector))
+            .flatMap((node, index) => node.open || node.getAttribute("aria-expanded") === "true" || node.querySelector("details[open]") ? [index] : []), selector);
+          const ordered_ids = items.map(item => spec.module.key === "reports" ? item.key : retainedItemIdentity(`/api/dashboard/${spec.module.action}`, section, item, { data: {} }));
+          assert.equal(await page.locator(selector).count(), ordered_ids.length, `${spec.key}: response order cannot be bound to actual rendered row positions`);
+          const main = reads.findLast(read => new URL(read.url).pathname === `/api/dashboard/${spec.module.action}`);
+          const item = items[open_indices[0]];
+          return { ordered_ids, open_indices, target_id: item ? ordered_ids[open_indices[0]] : spec.target_identity,
+            subject_id: item?.subject_id ?? null,
+            snapshot: main?.payload.snapshot_version ?? main?.payload.read_context?.read_version,
+            ...(spec.module.key === "funds" ? { account: main?.payload.data.selected_movement_account } : {}),
+          };
+        }
+        async function verifyTarget(spec, reads) {
+          if (!spec.requiresTarget && spec.key !== "employees_expanded_detail_refresh") return;
+          const after = await targetBinding(spec, reads);
+          verifyRetainedTargetBinding(spec.beforeTargetBinding, after, spec.expected_refresh_behavior === "close_activity_members_retain_category");
+          spec.afterTargetBinding = after;
+        }
+        async function rememberRetained(spec) {
+          spec.beforeRefresh = await retainedState(spec);
+          assert(spec.beforeRefresh.rows.length, `${spec.key}: no real visible records`);
+          spec.beforeResponseIdentities = retainedPayloads.map(({ url, payload }) => ({ url,
+            snapshot_version: payload.snapshot_version ?? payload.read_context?.read_version,
+            identities: Object.fromEntries(Object.entries(payload.data?.collections ?? {}).map(([section, collection]) =>
+              [section, collection.items.map(item => retainedItemIdentity(new URL(url).pathname, section, item, payload))])),
+          }));
+          spec.beforeCollectionIdentities = retainedCollectionIdentities(retainedPayloads);
+          spec.beforeAuxiliaryComplete = verifyRetainedAuxiliaryComplete(retainedPayloads);
+          spec.beforeVerifiedReads = [...retainedPayloads];
+          if (retainedRefreshOnly && (spec.requiresTarget || spec.key === "employees_expanded_detail_refresh")) {
+            spec.beforeTargetBinding = await targetBinding(spec, retainedPayloads);
+            assert(spec.beforeTargetBinding.open_indices.length === 1, `${spec.key}: no unique actual expanded target`);
+            spec.target_identity = spec.beforeTargetBinding.target_id;
+          }
+          spec.refreshReadOffset = retainedPayloads.length;
+        }
+        async function retainedRefresh(spec) {
+          spec.refreshEvidence = { status: "pending", verified_responses: [] };
+          const replies = [response("context"), waitForLater(page.waitForResponse(reply => {
+            const url = new URL(reply.url()); return matchesAction(url, spec.module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+          }))];
+          await page.locator('.module-header button.refresh').click();
+          for (const reply of await Promise.all(replies)) {
+            const payload = await verifyReply(reply, spec.module, company, { allowEmployeeContinuation: true });
+            spec.refreshEvidence.verified_responses.push({ url: diagnosticUrl(reply.url()), snapshot_version: payload.snapshot_version ?? payload.read_context?.read_version });
+          }
+          await settleRequiredReads(spec.module);
+          const fresh = retainedPayloads.slice(spec.refreshReadOffset);
+          await verifyTarget(spec, fresh);
+          let effective = fresh;
+          if (spec.key === "funds_book_retained_detail_refresh" && !fresh.some(read => new URL(read.url).pathname === "/api/dashboard/business-status")) {
+            const main = fresh.findLast(read => new URL(read.url).pathname === "/api/dashboard/funds" && !new URL(read.url).searchParams.has("section"));
+            const cached = verifiedFundsDetailCache(spec.beforeVerifiedReads, main, spec.afterTargetBinding);
+            effective = [...fresh, ...cached];
+            spec.refreshEvidence.detail_cache = { status: "verified_same_snapshot_same_subject_account_and_open_row", main_url: main.url,
+              snapshot_version: main.payload.snapshot_version, target: spec.afterTargetBinding, prior_verified_urls: cached.map(read => read.url) };
+          }
+          spec.afterAuxiliaryComplete = verifyRetainedAuxiliaryComplete(effective);
+          spec.refreshEvidence.auxiliary_complete = spec.afterAuxiliaryComplete;
+          spec.refreshEvidence.target_binding = spec.afterTargetBinding;
+          spec.afterCollectionIdentities = retainedCollectionIdentities(effective);
+          verifyRetainedCollectionIdentities(spec.beforeCollectionIdentities, spec.afterCollectionIdentities,
+            { closeActivityMembers: spec.expected_refresh_behavior === "close_activity_members_retain_category" });
+          spec.refreshEvidence.status = "verified";
+        }
+        async function change(module, operation, section = null, label = "interaction", filter = null) {
+          const payloads = await localChange(module, operation, section, label, filter);
+          await settleRequiredReads(module);
+          return payloads;
+        }
+        async function selectFilter(module, value) {
+          const label = module.key === "employees" ? "筛选员工" : "筛选资产";
+          if (await page.getByRole("button", { name: label, exact: true }).getAttribute("data-value") !== value)
+            await change(module, () => selectDashboardOption(page, label, value), module.key, `prepare ${value}`, value);
+        }
+        for (const module of modules.filter(item => ["employees", "assets"].includes(item.key))) {
+          const values = module.key === "employees" ? ["in_period", "all"] : ["fixed", "all"];
+          for (const value of values) specs.push({ key: `${module.key}_filter_${value}`, module, root: refreshRoots[module.key], requireNewResponse: true,
+            trigger: `[role=option][data-value=${JSON.stringify(value)}]`, counts: [],
+            prepare: async () => { await openModule(module); await selectFilter(module, values.find(item => item !== value)); return true; },
+            perform: () => change(module, () => selectDashboardOption(page, module.key === "employees" ? "筛选员工" : "筛选资产", value), module.key, `timed ${value}`, value),
+            verify: async () => assert.equal(await page.getByRole("button", { name: module.key === "employees" ? "筛选员工" : "筛选资产", exact: true }).getAttribute("data-value"), value),
+          });
+          let identity;
+          specs.push({ key: `${module.key}_exact_target`, module, root: refreshRoots[module.key], navigation: true, requireNewResponse: true,
+            counts: [[module.key === "employees" ? "#employee-card-target" : "#asset-card-target", 1]],
+            position: { selector: module.key === "employees" ? "#employee-card-target" : "#asset-card-target", require_focus: true },
+            prepare: async function () {
+              const main = await openModule(module, module.key === "employees" ? { employee_filter: "all" } : {}), field = module.key === "employees" ? "employee_id" : "asset_id";
+              const item = main.data.collections[module.key].items.find(item => item[field]);
+              if (!item) return false;
+              identity ??= item[field];
+              const target = new URL(address(module)); target.searchParams.set(field, identity); this.url = target.href;
+              if (module.key === "employees") { target.searchParams.set("employee_filter", "all"); this.url = target.href; }
+              return true;
+            },
+            perform: async function () {
+              const field = module.key === "employees" ? "employee_id" : "asset_id", requests = [];
+              const collect = request => { if (new URL(request.url()).pathname.startsWith("/api/dashboard/")) requests.push(new URL(request.url())); };
+              const pending = [response("context"), waitForLater(page.waitForResponse(reply => new URL(reply.url()).pathname === `/api/dashboard/${module.action}` && new URL(reply.url()).searchParams.get(field) === identity))];
+              page.on("request", collect);
+              try {
+                await page.goto(this.url);
+                for (const reply of await Promise.all(pending)) {
+                  const payload = await verifyReply(reply, module);
+                  if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) verifyExactInteractionTarget(payload, new URL(reply.url()), company, module.key, identity);
+                }
+                await rendered(module);
+                await page.locator(this.counts[0][0]).waitFor({ state: "visible" });
+                await settleRequiredReads(module);
+                for (const url of requests) {
+                  assert.equal(url.searchParams.get("company_id"), company.id);
+                  if (url.pathname === "/api/dashboard/context") continue;
+                  assert.equal(url.pathname, `/api/dashboard/${module.action}`, "exact target read unrelated resource");
+                  assert.equal(url.searchParams.get(field), identity);
+                  assert(!url.searchParams.has("cursor") && !url.searchParams.has("section"), "exact target searched continuation pages");
+                }
+              } finally { page.off("request", collect); }
+            }, verify: async () => {},
+          });
+        }
+        const funds = modules.find(item => item.key === "funds"), brief = modules[0], employees = modules.find(item => item.key === "employees");
+        for (const value of ["bank", "book"]) specs.push({ key: `funds_view_${value}`, module: funds, root: "#bank-details", counts: [], trigger: `#fund-detail-tab-${value}`,
+          prepare: async () => { await openModule(funds); const other = value === "bank" ? "book" : "bank"; if (await page.locator(`#fund-detail-tab-${other}`).getAttribute("aria-selected") !== "true") await change(funds, () => page.locator(`#fund-detail-tab-${other}`).click()); return true; },
+          perform: () => change(funds, () => page.locator(`#fund-detail-tab-${value}`).click()),
+          verify: async () => assert.equal(await page.locator(`#fund-detail-tab-${value}`).getAttribute("aria-selected"), "true"),
+        });
+        for (const index of [1, 0]) specs.push({ key: `funds_account_${index + 1}`, module: funds, root: "#bank-details", requireNewResponse: true, counts: [], trigger: `.fund-account-index > button:nth-of-type(${index + 1})`,
+          prepare: async () => {
+            await openModule(funds); const buttons = page.locator(".fund-account-index > button"); if (await buttons.count() < 2) return false;
+            const other = index === 0 ? 1 : 0; if (await buttons.nth(other).getAttribute("aria-current") !== "true") await change(funds, () => buttons.nth(other).click(), "movements"); return true;
+          }, perform: () => change(funds, () => page.locator(".fund-account-index > button").nth(index).click(), "movements"),
+          verify: async () => assert.equal(await page.locator(".fund-account-index > button").nth(index).getAttribute("aria-current"), "true"),
+        });
+        for (const section of ["activity", "open_items"]) {
+          const root = section === "activity" ? "#activity" : "#open-items", buttons = section === "activity" ? `${root} .index button` : `${root} .open-index button`;
+          let expectedCount;
+          specs.push({ key: `brief_${section}_selected_category_complete`, module: brief, root, counts: [], trigger: `${buttons}:nth-of-type(2)`,
+            prepare: async function () {
+              const main = await openModule(brief);
+              const categories = section === "activity" ? main.data.activity_groups : main.data.open_items.categories.filter(item => item.count);
+              if (categories.length < 2 || await page.locator(buttons).count() < 2) return false;
+              expectedCount = categories[1].group_count;
+              this.counts = [[section === "activity" ? "#activity .event-row" : "#open-items .open-event-row", expectedCount]];
+              await change(brief, () => page.locator(buttons).first().click()); return true;
+            }, perform: () => change(brief, () => page.locator(buttons).nth(1).click()),
+            verify: async function () { assert.equal(await page.locator(this.counts[0][0]).count(), expectedCount, "selected category did not load its complete group count"); },
+          });
+        }
+        specs.push({ key: "employees_expanded_detail_refresh", module: employees, root: refreshRoots.employees, counts: [['[aria-label="员工明细记录"] details.employee-card[open] .employee-detail', 1]], refresh: true, requireNewResponse: true, trigger: '.module-header button.refresh',
+          rows: '[aria-label="员工明细记录"] .employee-card',
+          prepare: async function () {
+            await openModule(employees, { employee_filter: "all" }); const card = page.locator('[aria-label="员工明细记录"] details.employee-card').first(); if (!await card.count()) return false;
+            await change(employees, () => card.locator(":scope > summary").click()); await card.locator(".employee-detail").waitFor({ state: "visible" });
+            await rememberRetained(this); return true;
+          }, perform: async function () {
+            this.refreshEvidence = { status: "pending", verified_responses: [] };
+            const replies = [waitForLater(response("context")), waitForLater(page.waitForResponse(reply => {
+              const url = new URL(reply.url()); return matchesAction(url, employees.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+            }))];
+            await page.locator('.module-header button.refresh').click();
+            for (const reply of await Promise.all(replies)) {
+              const payload = await verifyReply(reply, employees, company, { allowEmployeeContinuation: true });
+              this.refreshEvidence.verified_responses.push({ url: diagnosticUrl(reply.url()), snapshot_version: payload.snapshot_version });
+            }
+            await settleRequiredReads(employees); this.refreshEvidence.status = "verified";
+          }, verify: async function () {
+            assert.equal(await page.locator('[aria-label="员工明细记录"] details.employee-card[open] .employee-detail').count(), 1, "refresh lost the expanded detail");
+            verifyRetainedRefreshState(this.beforeRefresh, await retainedState(this), this.key);
+            if (retainedRefreshOnly) {
+              await verifyTarget(this, retainedPayloads.slice(this.refreshReadOffset));
+              this.afterCollectionIdentities = retainedCollectionIdentities(retainedPayloads.slice(this.refreshReadOffset));
+              verifyRetainedCollectionIdentities(this.beforeCollectionIdentities, this.afterCollectionIdentities);
+            }
+          },
+        });
+        for (const all of [false, true]) {
+          let voucherCount;
+          specs.push({ key: all ? "brief_vouchers_all_complete" : "brief_vouchers_next_page", module: brief, root: "#activity", counts: [], requireNewResponse: true,
+            trigger: all ? '[role=switch][aria-label="改为全部显示凭证"]' : '.voucher-pagination button:last-of-type',
+            prepare: async function () {
+              const main = await openModule(brief); voucherCount = main.data.voucher_count; if (voucherCount <= 20) return false;
+              await change(brief, () => page.getByRole("button", { name: "按凭证", exact: true }).click(), "vouchers");
+              this.counts = [[".voucher-card", all ? voucherCount : Math.min(20, voucherCount - 20)]]; return true;
+            }, perform: () => change(brief, () => all ? page.getByRole("switch", { name: "改为全部显示凭证", exact: true }).click() : page.getByRole("button", { name: "下一页", exact: true }).click(), all || voucherCount > 20 ? "vouchers" : null),
+            verify: async function () {
+              assert.equal(await page.locator(".voucher-card").count(), this.counts[0][1]);
+              if (all) assert.equal(new Set(await page.locator(".voucher-reference strong").allTextContents()).size, voucherCount, "all vouchers lost or duplicated identities");
+              else assert((await page.locator(".voucher-pagination strong").textContent()).trim().startsWith("2 /"));
+            },
+          });
+        }
+        if (retainedRefreshOnly) {
+          const strengthenedEmployee = specs.find(spec => spec.key === "employees_expanded_detail_refresh");
+          specs.length = 0;
+          function addRetained(key, module, rows, prepare, counts = []) {
+            specs.push({ key, module, root: refreshRoots[module.key], rows, counts, refresh: true, requireNewResponse: true,
+              trigger: '.module-header button.refresh',
+              prepare: async function () {
+                this.unverifiedReason = undefined;
+                if (!await prepare.call(this)) { this.unverifiedReason ??= "no real matching business record/detail in the selected scope"; return false; }
+                await settleRequiredReads(module); await rememberRetained(this); return true;
+              }, perform: async function () { await retainedRefresh(this); },
+              verify: async function () { verifyRetainedRefreshState(this.beforeRefresh, await retainedState(this), this.key); },
+            });
+          }
+          for (const section of ["activity", "open_items"]) {
+            const root = section === "activity" ? "#activity" : "#open-items";
+            const buttons = `${root} ${section === "activity" ? ".index" : ".open-index"} button`;
+            const rows = `${root} ${section === "activity" ? ".event-row" : ".open-event-row"}`;
+            addRetained(`brief_${section}_retained_detail_refresh`, brief, rows, async function () {
+              await openModule(brief);
+              if (await page.locator(buttons).count() < 2) { this.unverifiedReason = "no real nondefault brief category"; return false; }
+              await change(brief, () => page.locator(buttons).nth(1).click());
+              const row = page.locator(`${rows}[role=button]`).first();
+              if (!await row.count()) return false;
+              await row.click(); await settleRequiredReads(brief);
+              await row.locator(".group-members").waitFor({ state: "visible" });
+              const groupReads = retainedPayloads.filter(item => new URL(item.url).pathname === "/api/dashboard/brief-group"
+                && item.payload.data.section === section && item.payload.data.collections.members.items.length);
+              if (!groupReads.length) { this.unverifiedReason = `${section}: real group has no verified members to retain`; return false; }
+              this.target_identity = groupReads.at(-1).payload.data.group_key;
+              const main = retainedPayloads.find(read => new URL(read.url).pathname === "/api/dashboard/brief" && !new URL(read.url).searchParams.has("section"))?.payload;
+              this.category_section = section;
+              this.category_key = (section === "activity" ? main.data.activity_groups : main.data.open_items.categories.filter(item => item.count))[1].key;
+              this.requiresTarget = true;
+              this.expected_refresh_behavior = section === "activity" ? "close_activity_members_retain_category" : "retain_same_snapshot_outer_group_reload_members_close_member_progress";
+              this.counts = [[`${rows}[aria-expanded=true] .group-members`, section === "activity" ? 0 : 1]]; return true;
+            });
+          }
+          addRetained("funds_book_retained_detail_refresh", funds, ".book-activity-row", async function () {
+            await openModule(funds);
+            const accounts = page.locator(".fund-account-index > button");
+            if (await accounts.count() < 2) { this.unverifiedReason = "no real nondefault funds account"; return false; }
+            await change(funds, () => accounts.nth(1).click(), "movements");
+            const row = page.locator('.book-activity-row[role=button]').first(); if (!await row.count()) return false;
+            await row.click(); await settleRequiredReads(funds);
+            await row.locator(".business-detail-panel").waitFor({ state: "visible" });
+            const detail = retainedPayloads.findLast(item => new URL(item.url).pathname === "/api/dashboard/business-status");
+            assert(detail, "funds expanded detail lacks a generated-contract-verified business response");
+            this.target_identity = detail.payload.data.identity.subject_id;
+            this.requiresTarget = true;
+            this.counts = [['.book-activity-row[aria-expanded=true] .business-detail-panel', 1]]; return true;
+          });
+          addRetained("funds_bank_retained_refresh", funds, ".bank-activity-item", async function () {
+            await openModule(funds); await change(funds, () => page.locator("#fund-detail-tab-bank").click());
+            if (!await page.locator(".bank-activity-item").count()) { this.unverifiedReason = "no actual bank statement rows"; return false; }
+            assert.equal(await page.locator("#fund-detail-tab-bank").getAttribute("aria-selected"), "true"); return true;
+          });
+          const assets = modules.find(item => item.key === "assets"), reports = modules.find(item => item.key === "reports");
+          addRetained("assets_fixed_list_retained_detail_refresh", assets, ".asset-grid > article", async function () {
+            const main = await openModule(assets); await selectFilter(assets, "fixed");
+            await page.getByRole("group", { name: "资产展示方式", exact: true }).getByRole("button", { name: "列表", exact: true }).click();
+            const detail = page.locator("details.asset-list-details").first(); if (!await detail.count()) return false;
+            await detail.locator(":scope > summary").click(); await detail.locator(".asset-list-detail").waitFor({ state: "visible" });
+            this.target_identity = retainedPayloads.find(item => item.payload.data?.collections?.assets && !new URL(item.url).searchParams.has("cursor")
+              && item.payload.data.asset_filter === "fixed")?.payload.data.collections.assets.items[0]?.asset_id;
+            assert(this.target_identity, "fixed asset expanded without a verified asset identity");
+            this.requiresTarget = true;
+            this.counts = [["details.asset-list-details[open] .asset-list-detail", 1]]; return true;
+          });
+          addRetained("reports_statement_retained_detail_refresh", reports, "#report-full tbody tr", async function () {
+            const main = await openModule(reports); if (main.statements.length < 2) { this.unverifiedReason = "no real nondefault statement"; return false; }
+            await page.locator("#report-statement-button-1").click(); await page.locator("#report-full").waitFor({ state: "visible" });
+            this.target_identity = main.statements[1].key; this.requiresTarget = true; this.counts = [["#report-full", 1]]; return true;
+          });
+          addRetained("employees_automatic_continuation_refresh", employees, '[aria-label="员工明细记录"] .employee-card', async function () {
+            const main = await openModule(employees, { employee_filter: "all" });
+            const total = main.data.collections.employees.page.filtered_count;
+            if (total <= 20) { this.unverifiedReason = "employee selection has no real continuation beyond 20"; return false; }
+            const navigation = page.locator('.section-nav').getByRole('button', { name: '员工明细', exact: true });
+            await navigation.click();
+            assert.equal(await navigation.getAttribute('aria-current'), 'location', "employees: actual employee section did not activate");
+            await waitForStage9(() => page.waitForFunction(expected => document.querySelectorAll('[aria-label="员工明细记录"] .employee-card').length === expected, total),
+              "employees: real automatic continuation", Date.now() + 30000);
+            await settleRequiredReads(employees);
+            assert(retainedPayloads.some(item => new URL(item.url).searchParams.has("cursor")
+              && item.payload.data?.collections?.employees), "employee rows lack verified actual continuation");
+            this.counts = [['[aria-label="员工明细记录"] .employee-card', total]]; return true;
+          });
+          specs.push(strengthenedEmployee);
+          assert.deepEqual(specs.map(spec => spec.key), retainedRefreshKeys);
+        }
+        function requiredListener(spec, required) {
+          return request => {
+            const pathname = new URL(request.url()).pathname;
+            if (pathname === `/api/dashboard/${spec.module.action}` || (spec.navigation || spec.refresh) && pathname === "/api/dashboard/context"
+              || retainedRefreshOnly && ["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(pathname)) required.add(request);
+          };
+        }
+        function verifiedInteractionReads(spec, required) {
+          const reads = [];
+          for (const request of required) {
+            const record = requestDiagnostics.get(request);
+            if (apiFailures.some(failure => failure.request?.request_id === record?.request_id && allowedLocalAborts.has(failure))) continue;
+            verifiedRequestRecord(requestDiagnostics, verifiedRequests, request, spec.key);
+            const target = new URL(request.url());
+            assert.equal(target.origin, new URL(config.origin).origin, `${spec.key}: required response origin changed`);
+            assert(retainedRefreshOnly ? interactionScopeAllows(target, { action: spec.module.action, company_id: company.id, period: company.period,
+              snapshot: refreshProjections.get(spec.module.key)?.snapshot, quarter, retained_refresh: true })
+              : matchesAction(target, target.pathname === "/api/dashboard/context" ? "context" : spec.module.action), `${spec.key}: required response scope changed`);
+            reads.push({ request_id: record.request_id, status: "verified", url: diagnosticUrl(request.url()) });
+          }
+          return reads;
+        }
+        if (voucherTailDiagnostic) {
+          const selected = specs.find(spec => spec.key === "brief_vouchers_all_complete");
+          assert(selected, "voucher tail diagnostic lost its actual all-vouchers scenario");
+          specs.splice(0, specs.length, selected);
+        }
+        for (const spec of specs) {
+          const result = interactionResults[spec.key] = { status: "preparing", measurement_scope: retainedRefreshOnly ? "retained_refresh_state" : "existing_interaction",
+            timing_scope: spec.navigation ? "exact_target_navigation" : spec.refresh ? "expanded_hot_refresh" : "local_interaction",
+            completion: "browser current-cycle successful resources and calibrated full continuation chain, then complete selected content for two stable frames"
+              + (spec.position ? " with the focused target in the viewport at its calibrated position and unchanged geometry/scroll coordinates" : "")
+              + "; Node validation accepts or rejects afterward",
+            timing_includes: "product fetch/download and rendering plus limited browser observer bookkeeping; Node response/DOM validation excluded; default page timing unchanged", attempts: [] };
+          let prepared;
+          try { prepared = await spec.prepare(); }
+          catch (error) {
+            if (!retainedRefreshOnly) throw error;
+            result.status = "failed"; result.failure_phase = "retained_refresh_prepare"; result.message = sanitize(error.message);
+            result.prepare_diagnostic = await page.evaluate(({ root, rows }) => ({
+              root_present: Boolean(document.querySelector(root)), row_count: document.querySelectorAll(rows ?? ':not(*)').length,
+              active_section: document.querySelector('.section-nav button[aria-current]')?.textContent.trim() ?? null,
+              employee_rows: document.querySelectorAll('[aria-label="员工明细记录"] .employee-card').length,
+              labor_rows: document.querySelectorAll('[aria-label="个人劳务明细记录"] .employee-card').length,
+              employee_filter: document.querySelector('[aria-label="筛选员工"].select-trigger')?.getAttribute('data-value') ?? null,
+              busy: document.querySelector('.module-header')?.getAttribute('aria-busy') ?? null,
+            }), { root: spec.root, rows: spec.rows });
+            result.prepare_diagnostic.page_url = diagnosticUrl(page.url());
+            result.prepare_diagnostic.pending_requests = requestDiagnostics.pending();
+            continue;
+          }
+          if (!prepared) { result.status = "unverified"; result.reason = spec.unverifiedReason ?? "required real response target/category/page unavailable"; continue; }
+          if (retainedRefreshOnly || spec.key === "employees_expanded_detail_refresh") {
+            result.expected_refresh_behavior = spec.expected_refresh_behavior ?? "retain_same_snapshot_visible_state";
+            result.before_refresh = spec.beforeRefresh; result.before_response_identities = spec.beforeResponseIdentities;
+            result.before_collection_identities = spec.beforeCollectionIdentities;
+            result.before_target_binding = spec.beforeTargetBinding;
+            result.before_auxiliary_complete = spec.beforeAuxiliaryComplete;
+            result.target_identity = spec.target_identity ?? null;
+          }
+          result.status = "calibrating";
+          const calibratedRequests = new Set(), calibrateListener = requiredListener(spec, calibratedRequests);
+          page.on("request", calibrateListener);
+          let calibratedPosition;
+          let calibrationError;
+          try {
+            await spec.perform(); await spec.verify();
+            if (spec.position) calibratedPosition = await waitForStage9(() => page.evaluate(calibrateInteractionPosition, spec.position), `${spec.key}: positioning calibration`);
+            assertNoBrowserFailures();
+          }
+          catch (error) { if (!retainedRefreshOnly) throw error; calibrationError = error; }
+          finally { page.off("request", calibrateListener); }
+          if (calibrationError) {
+            result.status = "failed"; result.failure_phase = "retained_refresh_calibration";
+            result.message = sanitize(calibrationError.message); result.after_refresh = await retainedState(spec);
+            result.refresh_evidence = spec.refreshEvidence; continue;
+          }
+          const calibratedReads = verifiedInteractionReads(spec, calibratedRequests);
+          const projection = await page.evaluate(captureRefreshProjection, { root: spec.root });
+          assert(projection && JSON.parse(projection).content.length, `${spec.key}: empty calibrated target`);
+          const selection = { root: spec.root, counts: spec.counts, projection, trigger: spec.trigger, navigation: Boolean(spec.navigation), refresh: Boolean(spec.refresh), url: spec.url,
+            ...(voucherTailDiagnostic ? { diagnostic_voucher_tail: true } : {}),
+            position: spec.position ? { ...spec.position, expected: calibratedPosition } : undefined,
+            cycle_id: spec.key, require_new_response: Boolean(spec.requireNewResponse), scope: { action: spec.module.action, company_id: company.id, period: company.period, snapshot: refreshProjections.get(spec.module.key)?.snapshot,
+              ...(retainedRefreshOnly ? { retained_refresh: true, quarter } : {}) } };
+          selection.read_plan = { cycle_id: selection.cycle_id, scope: { ...selection.scope }, required: interactionReadMultiset(calibratedReads),
+            cache_verified: !selection.require_new_response && calibratedReads.length === 0 && localActions.at(-1)?.status === "passed" };
+          assert(verifiedReadCycleReady(selection, { ...selection.read_plan, cycle_id: selection.cycle_id, status: "verified", pending: 0, failed: 0, required_reads: calibratedReads }), `${spec.key}: no verified network/cache calibration`);
+          result.read_plan = selection.read_plan;
+          if (selection.position) result.position_plan = selection.position;
+          if (spec.navigation) await page.addInitScript(observeInteraction, selection);
+          for (const kind of ["warmup", "sample"]) for (let index = 0; index < (kind === "warmup" ? warmups : samples); index++) {
+            try { await recordRefreshAttempt(result.attempts, { scenario: spec.key, kind, iteration: index + 1 }, async attempt => {
+              interactionAttempts.push(attempt);
+              assert(await spec.prepare(), `${spec.key}: real target disappeared`);
+              if (retainedRefreshOnly || spec.key === "employees_expanded_detail_refresh") {
+                attempt.before_refresh = spec.beforeRefresh; attempt.before_response_identities = spec.beforeResponseIdentities;
+                attempt.before_collection_identities = spec.beforeCollectionIdentities;
+                attempt.before_target_binding = spec.beforeTargetBinding;
+                attempt.before_auxiliary_complete = spec.beforeAuxiliaryComplete;
+                attempt.expected_refresh_behavior = spec.expected_refresh_behavior ?? "retain_same_snapshot_visible_state";
+              }
+              if (!spec.navigation) {
+                if (!spec.refresh) assert.notEqual(await page.evaluate(captureRefreshProjection, { root: spec.root }), projection, `${spec.key}: preparation already shows the target`);
+                await page.evaluate(observeInteraction, selection);
+              }
+              attempt.phase = "action";
+              const required = new Set();
+              let trace;
+              if (voucherTailDiagnostic && kind === "sample" && index === 0 && config.diagnostic_trace_path) {
+                trace = await startVoucherTailTrace(context, page, config.diagnostic_trace_path);
+              }
+              const collectRequired = requiredListener(spec, required);
+              let operationFailed = false;
+              page.on("request", collectRequired);
+              try {
+                interactionEndpointPending = true;
+                await spec.perform();
+              attempt.phase = "render";
+              await page.waitForFunction(() => window.__stage9Interaction?.end !== null && window.__stage9Interaction?.end !== undefined || window.__stage9Interaction?.error);
+              const state = await page.evaluate(() => window.__stage9Interaction);
+              if (trace) { attempt.renderer_trace = await trace.finish(); trace = null; }
+              if (state) assert(!state.error && Number.isFinite(state.end), state.error ?? "missing interaction endpoint");
+              const milliseconds = state.end - state.start;
+              attempt.elapsed_ms = milliseconds;
+              if (voucherTailDiagnostic) {
+                attempt.diagnostic_only = true; attempt.instrumented = true; attempt.sla_eligible = false;
+                attempt.voucher_tail_diagnostic = state.diagnostic;
+                attempt.voucher_tail_diagnostic.network_complete_at_ms = state.network_complete_at;
+                attempt.voucher_tail_diagnostic.click_start_ms = state.start;
+                attempt.voucher_tail_diagnostic.endpoint_ms = state.end;
+                attempt.voucher_tail_diagnostic.fetches = state.fetches;
+              }
+              attempt.phase = "validate";
+              assertNoBrowserFailures();
+              const reads = verifiedInteractionReads(spec, required);
+              assert.deepEqual(interactionReadMultiset(reads), selection.read_plan.required, `${spec.key}: necessary read multiset changed from verified same-snapshot calibration`);
+              const proof = { cycle_id: selection.cycle_id, scope: selection.scope, status: "verified", pending: 0, failed: 0,
+                required_reads: reads, cache_verified: selection.read_plan.cache_verified && localActions.at(-1)?.status === "passed" };
+              assert(verifiedReadCycleReady(selection, proof), `${spec.key}: missing current-cycle response or validated cache`);
+              attempt.read_cycle = { ...proof, observed_request_count: required.size, candidate_endpoint_ms: state.end, validation_after_endpoint: true,
+                network_complete_at_ms: state.network_complete_at, render_tail_ms: state.end - state.network_complete_at,
+                browser_fetch_count: state.fetches.length, path: selection.read_plan.required.length ? "new_network" : "validated_same_snapshot_cache" };
+              if (selection.position) attempt.position = state.position;
+              if (state) { assert(!state.error, state.error); assert.deepEqual(state.flashes, [], `${spec.key}: local change flashed whole-page loading`); }
+              await spec.verify(); assertNoBrowserFailures();
+              if (retainedRefreshOnly) {
+                attempt.after_collection_identities = spec.afterCollectionIdentities;
+                attempt.after_target_binding = spec.afterTargetBinding;
+                attempt.after_auxiliary_complete = spec.afterAuxiliaryComplete;
+              }
+              assert.equal(required.size, attempt.read_cycle.observed_request_count, `${spec.key}: another necessary read started during final validation`);
+              if (spec.refresh) attempt.refresh_evidence = spec.refreshEvidence;
+              attempt.verified_reads = layoutVerifiedReads.map(item => ({ ...item }));
+              return milliseconds;
+              } catch (error) { operationFailed = true; throw error; }
+              finally {
+                if (trace) attempt.renderer_trace = await trace.finish();
+                interactionEndpointPending = false; page.off("request", collectRequired);
+                await waitForStage9(() => page.evaluate(() => window.__stage9InteractionCleanup?.()),
+                  `${spec.key}: interaction observer cleanup`, Date.now() + 1000).catch(error => {
+                  attempt.cleanup_error = sanitize(error.message);
+                  if (!operationFailed) throw error;
+                });
+              }
+            }, async () => {
+              if (result.attempts.at(-1)?.phase === "prepare") return { started: false };
+              const state = await page.evaluate(() => window.__stage9Interaction);
+              if (spec.refresh) result.attempts.at(-1).refresh_evidence = spec.refreshEvidence;
+              return { started: Boolean(state?.started), elapsed_ms: state?.end === null ? await page.evaluate(() => performance.now() - window.__stage9Interaction.start) : state?.end - state?.start };
+            }); } catch { /* Keep every attempted sample, including failed and slow ones. */ }
+          }
+          const timings = result.attempts.filter(item => item.kind === "sample").map(item => item.elapsed_ms);
+          const complete = result.attempts.every(item => item.status === "complete");
+          Object.assign(result, { status: complete ? "measured" : "failed", samples: timings, ...stage9TimingSummary(timings, 600, complete) });
+        }
+        const interactionReport = { status: Object.values(interactionResults).some(value => value.status === "failed") ? "failed" : Object.values(interactionResults).some(value => value.over_target_count) ? "over_target" : "passed", target_ms: 600, measurement_mode: "interaction_timing",
+          measurement_scope: retainedRefreshOnly ? "retained_refresh_state" : "existing_interaction", default_page_acceptance: false, warmups, sample_count: samples,
+          interactions: interactionResults, interaction_attempts: interactionAttempts, local_actions: localActions, obsolete_cancellations: obsoleteCancellations,
+          unverified: Object.entries(interactionResults).filter(([, value]) => value.status === "unverified").map(([key]) => key) };
+        if (voucherTailDiagnostic) Object.assign(interactionReport, {
+          status: Object.values(interactionResults).every(value => value.status === "measured") ? "diagnostic_complete" : "failed",
+          diagnostic_only: true, instrumented: true, sla_eligible: false,
+          measurement_mode: "voucher_tail_diagnostic", measurement_scope: "single_voucher_tail_diagnostic",
+        });
+        if (interactionReport.status === "failed") failureReport = interactionReport;
+        return interactionReport;
+      }
       for (const width of [320, 375, 768, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         for (const module of modules) {
           layoutProgress = { page: module.key, viewport: width };
           const expected = [response("context"), response(module.action)];
+          layoutVerifiedReads.length = 0;
+          layoutMovementAccount = null;
+          layoutAccounts.length = 0;
           await page.goto(address(module));
           let mainPayload;
           for (const reply of await Promise.all(expected)) {
@@ -1188,20 +2824,20 @@ async function run(config) {
               }
               await checkOwnerLayout(module, "current_payroll");
             }
-            await localChange(module, () => selectDashboardOption(page, "筛选员工", "payroll"), "employees");
-            await localChange(module, () => selectDashboardOption(page, "筛选员工", "all"), "employees");
+            await localChange(module, () => selectDashboardOption(page, "筛选员工", "in_period"), "employees", "select in-period employees", "in_period");
+            await localChange(module, () => selectDashboardOption(page, "筛选员工", "all"), "employees", "select all employees", "all");
           }
           if (module.key === "assets") {
-            await localChange(module, () => selectDashboardOption(page, "筛选资产", "fixed"), "assets");
-            await localChange(module, () => selectDashboardOption(page, "筛选资产", "all"), "assets");
+            await localChange(module, () => selectDashboardOption(page, "筛选资产", "fixed"), "assets", "select fixed assets", "fixed");
+            await localChange(module, () => selectDashboardOption(page, "筛选资产", "all"), "assets", "select all assets", "all");
           }
           if (module.key === "funds") {
-            await localChange(module, () => page.locator("#fund-detail-tab-bank").click());
-            await localChange(module, () => page.locator("#fund-detail-tab-book").click());
+            await localChange(module, () => page.locator("#fund-detail-tab-bank").click(), null, "select bank view");
+            await localChange(module, () => page.locator("#fund-detail-tab-book").click(), null, "select book view");
             const accounts = page.locator(".fund-account-index > button");
             if (await accounts.count() > 1) {
-              await localChange(module, () => accounts.nth(1).click(), "movements");
-              await localChange(module, () => accounts.first().click(), "movements");
+              await localChange(module, () => accounts.nth(1).click(), "movements", "select second movement account");
+              await localChange(module, () => accounts.first().click(), "movements", "select first movement account");
             }
           }
           if (module.key === "brief") {
@@ -1273,7 +2909,16 @@ async function run(config) {
             }
             await localChange(module, () => page.getByRole("button", { name: "按业务", exact: true }).click());
           }
-          const detail = page.locator(".business-status-details").first();
+          let detail = page.locator(".business-status-details").first();
+          let briefProgress = null;
+          if (module.key === "brief") {
+            const group = page.locator("#activity .event-row").first();
+            assert(await group.count(), "brief: no activity group for business detail coverage");
+            await expandActivityGroup(group, mainPayload.snapshot_version);
+            briefProgress = group.getByRole("button", { name: "业务进展", exact: true }).first();
+            assert(await briefProgress.count(), "brief: selected activity group has no progress entry; detail coverage unavailable");
+            detail = briefProgress.locator("xpath=ancestor::li[1]").locator(".business-status-details");
+          }
           if (await detail.count()) {
             const ancestors = detail.locator("xpath=ancestor::details[not(@open)]");
             const count = await ancestors.count();
@@ -1283,7 +2928,7 @@ async function run(config) {
                 .locator(":scope > summary").click();
             }
             const reply = response("business-status");
-            if (module.key === "brief") await detail.locator("xpath=ancestor::li[contains(@class,'event-row')]").locator(".event-copy").click();
+            if (module.key === "brief") await briefProgress.click();
             else if (module.key === "funds" && await detail.locator("summary.hidden-summary").count()) {
               await detail.locator("xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' book-activity-row ')]").click();
             }
@@ -1316,11 +2961,15 @@ async function run(config) {
               await verifyBriefVisible(mainPayload.data);
             } finally { page.off("request", markAllowed); }
           }
+          // Layout completion includes the current collection/detail reads;
+          // navigation must not cancel them and then report a successful page.
+          await settleRequiredReads(module);
         }
       }
       assertNoBrowserFailures();
       return { status: "passed", company_id: company.id, period: company.period,
-        pages: {}, layouts, navigation: navigationBase };
+        pages: {}, layouts, navigation: navigationBase, local_actions: localActions,
+        obsolete_cancellations: obsoleteCancellations, pending_api_requests: requestDiagnostics.pending() };
     }
     if (config.foreground_stream) {
       assert(typeof config.stop_file === "string" && config.stop_file.length > 0);
@@ -1384,14 +3033,10 @@ async function run(config) {
       const resourceSamples = [];
       result[module.key] = { samples: timings, resource_samples: resourceSamples };
       for (let i = 0; i < samples; i++) timings.push(await measure(module, resourceSamples));
-      const sorted = [...timings].sort((a, b) => a - b);
       result[module.key] = {
         samples: timings,
         resource_samples: resourceSamples,
-        median_ms: percentile(sorted, 0.5),
-        p95_ms: percentile(sorted, 0.95),
-        max_ms: sorted.at(-1),
-        over_500_ms: timings.filter(value => value >= 500).length,
+        ...stage9TimingSummary(timings, 500),
       };
     }
     const switchTarget = config.companies.find(item => item.id !== company.id
@@ -1405,23 +3050,27 @@ async function run(config) {
     partialNavigation.company_switch = companySwitch;
     assertNoBrowserFailures();
     return {
-      status: Object.keys(result).length > 0 && Object.values(result).every(page => page.samples.length === samples && page.over_500_ms === 0) ? "passed" : "over_target",
+      status: Object.keys(result).length > 0 && Object.values(result).every(page => page.samples.length === samples && page.over_target_count === 0) ? "passed" : "over_target", target_ms: 500,
       company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
       refresh_attempts: refreshAttempts,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
     };
   } catch (error) {
-    return {
+    failureReport = {
       status: "failed", message: sanitize(error?.message || error),
+      ...(retainedRefreshOnly ? { measurement_scope: "retained_refresh_state", default_page_acceptance: false } : {}),
       company_id: company.id, period: company.period, pages: result,
+      interactions: interactionResults, interaction_attempts: interactionAttempts,
       refresh_attempts: refreshAttempts,
       navigation: partialNavigation, warmups, sample_count: samples,
       page_errors: pageErrors, api_failures: apiFailures,
       layouts: layoutChecks, layout_progress: layoutProgress,
+      local_actions: localActions, pending_api_requests: requestDiagnostics.pending(),
+      obsolete_cancellations: obsoleteCancellations,
     };
+    return failureReport;
   } finally {
-    await context.close();
-    await browser.close();
+    await closeStage9Browser(context, browser, failureReport);
   }
 }
 
@@ -1433,7 +3082,7 @@ if (require.main === module) {
     try {
       const result = await run(JSON.parse(input));
       process.stdout.write(`${JSON.stringify(result)}\n`);
-      if (result.status !== "passed") process.exitCode = 1;
+      if (result.status !== "passed" && !(result.status === "diagnostic_complete" && result.diagnostic_only === true && result.sla_eligible === false)) process.exitCode = 1;
     } catch (error) {
       process.stdout.write(`${JSON.stringify({ status: "failed", message: sanitize(error?.message || error) })}\n`);
       process.exitCode = 1;
@@ -1441,4 +3090,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { waitForLater, recordRefreshAttempt, verifyLocalRead, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyVisibleVoucherRows, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
+module.exports = { waitForStage9, waitForStage9Frames, selectStage9Option, closeStage9Browser, localReadMatchesSelection, localReplyIsObsolete, verifyLocalActionReplies, interactionReadUrl, interactionReadMultiset, interactionReadPlanReady, verifiedRequestRecord, verifyEmployeeRootRows, verifiedReadCycleReady, resultHasVisibleContent, observeInteraction, verifyExactInteractionTarget, verifySelectedFilter, verifyBriefGroup, obsoleteLocalCancellation, diagnosticUrl, createRequestDiagnostics, waitForLater, recordRefreshAttempt, verifyLocalRead, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyVisibleVoucherRows, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
+Object.assign(module.exports, { retainedRefreshKeys, retainedRefreshSelection, interactionScopeAllows, verifyRetainedRefreshState, readRetainedRefreshState, verifyRetainedResponseContract, retainedCollectionIdentities, verifyRetainedCollectionIdentities, retainedItemIdentity, verifyRetainedAuxiliaryComplete, verifyRetainedTargetBinding, verifiedFundsDetailCache });
+Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, stage9TimingSummary });
+Object.assign(module.exports, { voucherTailDiagnosticSelection });

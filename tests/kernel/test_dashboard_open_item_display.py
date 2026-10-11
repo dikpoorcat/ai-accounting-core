@@ -116,6 +116,9 @@ def _read_pages(dashboard, *, limit):
     rows = []
     while True:
         validate_response("dashboard_brief", response)
+        assert response["scope"] == "open_items"
+        assert set(response["data"]) == {"collections"}
+        assert set(response["data"]["collections"]) == {"open_items"}
         collection = response["data"]["collections"]["open_items"]
         rows.extend(collection["items"])
         page = collection["page"]

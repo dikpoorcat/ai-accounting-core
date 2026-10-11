@@ -112,6 +112,11 @@ def native_samples(root):
     add("company_with_period", "dashboard_context", call("dashboard_context"))
     brief = call("dashboard_brief", period="2026-01")
     add("brief", "dashboard_brief", brief)
+    for section in ("activity", "open_items"):
+        add(f"brief_{section}", "dashboard_brief", call(
+            "dashboard_brief", period="2026-01", section=section,
+            expected_version=brief["snapshot_version"],
+        ))
     add(
         "brief_vouchers",
         "dashboard_brief",

@@ -8,7 +8,7 @@ import test_banking as banking
 from ai_accounting.kernel import entities, stored_json
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.entities import Entities, employee_entities
-from ai_accounting.kernel.query_reads import QueryReads
+from ai_accounting.kernel.query_reads import QueryReads, _owns_current_selector_snapshot
 from ai_accounting.kernel.types import digest
 
 bank_book = banking.book
@@ -30,12 +30,38 @@ def test_sql_outcome_proof_reuses_success_only_within_one_snapshot(bank_book, mo
 
     monkeypatch.setattr(stored_json, "verify_outcome_bytes", counted)
     with QueryReads.snapshot(engine) as reads:
+        assert _owns_current_selector_snapshot(reads, reads.connection)
         reads.verify_sql_outcomes({identifier})
         reads.verify_sql_outcomes({identifier})
     assert checked == [identifier]
     with QueryReads.snapshot(engine) as reads:
         reads.verify_sql_outcomes({identifier})
     assert checked == [identifier, identifier]
+
+
+def test_active_flag_alone_does_not_cache_unowned_sql_success(bank_book, monkeypatch):
+    engine, save, publish, _ = bank_book
+    banking.funding(save, publish)
+    with engine.store.connection(read_only=True) as connection:
+        ident = connection.execute(
+            "SELECT calculation_id FROM calculation_current WHERE subject_id='funding'"
+        ).fetchone()[0]
+        connection.execute('BEGIN')
+        reads = QueryReads(engine, connection)
+        reads._snapshot_active = True
+        assert not _owns_current_selector_snapshot(reads, connection)
+        original = stored_json.verify_outcome_bytes
+        checked = []
+
+        def counted(raw, expected, selected, **kwargs):
+            checked.append(selected)
+            return original(raw, expected, selected, **kwargs)
+
+        monkeypatch.setattr(stored_json, 'verify_outcome_bytes', counted)
+        reads.verify_sql_outcomes({ident})
+        reads.verify_sql_outcomes({ident})
+        assert checked == [ident, ident]
+        assert reads._verified_sql_outcomes == set()
 
 
 def test_failed_sql_outcome_batch_does_not_cache_successful_prefix(bank_book, monkeypatch):

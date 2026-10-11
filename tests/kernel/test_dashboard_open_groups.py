@@ -1,6 +1,7 @@
 """Complete pending groups retain exact historical money and bounded members."""
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 from test_banking import book as book
@@ -13,6 +14,7 @@ from test_payroll import contribution_policy, income_tax_policy, opening, payrol
 from test_payroll import profile as payroll_profile
 from test_payroll_corrections import Company, payment
 
+from ai_accounting.kernel import dashboard_open_groups as group_reader
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import _Snapshot
 from ai_accounting.kernel.dashboard_open_groups import (
@@ -485,3 +487,75 @@ def test_group_status_keeps_mixed_overpayment_unknown_and_partial(book):
         }
         group = _group(snap, data, "group")
         assert group["outstanding_fen"] is None and group["status"] == "unestablished"
+
+
+@pytest.mark.parametrize("values,expected,status", [
+    ([(100, 200, 0, -100, "over_settled"), (100, 0, 0, 100, "open")],
+     (200, 200, 0, 0), "over_settled"),
+    ([(None, 0, 0, None, "unestablished"), (2**63 - 1, 0, 0, None, "unestablished"),
+      (1, 0, 0, None, "unestablished")], (None, 0, 0, None), "unestablished"),
+    ([(2**63 - 1, 0, 0, 1, "open"), (1, 0, 0, 1, "open")], None, "open"),
+    ([(0, 2**63 - 1, 0, None, "unknown"), (0, 1, 0, None, "unknown")], None, "unestablished"),
+])
+def test_record_group_checked_none_and_abnormal_status(values, expected, status):
+    fields = ("source_amount_fen", "paid_fen", "other_settled_fen", "remaining_fen",
+              "settlement_status")
+    rows = [{"key": str(index), "category_key": "supplier_payables",
+             **dict(zip(fields, value, strict=True))}
+            for index, value in enumerate(values)]
+    data = {
+        "groups": {"group": rows},
+        "identities": {"0": {"party_id": None, "missing_party": "未提供", "description": "费用"}},
+        "current_by_key": {row["key"]: row for row in rows},
+    }
+    snap = SimpleNamespace(party_field=lambda *args, **kwargs: {"party": {"name": "未提供"}})
+    if expected is None:
+        with pytest.raises(ValueError, match="signed 64-bit integer"):
+            _group(snap, data, "group")
+    else:
+        row = _group(snap, data, "group")
+        assert tuple(row[field] for field in (*fields[:3], "outstanding_fen")) == expected
+        assert row["current_outstanding_fen"] == expected[-1]
+        assert row["status"] == row["current_status"] == status
+
+
+def test_closed_all_object_and_member_pages_keep_complete_counts(book):
+    from test_dashboard_open_identity_tokens import _read_all
+
+    engine, _, _, proof = book
+    total = sum(expenses(book, 1, party=f"supplier-{index}", prefix=f"group-{index}")
+                for index in range(26))
+    assert close_month(inventories(engine, proof, "2026-09", {"transactions"}), proof, "2026-09")[
+        "status"
+    ] == "closed"
+    pages, members = _read_all(engine)
+    rows = [row for page in pages for row in page["collection"]["items"]]
+    assert len(rows) == len({row["id"] for row in rows}) == 26
+    assert all(page["payable_fen"] == total and page["group_count"] == page["total_count"] == 26
+               for page in pages)
+    assert all(page["current_outstanding"]["payable_fen"] == total for page in pages)
+    assert sum(row["outstanding_fen"] for row in rows) == total
+    selected = [row for parts in members.values() for page in parts for row in page["items"]]
+    assert len(selected) == len({row["id"] for row in selected}) == 26
+    assert {row["subject_id"] for row in selected} == {f"group-{index}-000" for index in range(26)}
+    assert all(row["outstanding_fen"] == row["source_amount_fen"] == 100 for row in selected)
+
+
+def test_failed_record_group_does_not_publish_partial_snapshot_success(book, monkeypatch):
+    engine, _, _, proof = book
+    expenses(book, 3)
+    close_month(inventories(engine, proof, "2026-09", {"transactions"}), proof, "2026-09")
+    original = group_reader._record_data
+
+    def fail_after_proof(snap):
+        result = original(snap)
+        assert len(result["historical"]["obligations"]) == 3
+        raise ValueError("failed complete group reduction")
+
+    with snapshot(engine, "2026-09") as snap:
+        with monkeypatch.context() as failed:
+            failed.setattr(group_reader, "_record_data", fail_after_proof)
+            with pytest.raises(ValueError, match="failed complete group reduction"):
+                open_group_page(snap)
+            assert not hasattr(snap, "_open_group_data")
+        assert open_group_page(snap)["total_count"] == 3

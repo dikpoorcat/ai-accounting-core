@@ -46,6 +46,16 @@ def test_repaired_browser_observer_preserves_qualified_runtime(tmp_path):
         verified_browser_harness(original, repaired, book)
 
 
+def test_repaired_browser_readiness_test_preserves_qualified_runtime(tmp_path):
+    changed = "frontend/tests/browser-stage9-readiness.test.mjs"
+    original, repaired, book = _pair(tmp_path, changed)
+    path, proof = verified_browser_harness(original, repaired, book)
+    assert path == repaired / "frontend/tests/browser-stage9-hot-refresh.cjs"
+    assert proof["status"] == "qualified_runtime_bytes_unchanged"
+    assert proof["changed_tool_files"] == [changed]
+    assert proof["harness_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 @pytest.mark.parametrize("change", (
     "src/ai_accounting/kernel/example.py",
     "src/ai_accounting/schema_contracts/company/draft.json",
@@ -55,6 +65,8 @@ def test_repaired_browser_observer_preserves_qualified_runtime(tmp_path):
     "frontend/package-lock.json",
     "tests/kernel/stage9_book.py",
     "scripts/benchmark_stage9.py",
+    "frontend/tests/funds-filters.test.mjs",
+    "frontend/tests/fixtures/dashboard-contracts.json",
 ))
 def test_browser_repair_rejects_changed_business_contract_assets_or_fixture(tmp_path, change):
     original, repaired, book = _pair(tmp_path, change)

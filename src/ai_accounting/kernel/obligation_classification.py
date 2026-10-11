@@ -187,11 +187,27 @@ def adopted_source_semantics(connection, obligations, *, reads=None):
 def classify_obligations(connection, obligations, *, reads=None):
     obligations = list(obligations)
     semantics = adopted_source_semantics(connection, obligations, reads=reads)
-    return [
-        {**item, "category_key": obligation_category(
+    # A complete scope may contain years of different subjects with the same
+    # accounting direction and business meaning. Interpret those pure rules
+    # once per exact scalar tuple, after every selected semantic source above
+    # has independently passed its content and identity checks. This local
+    # table supplies no source, adoption or cross-request proof.
+    labels, result = {}, []
+    for item in obligations:
+        values = (
             item.get("category"), item.get("account"),
             (item.get("source_business") or {}).get("kind"),
-            semantic=semantics.get(item.get("source_calculation_id")),
-        )}
-        for item in obligations
-    ]
+            semantics.get(item.get("source_calculation_id")),
+        )
+        identity = tuple((type(value), value) for value in values)
+        try:
+            label = labels.get(identity)
+        except TypeError:
+            # Exceptional composites retain the existing rule/error behavior.
+            identity, label = None, None
+        if label is None:
+            label = obligation_category(*values[:3], semantic=values[3])
+            if identity is not None:
+                labels[identity] = label
+        result.append({**item, "category_key": label})
+    return result

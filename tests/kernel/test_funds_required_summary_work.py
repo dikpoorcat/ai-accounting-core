@@ -224,6 +224,12 @@ def test_verified_reversal_events_preserve_original_frozen_month_anchor(
             current=True, accounts=ACCOUNTS, subjects=None,
         )
         assert len(rows) == 2 and any(row["reverses_id"] for row in rows)
+        assert reader._verified_current_event_rows(
+            current=True, accounts=ACCOUNTS, subjects={"receipt"},
+        ) == rows
+        assert reader._verified_current_event_rows(
+            current=True, accounts=ACCOUNTS, subjects={"unrelated"},
+        ) == []
         actual = _effects(reader)
         assert actual == expected
         assert sum(row["sign"] * row["amount"] for row in actual) == -300

@@ -475,7 +475,8 @@ def _named_entities(connection, entity_ids, *, store):
     if not missing or "tax_import_identity_v2" not in store.registry.models:
         return named, {}
     rows = list(connection.execute(
-        "SELECT t.employee_id,f.id FROM json_each(?) ids JOIN fact_scope s "
+        "SELECT t.employee_id,f.id FROM json_each(?) ids CROSS JOIN fact_scope s "
+        "INDEXED BY fact_scope_selection "
         "ON s.kind='tax_import_identity_v2' AND s.scope_key='tax-identity:'||ids.value "
         "JOIN fact_current a ON a.fact_id=s.fact_id JOIN fact_revision f ON f.id=a.fact_id "
         "JOIN fact_tax_import_identity_v2 t ON t.revision_id=f.id AND t.employee_id=ids.value",
@@ -752,9 +753,22 @@ def verify_hits(
     return tuple(sorted(actual))
 
 
-def verify_entity_references(connection, *, registry=None):
+def verify_entity_references(connection, *, registry=None, _verified_source=None):
     ids = [row[0] for row in connection.execute("SELECT id FROM fact_revision")]
-    recorded, metadata, registry = _recorded_reference_batch(connection, ids, registry=registry)
+    options = {}
+    if _verified_source is not None:
+        from .verified_source_lease import require_verified_calculation_source
+
+        source = require_verified_calculation_source(connection, _verified_source)
+        if set(ids) != source["facts"].keys():
+            raise KernelError("content_integrity_failed", "对象引用核验的事实集合不一致")
+        options = {
+            "fact_data": {ident: source["facts"][ident]["data"] for ident in ids},
+            "fact_digests": {ident: source["facts"][ident]["digest"] for ident in ids},
+        }
+    recorded, metadata, registry = _recorded_reference_batch(
+        connection, ids, registry=registry, **options,
+    )
     for match, table in (
         ("recorded", "entity_reference_recorded"),
         ("current", "entity_reference_current"),

@@ -4,7 +4,7 @@ import { useRoute } from "vue-router";
 import { fetchBriefGroup, type BriefGroupResponse, type BriefGroupSection } from "../../api/briefGroup";
 import type { BriefActivityRow, BriefOpenItem, BriefOpenItems, BriefVoucher } from "../../api/brief";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../../api/client";
-import { businessStateLabel } from "../../api/dashboardContracts";
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT, businessStateLabel } from "../../api/dashboardContracts";
 import { formatFen } from "../../utils/money";
 import { appendDashboardCollection } from "../../utils/dashboardCollections";
 import { groupContributionMembers, contributionProgressRows, payrollMonthLabel } from "../../utils/briefOpenItems";
@@ -14,7 +14,7 @@ import BriefVoucherPreview from "./BriefVoucherPreview.vue";
 
 const props = defineProps<{
   section: BriefGroupSection; groupKey: string; expanded: boolean; period: string;
-  snapshotVersion?: string | null; refreshGeneration?: number; focusedActivity?: BriefActivityRow | null;
+  snapshotVersion?: string | null; refreshGeneration?: number; refreshing?: boolean; focusedActivity?: BriefActivityRow | null;
   voucherIndex?: ReadonlyMap<string, BriefVoucher>; openSummary?: BriefOpenItems;
   direction?: "receivable" | "payable"; periodClosed?: boolean;
 }>();
@@ -22,19 +22,21 @@ const emit = defineEmits<{ vouchers: [items: BriefVoucher[]]; requestVoucher: [i
 const route = useRoute();
 const data = shallowRef<BriefGroupResponse["data"] | null>(null);
 const loading = ref(false), error = ref(""), selected = ref(""), preview = ref(""), expandedPart = ref("");
+// Keep opened member progress cached until the existing group/scope reset.
+const openedDetails = ref(new Set<string>());
 let request: AbortController | null = null, generation = 0, mounted = true;
-function selection() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.refreshGeneration, props.section, props.groupKey]); }
+function selection() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.refreshGeneration, props.refreshing, props.section, props.groupKey]); }
 function cancel() { generation++; request?.abort(); request = null; loading.value = false; }
-function invalidate() { cancel(); data.value = null; preview.value = ""; selected.value = ""; expandedPart.value = ""; error.value = ""; }
+function invalidate() { cancel(); data.value = null; preview.value = ""; selected.value = ""; expandedPart.value = ""; openedDetails.value.clear(); error.value = ""; }
 async function loadMore() {
-  if (!props.expanded || loading.value || !props.snapshotVersion || typeof route.query.company_id !== "string") return;
+  if (!props.expanded || props.refreshing || loading.value || !props.snapshotVersion || typeof route.query.company_id !== "string") return;
   const page = data.value?.collections.members.page;
   if (page && !page.has_more) return;
   const current = ++generation, scope = selection(), controller = new AbortController();
   request = controller; loading.value = true; error.value = "";
   const valid = () => mounted && current === generation && scope === selection() && request === controller;
   try {
-    const result = await fetchBriefGroup(route.query.company_id, props.period, props.section, props.groupKey, props.snapshotVersion, controller.signal, { cursor: page?.next_cursor ?? undefined });
+    const result = await fetchBriefGroup(route.query.company_id, props.period, props.section, props.groupKey, props.snapshotVersion, controller.signal, { cursor: page?.next_cursor ?? undefined, limit: page?.next_cursor ? AUTOMATIC_DASHBOARD_PAGE_LIMIT : 20 });
     if (!valid()) return;
     const incoming = result.data;
     const previous = data.value;
@@ -72,7 +74,10 @@ const ungroupedOpenMembers = computed(() => {
 });
 function amount(value: string | null) { return value == null ? "待核对" : formatFen(value); }
 function itemKey(item: BriefOpenItem) { return item.id; }
-function toggle(key: string) { selected.value = selected.value === key ? "" : key; }
+function toggle(key: string) {
+  selected.value = selected.value === key ? "" : key;
+  if (selected.value) openedDetails.value.add(key);
+}
 function togglePart(key: string) { expandedPart.value = expandedPart.value === key ? "" : key; selected.value = ""; preview.value = ""; }
 function openContext(item: BriefOpenItem) {
   return { obligationKey: item.id, categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
@@ -82,13 +87,13 @@ function openContext(item: BriefOpenItem) {
     otherSettledFen: item.other_settled_fen, outstandingFen: item.outstanding_fen, currentStatus: item.current_status,
     currentOutstandingFen: item.current_outstanding_fen, selectedPeriodClosed: props.periodClosed };
 }
-watch(selection, () => { invalidate(); if (props.expanded) void loadMore(); }, { flush: "sync" });
+watch(selection, () => { invalidate(); if (props.expanded && !props.refreshing) void loadMore(); }, { flush: "post" });
 watch(() => props.expanded, expanded => {
   preview.value = "";
   if (expanded) {
     void loadMore();
-  } else { cancel(); selected.value = ""; expandedPart.value = ""; }
-}, { immediate: true });
+  } else { cancel(); selected.value = ""; expandedPart.value = ""; openedDetails.value.clear(); }
+}, { immediate: true, flush: "post" });
 onBeforeUnmount(() => { mounted = false; cancel(); });
 </script>
 <template>
@@ -112,13 +117,13 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
             </td>
           </tr>
           <tr v-if="part.members.length === 1 && part.members[0]!.subject_id" v-show="selected === part.members[0]!.id" class="contribution-detail-row"><td colspan="6">
-            <BusinessStatusDetails :subject-id="part.members[0]!.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(part.members[0]!)" :expanded="expanded && selected === part.members[0]!.id" hide-summary presentation="brief" @changed="$emit('changed')" />
+            <BusinessStatusDetails v-if="openedDetails.has(part.members[0]!.id)" :subject-id="part.members[0]!.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(part.members[0]!)" :expanded="expanded && selected === part.members[0]!.id" hide-summary presentation="brief" @changed="$emit('changed')" />
           </td></tr>
           <tr v-else-if="part.members.length > 1" v-show="expandedPart === row.id + ':' + part.component" class="contribution-detail-row"><td colspan="6"><ul class="contribution-records" :aria-label="part.label + '逐笔记录'">
             <li v-for="item in part.members" :key="item.id"><div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}</span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
               <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
               <button v-if="item.subject_id" type="button" :aria-expanded="selected === item.id" @click="toggle(item.id)">业务进展</button>
-            </div><BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && expandedPart === row.id + ':' + part.component && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" /></li>
+            </div><BusinessStatusDetails v-if="item.subject_id && openedDetails.has(item.id)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && expandedPart === row.id + ':' + part.component && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" /></li>
           </ul></td></tr>
         </template></tbody>
       </table>
@@ -134,17 +139,17 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.key" @preview="value => preview = value ? item.key : preview === item.key ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id" type="button" :aria-expanded="selected === item.key" @click="toggle(item.key)">业务进展</button>
         </div>
-        <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
+        <BusinessStatusDetails v-if="item.subject_id && openedDetails.has(item.key)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
       <li v-for="item in ungroupedOpenMembers" :key="item.id">
         <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}<small v-if="item.purpose && !item.contribution_component" class="member-purpose">{{ item.purpose }}</small></span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.id" @preview="value => preview = value ? item.id : preview === item.id ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id" type="button" :aria-expanded="selected === itemKey(item)" @click="toggle(itemKey(item))">业务进展</button>
         </div>
-        <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" />
+        <BusinessStatusDetails v-if="item.subject_id && openedDetails.has(item.id)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :brief-context="openContext(item)" :expanded="expanded && selected === item.id" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
     </ul>
-    <DashboardPagination automatic compact :active="expanded" :scope="selection()" item-label="笔记录" :page="page" :loaded="loaded" :loading="loading" :error="error" @pause="cancel" @more="loadMore" @retry="loadMore" />
+    <DashboardPagination automatic compact :active="expanded && !refreshing" :scope="selection()" item-label="笔记录" :page="page" :loaded="loaded" :loading="loading" :error="error" @pause="cancel" @more="loadMore" @retry="loadMore" />
   </section>
 </template>
 <style scoped>

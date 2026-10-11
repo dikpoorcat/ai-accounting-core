@@ -7,7 +7,7 @@ frozen calculation explanations. Journal lines are INTERNAL calculation output.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any, ClassVar, Literal
 
@@ -108,6 +108,22 @@ class Read:
     kind: str
     key: str
     before_period: YearMonth | None = None
+
+
+def read_identity_payload(read):
+    """Serialize this immutable scope without recursively copying scalar fields.
+
+    Other dataclass types, including the fixed historical Read, keep their
+    original serializer. Calculation identity bytes and read order are unchanged.
+    """
+    if type(read) is not Read:
+        return asdict(read)
+    return {
+        "source": read.source,
+        "kind": read.kind,
+        "key": read.key,
+        "before_period": read.before_period,
+    }
 
 
 @dataclass(frozen=True)

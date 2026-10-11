@@ -19,12 +19,37 @@ def _invalid():
 
 
 def adopted_rows(snap):
-    rows = snap.month_journal.verified_rows()
-    if rows is None:
-        query, parameters = snap.month_journal.sql()
-        rows = list(snap.connection.execute(query, parameters))
-        snap.reads.verify_selected_voucher_adoptions(rows, through_period=snap.month)
-    return rows
+    return snap.month_journal.authenticated_headers()
+
+
+_CLASSIFICATION_FIELDS = ("creditor_kind", "nature", "payer_kind")
+CLASSIFICATION_KINDS = frozenset({
+    "expense", "opening_obligation", "employee_advance", "reimbursement_acceptance",
+})
+
+
+def _classification_cache(snap):
+    from .query_reads import _owns_current_selector_snapshot
+
+    if _owns_current_selector_snapshot(snap.reads, snap.connection):
+        return snap.reads._report_snapshot_cache.setdefault("activity_classification_values", {})
+    return None
+
+
+def _checked_values(outcome, kind):
+    if not isinstance(outcome.get("values"), dict):
+        _invalid()
+    values = outcome["values"]
+    if "obligations" in values and (
+        not isinstance(values["obligations"], list)
+        or any(not isinstance(item, dict) for item in values["obligations"])
+    ):
+        _invalid()
+    if kind == "opening_identity_binding":
+        basis = values.get("basis_values")
+        if not isinstance(basis, dict) or not isinstance(basis.get("obligations"), list):
+            _invalid()
+    return values
 
 
 def _records(snap, identifiers):
@@ -77,18 +102,7 @@ def _records(snap, identifiers):
     result = {}
     for ident, header in headers.items():
         outcome = outcomes[ident]
-        if not isinstance(outcome.get("values"), dict):
-            _invalid()
-        values = outcome["values"]
-        if "obligations" in values and (
-            not isinstance(values["obligations"], list)
-            or any(not isinstance(item, dict) for item in values["obligations"])
-        ):
-            _invalid()
-        if header["kind"] == "opening_identity_binding":
-            basis = values.get("basis_values")
-            if not isinstance(basis, dict) or not isinstance(basis.get("obligations"), list):
-                _invalid()
+        _checked_values(outcome, header["kind"])
         result[ident] = {
             **header, "period": str(YearMonth.from_ordinal(header["period"])),
             "fact": {"id": header["fact_id"], "data": {}}, "outcome": outcome,
@@ -96,19 +110,95 @@ def _records(snap, identifiers):
     return result
 
 
-def classification_values(snap, identifiers):
-    return {ident: item["outcome"]["values"] for ident, item in _records(snap, identifiers).items()}
+def classification_values(snap, identifiers, *, kinds=None):
+    """Read only consumed classification fields after the original content proof.
+
+    The SQL shape guards retain _records' full structural checks without
+    materializing its unused obligations and other composite values. Fixed and
+    unowned readers keep their independent complete record interpretation.
+    """
+    identifiers = set(identifiers)
+    if not identifiers:
+        return {}
+    cache = _classification_cache(snap)
+    if cache is None:
+        return {ident: item["outcome"]["values"]
+                for ident, item in _records(snap, identifiers).items()}
+    token = getattr(snap.reads, "_snapshot_token", None)
+    snap.reads.verify_sql_outcomes(identifiers)
+    result = {ident: dict(cache[ident]) for ident in identifiers if ident in cache}
+    missing = identifiers - result.keys()
+    if not missing:
+        return result
+    if kinds is None:
+        kinds = dict(snap.connection.execute(
+            "SELECT id,kind FROM calculation WHERE id IN (SELECT value FROM json_each(?))",
+            (canonical(sorted(missing)),),
+        ))
+    if not missing <= kinds.keys():
+        _invalid()
+    contents = snap.reads._verified_source_contents
+    pending = {}
+    for ident in missing & contents.keys():
+        values = _checked_values(contents[ident], kinds[ident])
+        pending[ident] = {name: values[name] for name in _CLASSIFICATION_FIELDS if name in values}
+    missing -= pending.keys()
+    if missing:
+        columns = ",".join(
+            f"json_type(c.outcome,'$.values.{name}') {name}_type,"
+            f"json_extract(c.outcome,'$.values.{name}') {name}"
+            for name in _CLASSIFICATION_FIELDS
+        )
+        for row in snap.connection.execute(
+            "SELECT c.id,c.kind,json_type(c.outcome,'$.values') values_type," + columns
+            + ",json_type(c.outcome,'$.values.obligations') obligations_type,"
+            "EXISTS(SELECT 1 FROM jsonb_each(c.outcome,'$.values.obligations') child "
+            "WHERE child.type!='object') invalid_obligation,"
+            "json_type(c.outcome,'$.values.basis_values') basis_type,"
+            "json_type(c.outcome,'$.values.basis_values.obligations') basis_obligations_type "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value",
+            (canonical(sorted(missing)),),
+        ):
+            if row["values_type"] != "object" or (
+                row["obligations_type"] is not None and (
+                    row["obligations_type"] != "array" or row["invalid_obligation"]
+                )
+            ) or row["kind"] == "opening_identity_binding" and (
+                row["basis_type"] != "object" or row["basis_obligations_type"] != "array"
+            ):
+                _invalid()
+            values = {}
+            for name in _CLASSIFICATION_FIELDS:
+                shape = row[name + "_type"]
+                if shape is not None:
+                    values[name] = (json.loads(row[name]) if shape in {"array", "object"}
+                                    else row[name])
+            pending[row["id"]] = values
+    result.update(pending)
+    if result.keys() != identifiers:
+        _invalid()
+    if (_classification_cache(snap) is cache and snap.reads._snapshot_token is token):
+        cache.update(pending)
+    return result
 
 
-def payment_components(snap):
+def payment_components(snap, *, selected_rows=None):
     from .dashboard import _settlement_group
     from .report_open_contribution import verify_published_source_bindings
 
-    rows = [row for row in adopted_rows(snap) if row["basis_kind"] in SETTLEMENT_PAYMENT_KINDS]
+    # A precise detail already selected and authenticated its voucher. It needs
+    # no components from other payments in the same month.
+    rows, classification_ids = [], set()
+    for row in adopted_rows(snap) if selected_rows is None else selected_rows:
+        if row["basis_kind"] in SETTLEMENT_PAYMENT_KINDS:
+            rows.append(row)
+        elif row["basis_kind"] in CLASSIFICATION_KINDS:
+            classification_ids.add(row["basis_calculation_id"])
     identifiers = {row["basis_calculation_id"] for row in rows}
     if not identifiers:
         return {}
-    fallback = verify_published_source_bindings(snap.reads, identifiers)
+    token = getattr(snap.reads, "_snapshot_token", None)
+    fallback = verify_published_source_bindings(snap.reads, identifiers, _sql_outcomes=True)
     if fallback:
         snap.reads.verify_saved_input_identity(fallback)
     # This proves the exact root dependency declaration, independently of each
@@ -136,7 +226,7 @@ def payment_components(snap):
     direct_ids = source_ids | binding_ids | tax_ids
     if any(not isinstance(ident, str) or not ident for ident in direct_ids):
         _invalid()
-    fallback = verify_published_source_bindings(snap.reads, source_ids)
+    fallback = verify_published_source_bindings(snap.reads, source_ids, _sql_outcomes=True)
     if fallback:
         snap.reads.verify_saved_input_identity(fallback)
     # Bindings may be state results without an independent publication. The
@@ -159,7 +249,9 @@ def payment_components(snap):
         by_kind[root["kind"]].add(root["fact_id"])
     for kind, fact_ids in by_kind.items():
         model = snap.store.registry.models[kind]
-        fields = [name for name in ("amount_fen", "counterparty_id", "payment_method", "direction")
+        fields = [name for name in (
+            "amount_fen", "counterparty_id", "payment_method", "direction", "actual_date",
+        )
                   if name in model.model_fields]
         columns = ",".join(["revision_id", *(f'"{name}"' for name in fields)])
         for row in snap.connection.execute(
@@ -184,7 +276,7 @@ def payment_components(snap):
             if data is None or row["item_no"] != len(data["allocations"]):
                 _invalid()
             data["allocations"].append({name: row[name] for name in allocation_fields})
-    by_basis = {}
+    by_basis, obligation_indexes = {}, {}
     for ident, root in roots.items():
         data = facts.get(root["fact_id"])
         if data is None:
@@ -198,6 +290,7 @@ def payment_components(snap):
         relation = resolve_calculation_relations(
             root, load_calculation=lambda key: sources.get(key),
             load_parents=lambda key: parents.get(key, ()), collect_ancestry=False,
+            settlement_only=True, _obligation_indexes=obligation_indexes,
         )
         if relation["issues"] or any(
             item["state"] != "resolved" for item in relation["settlements"]
@@ -306,4 +399,22 @@ def payment_components(snap):
                 or roots[ident]["kind"] == "payroll_reserve_payment",
             })
         result[row["id"]] = items
+    # These dates came from the exact facts already proved for the parts. A
+    # batch's unique group members need no additional whole-payment party sort.
+    snap.semantic_cache.update({
+        ("activity_payment_date", ident): facts[root["fact_id"]].get("actual_date")
+        for ident, root in roots.items()
+    })
+    # Only a completely successful payment batch can publish its already
+    # shape-checked source scalars needed by the selected activity classification.
+    # Cross-month sources and payment roots need no unused second projection.
+    # An effective binding basis never replaces the exact source's own values.
+    cache = _classification_cache(snap)
+    if cache is not None and snap.reads._snapshot_token is token:
+        cache.update({
+            ident: {name: item["outcome"]["values"][name] for name in _CLASSIFICATION_FIELDS
+                    if name in item["outcome"]["values"]}
+            for ident in classification_ids & sources.keys()
+            for item in (sources[ident],)
+        })
     return result

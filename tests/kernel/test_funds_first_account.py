@@ -20,6 +20,9 @@ resident = resident_fixture
 
 
 def test_first_account_has_one_company_summary_and_explicit_pagination(bank_book, monkeypatch):
+    from ai_accounting.kernel import dashboard_model_reads
+
+    monkeypatch.setattr(dashboard_model_reads, "read_page", lambda *args, **kwargs: None)
     engine, _, _, _ = bank_book
     _publish_filter_funding(engine, ["bank-b", "bank-a", "bank-a", "bank-b"])
     dashboard = Dashboard(engine)

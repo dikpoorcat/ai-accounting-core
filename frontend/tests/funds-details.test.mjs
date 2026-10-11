@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,7 +11,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { compile } from "@vue/compiler-dom";
 import { compileScript, parse } from "@vue/compiler-sfc";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
@@ -117,10 +118,10 @@ async function detailHarness() {
   const key = `fundsDetailsHarness${++sequence}`, calls = [], cleanup = [], events = [];
   const route = Vue.reactive({ query: { company_id: "company-a" } });
   const props = Vue.reactive({ subjectId: "salary-business", period: "2026-09", snapshotVersion: "v1", settlementView: "historical", presentation: "funds", fundsContext: movement(), hideSummary: true, expanded: false });
-  globalThis[key] = { Vue, props, route, cleanup, events, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
-  const source = readFileSync(new URL("../src/components/BusinessStatusDetails.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
-  const prefix = `const environment = globalThis.${key}; const { ref, computed, watch } = environment.Vue;
-    const { appendDashboardCollection } = environment; const onBeforeUnmount = callback => environment.cleanup.push(callback);
+  globalThis[key] = { Vue, props, route, cleanup, events, appendDashboardCollection, prepareDashboardCollections, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
+  const source = readFileSync(new URL("../src/components/BusinessStatusDetails.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
+  const prefix = `const environment = globalThis.${key}; const { ref, shallowRef, computed, watch } = environment.Vue;
+    const { appendDashboardCollection, prepareDashboardCollections } = environment; const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route, defineProps = () => environment.props;
     const withDefaults = (value, defaults) => { for (const [key, fallback] of Object.entries(defaults)) if (value[key] === undefined) value[key] = fallback; return value; };
     const defineEmits = () => (...args) => environment.events.push(args), fetchBusinessStatus = environment.fetch;
@@ -180,15 +181,15 @@ async function rowHarness({ deferRequests = false } = {}) {
   const key = `fundsRowsHarness${++sequence}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09" }, hash: "" });
   const mounted = [], cleanup = [], calls = [];
-  globalThis[key] = { Vue, route, appendDashboardCollection, mounted, cleanup,
+  globalThis[key] = { Vue, route, appendDashboardCollection, prepareDashboardCollections, mounted, cleanup,
     fetch: (...args) => {
       if (!deferRequests) return Promise.reject(new Error("unexpected fetch"));
       return new Promise((resolve, reject) => calls.push({ args, resolve, reject }));
     } };
-  const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const money = readFileSync(new URL("../src/utils/money.ts", import.meta.url), "utf8").replace(/export /g, "");
-  const prefix = `const environment = globalThis.${key}; const { computed, nextTick, ref, watch } = environment.Vue;
-    const { appendDashboardCollection } = environment;
+  const prefix = `const environment = globalThis.${key}; const { computed, nextTick, ref, shallowRef, watch } = environment.Vue;
+    const { appendDashboardCollection, prepareDashboardCollections } = environment;
     const onMounted = callback => environment.mounted.push(callback);
     const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route, useRouter = () => ({ replace: async () => {}, push: async () => {} });
@@ -226,7 +227,7 @@ test("movement rows toggle by stable occurrence id, support row keyboard input a
       view.toggleMovement(first); change(); assert.equal(view.expandedMovementId.value, "", "scope change closes old row");
     }
     const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8");
-    assert.match(source, /:key="item.id" class="book-activity-row business-list-row"/);
+    assert.match(source, /:key="item.id"[\s\S]*?class="book-activity-row business-list-row"/);
     assert.match(source, /@click="toggleMovement\(item, \$event\)" @keydown="handleMovementKey\(item, \$event\)"/);
     assert.match(source, /presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary/);
     assert.match(source, /item\.correction \? formatFen\(item\.signed_amount_fen\) : movementAmount\(item\.direction, item\.amount_fen\)/);

@@ -21,6 +21,7 @@ DEVELOPMENT_SOURCE_FINGERPRINTS = {
     "company": (
         "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861",
         "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb",
+        "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4",
     )
 }
 DATABASE_FORMAT_KEYS = frozenset({"family", "kind", "status", "version", "fingerprint"})
@@ -212,7 +213,7 @@ def production_bundle():
 
     from .development_contracts import load_development_contracts
 
-    source_sha, intermediate_sha = DEVELOPMENT_SOURCE_FINGERPRINTS["company"]
+    source_sha, intermediate_sha, model_source_sha = DEVELOPMENT_SOURCE_FINGERPRINTS["company"]
     sources = (
         load_development_contracts(
             Path(__file__).with_name("schema_contracts") / "development" / "company",
@@ -223,7 +224,7 @@ def production_bundle():
         if STATUS == "draft"
         else {}
     )
-    target_sha = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
+    target_sha = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
     return _require_released_company_verifiers(
         load_bundle(
             default_registry(),
@@ -234,8 +235,14 @@ def production_bundle():
             current_versions={"company": VERSION, "catalog": VERSION},
             company_verifiers=verifiers,
             development_contracts=sources,
-            draft_transitions={"company": (
-                (source_sha, intermediate_sha), (intermediate_sha, target_sha),
-            )} if STATUS == "draft" else {},
+            draft_transitions={
+                "company": (
+                    (source_sha, intermediate_sha),
+                    (intermediate_sha, model_source_sha),
+                    (model_source_sha, target_sha),
+                )
+            }
+            if STATUS == "draft"
+            else {},
         )
     )

@@ -38,7 +38,7 @@ from .response_types import (
     Version9,
     Version10,
     Version11,
-    Version18,
+    Version19,
     WireFen,
 )
 from .work_draft_contract import WorkDraft
@@ -1302,9 +1302,9 @@ class BriefRisk(ResponseObject):
 
 
 class BriefCollections(ResponseObject):
-    activity: NotRequired[Collection[BriefActivityDisplayGroup]]
+    activity: Collection[BriefActivityDisplayGroup]
     vouchers: NotRequired[Collection[OwnerBriefVoucher]]
-    open_items: NotRequired[Collection[BriefOpenDisplayGroup]]
+    open_items: Collection[BriefOpenDisplayGroup]
 
 
 class AdoptedBasisSources(ResponseObject):
@@ -1340,9 +1340,9 @@ class BriefData(ResponseObject):
     focused_voucher: OwnerBriefVoucher | None
     activity_groups: list[BriefActivityGroup]
     position: BriefPosition
-    financial_position: NotRequired[BriefFinancialPosition]
-    workforce_cost: NotRequired[BriefWorkforceCost]
-    long_term_assets: NotRequired[LongTermAssets]
+    financial_position: BriefFinancialPosition
+    workforce_cost: BriefWorkforceCost
+    long_term_assets: LongTermAssets
     funds_overview: FundsOverview
     open_items: BriefOpenSummary
     risks: list[BriefRisk]
@@ -1350,13 +1350,65 @@ class BriefData(ResponseObject):
     collections: BriefCollections
 
 
-class DashboardBriefResponse(ResponseObject):
-    schema_version: Version18
+class DashboardBriefBase(ResponseObject):
+    schema_version: Version19
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
     read_context: DashboardReadContext
+
+
+class DashboardBriefOverviewResponse(DashboardBriefBase):
+    scope: Literal["overview"]
     data: BriefData | None
+
+
+class BriefActivityCollections(ResponseObject):
+    activity: Collection[BriefActivityDisplayGroup]
+
+
+class BriefActivityData(ResponseObject):
+    collections: BriefActivityCollections
+
+
+class BriefOpenCollections(ResponseObject):
+    open_items: Collection[BriefOpenDisplayGroup]
+
+
+class BriefOpenData(ResponseObject):
+    collections: BriefOpenCollections
+
+
+class BriefVoucherCollections(ResponseObject):
+    vouchers: Collection[OwnerBriefVoucher]
+
+
+class BriefVoucherData(ResponseObject):
+    collections: BriefVoucherCollections
+
+
+class DashboardBriefActivityResponse(DashboardBriefBase):
+    scope: Literal["activity"]
+    data: BriefActivityData | None
+
+
+class DashboardBriefOpenResponse(DashboardBriefBase):
+    scope: Literal["open_items"]
+    data: BriefOpenData | None
+
+
+class DashboardBriefVoucherResponse(DashboardBriefBase):
+    scope: Literal["vouchers"]
+    data: BriefVoucherData | None
+
+
+DashboardBriefResponse = Annotated[
+    DashboardBriefOverviewResponse
+    | DashboardBriefActivityResponse
+    | DashboardBriefOpenResponse
+    | DashboardBriefVoucherResponse,
+    Field(discriminator="scope"),
+]
 
 
 class BriefActivityMemberCollections(ResponseObject):

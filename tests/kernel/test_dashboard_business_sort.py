@@ -185,9 +185,9 @@ def test_open_obligations_order_by_complete_object_before_page_in_open_and_froze
             state_batches.append(len(digests))
             return original_states(connection, period, digests, **options)
 
-        def sources(connection, period, rows):
+        def sources(connection, period, rows, **options):
             source_batches.append(len(rows))
-            return original_sources(connection, period, rows)
+            return original_sources(connection, period, rows, **options)
 
         monkeypatch.setattr(freeze, "_read_states", states)
         monkeypatch.setattr(freeze, "_verified_page_sources", sources)

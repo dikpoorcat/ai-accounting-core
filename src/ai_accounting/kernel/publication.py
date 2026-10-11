@@ -1,9 +1,8 @@
 """Immutable publication chains and the posting rule shared by all publishers."""
 
 import hashlib
-from dataclasses import asdict
 
-from .contracts import KernelError, Read
+from .contracts import KernelError, Read, read_identity_payload
 from .stored_json import loads_unique
 from .types import YearMonth, canonical, digest, sum_fen
 
@@ -215,6 +214,9 @@ def append(connection, subject_id, calculation_id, decision, voucher_id):
         "mode,posting_period,baseline_calculation_id,voucher_id) VALUES(?,?,?,?,?,?,?,?,?)",
         (ident, *values.values()),
     )
+    from .dashboard_model_runtime import record_period
+
+    record_period(connection, decision["posting_period"])
     return ident
 
 
@@ -482,7 +484,7 @@ def _correction_baseline_totals(connection, rows):
         versions = dependencies[ident] | (dependency_facts[ident] - {row["fact_id"]})
         payload = {
             "fact": row["fact_id"], "outcome": outcome,
-            "reads": [asdict(read) for read in sorted(reads[ident], key=repr)],
+            "reads": [read_identity_payload(read) for read in sorted(reads[ident], key=repr)],
             "program": row["program_version"],
         }
         first_key = "c_" + digest({**payload, "versions": sorted(versions)}).hex()

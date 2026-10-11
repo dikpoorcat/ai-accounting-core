@@ -15,6 +15,8 @@ from collections import ChainMap, defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_core import from_json
+
 from .close_contract import require_close_contract
 from .contracts import KernelError
 from .key_membership_filter import (
@@ -447,6 +449,9 @@ def write_close(
         "INSERT INTO close_storage_root(period,storage_digest) VALUES(?,?)",
         (period, _sha(root_text)),
     )
+    from .dashboard_model_runtime import record_period
+
+    record_period(connection, period)
     return logical_digest
 
 
@@ -611,10 +616,13 @@ def _family(connection, header: CloseHeader, family: str):
         "SELECT content,digest FROM close_storage_subroot WHERE period=? AND family=?",
         (header.period, family),
     ).fetchone()
-    return _decode_family(header, family, row)
+    return _decode_family(
+        header, family, row,
+        _native=family == "accounting" and _owned_header_snapshot(connection),
+    )
 
 
-def _decode_family(header, family, row):
+def _decode_family(header, family, row, *, _native=False):
     expected = header.root["subroots"].get(family)
     if (
         row is None
@@ -623,8 +631,10 @@ def _decode_family(header, family, row):
     ):
         _invalid(header.period, "storage_subroot_digest_mismatch")
     try:
-        return json.loads(row["content"])
-    except json.JSONDecodeError:
+        # The complete descriptors and negative filter remain required. The
+        # owned reader only changes their parser, never their proof or scope.
+        return from_json(row["content"]) if _native else json.loads(row["content"])
+    except ValueError:
         _invalid(header.period, "storage_subroot_invalid")
 
 
@@ -637,7 +647,10 @@ def _families_many(connection, headers, family):
         (canonical([header.period for header in headers]), family),
     ).fetchall()
     return tuple(
-        _decode_family(header, family, row if row["content"] is not None else None)
+        _decode_family(
+            header, family, row if row["content"] is not None else None,
+            _native=family == "accounting" and _owned_header_snapshot(connection),
+        )
         for header, row in zip(headers, rows, strict=True)
     )
 
@@ -1289,7 +1302,7 @@ def _accounting_authority(
     )
 
 
-def _frozen_asset_owner_subjects(connection, headers, subjects):
+def _frozen_asset_owner_subjects(connection, headers, subjects, *, owner_subjects=None):
     """Use complete frozen declarations, never mutable kind, to locate owners."""
     declared, source_periods = {}, {}
     for header in headers:
@@ -1324,7 +1337,7 @@ def _frozen_asset_owner_subjects(connection, headers, subjects):
             (canonical(sorted(source_periods)),),
         ):
             if (
-                row["subject_id"] not in subjects
+                row["subject_id"] not in (subjects if owner_subjects is None else owner_subjects)
                 or row["kind"] not in {"asset_activation_batch", "asset_consumption_month"}
                 or (row["subject_id"], row["kind"], row["period"])
                 != (row["fact_subject"], row["fact_kind"], row["fact_period"])
@@ -1333,13 +1346,14 @@ def _frozen_asset_owner_subjects(connection, headers, subjects):
                 _invalid(source_periods[row["id"]], "storage_asset_owner_source_mismatch")
             sources[row["id"]] = row["subject_id"]
     return {
-        period: frozenset(sources[ident] for ident in owners)
+        period: frozenset(sources[ident] for ident in owners if sources[ident] in subjects)
         for period, owners in declared.items()
     }
 
 
 def read_asset_owner_accounting_many(
     connection, headers, subjects, *, _verified_parts=None, _positions_cache=None,
+    owner_subjects=None,
 ) -> tuple[CloseAccountingSlice, ...]:
     """Prove complete owner slices with independently frozen monthly read scopes.
 
@@ -1347,15 +1361,21 @@ def read_asset_owner_accounting_many(
     all asset_batch_owner adoptions. Its negative scope survives missing mutable
     publications and vouchers. Actual authority for the entire requested owner
     universe adds every live publication and voucher month before reading buckets.
-    This only narrows physical reads; output and both comparisons stay complete.
+    An identity-only consumer may supply a complete owner universe while asking
+    only for its proved activation subjects. All declarations retain physical
+    identity checks; only selected subjects' independent leaves are consumed.
+    Output and both comparisons stay complete for those requested subjects.
     """
     headers, subjects = tuple(headers), frozenset(subjects)
     if not headers or not _owned_header_snapshot(connection):
         return read_accounting_many(
-            connection, headers, subjects, _verified_parts=_verified_parts,
+            connection, headers, subjects if owner_subjects is None else owner_subjects,
+            _verified_parts=_verified_parts,
             _positions_cache=_positions_cache,
         )
-    scopes = _frozen_asset_owner_subjects(connection, headers, subjects)
+    scopes = _frozen_asset_owner_subjects(
+        connection, headers, subjects, owner_subjects=owner_subjects,
+    )
     return _read_accounting_many(
         connection, headers, subjects, _verified_parts=_verified_parts,
         _positions_cache=_positions_cache, _asset_owner_scopes=scopes,

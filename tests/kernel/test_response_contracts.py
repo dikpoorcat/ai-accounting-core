@@ -69,6 +69,39 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     )
 
 
+def test_brief_four_scopes_are_strict_and_discriminated(samples):
+    schema = response_schemas()["dashboard_brief"]
+    assert set(schema["discriminator"]["mapping"]) == {
+        "overview", "activity", "open_items", "vouchers"
+    }
+    assert len(schema["oneOf"]) == 4
+    for scope in ("overview", "activity", "open_items", "vouchers"):
+        name = "brief" if scope == "overview" else f"brief_{scope}"
+        value = copy.deepcopy(samples[name]["response"])
+        assert value["scope"] == scope
+        assert value["schema_version"] == 19
+        if scope != "overview":
+            assert set(value["data"]) == {"collections"}
+            assert set(value["data"]["collections"]) == {scope}
+            for key in ("position", "owner_tasks", "focused_voucher"):
+                invalid = copy.deepcopy(value)
+                invalid["data"][key] = samples["brief"]["response"]["data"][key]
+                with pytest.raises(KernelError):
+                    validate_response("dashboard_brief", invalid)
+            invalid = copy.deepcopy(value)
+            del invalid["data"]["collections"][scope]
+            with pytest.raises(KernelError):
+                validate_response("dashboard_brief", invalid)
+        invalid = copy.deepcopy(value)
+        del invalid["scope"]
+        with pytest.raises(KernelError):
+            validate_response("dashboard_brief", invalid)
+        invalid = copy.deepcopy(value)
+        invalid["scope"] = "unknown"
+        with pytest.raises(KernelError):
+            validate_response("dashboard_brief", invalid)
+
+
 @pytest.mark.parametrize("value", [None, "true", 1])
 def test_brief_voucher_progress_is_required_strict_boolean(samples, value):
     response = copy.deepcopy(samples["brief_vouchers"]["response"])

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 from stage9_metrics import measure_work
-from test_integrity_content import damage
+from test_integrity_content import damage, verify
 from test_open_correction_source_heads import prepare
 from test_publication_periods import close, publish, save
 from test_publication_periods import company as company  # noqa: F401
@@ -13,9 +13,13 @@ from test_reports import book as _report_book
 from test_reports import profile
 
 from ai_accounting.kernel import publication, publication_v1, query_reads, stored_json
+from ai_accounting.kernel.backup import BackupError, verify_file
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_model_runtime import _producing, stable_payload
+from ai_accounting.kernel.maintenance import Maintenance
+from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth
 
@@ -220,7 +224,7 @@ def _accounting(engine):
         )
 
 
-def test_real_cash_correction_combined_deletion_rejects_all_four_consumers(tmp_path):
+def test_real_cash_correction_deletion_rejects_hits_but_preserves_certified_aggregates(tmp_path):
     engine, save_fact, confirm, close_month = _report_book.__wrapped__(tmp_path)
     profile(save_fact, confirm)
     data = {
@@ -249,19 +253,67 @@ def test_real_cash_correction_combined_deletion_rejects_all_four_consumers(tmp_p
     assert [row["values"]["current_fen"] for row in cash_rows if row["line"] in (15, 20, 22)] == [
         120, 120, 120,
     ]
-    assert dashboard.brief("2026-03", preparation="deferred")["data"] is not None
+    brief = dashboard.brief("2026-03", preparation="deferred")
+    assert brief["data"] is not None
+    assert len(funds["collections"]["movements"]["items"]) == 2
+    assert any(item["correction"] for item in funds["collections"]["movements"]["items"])
     _remove_reverse(engine)
-    for operation in (
-        lambda: _accounting(engine),
-        lambda: dashboard.funds("2026-03", preparation="deferred"),
-        lambda: dashboard.quarterly_report(2026, 1, preparation="deferred"),
-        lambda: dashboard.brief("2026-03", preparation="deferred"),
+    # These are authenticated aggregate roots, not displayed physical voucher
+    # hits. Keep all their certified business content, including the amounts.
+    assert stable_payload(dashboard.quarterly_report(2026, 1, preparation="deferred")) == (
+        stable_payload(report)
+    )
+    assert stable_payload(dashboard.brief("2026-03", preparation="deferred")) == (
+        stable_payload(brief)
+    )
+    for name, operation in (
+        ("accounting", lambda: _accounting(engine)),
+        ("funds", lambda: dashboard.funds("2026-03", preparation="deferred")),
     ):
         for _ in range(2):
+            with pytest.raises(KernelError) as failure:
+                try:
+                    operation()
+                except KernelError:
+                    raise
+                else:
+                    pytest.fail(f"Damaged reversal unexpectedly accepted by {name}")
+            assert failure.value.code == "content_integrity_failed"
+            if name == "accounting":
+                assert failure.value.details["reason"] == "correction_voucher_source_missing"
+
+    # Independently exercise their native readers without changing the default
+    # funds path above. Production uses this same guard while building models.
+    token = _producing.set(True)
+    try:
+        for operation in (
+            lambda: dashboard.quarterly_report(2026, 1, preparation="deferred"),
+            lambda: dashboard.brief("2026-03", preparation="deferred"),
+        ):
             with pytest.raises(KernelError) as failure:
                 operation()
             assert failure.value.code == "content_integrity_failed"
             assert failure.value.details["reason"] == "correction_voucher_source_missing"
+    finally:
+        _producing.reset(token)
+
+    with engine.store.connection(read_only=True) as connection:
+        before = tuple(connection.iterdump())
+        with pytest.raises(KernelError) as close_readiness:
+            Periods(engine).collect_current_readiness(connection, "2026-03")
+    assert close_readiness.value.code == "content_integrity_failed"
+    for operation in (
+        lambda: verify(engine),
+        lambda: Maintenance(engine).rebuild_projections(request_id="missing-reversal-repair"),
+    ):
+        with pytest.raises(KernelError) as failure:
+            operation()
+        assert failure.value.code == "content_integrity_failed"
+    with pytest.raises(BackupError) as backup:
+        verify_file(engine.store.path, _bundle=engine.store.bundle)
+    assert backup.value.code == "backup_content_invalid"
+    with engine.store.connection(read_only=True) as connection:
+        assert tuple(connection.iterdump()) == before
 
 
 def test_correction_reads_only_exact_baseline_when_unrelated_frozen_history_grows(tmp_path):

@@ -68,15 +68,24 @@ def test_exact_own_source_proof_does_not_decode_dependencies_or_repeat_sql_decod
 
     monkeypatch.setattr(integrity, "_object", unnecessary)
     monkeypatch.setattr(QueryReads, "verify_saved_input_identity", unnecessary)
-    monkeypatch.setattr(stored_json, "verify_outcome_bytes", unnecessary)
+    original = stored_json.verify_outcome_bytes
+    syntax_calls = []
+
+    def syntax(raw, expected_digest, ident, **kwargs):
+        syntax_calls.append(ident)
+        return original(raw, expected_digest, ident, **kwargs)
+
+    monkeypatch.setattr(stored_json, "verify_outcome_bytes", syntax)
 
     def read():
         with QueryReads.snapshot(engine) as reads:
             assert verify_published_source_bindings(reads, {payment}) == frozenset()
+            assert syntax_calls == []
             assert set(reads._anchored_source_bytes) == {payment}
             assert reads._verified_source_contents == {}
             reads.verify_sql_outcomes({payment})
             reads.verify_sql_outcomes({payment})
+            assert syntax_calls == [payment]
             assert reads._anchored_source_bytes.keys() == {payment}
             assert reads._verified_saved_input_identities == set()
             return reads

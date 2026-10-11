@@ -181,6 +181,18 @@ def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_p
     initial_work, initial = measure_work(company.engine, counts)
     for period in ("2026-03", "2026-04", "2026-05"):
         consume_assets(company.engine, company.owner_confirmation, period)
+    consumption_work, consumed = measure_work(company.engine, counts)
+    assert consumed == initial
+    for name in (
+        "calculation_result_rows_loaded", "calculation_result_bytes_loaded",
+        "calculation_result_json_decodes", "raw_fact_json_decodes",
+    ):
+        assert consumption_work["counters"][name] == initial_work["counters"][name]
+    # Each new owner still needs its typed fact to authenticate its kind before
+    # the activation-only consumer excludes its result body.
+    assert consumption_work["counters"]["typed_fact_json_decodes"] == (
+        initial_work["counters"]["typed_fact_json_decodes"] + 3
+    )
     for index in range(6):
         company.save(Expense(
             period="2026-03", counterparty_id="supplier", amount_fen=index + 1,
@@ -205,8 +217,8 @@ def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_p
         "calculation_result_rows_loaded", "calculation_result_bytes_loaded",
         "calculation_result_json_decodes", "typed_fact_json_decodes", "raw_fact_json_decodes",
     ):
-        assert grown_work["counters"][name] == initial_work["counters"][name]
-    assert len(count_queries) == 2
+        assert grown_work["counters"][name] == consumption_work["counters"][name]
+    assert len(count_queries) == 3
     with company.engine.store.connection(read_only=True) as connection:
         query, parameters = count_queries[-1]
         query_plan = [row[3] for row in connection.execute(
@@ -214,7 +226,8 @@ def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_p
         )]
     assert not any(detail.startswith("SCAN f") for detail in query_plan)
     print(json.dumps({
-        "initial": initial_work["counters"], "grown": grown_work["counters"],
+        "initial": initial_work["counters"], "consumption": consumption_work["counters"],
+        "grown": grown_work["counters"],
         "count_query_plan": query_plan,
     }))
 

@@ -12,11 +12,16 @@ from ai_accounting.kernel.types import YearMonth, canonical
 
 @pytest.mark.parametrize("scenario", ["individual_payment", "no_balances", "mixed"])
 @pytest.mark.parametrize("funds", [False, True])
-def test_irrelevant_sort_ancestry_does_not_increase_work(scenario, funds, record_property, monkeypatch):
+def test_irrelevant_sort_ancestry_does_not_increase_work(
+    scenario, funds, record_property, monkeypatch,
+):
     from ai_accounting.kernel import report_open_contribution
 
-    monkeypatch.setattr(report_open_contribution, "verify_published_source_bindings",
-                        lambda reads, identifiers: frozenset())
+    def prove(reads, identifiers, *, _sql_outcomes):
+        assert _sql_outcomes is True
+        return frozenset()
+
+    monkeypatch.setattr(report_open_contribution, "verify_published_source_bindings", prove)
     with sqlite3.connect(":memory:") as connection:
         connection.row_factory = sqlite3.Row
         connection.executescript(
@@ -70,9 +75,11 @@ def test_irrelevant_sort_ancestry_does_not_increase_work(scenario, funds, record
             connection=connection, store=SimpleNamespace(registry=SimpleNamespace(models=models)),
             metadata=SimpleNamespace(prime_profiles=lambda *_: None), party=lambda ident: ident,
             reads=SimpleNamespace(verify_sql_outcomes=lambda *_: None),
-            profiles={kind: {ident: {"display_name": ident} for ident in ("actual-party", "source-party")}
+            profiles={kind: {ident: {"display_name": ident}
+                             for ident in ("actual-party", "source-party")}
                       for kind in ("employee", "counterparty")},
-            current_profiles={kind: {ident: {"display_name": ident} for ident in ("actual-party", "source-party")}
+            current_profiles={kind: {ident: {"display_name": ident}
+                                     for ident in ("actual-party", "source-party")}
                               for kind in ("employee", "counterparty")},
         )
         previous, baseline = 0, None

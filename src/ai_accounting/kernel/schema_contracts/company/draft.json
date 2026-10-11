@@ -87,6 +87,11 @@
     },
     {
       "type": "index",
+      "name": "dashboard_read_model_commit_period",
+      "sql": "CREATE INDEX dashboard_read_model_commit_period ON dashboard_read_model_commit(period,audit_id)"
+    },
+    {
+      "type": "index",
       "name": "dependency_scope_any_kind",
       "sql": "CREATE INDEX dependency_scope_any_kind ON dependency_scope(source,scope_key,kind,calculation_id)"
     },
@@ -504,6 +509,21 @@
       "type": "table",
       "name": "company_note_revision",
       "sql": "CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE\n CHECK(revision>0), text TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32),\n evidence_digest BLOB REFERENCES evidence(digest)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_read_model_block",
+      "sql": "CREATE TABLE dashboard_read_model_block(\n digest BLOB PRIMARY KEY CHECK(length(digest)=32),\n payload TEXT NOT NULL CHECK(json_valid(payload))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_read_model_commit",
+      "sql": "CREATE TABLE dashboard_read_model_commit(\n id BLOB PRIMARY KEY CHECK(length(id)=32),\n period TEXT NOT NULL,\n request_id TEXT NOT NULL,\n audit_id INTEGER NOT NULL REFERENCES audit(id),\n descriptor TEXT NOT NULL CHECK(json_valid(descriptor)),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32),\n parent_id BLOB REFERENCES dashboard_read_model_commit(id),\n UNIQUE(audit_id,period)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_read_model_current",
+      "sql": "CREATE TABLE dashboard_read_model_current(\n period TEXT PRIMARY KEY,\n commit_id BLOB NOT NULL REFERENCES dashboard_read_model_commit(id)\n) STRICT"
     },
     {
       "type": "table",
@@ -1999,6 +2019,16 @@
       "type": "trigger",
       "name": "immutable_company_note_revision_UPDATE",
       "sql": "CREATE TRIGGER immutable_company_note_revision_UPDATE BEFORE UPDATE ON company_note_revision BEGIN SELECT RAISE(ABORT,'immutable company_note_revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_read_model_commit_delete",
+      "sql": "CREATE TRIGGER immutable_dashboard_read_model_commit_delete\n BEFORE DELETE ON dashboard_read_model_commit\n BEGIN SELECT RAISE(ABORT,'immutable dashboard model receipt'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_read_model_commit_update",
+      "sql": "CREATE TRIGGER immutable_dashboard_read_model_commit_update\n BEFORE UPDATE ON dashboard_read_model_commit\n BEGIN SELECT RAISE(ABORT,'immutable dashboard model receipt'); END"
     },
     {
       "type": "trigger",
@@ -5276,5 +5306,5 @@
       "sql": "CREATE TRIGGER source_change_retained BEFORE DELETE ON source_change BEGIN SELECT RAISE(ABORT,'retained source change'); END"
     }
   ],
-  "sha256": "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
+  "sha256": "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
 }

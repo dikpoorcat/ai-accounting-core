@@ -13,7 +13,7 @@ from collections import ChainMap
 from contextlib import contextmanager, nullcontext
 
 from . import stored_json
-from .contracts import KernelError
+from .contracts import KernelError, read_identity_payload
 from .domains.money import SETTLEMENT_PAYMENT_KINDS
 from .query_semantics import (
     SETTLEMENT_SOURCE_SLOTS,
@@ -87,7 +87,7 @@ class _MaterialSqlOutcomeBatch:
 
 
 class _OpenVoucherScopeHeads:
-    """Physical rows carried only from this owned scope's actual SQL read."""
+    """Actual terminal/head rows in this owned snapshot, never a full source proof."""
 
     def __init__(self, reads, rows):
         self.reads = reads
@@ -179,6 +179,55 @@ def verify_current_publication_voucher_heads(connection, publications):
     reads = _active_fact_reads.get()
     owned = _owns_current_selector_snapshot(reads, connection)
     _verify_publication_voucher_head_batch(connection, publications, reads if owned else None)
+
+
+def _verify_model_current_publication_voucher_heads(connection, publications):
+    """Keep the model hit's actual forward headers for the reverse relation check.
+
+    Only the current owned reader can reuse these exact SQLite rows. Historical
+    and unowned callers keep the independent ID lookups. Review and correction
+    exceptions still pass through the existing independent guards below.
+    """
+    publications = tuple(publications)
+    if not publications:
+        return
+    reads = _active_fact_reads.get()
+    if not _owns_current_selector_snapshot(reads, connection):
+        return verify_current_publication_voucher_heads(connection, publications)
+    from .publication import CONTENT_FIELDS
+
+    expected = {row["id"]: row for row in publications}
+    rows = tuple(connection.execute(
+        "SELECT p.*,a.calculation_id current_id,"
+        "EXISTS(SELECT 1 FROM calculation_publication n "
+        "WHERE n.previous_publication_id=p.id) has_successor,"
+        "EXISTS(SELECT 1 FROM period_close z WHERE z.period=p.posting_period) closed,"
+        "h.version_id,v.id version_exists,v.voucher_id version_voucher,"
+        "v.period version_period,v.reverses_id,v.calculation_id version_calculation,"
+        "vc.subject_id version_subject,closes.closed_through "
+        "FROM json_each(?) ids LEFT JOIN calculation_publication p ON p.id=ids.value "
+        "LEFT JOIN calculation_current a ON a.subject_id=p.subject_id "
+        "LEFT JOIN voucher_current h ON h.voucher_id=p.voucher_id "
+        "LEFT JOIN voucher_version v ON v.id=h.version_id "
+        "LEFT JOIN calculation vc ON vc.id=v.calculation_id "
+        "CROSS JOIN (SELECT coalesce(max(period),-1) closed_through FROM period_close) closes",
+        (canonical(sorted(expected)),),
+    ))
+    if len(rows) != len(expected) or any(
+        row["id"] not in expected or row["closed"] or row["has_successor"]
+        or row["current_id"] != row["calculation_id"]
+        or any(row[field] != expected[row["id"]][field] for field in CONTENT_FIELDS)
+        for row in rows
+    ):
+        raise KernelError("content_integrity_failed", "看板命中发布缺少精确当前凭证来源")
+    if any(row["posting_period"] <= row["closed_through"] for row in rows):
+        # A later close can cover an empty month without its own close row.
+        # Preserve the independent ID reader's closed-through filtering; these
+        # headers cannot publish an open normal relationship signature.
+        return verify_current_publication_voucher_heads(connection, publications)
+    _verify_publication_voucher_head_batch(
+        connection, rows, reads, _OpenVoucherScopeHeads(reads, rows),
+    )
 
 
 def _verify_publication_voucher_head_batch(connection, publications, reads, scope_heads=None):
@@ -489,6 +538,67 @@ def _owns_current_selector_snapshot(reads, connection):
         and close_reader() is close_storage
         and publication_reader() is publication
     )
+
+
+def _read_exact_source_headers(connection, identifiers):
+    """Read exact calculation/fact identities once, without result bodies."""
+    columns = (
+        "id", "digest", "subject_id", "kind", "period", "fact_id", "fact_subject",
+        "fact_period", "fact_digest", "fact_kind", "cs", "fs",
+    )
+    return {
+        row[0]: dict(zip(columns, row, strict=True))
+        for row in connection.execute(
+            "SELECT c.id,c.digest,c.subject_id,c.kind,c.period,c.fact_id,"
+            "f.subject_id fact_subject,f.period fact_period,f.digest fact_digest,s.kind fact_kind,"
+            "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) cs,"
+            "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=c.fact_id) fs "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id LEFT JOIN subject s ON s.id=f.subject_id",
+            (canonical(sorted(identifiers)),),
+        )
+    }
+
+
+def _read_exact_source_header_rows(connection, identifiers):
+    """Keep native private proof inputs immutable, with the public field aliases."""
+    return {
+        row["id"]: row
+        for row in connection.execute(
+            "SELECT c.id,c.digest,c.subject_id,c.kind,c.period,c.fact_id,"
+            "f.subject_id fact_subject,f.period fact_period,f.digest fact_digest,s.kind fact_kind,"
+            "EXISTS(SELECT 1 FROM calculation_seal z WHERE z.calculation_id=c.id) cs,"
+            "EXISTS(SELECT 1 FROM fact_seal z WHERE z.fact_id=c.fact_id) fs "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN fact_revision f ON f.id=c.fact_id LEFT JOIN subject s ON s.id=f.subject_id",
+            (canonical(sorted(identifiers)),),
+        )
+    }
+
+
+@contextmanager
+def _exact_source_header_batch(connection, identifiers, *, reads=None):
+    """Stage physical headers until the consumer's own whole validator succeeds.
+
+    Cached records supply no content, adoption or fact-proof success. Each
+    consumer keeps its independent checks; values only avoid another exact SQL
+    read in the same owned current snapshot. Fixed/unowned readers read afresh.
+    """
+    identifiers = set(identifiers)
+    active = _owns_current_selector_snapshot(reads, connection)
+    token = reads._snapshot_token if active else None
+    cache = reads._exact_source_headers if active else {}
+    headers = {ident: cache[ident] for ident in identifiers if ident in cache}
+    missing = identifiers - headers.keys()
+    loader = _read_exact_source_header_rows if active else _read_exact_source_headers
+    pending = loader(connection, missing) if missing else {}
+    headers.update(pending)
+    yield headers
+    if active:
+        if (not _owns_current_selector_snapshot(reads, connection)
+                or reads._snapshot_token is not token):
+            raise KernelError("content_integrity_failed", "精确业务来源核验快照已失效")
+        cache.update(pending)
 
 
 def _selected_current_voucher_publications(reads, rows, *, period, cutoff):
@@ -862,6 +972,9 @@ class QueryReads:
         self._frozen_settlement_roots = {}
         self._frozen_settlement_blocks = {}
         self._frozen_settlement_states = {}
+        self._frozen_settlement_scalars = {}
+        self._frozen_settlement_open_entries = {}
+        self._exact_source_headers = {}
         self._frozen_settlement_tails = {}
         self._verified_balance_scopes = set()
         self._verified_balance_period_scopes = set()
@@ -909,7 +1022,7 @@ class QueryReads:
     @contextmanager
     def snapshot(cls, engine):
         """Own one read-only transaction; no memo survives an exit or transaction change."""
-        from .runtime import _OwnedReadConnection, _owned_read_transaction
+        from .runtime import _owned_read_transaction, _OwnedReadConnection
 
         with engine.store._snapshot_connection() as connection:
             owned = type(connection) is _OwnedReadConnection
@@ -1481,21 +1594,31 @@ class QueryReads:
     def verify_sql_outcomes(self, identifiers):
         """Reuse only exact successful JSON/content proof in this owned snapshot."""
         identifiers = set(identifiers)
-        active = self._snapshot_active and self.connection.in_transaction
+        active = _owns_current_selector_snapshot(self, self.connection)
+        token = self._snapshot_token
         missing = (
             {
                 ident
                 for ident in identifiers
                 if ident not in self._verified_sql_outcomes
                 and ident not in self._verified_source_contents
-                and ident not in self._anchored_source_bytes
             }
             if active
             else identifiers
         )
         if missing:
-            verify_sql_outcomes(self.connection, missing)
-            if active:
+            raw_ids = {
+                ident for ident in missing
+                if ident in self._anchored_source_bytes and ident in self._raw_calculation_outcomes
+            } if active else set()
+            for ident in sorted(raw_ids):
+                stored_json.verify_outcome_bytes(
+                    self._raw_calculation_outcomes[ident],
+                    bytes.fromhex(self._anchored_source_bytes[ident][1]), ident,
+                )
+            verify_sql_outcomes(self.connection, missing - raw_ids)
+            if (active and _owns_current_selector_snapshot(self, self.connection)
+                    and self._snapshot_token is token):
                 self._verified_sql_outcomes.update(missing)
 
     def _material_sql_outcome_batch(self, connection):
@@ -1930,9 +2053,58 @@ class QueryReads:
         from .storage import _scalar_fact_hashes, _snapshot_fact_hashes, _snapshot_fact_raws
 
         headers = tuple(headers)
+        owned = _owns_current_selector_snapshot(self, self.connection)
+        token = self._snapshot_token if owned else None
+        successes = (
+            self._report_snapshot_cache.get("exact_fact_content_proofs", set()) if owned else set()
+        )
+
+        def proof_key(header):
+            ident, kind, period, checksum = (
+                header["fact_id"], header["fact_kind"], header["fact_period"],
+                header["fact_digest"],
+            )
+            if (type(ident) is str and type(kind) is str and type(period) is int
+                    and type(checksum) is bytes and len(checksum) == 32):
+                return ident, kind, period, checksum
+            return None
+
+        pending_keys = set()
+        requested_keys = {}
+        pending_headers = []
+        for header in headers:
+            key = proof_key(header)
+            if key is not None:
+                previous = requested_keys.setdefault(key[0], key)
+                if previous != key:
+                    raise KernelError("content_integrity_failed", "同批事实内容依据互相冲突")
+            if owned and key is not None and key in successes:
+                continue
+            pending_headers.append(header)
+            if owned and key is not None:
+                pending_keys.add(key)
+        if not pending_headers:
+            return
+        headers = tuple(pending_headers)
+        # This records only this method's exact child/order/period/content
+        # proof. Each consumer still checks its own identity and seals; a full
+        # fact/evidence proof is a different scope and is never inferred here.
+        def publish():
+            if (owned and _owns_current_selector_snapshot(self, self.connection)
+                    and self._snapshot_token is token):
+                self._report_snapshot_cache.setdefault("exact_fact_content_proofs", set()).update(
+                    pending_keys,
+                )
+
         kinds, fact_periods, fact_digests = {}, {}, {}
         for header in headers:
             ident = header["fact_id"]
+            if ident in fact_periods and (
+                fact_periods[ident] != header["fact_period"]
+                or fact_digests[ident] != header["fact_digest"]
+                or ident not in kinds.get(header["fact_kind"], ())
+            ):
+                raise KernelError("content_integrity_failed", "同批事实内容依据互相冲突")
             kinds.setdefault(header["fact_kind"], set()).add(ident)
             fact_periods[ident] = header["fact_period"]
             fact_digests[ident] = header["fact_digest"]
@@ -1960,6 +2132,7 @@ class QueryReads:
         )
         fallback_ids = {ident for ident in fact_ids if raw_hashes.get(ident) != fact_digests[ident]}
         if not fallback_ids:
+            publish()
             return
         facts = _snapshot_fact_raws(self.store, self.connection, fallback_ids)
         try:
@@ -1976,6 +2149,7 @@ class QueryReads:
             for ident, fact in facts.items()
         ):
             raise KernelError("content_integrity_failed", "本次读取的事实内容封签不一致")
+        publish()
 
     def verify_saved_input_identity(self, identifiers):
         """Bind consumed result bodies to their saved calculation identities.
@@ -1985,7 +2159,6 @@ class QueryReads:
         input-digest variants, not a current-head or adoption assertion.
         """
         from collections import defaultdict
-        from dataclasses import asdict
 
         from .content_history_context import month_type, read_type, source_digest
         from .integrity import _invalid
@@ -2063,7 +2236,9 @@ class QueryReads:
             payload = {
                 "fact": row["fact_id"],
                 "outcome": outcomes[ident],
-                "reads": [asdict(read) for read in sorted(saved_reads[ident], key=repr)],
+                "reads": [
+                    read_identity_payload(read) for read in sorted(saved_reads[ident], key=repr)
+                ],
                 "program": row["program_version"],
             }
             first_key = "c_" + source_digest({**payload, "versions": sorted(versions)}).hex()
@@ -2080,7 +2255,7 @@ class QueryReads:
             self._verified_saved_input_identities.update(missing)
         return outcomes
 
-    def _verify_anchored_source_bytes(self, proof):
+    def _verify_anchored_source_bytes(self, proof, *, _sql_outcomes=False):
         """Check an already authenticated report anchor's exact saved sources.
 
         The report reader alone mints this private proof after checking the
@@ -2091,6 +2266,9 @@ class QueryReads:
         from .report_open_contribution import _require_source_proof
 
         bindings = _require_source_proof(proof, self)
+        owned = _owns_current_selector_snapshot(self, self.connection)
+        token = self._snapshot_token
+        sql_scope = _sql_outcomes and owned
         expected = {}
         for binding in bindings:
             if len(binding) != 4:
@@ -2111,7 +2289,7 @@ class QueryReads:
                 raise KernelError("content_integrity_failed", "报表命中来源绑定与已核原文冲突")
             else:
                 actual[ident] = list(binding)
-        if not pending_bindings:
+        if not pending_bindings and not sql_scope:
             return actual
         body_ids = {
             ident for ident in pending_bindings if ident not in self._verified_source_contents
@@ -2131,7 +2309,7 @@ class QueryReads:
                 "JOIN fact_revision f ON f.id=c.fact_id JOIN subject s ON s.id=f.subject_id",
                 (canonical(sorted(body_ids)), canonical(sorted(pending_bindings))),
             )
-        }
+        } if pending_bindings else {}
         if headers.keys() != pending_bindings.keys():
             raise KernelError("content_integrity_failed", "本次读取的核算来源缺失")
         pending = {}
@@ -2154,18 +2332,21 @@ class QueryReads:
                 raise KernelError("content_integrity_failed", "本次读取的核算来源封签不一致")
             if ident not in self._verified_source_contents:
                 pending[ident] = header
-        if not pending:
-            self._anchored_source_bytes.update(pending_bindings)
-            return actual
+        if pending:
+            self._verify_selected_fact_bodies(pending.values())
 
-        self._verify_selected_fact_bodies(pending.values())
-
+        raw_outcomes, sql_verified = {}, set()
         for ident, header in pending.items():
             raw = (
                 self._raw_calculation_outcomes[ident]
                 if ident in self._raw_calculation_outcomes
                 else header["outcome"].encode("utf-8")
             )
+            raw_outcomes[ident] = raw
+            if sql_scope and ident not in self._verified_sql_outcomes:
+                stored_json.verify_outcome_bytes(raw, header["digest"], ident)
+                sql_verified.add(ident)
+                continue
             if hashlib.sha256(raw).digest() == header["digest"]:
                 continue
             # Equivalent noncanonical JSON remains valid under the original
@@ -2179,7 +2360,28 @@ class QueryReads:
                 ) from error
             if not valid:
                 raise KernelError("content_integrity_failed", "本次读取的核算来源封签不一致")
-        self._anchored_source_bytes.update(pending_bindings)
+        if sql_scope:
+            # Cached byte proofs are not JSON1 syntax proofs. Upgrade their
+            # exact saved bytes too, staging all success until this batch ends.
+            missing_sql = {
+                ident for ident in expected if ident not in sql_verified
+                and ident not in self._verified_sql_outcomes
+                and ident not in self._verified_source_contents
+            }
+            cached_raw = {ident for ident in missing_sql if ident in self._raw_calculation_outcomes}
+            for ident in sorted(cached_raw):
+                stored_json.verify_outcome_bytes(
+                    self._raw_calculation_outcomes[ident], bytes.fromhex(expected[ident][1]), ident,
+                )
+            verify_sql_outcomes(self.connection, missing_sql - cached_raw)
+            sql_verified.update(missing_sql)
+        if self._snapshot_active and self._snapshot_token is token:
+            self._anchored_source_bytes.update(pending_bindings)
+            if owned and _owns_current_selector_snapshot(self, self.connection):
+                # Retain raw bytes, not decoded results, for a later syntax
+                # upgrade by a SQL consumer in this same owned snapshot.
+                self._raw_calculation_outcomes.update(raw_outcomes)
+                self._verified_sql_outcomes.update(sql_verified)
         return actual
 
     def vouchers(self, identifiers):
@@ -2288,11 +2490,15 @@ class QueryReads:
             rows, subjects=subjects, adopted_only=False, subjects_by_period=subjects_by_period
         )
 
-    def close_asset_owner_accounting_many(self, rows, *, subjects):
+    def close_asset_owner_accounting_many(self, rows, *, subjects, owner_subjects=None):
         """Read frozen owner slices using their independently committed full roster."""
+        owned = _owns_current_selector_snapshot(self, self.connection)
+        if not owned and owner_subjects is not None:
+            subjects, owner_subjects = owner_subjects, None
         return self._close_accounting_many(
             rows, subjects=subjects, adopted_only=False,
-            asset_owners=_owns_current_selector_snapshot(self, self.connection),
+            asset_owners=owned,
+            asset_owner_subjects=owner_subjects,
         )
 
     def frozen_bank_account_identities(
@@ -2448,7 +2654,8 @@ class QueryReads:
         )
 
     def _close_accounting_many(
-        self, rows, *, subjects, adopted_only, subjects_by_period=None, asset_owners=False
+        self, rows, *, subjects, adopted_only, subjects_by_period=None, asset_owners=False,
+        asset_owner_subjects=None,
     ):
         """Stage current-reader groups; retain v1's per-month proof semantics."""
         from . import close_storage
@@ -2458,6 +2665,10 @@ class QueryReads:
         if not rows:
             return ()
         subjects = frozenset(subjects)
+        if asset_owner_subjects is not None:
+            asset_owner_subjects = frozenset(asset_owner_subjects)
+            if not subjects <= asset_owner_subjects:
+                raise ValueError("selected owners must belong to the complete owner universe")
         if subjects_by_period is not None:
             subjects_by_period = {
                 period: frozenset(scope) for period, scope in subjects_by_period.items()
@@ -2490,6 +2701,8 @@ class QueryReads:
                 # It is distinct from the ordinary whole-universe proof, even
                 # though both return the same full subject selection.
                 key = (*key, "asset_owners")
+                if asset_owner_subjects is not None:
+                    key = (*key, asset_owner_subjects)
             requested_keys.append(key)
             if not self._snapshot_active or key not in cache:
                 pending.setdefault(key, row)
@@ -2526,6 +2739,10 @@ class QueryReads:
                 ),
                 _positions_cache=(
                     self._close_accounting_positions if self._snapshot_active else None
+                ),
+                **(
+                    {"owner_subjects": asset_owner_subjects}
+                    if asset_owners and asset_owner_subjects is not None else {}
                 ),
                 **(
                     {"subjects_by_period": {key[0]: key[1] for key in pending}}

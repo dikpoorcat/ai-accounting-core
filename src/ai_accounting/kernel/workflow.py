@@ -1088,8 +1088,9 @@ class Workflow:
                     row[0]
                     for row in connection.execute(
                         "SELECT a.fact_id FROM json_each(?) ids "
-                        "JOIN fact_current a ON a.subject_id=ids.value "
-                        "JOIN subject s ON s.id=a.subject_id WHERE s.kind='external_obligation'",
+                        "CROSS JOIN fact_current a ON a.subject_id=ids.value "
+                        "CROSS JOIN subject s ON s.id=a.subject_id "
+                        "WHERE s.kind='external_obligation'",
                         (json.dumps(sorted(obligation_ids)),),
                     )
                 ).values()

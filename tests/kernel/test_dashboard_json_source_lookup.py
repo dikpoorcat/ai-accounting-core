@@ -20,7 +20,8 @@ def minimal_source_proof(monkeypatch):
     # This SQLite plan fixture intentionally has no publication/anchor tables.
     # Preserve its original strict saved-JSON proof at that boundary; real
     # whole-month source identity/anchor rejection has separate integration tests.
-    def prove(reads, identifiers):
+    def prove(reads, identifiers, *, _sql_outcomes):
+        assert _sql_outcomes is True
         reads.verify_saved_input_identity(identifiers)
         return frozenset()
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -47,6 +48,8 @@ DATABASE_MEMBER = "company.sqlite"
 MANIFEST_MEMBER = "manifest.json"
 MAX_MANIFEST_BYTES = 64 * 1024
 DEFAULT_MAX_DATABASE_BYTES = 32 * 1024**3
+_COPY_STALL_SECONDS = 120.0
+_COPY_MAX_RESTARTS = 8
 
 
 class BackupError(ValueError):
@@ -596,6 +599,65 @@ def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -
     _clear_rollover(marker, pending)
 
 
+class _SQLiteCopyProgress:
+    """Bound failed work without limiting a healthy large snapshot's duration.
+
+    SQLite reports logical pages, including the reader's WAL snapshot. File
+    size or destination growth cannot establish progress: a restarted backup
+    may overwrite already allocated pages. BUSY/LOCKED counters may be stale.
+    """
+
+    def __init__(self, timeout_seconds, progress=None):
+        if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+            raise ValueError("timeout_seconds must be finite and nonnegative")
+        if timeout_seconds == 0:
+            raise _error("backup_content_invalid", "SQLite backup timed out without page progress")
+        self.timeout_seconds = timeout_seconds
+        self.callback = progress
+        self.last_progress = time.monotonic()
+        self.previous_time = self.last_progress
+        self.previous_busy = False
+        self.busy_seconds = 0.0
+        self.previous_pages = None
+        self.restarts = 0
+
+    def __call__(self, status, remaining, total):
+        now = time.monotonic()
+        busy = status in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+        # Include the failed step, retry sleep and step after a BUSY callback. A few
+        # successful pages between retries must not reset the overall budget.
+        if busy or self.previous_busy:
+            self.busy_seconds += now - self.previous_time
+        self.previous_time, self.previous_busy = now, busy
+        if self.busy_seconds >= self.timeout_seconds:
+            raise _error("backup_content_invalid", "SQLite backup timed out waiting for locks")
+        if now - self.last_progress >= self.timeout_seconds:
+            raise _error("backup_content_invalid", "SQLite backup timed out without page progress")
+        if status in (sqlite3.SQLITE_OK, sqlite3.SQLITE_DONE):
+            if not 0 <= remaining <= total:
+                raise _error("backup_content_invalid", "Invalid SQLite backup page progress")
+            previous = self.previous_pages
+            if previous is not None and (total != previous[1] or remaining > previous[0]):
+                self.restarts += 1
+                if self.restarts > _COPY_MAX_RESTARTS:
+                    raise _error("backup_content_invalid", "SQLite backup source changed too often")
+            elif (previous is None and remaining < total) or (
+                previous is not None and remaining < previous[0]
+            ):
+                self.last_progress = now
+            self.previous_pages = (remaining, total)
+        if self.callback is not None:
+            self.callback(status, remaining, total)
+
+
+def _copy_with_progress_limits(source, target, *, timeout_seconds=_COPY_STALL_SECONDS,
+                               progress=None):
+    source.backup(
+        target, pages=256,
+        progress=_SQLiteCopyProgress(timeout_seconds, progress), sleep=0.01,
+    )
+
+
 def copy_to_unpublished_database(source, target, *, progress=None) -> None:
     """Copy into a caller-owned exclusive, unpublished file without a full WAL.
 
@@ -619,7 +681,7 @@ def copy_to_unpublished_database(source, target, *, progress=None) -> None:
         if target.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
             raise _error("backup_content_invalid", "Could not prepare unpublished target")
         after_delete()
-        source.backup(target, pages=256, progress=progress)
+        _copy_with_progress_limits(source, target, progress=progress)
         if target.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
             raise _error("backup_content_invalid", "Could not finalize unpublished copy")
         after_delete()
@@ -637,13 +699,7 @@ def _copy_sqlite_snapshot(source_connection, temporary: Path, *, timeout_seconds
     try:
         destination = sqlite3.connect(temporary, isolation_level=None)
         destination.execute("PRAGMA synchronous=FULL")
-        started = time.monotonic()
-
-        def progress(_status: int, _remaining: int, _total: int) -> None:
-            if time.monotonic() - started >= timeout_seconds:
-                raise _error("backup_content_invalid", "SQLite backup timed out")
-
-        source_connection.backup(destination, pages=256, progress=progress, sleep=0.01)
+        _copy_with_progress_limits(source_connection, destination, timeout_seconds=timeout_seconds)
         if destination.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
             raise _error(
                 "backup_content_invalid", "Could not finalize the standalone database snapshot"
@@ -711,10 +767,14 @@ def backup_to_file(
     expected_company_id: str | None = None,
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = _COPY_STALL_SECONDS,
     _bundle=None,
 ) -> dict[str, Any]:
-    """Create and verify one standalone snapshot; the target must not exist."""
+    """Create and verify one standalone snapshot; the target must not exist.
+
+    timeout_seconds bounds absence of page progress and cumulative lock retry
+    time, rather than the total duration of a normally advancing large copy.
+    """
     bundle = _resolve_bundle(_bundle)
     require_supported_runtime()
     source_path, target_path = reject_reparse_path(source), reject_reparse_path(target)
@@ -778,7 +838,7 @@ def _capture_portable_snapshot(source: Path, target: Path, bundle, **identity_ch
         try:
             source_connection.execute("BEGIN")
             _company_header(source_connection, bundle, allow_previous=False, **identity_checks)
-            _copy_sqlite_snapshot(source_connection, temporary, timeout_seconds=120.0)
+            _copy_sqlite_snapshot(source_connection, temporary, timeout_seconds=_COPY_STALL_SECONDS)
         finally:
             source_connection.rollback()
             source_connection.close()

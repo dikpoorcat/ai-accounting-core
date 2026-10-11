@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import cache
@@ -337,9 +338,14 @@ class Store:
         try:
             yield connection
         finally:
-            if connection.in_transaction:
-                connection.rollback()
-            connection.close()
+            try:
+                if connection.in_transaction:
+                    connection.rollback()
+            except sqlite3.ProgrammingError:
+                # Failed restoration may already have closed this connection.
+                pass
+            finally:
+                connection.close()
 
     def fact(self, connection, fact_id) -> FactVersion:
         row = connection.execute(
@@ -611,6 +617,9 @@ class Store:
         )
         sync_entity_references(connection, version, hashed)
         sync_discovery_fact(connection, version.id)
+        from .dashboard_model_runtime import record_period
+
+        record_period(connection, fact.period)
 
     @staticmethod
     def _verify_calculation_identity(row):

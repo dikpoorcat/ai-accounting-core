@@ -19,10 +19,12 @@ from .runtime import (
     require_local_database,
 )
 
-# Keep SQLite's own coherent page cache bounded across the four resident reads.
-# Smaller caches repeatedly evict necessary pages at the main scale;
-# this stores database pages, never a previous transaction's business response.
-READ_PAGE_CACHE_KIB = 256 * 1024
+# SQLite allocates coherent database pages on demand, not business responses or
+# proofs from an earlier snapshot. One GiB per connection gives the four-slot
+# pool a combined suggested page budget of four GiB across all companies.
+# This is not a hard RSS limit: SQLite overhead and other process objects are
+# additional, and the requested page budget need not be fully allocated.
+READ_PAGE_CACHE_KIB = 1024 * 1024
 MAXIMUM_READ_CONNECTIONS = 4
 
 

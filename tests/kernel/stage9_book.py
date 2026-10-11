@@ -29,6 +29,17 @@ def month_at(index):
     return str(YearMonth.from_ordinal(YearMonth("2016-01").ordinal + index))
 
 
+def synthetic_employee_profile(name):
+    """The fixture explicitly defines fictional employees as regularly employed."""
+    return {
+        "display_name": name,
+        "active": True,
+        "employment_status": "active",
+        "employment_state": "regular",
+        "employment_start": "2016-01-01",
+    }
+
+
 def synthetic_temporary():
     workspace = os.environ.get("STAGE9_WORKSPACE_ROOT")
     selected = Path(workspace).resolve() if workspace else Path(__file__).resolve().parents[2]
@@ -92,7 +103,14 @@ class MixedBook:
         self.lender = self.entity("organization", "合成持牌贷款人")
         self.bank = self.entity("fund_account", "合成公司银行", account_type="bank")
         self.cash = self.entity("fund_account", "合成现金账户", account_type="cash")
-        self.employees = [self.entity("person", f"合成员工{i + 1:03}") for i in range(employees)]
+        self.employees = [
+            self.entity(
+                "person", f"合成员工{i + 1:03}",
+                profile=synthetic_employee_profile(f"合成员工{i + 1:03}"),
+                source="合成场景定义：员工自2016-01-01起在职，非真实负责人确认",
+            )
+            for i in range(employees)
+        ]
         self._setup()
 
     def checkpoint(self):
@@ -215,11 +233,11 @@ class MixedBook:
             request_id=self.request("evidence"),
         )["digest"]
 
-    def entity(self, kind, name, **options):
+    def entity(self, kind, name, *, profile=None, source="明确的合成规模样本", **options):
         return self.entities.register_entity(
             kind,
-            {"display_name": name},
-            source="明确的合成规模样本",
+            profile if profile is not None else {"display_name": name},
+            source=source,
             request_id=self.request("entity"),
             **options,
         )["entity_id"]

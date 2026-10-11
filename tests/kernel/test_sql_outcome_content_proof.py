@@ -9,7 +9,7 @@ from test_integrity_content import damage
 
 from ai_accounting.kernel import stored_json
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.query_reads import QueryReads
+from ai_accounting.kernel.query_reads import QueryReads, _owns_current_selector_snapshot
 
 engine = _engine
 
@@ -45,6 +45,7 @@ def test_successful_content_then_sql_checks_decode_exact_result_once(engine, mon
     ident, raw = rows["good"]["id"], rows["good"]["outcome"]
     decoded = probe(monkeypatch)
     with QueryReads.snapshot(engine) as reads:
+        assert _owns_current_selector_snapshot(reads, reads.connection)
         outcome = reads.verify_selected_content((ident,))[ident]
         assert outcome == json.loads(raw)
         assert decoded.count(raw) == 1
@@ -112,13 +113,19 @@ def test_content_proof_expires_with_owned_snapshot_and_plain_reads_recheck(engin
     with QueryReads.snapshot(engine) as fresh:
         fresh.verify_sql_outcomes((ident,))
         assert decoded.count(raw) == 2
-    with engine.store.connection(read_only=True) as connection:
-        plain = QueryReads(engine, connection)
-        plain.verify_selected_content((ident,))
-        before = decoded.count(raw)
-        plain.verify_sql_outcomes((ident,))
-        plain.verify_sql_outcomes((ident,))
-        assert decoded.count(raw) == before + 2
+    for active_flag in (False, True):
+        with engine.store.connection(read_only=True) as connection:
+            if active_flag:
+                connection.execute('BEGIN')
+            plain = QueryReads(engine, connection)
+            plain._snapshot_active = active_flag
+            assert not _owns_current_selector_snapshot(plain, connection)
+            plain.verify_selected_content((ident,))
+            before = decoded.count(raw)
+            plain.verify_sql_outcomes((ident,))
+            plain.verify_sql_outcomes((ident,))
+            assert decoded.count(raw) == before + 2
+            assert plain._verified_sql_outcomes == set()
 
 
 def test_sql_reuse_does_not_scan_unrelated_content_cache(engine):

@@ -198,7 +198,15 @@ def _category(item):
     return item["group"]
 
 
-def _assert_groups(engine, data, expected, *, complete=True):
+def _assert_group_totals(data, expected):
+    assert {item["key"]: item["event_count"] for item in data["activity_groups"]} == dict(
+        Counter(expected.values())
+    )
+    for group in data["activity_groups"]:
+        assert sum(item["count"] for item in group["type_counts"]) == group["event_count"]
+
+
+def _assert_groups(engine, data, expected, *, complete=True, check_totals=True):
     activities = _loaded_members(engine, data)
     expected = {
         ident if isinstance(ident, tuple) else (ident, group): group
@@ -210,11 +218,8 @@ def _assert_groups(engine, data, expected, *, complete=True):
     assert {ident: item["group"] for ident, item in components.items()} == {
         ident: expected[ident] for ident in components
     }
-    assert {item["key"]: item["event_count"] for item in data["activity_groups"]} == dict(
-        Counter(expected.values())
-    )
-    for group in data["activity_groups"]:
-        assert sum(item["count"] for item in group["type_counts"]) == group["event_count"]
+    if check_totals:
+        _assert_group_totals(data, expected)
     assert len(activities) == len(components)
 
 
@@ -244,17 +249,20 @@ def test_whole_month_groups_stay_complete_when_only_one_voucher_is_loaded(book):
     expected = _reimbursement_payments(book)
     dashboard = Dashboard(engine)
     response = dashboard.brief(PERIOD, preparation="deferred", limit=1)
+    overview = response["data"]
+    assert response["scope"] == "overview"
+    _assert_group_totals(overview, expected)
     loaded = set()
     while True:
         data = response["data"]
-        _assert_groups(engine, data, expected, complete=False)
+        _assert_groups(engine, data, expected, complete=False, check_totals=False)
         items = data["collections"]["activity"]["items"]
         assert len(items) == 1
         subjects = {item["subject_id"] for item in _loaded_members(engine, data)}
         assert not loaded & subjects
         loaded.update(subjects)
         page = data["collections"]["activity"]["page"]
-        assert page["total_count"] == data["group_count"]
+        assert page["total_count"] == overview["group_count"]
         if not page["has_more"]:
             break
         response = dashboard.brief(
@@ -655,14 +663,17 @@ def test_mixed_receipt_group_totals_cover_all_activity_pages(book):
     }
     dashboard = Dashboard(engine)
     response = dashboard.brief(PERIOD, preparation="deferred", limit=1)
+    overview = response["data"]
+    assert response["scope"] == "overview"
+    _assert_group_totals(overview, expected)
+    assert overview["activity_count"] == 4
+    assert overview["voucher_count"] == 3
     loaded = set()
     while True:
         data = response["data"]
-        _assert_groups(engine, data, expected, complete=False)
+        _assert_groups(engine, data, expected, complete=False, check_totals=False)
         collection = data["collections"]["activity"]
         assert collection["page"]["total_count"] == 4
-        assert data["activity_count"] == 4
-        assert data["voucher_count"] == 3
         subjects = {(item["subject_id"], _category(item))
                     for item in _loaded_members(engine, data)}
         assert not loaded & subjects

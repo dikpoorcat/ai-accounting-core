@@ -1,10 +1,11 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import { parse, compileTemplate } from "@vue/compiler-sfc";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 import {
   validateDashboardBriefResponse,
   validateDashboardFundsResponse,
@@ -12,7 +13,7 @@ import {
 } from "../src/api/generated/dashboardValidators.js";
 
 const source = path => readFileSync(new URL(path, import.meta.url), "utf8");
-const withoutImports = text => text.replace(/import[\s\S]*?from "[^"]+";/g, "");
+const withoutImports = text => text.replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
 let sequence = 0;
 async function compile(code, environment = {}) {
   const key = `t7Deferred${++sequence}`;
@@ -43,7 +44,7 @@ async function viewHarness(kind) {
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02", quarter: "2026-Q1" }, hash: "" });
   const capture = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const context = Vue.ref(null);
-  const environment = { Vue, route, trace, unmount, appendDashboardCollection,
+  const environment = { Vue, route, trace, unmount, appendDashboardCollection, prepareDashboardCollections,
     nextTick: async () => { await Vue.nextTick(); trace.push("paint"); },
     router: { push() {}, replace() {} },
     contextState: { context, load: async () => ({ periods: [{ key: "2026-02", year: 2026, month: 2 }], quarters: [{ key: "2026-Q1", year: 2026, quarter: 1 }] }), refresh: () => capture(calls.context, []) },
@@ -58,7 +59,7 @@ async function viewHarness(kind) {
     : "report, loading, errorMessage, reportHeadline, preview, refresh, exportReport, invalidateRequests";
   const module = await compile(`export function instantiate() {
     const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
-    const { appendDashboardCollection } = environment;
+    const { appendDashboardCollection, prepareDashboardCollections } = environment;
     const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
     const fetchCompleteBrief = fetchDeferredBrief;
     const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);

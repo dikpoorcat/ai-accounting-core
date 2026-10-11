@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -8,7 +9,7 @@ import { groupContributionMembers, contributionProgressRows } from "./helpers/br
 
 let sequence = 0;
 async function harness(section = "activity") {
-  const source = readFileSync(new URL("../src/components/brief/BriefGroupMembers.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const source = readFileSync(new URL("../src/components/brief/BriefGroupMembers.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const environment = { Vue, props: Vue.reactive({ section, groupKey: "group-a", expanded: false, period: "2026-09", snapshotVersion: "v1", refreshGeneration: 0 }), route: Vue.reactive({ query: { company_id: "a" } }), requests: [], events: [], unmount: [] };
   const key = `briefGroup${++sequence}`; globalThis[key] = environment;
   const { outputText } = ts.transpileModule(`const env = globalThis.${key}; export function instantiate() {
@@ -20,7 +21,7 @@ async function harness(section = "activity") {
     const appendDashboardCollection = env.appendDashboardCollection;
     const { groupContributionMembers, contributionProgressRows } = env;
     ${source}
-    return { data, loading, error, selected, preview, expandedPart, loadMore, cancel, activityMembers, openMembers, contributions, ungroupedOpenMembers, toggle, togglePart };
+    return { data, loading, error, selected, openedDetails, preview, expandedPart, loadMore, cancel, activityMembers, openMembers, contributions, ungroupedOpenMembers, toggle, togglePart };
   }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   environment.appendDashboardCollection = appendDashboardCollection;
   environment.groupContributionMembers = groupContributionMembers;
@@ -30,6 +31,26 @@ async function harness(section = "activity") {
   return { ...environment, ...state, close() { environment.unmount.forEach(fn => fn()); scope.stop(); } };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test("group members append 20 then 500 then the tail without dropping paired vouchers", async () => {
+  for (const section of ["activity", "open_items"]) {
+    const state = await harness(section), keys = Array.from({ length: 525 }, (_, index) => `member-${index}`);
+    try {
+      state.props.expanded = true; await tick();
+      assert.equal(state.requests[0].args[6].limit, 20);
+      state.requests[0].resolve(response(section, keys.slice(0, 20), true)); await tick();
+      const items = state.data.value.collections.members.items;
+      const next = state.loadMore(); assert.equal(state.requests[1].args[6].limit, 500);
+      state.requests[1].resolve(response(section, keys.slice(20, 520), true)); await next;
+      const tail = state.loadMore(); assert.equal(state.requests[2].args[6].limit, 500);
+      state.requests[2].resolve(response(section, keys.slice(520))); await tail;
+      assert.equal(state.data.value.collections.members.items, items);
+      assert.deepEqual(items.map(item => item.key ?? item.id), keys);
+      assert.equal(state.events.filter(event => event[0] === "vouchers").flatMap(event => event[1]).length, 525);
+      await state.loadMore(); assert.equal(state.requests.length, 3);
+    } finally { state.close(); }
+  }
+});
 function response(section, keys, more = false) {
   return { data: { section, group_key: "group-a", collections: { members: { items: keys.map(key => section === "activity" ? { key, group_key: "group-a", subject_id: `s-${key}` } : { id: key, group_key: "group-a", subject_id: `s-${key}` }), page: { has_more: more, next_cursor: more ? "next" : null } }, vouchers: { items: keys.map(key => ({ voucher_version_id: `v-${key}` })), page: { has_more: false } } } } };
 }
@@ -40,23 +61,29 @@ test("groups read only on expansion and append bounded members without opening p
       assert.equal(state.requests.length, 0);
       state.props.expanded = true; await tick(); assert.equal(state.requests.length, 1);
       assert.deepEqual(state.requests[0].args.slice(0, 5), ["a", "2026-09", section, "group-a", "v1"]);
+      assert.equal(state.requests[0].args[6].limit, 20);
       state.requests[0].resolve(response(section, ["one"], true)); await tick();
       const items = state.data.value.collections.members.items;
       assert.equal(state.selected.value, ""); assert.deepEqual(state.events.map(event => event[0]), ["vouchers"]);
+      assert.equal(state.openedDetails.value.size, 0);
       state.toggle("one"); assert.equal(state.selected.value, "one");
-      const next = state.loadMore(); assert.equal(state.requests[1].args[6].cursor, "next");
+      assert.deepEqual([...state.openedDetails.value], ["one"]);
+      const next = state.loadMore(); assert.equal(state.requests[1].args[6].cursor, "next"); assert.equal(state.requests[1].args[6].limit, 500);
       state.requests[1].resolve(response(section, ["two"])); await next;
       assert.equal(state.data.value.collections.members.items, items); assert.equal(items.length, 2);
       assert.equal(state.selected.value, "one", "member continuation preserves the explicitly selected progress");
       state.toggle("two"); assert.equal(state.selected.value, "two", "only the requested member is selected");
       state.toggle("two"); assert.equal(state.selected.value, "");
+      assert.deepEqual([...state.openedDetails.value], ["one", "two"], "member collapse retains explicitly opened details");
       state.toggle("one");
       state.props.expanded = false; await tick(); assert.equal(state.selected.value, "");
+      assert.equal(state.openedDetails.value.size, 0, "whole-group collapse follows the existing child unmount boundary");
       state.props.expanded = true; await tick();
       assert.equal(state.selected.value, ""); assert.equal(state.requests.length, 2, "cached reopening does not reread members");
       state.toggle("one");
       state.props.refreshGeneration++; await tick();
       assert.equal(state.selected.value, "", "refresh clears the prior member detail selection");
+      assert.equal(state.openedDetails.value.size, 0);
     } finally { state.close(); }
   }
 });

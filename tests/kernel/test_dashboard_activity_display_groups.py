@@ -41,15 +41,17 @@ def test_focused_voucher_inside_page_keeps_exact_identity_after_preview_deduplic
     assert len(vouchers) == 2
     for selected in vouchers:
         result = dashboard.brief(
-            "2026-09", section="vouchers", voucher_version_id=selected["voucher_version_id"],
+            "2026-09", voucher_version_id=selected["voucher_version_id"],
         )
         data = result["data"]
+        assert result["scope"] == "overview"
         assert data["focused_voucher"]["voucher_version_id"] == selected["voucher_version_id"]
-        assert [
-            item["voucher_version_id"] for item in data["collections"]["vouchers"]["items"]
-        ] == [
-            item["voucher_version_id"] for item in vouchers
-        ]
+        assert data["focused_voucher"]["number"] == selected["number"]
+        assert data["voucher_count"] == len(vouchers)
+        assert "vouchers" not in data["collections"]
+        assert data["focused_activity"]["group_key"] in {
+            item["group_key"] for item in data["collections"]["activity"]["items"]
+        }
 
 
 def test_complete_group_amount_and_two_bounded_member_pages(book, monkeypatch):
@@ -170,7 +172,7 @@ def test_default_group_summary_keeps_counts_and_independent_vouchers(book):
     dashboard = Dashboard(book[0])
     brief = dashboard.brief("2026-09")
     validate_response("dashboard_brief", brief)
-    assert brief["schema_version"] == 18
+    assert brief["schema_version"] == 19
     assert brief["data"]["activity_count"] == brief["data"]["voucher_count"] == 22
     assert brief["data"]["group_count"] == 1
     assert "vouchers" not in brief["data"]["collections"]

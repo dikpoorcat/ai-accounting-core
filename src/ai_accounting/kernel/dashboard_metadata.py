@@ -97,6 +97,7 @@ class Records(Mapping):
                         self.snapshot.store.company_id,
                         self.snapshot.store.database_id,
                         self.snapshot.period,
+                        None if identifiers is None else frozenset(identifiers),
                     )
                     if cache is not None and key in cache:
                         identities = cache[key]
@@ -104,6 +105,7 @@ class Records(Mapping):
                         identities = tuple(employee_entities(
                             self.connection, self.snapshot.period,
                             registry=self.snapshot.store.registry,
+                            entity_ids=identifiers,
                         ))
                         if cache is not None:
                             cache[key] = identities
@@ -316,7 +318,8 @@ class TaxIdentityCandidates(Mapping):
         # The existing exact scope index locates each employee before normalized
         # identity columns are checked; no all-company tax fact payload is read.
         rows = self.snapshot.connection.execute(
-            "SELECT t.employee_id,f.id FROM json_each(?) ids JOIN fact_scope s "
+            "SELECT t.employee_id,f.id FROM json_each(?) ids CROSS JOIN fact_scope s "
+            "INDEXED BY fact_scope_selection "
             "ON s.kind='tax_import_identity_v2' AND s.scope_key='tax-identity:'||ids.value "
             "JOIN fact_current a ON a.fact_id=s.fact_id JOIN fact_revision f ON f.id=a.fact_id "
             "JOIN fact_tax_import_identity_v2 t ON t.revision_id=f.id AND t.employee_id=ids.value "

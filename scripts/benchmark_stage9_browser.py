@@ -150,6 +150,17 @@ def validate_book_report(
     return periods[-1]
 
 
+def voucher_tail_diagnostic_options(args, environment=None):
+    """Explicit tooling mode; it never inherits acceptance counts or scope."""
+    environment = os.environ if environment is None else environment
+    enabled = args.diagnostic_voucher_tail or environment.get("STAGE9_DIAGNOSTIC_VOUCHER_TAIL") == "1"
+    if enabled:
+        if not args.interaction_only or args.layout_only or args.navigation_only or args.instrument or args.qualify_output is not None or args.switch_book_report is not None:
+            raise ValueError("Voucher tail diagnostic requires only existing interactions and an existing exact-source qualification")
+        args.warmups, args.repeats = 1, 3
+    return enabled
+
+
 def measurement_scope(
     book, *, repeats: int, warmups: int, instrument: bool, navigation_only,
     static_build="release",
@@ -277,6 +288,7 @@ def verified_browser_harness(source, harness_source, book):
     )
     allowed = {
         "frontend/tests/browser-stage9-hot-refresh.cjs",
+        "frontend/tests/browser-stage9-readiness.test.mjs",
         "scripts/benchmark_stage9_browser.py",
         "tests/kernel/test_stage9_browser_report.py",
         "tests/kernel/test_stage9_browser_harness_source.py",
@@ -402,6 +414,8 @@ def main():
     )
     parser.add_argument("--repeats", type=int, default=30)
     parser.add_argument("--layout-only", action="store_true")
+    parser.add_argument("--interaction-only", action="store_true", help="independent selected-region, exact-target, expanded-refresh and all-pages timing; not default-page acceptance")
+    parser.add_argument("--diagnostic-voucher-tail", action="store_true", help="instrument only all-voucher interaction (1 warmup, 3 samples); never SLA eligible")
     parser.add_argument("--screenshots", type=Path)
     parser.add_argument("--warmups", type=int, default=3)
     parser.add_argument("--timing-ready-file", type=Path)
@@ -417,6 +431,10 @@ def main():
         help="diagnostic HTTP/dispatch timings; keep separate from acceptance timing",
     )
     args = parser.parse_args()
+    try:
+        diagnostic_voucher_tail = voucher_tail_diagnostic_options(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.harness_source is not None and args.qualify_output is not None:
         parser.error("Browser-tool repair reuses an existing exact-source qualification")
     preparation_started = time.perf_counter()
@@ -430,6 +448,8 @@ def main():
         parser.error("navigation-only measurements must not enable HTTP instrumentation")
     if args.layout_only and (args.navigation_only or args.instrument):
         parser.error("Layout checks must be separate from timing and instrumentation")
+    if args.interaction_only and (args.layout_only or args.navigation_only or args.instrument or args.screenshots):
+        parser.error("Interaction timing must be separate from default/layout/navigation/instrumentation")
     if args.screenshots is not None and not args.layout_only:
         parser.error("Screenshots are only captured in layout checks")
     if args.navigation_only == "switch" and args.switch_book_report is None:
@@ -500,6 +520,15 @@ def main():
         require_report_source(book, source)
     root = Path(book["root"]).resolve()
     synthetic_path(root, workspace)
+    if diagnostic_voucher_tail and (
+        root != workspace / ".tmp/stage9-preparation-20261008-ready-main12"
+        or book.get("requested_months") != 12
+        or book.get("employee_count") != 50
+        or book.get("monthly_business_count") != 1000
+        or book.get("distribution") != "mixed_cumulative"
+        or "qualification" not in book
+    ):
+        raise ValueError("Voucher tail diagnostic requires the existing qualified synthetic main12")
     expected_name = (
         "阶段九合成独立业务企业"
         if book.get("distribution") == "independent_local_pairs"
@@ -741,8 +770,11 @@ def main():
             "warmups": args.warmups,
             "navigation_only": args.navigation_only,
             "layout_only": args.layout_only,
+            "interaction_only": args.interaction_only,
             "screenshot_directory": str(screenshots) if screenshots is not None else None,
         }
+        if diagnostic_voucher_tail:
+            config.update(diagnostic_voucher_tail=True, diagnostic_trace_path=str(output.with_suffix(".trace.json")))
         phase[0] = "browser"
         browser_started_wall_ms = time.time() * 1000
         process = subprocess.run(
@@ -814,13 +846,13 @@ def main():
             synthetic_root=str(root),
             source=str(source),
             measurement_mode=(
-                "owner_layout" if args.layout_only else f"navigation_{args.navigation_only}"
+                "interaction_timing" if args.interaction_only else "owner_layout" if args.layout_only else f"navigation_{args.navigation_only}"
                 if args.navigation_only
                 else "instrumented_diagnostic"
                 if args.instrument
                 else "page_timing"
             ),
-            sample_scope="owner_layout" if args.layout_only else measurement_scope(
+            sample_scope="independent_interactions" if args.interaction_only else "owner_layout" if args.layout_only else measurement_scope(
                 book,
                 repeats=args.repeats,
                 warmups=args.warmups,
@@ -849,9 +881,15 @@ def main():
             ),
             browser_harness_repair=harness_proof,
         )
+        if diagnostic_voucher_tail:
+            result.update(diagnostic_only=True, instrumented=True, sla_eligible=False,
+                          measurement_mode="voucher_tail_diagnostic", sample_scope="single_voucher_tail_diagnostic")
         output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": result["status"], "output": str(output)}))
-    if result["status"] != "passed":
+    if result["status"] != "passed" and not (
+        diagnostic_voucher_tail and result["status"] == "diagnostic_complete"
+        and result.get("diagnostic_only") is True and result.get("sla_eligible") is False
+    ):
         raise SystemExit(1)
 
 

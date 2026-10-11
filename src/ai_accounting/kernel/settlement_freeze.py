@@ -15,6 +15,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from typing import NamedTuple
+
+from pydantic_core import SchemaValidator, core_schema, from_json
 
 from .close_storage import derived_root, verified_header
 from .contracts import KernelError
@@ -495,14 +498,18 @@ def _subject_item(connection, period: int, directory: list, subject: str,
 
 
 def _read_block(connection, period: int, header: list) -> list[list]:
-    expected = bytes.fromhex(header[4])
     row = connection.execute(
-        "SELECT payload FROM settlement_freeze_block WHERE digest=?", (expected,)
+        "SELECT payload FROM settlement_freeze_block WHERE digest=?", (bytes.fromhex(header[4]),)
     ).fetchone()
-    if row is None or _sha(row[0]) != expected:
+    return _decode_block(period, header, None if row is None else row[0])
+
+
+def _decode_block(period: int, header: list, payload: str | None) -> list[list]:
+    """Keep the original block proof identical for single and batch reads."""
+    if payload is None or _sha(payload) != bytes.fromhex(header[4]):
         _fail("freeze_block_digest_mismatch", period)
     try:
-        items = json.loads(row[0])
+        items = json.loads(payload)
         keys = [item[0] for item in items]
         if (
             len(items) != header[3]
@@ -519,6 +526,30 @@ def _read_block(connection, period: int, header: list) -> list[list]:
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         _fail("freeze_block_contract_invalid", period)
     return items
+
+
+def _read_blocks(connection, period: int, headers: list, *, reads=None) -> dict:
+    """Load only explicit committed headers; publish a fully checked batch."""
+    from .query_reads import _owns_current_selector_snapshot
+
+    active = _owns_current_selector_snapshot(reads, connection)
+    token = reads._snapshot_token if active else None
+    cache = reads._frozen_settlement_blocks if active else {}
+    missing = [header for header in headers if (period, tuple(header)) not in cache]
+    pending = {}
+    if missing:
+        payloads = dict(connection.execute(
+            "SELECT ids.value,b.payload FROM json_each(?) ids "
+            "LEFT JOIN settlement_freeze_block b ON b.digest=unhex(ids.value)",
+            (canonical(list(dict.fromkeys(header[4] for header in missing))),),
+        ))
+        for header in missing:
+            pending[period, tuple(header)] = _decode_block(period, header, payloads.get(header[4]))
+        if active and (not _owns_current_selector_snapshot(reads, connection)
+                       or reads._snapshot_token is not token):
+            _fail("freeze_block_snapshot_changed", period)
+        cache.update(pending)
+    return {tuple(header): cache[period, tuple(header)] for header in headers}
 
 
 def _decode_state(period: int, key: str, expected: bytes, row) -> dict:
@@ -1008,6 +1039,7 @@ def _scope(
     block_cache = (
         reads._frozen_settlement_blocks
         if reads is not None and getattr(reads, "_snapshot_active", False)
+        and reads.connection is connection
         else {}
     )
     state_cache = (
@@ -1471,7 +1503,7 @@ def frozen_subject_summary(
             publications[publication_id] = posting
     movement_count = sum(state["movement_count"] for state in states.values())
     _verified_page_sources(
-        connection, scope.base_period, [*states.values(), *historical_source_states]
+        connection, scope.base_period, [*states.values(), *historical_source_states], reads=reads,
     )
     _verified_event_sources(connection, scope.base_period, event_sources)
     for posting, event in direct_events:
@@ -1569,7 +1601,7 @@ def _payroll_period_payment_states(connection, scope, *, reads=None, keys=None):
             continue
         states.append(state)
         result.append((state, paid, other))
-    _verified_page_sources(connection, scope.base_period, states)
+    _verified_page_sources(connection, scope.base_period, states, reads=reads)
     return result
 
 
@@ -1677,30 +1709,65 @@ def frozen_labor_outstanding_net(connection, period: str, *, reads=None) -> dict
     return {"remaining_fen": None if unknown else remaining}
 
 
-def _verified_page_sources(connection, period: int, states: list[dict]) -> None:
-    expected = [
-        state for state in states if state["source_calculation_id"] is not None
-    ]
+def _verified_page_sources(
+    connection, period: int, states: list[dict], *, reads=None, include_headers=False,
+) -> None:
+    expected, seen = [], set()
+    for state in states:
+        item = (
+            state.source_calculation_id, state.source_digest, state.source_kind,
+            state.source_fact_id,
+        ) if isinstance(state, _DashboardStateRecord) else (
+            state["source_calculation_id"], state["source_digest"],
+            state["source_kind"], state["source_fact_id"],
+        )
+        if item[0] is None:
+            continue
+        try:
+            if item in seen:
+                continue
+            seen.add(item)
+        except TypeError:
+            # Exceptional composite identities retain the original comparison
+            # and failure path, rather than acquiring a new hashing failure.
+            pass
+        expected.append(item)
     if not expected:
         return
-    actual = {
-        row["id"]: row
-        for row in connection.execute(
-            "SELECT id,digest,kind,fact_id FROM calculation "
-            "WHERE id IN (SELECT value FROM json_each(?))",
-            (canonical(sorted({state["source_calculation_id"] for state in expected})),),
-        )
-    }
-    for state in expected:
-        row = actual.get(state["source_calculation_id"])
-        if (
-            row is None
-            or state["source_digest"] is None
-            or bytes(row["digest"]).hex() != state["source_digest"]
-            or row["kind"] != state["source_kind"]
-            or row["fact_id"] != state["source_fact_id"]
-        ):
-            _fail("freeze_page_source_mismatch", period)
+    from .query_reads import _exact_source_header_batch, _owns_current_selector_snapshot
+
+    identifiers = {item[0] for item in expected}
+
+    def validate(actual):
+        digests = {}
+        for ident, source_digest, source_kind, source_fact_id in expected:
+            row = actual.get(ident)
+            if row is None or source_digest is None:
+                _fail("freeze_page_source_mismatch", period)
+            if ident not in digests:
+                digests[ident] = bytes(row["digest"]).hex()
+            if (
+                digests[ident] != source_digest
+                or row["kind"] != source_kind
+                or row["fact_id"] != source_fact_id
+            ):
+                _fail("freeze_page_source_mismatch", period)
+
+    active = _owns_current_selector_snapshot(reads, connection)
+    if active and (include_headers or identifiers <= reads._exact_source_headers.keys()):
+        with _exact_source_header_batch(connection, identifiers, reads=reads) as actual:
+            validate(actual)
+    else:
+        # Full summaries/CLI and fixed readers still need only the original
+        # digest identity fields. Do not broaden their physical fact selection.
+        validate({
+            row["id"]: row
+            for row in connection.execute(
+                "SELECT id,digest,kind,fact_id FROM calculation "
+                "WHERE id IN (SELECT value FROM json_each(?))",
+                (canonical(sorted(identifiers)),),
+            )
+        })
 
 
 def _verified_publication_sources(
@@ -1763,18 +1830,30 @@ def _page_entries(
     after: str | None = None,
     limit: int | None = None,
     reads=None,
+    complete_open=False,
 ) -> dict:
+    from .query_reads import _owns_current_selector_snapshot
+
     directory = scope.base_root["directories"]["all" if include_settled else "open"]
-    block_cache = (
-        reads._frozen_settlement_blocks
-        if reads is not None and getattr(reads, "_snapshot_active", False)
-        else {}
-    )
+    active = _owns_current_selector_snapshot(reads, connection)
+    block_cache = reads._frozen_settlement_blocks if active else {}
+    open_cache = reads._frozen_settlement_open_entries if active else {}
+    if complete_open:
+        if include_settled or page_keys is not None or after is not None:
+            raise ValueError("complete open directory requires an unfiltered full source read")
+        if active:
+            _read_blocks(connection, scope.base_period, directory, reads=reads)
 
     def load_block(header):
         cache_key = (scope.base_period, tuple(header))
         if cache_key not in block_cache:
             block_cache[cache_key] = _read_block(connection, scope.base_period, header)
+        if not include_settled:
+            # The authenticated open directory proves these exact revisions in
+            # this base root. A later exact lookup need not read neighbouring
+            # settled keys from the larger all directory to prove them again.
+            for key, digest_hex, first in block_cache[cache_key]:
+                open_cache[scope.base_period, key] = (digest_hex, first)
         return block_cache[cache_key]
 
     def eligible(state):
@@ -1785,21 +1864,32 @@ def _page_entries(
         )
 
     if page_keys is not None:
+        entries = {}
+        missing = set(page_keys) - scope.overrides.keys()
+        if include_settled:
+            for key in tuple(missing):
+                known = open_cache.get((scope.base_period, key))
+                if known is not None:
+                    if known[1] is not None and known[1] <= scope.cutoff:
+                        entries[key] = list(known)
+                    missing.remove(key)
         ordinals = {
             index
-            for key in page_keys
+            for key in missing
             if (index := bisect.bisect_left(
                 directory, key, key=lambda header: header[2]
             )) < len(directory)
             and directory[index][1] <= key
         }
         headers = [directory[index] for index in sorted(ordinals)]
-        entries = {
+        if active:
+            _read_blocks(connection, scope.base_period, headers, reads=reads)
+        entries.update({
             key: [digest_hex, first]
             for header in headers
             for key, digest_hex, first in load_block(header)
-            if first is not None and first <= scope.cutoff and key in page_keys
-        }
+            if first is not None and first <= scope.cutoff and key in missing
+        })
         for key, state in scope.overrides.items():
             if key in page_keys:
                 if eligible(state):
@@ -1934,88 +2024,457 @@ def _semantic_open_states(connection, scope: FrozenScope, *, reads=None) -> list
         counts[2] = checked(counts[2] + (remaining or 0))
     if {key: tuple(values) for key, values in observed.items()} != expected:
         _fail("freeze_classification_cohort_measures_mismatch", scope.base_period)
-    _verified_page_sources(connection, scope.base_period, states)
+    _verified_page_sources(connection, scope.base_period, states, reads=reads)
     return states
 
 
-def frozen_dashboard_open_sources(connection, period, *, current=False, page_keys=None, reads=None):
+def _dashboard_category_measures(connection, scope, *, reads=None):
+    """Complete navigation measures, retaining unknown counts for reclassification."""
+    from .settlement_projection import _obligation_view
+
+    measures = {}
+    for key, group in _included_groups(scope):
+        if not group[_G_OPEN_COUNT] or key[4] in SEMANTIC_SOURCE_KINDS:
+            continue
+        label = obligation_category(key[1], key[2], key[4])
+        item = measures.setdefault(label, {"count": 0, "sum": 0, "unknown_count": 0})
+        item["count"] += group[_G_OPEN_COUNT]
+        item["sum"] = checked(item["sum"] + group[_G_OPEN_SUM])
+        item["unknown_count"] += group[_G_OPEN_UNKNOWN_COUNT]
+    semantic_states = _semantic_open_states(connection, scope, reads=reads)
+    for obligation in classify_obligations(
+        connection, [_obligation_view(state) for state in semantic_states], reads=reads,
+    ):
+        item = measures.setdefault(
+            obligation["category_key"], {"count": 0, "sum": 0, "unknown_count": 0},
+        )
+        item["count"] += 1
+        item["sum"] = checked(item["sum"] + (obligation["remaining_fen"] or 0))
+        item["unknown_count"] += obligation["remaining_fen"] is None
+    return measures
+
+
+class _DashboardStateRecord(NamedTuple):
+    obligation_key: object
+    first_source_period: object
+    source_event_count: object
+    source_amount: object
+    paid: object
+    other_settled: object
+    bad_source: object
+    bad_paid: object
+    bad_other: object
+    source_subject_id: object
+    category: object
+    account: object
+    counterparty_id: object
+    component: object
+    source_calculation_id: object
+    source_kind: object
+    source_fact_id: object
+    source_digest: object
+
+
+# This compiled parser contains no source, snapshot or business proof. Accept
+# exactly the ordinary JSON1 scalar types; booleans retain JSON1's 0/1 result.
+# Only the boolean branch may use lax int conversion. Reals, composites,
+# oversized integers and exceptional Unicode go through the original reader.
+_STATE_SCALAR = core_schema.nullable_schema(core_schema.union_schema([
+    core_schema.int_schema(strict=True, ge=-(1 << 63), le=(1 << 63) - 1),
+    core_schema.str_schema(strict=True),
+    core_schema.chain_schema([
+        core_schema.bool_schema(strict=True), core_schema.int_schema(strict=False),
+    ]),
+], mode="left_to_right"))
+_STATE_SCALAR_VALUES = SchemaValidator(core_schema.tuple_schema(
+    [_STATE_SCALAR] * len(_DashboardStateRecord._fields), strict=True,
+), config={"cache_strings": False})
+
+
+class _DashboardSourceRecord(NamedTuple):
+    key: object
+    name: object
+    category: object
+    account: object
+    counterparty_id: object
+    source_kind: object
+    source_subject_id: object
+    source_calculation_id: object
+    source_fact_id: object
+    source_amount_fen: object
+    paid_fen: object
+    other_settled_fen: object
+    period_paid_fen: object
+    period_other_settled_fen: object
+    remaining_fen: object
+    settlement_status: object
+    source_event_count: object
+    category_key: object
+
+    def __getitem__(self, key):
+        return getattr(self, key) if isinstance(key, str) else tuple.__getitem__(self, key)
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+    @property
+    def creditor_id(self):
+        return self.counterparty_id
+
+    @property
+    def source_business(self):
+        return {"kind": self.source_kind, "subject_id": self.source_subject_id}
+
+    def public(self):
+        return {
+            "key": self.key, "name": self.name, "category": self.category,
+            "account": self.account, "counterparty_id": self.counterparty_id,
+            "creditor_id": self.counterparty_id, "source_business": self.source_business,
+            "source_calculation_id": self.source_calculation_id,
+            "source_fact_id": self.source_fact_id,
+            "source_amount_fen": self.source_amount_fen, "paid_fen": self.paid_fen,
+            "other_settled_fen": self.other_settled_fen, "period_paid_fen": self.period_paid_fen,
+            "period_other_settled_fen": self.period_other_settled_fen,
+            "remaining_fen": self.remaining_fen, "settlement_status": self.settlement_status,
+            "source_events": [], "source_event_count": self.source_event_count,
+            "category_key": self.category_key,
+        }
+
+
+def _packed_state_values(connection, digest_hex, raw, fields, *, _standard=False):
+    """Retain individual JSON1 types while decoding only a fixed scalar array."""
+    if raw is not None and not _standard and len(fields) == len(_DashboardStateRecord._fields):
+        try:
+            # All 18 scalar checks and boolean conversion stay in the bundled
+            # native parser. No Python callback runs for individual fields.
+            return _STATE_SCALAR_VALUES.validate_json(raw)
+        except ValueError:
+            # Preserve the original parser, scalar coercions and exceptions;
+            # native validation never becomes a new business rejection.
+            pass
+    if raw is None:
+        values = [None] * len(fields)
+    elif _standard:
+        values = json.loads(raw)
+    else:
+        try:
+            # This bundled parser retains scalar types without decoding state
+            # histories. Disable its global string cache; exceptional Unicode
+            # retains the original standard-library behavior.
+            values = from_json(raw, cache_strings=False)
+        except ValueError:
+            values = json.loads(raw)
+    for index, (_field, value) in enumerate(zip(fields, values, strict=True)):
+        typ = type(value)
+        if typ is bool:
+            values[index] = int(value)
+        elif typ is float and not _standard:
+            # Accounting state normally contains integers, strings and null.
+            # Exceptional reals retain exactly the original Python parser's
+            # rounding and non-finite values before the existing checks run.
+            return _packed_state_values(connection, digest_hex, raw, fields, _standard=True)
+        elif typ is dict or typ is list or typ is int and not -(1 << 63) <= value < (1 << 63):
+            # Composite/oversized fields are exceptional; retain SQLite's JSON
+            # text/integer-to-real coercion and original rejection semantics.
+            original = connection.execute(
+                "SELECT " + ",".join(f"json_extract(payload,'$.{name}')" for name in fields)
+                + " FROM settlement_state_revision WHERE digest=?",
+                (bytes.fromhex(digest_hex),),
+            ).fetchone()
+            return tuple(original)
+    return tuple(values)
+
+
+def _packed_state_scalars(connection, digest_hex, raw, fields):
+    return dict(zip(fields, _packed_state_values(connection, digest_hex, raw, fields), strict=True))
+
+
+def _dashboard_state_scalars(connection, scope, entries, *, reads=None, _records=False):
+    """Reuse only successfully authenticated base-state scalars in one snapshot."""
+    from .query_reads import _owns_current_selector_snapshot
+
+    active = _owns_current_selector_snapshot(reads, connection)
+    cache = reads._frozen_settlement_scalars if active else {}
+    fields = _DashboardStateRecord._fields
+    base = {
+        key: (scope.base_period, key, entries[key][0])
+        for key in entries if key not in scope.overrides
+    }
+    missing = [identity for identity in base.values() if identity not in cache]
+    pending = {}
+    if missing:
+        for row in connection.execute(
+            "SELECT ids.key,s.obligation_key,s.payload,"
+            + "json_extract(s.payload," + ",".join(f"'$.{field}'" for field in fields)
+            + ") scalars"
+            + " FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
+            "s.digest=unhex(ids.value)",
+            (canonical([identity[2] for identity in missing]),),
+        ):
+            index, saved_key, payload, raw_scalars = row
+            identity = missing[index]
+            _period, key, digest_hex = identity
+            if (saved_key != key or payload is None or _sha(payload).hex() != digest_hex):
+                _fail("freeze_state_digest_mismatch", scope.base_period)
+            # JSON1 parses the growing payload once and returns only this fixed
+            # scalar array. Python never decodes its events. Preserve JSON1's
+            # single-path scalar types (JSON booleans are SQLite integers).
+            state = _DashboardStateRecord(*_packed_state_values(
+                connection, digest_hex, raw_scalars, fields,
+            ))
+            if state.obligation_key != key:
+                _fail("freeze_state_digest_mismatch", scope.base_period)
+            pending[identity] = state
+        if len(pending) != len(missing):
+            _fail("freeze_state_missing_group_source", scope.base_period)
+    states = {}
+    for key, identity in base.items():
+        state = pending[identity] if identity in pending else cache.get(identity)
+        if state is None or state.first_source_period != entries[key][1]:
+            _fail("freeze_classification_source_period_mismatch", scope.base_period)
+        states[key] = state
+    overrides = {
+        key: _DashboardStateRecord(*(scope.overrides[key][field] for field in fields))
+        for key in entries if key in scope.overrides
+    }
+    _verified_page_sources(
+        connection, scope.base_period, [*pending.values(), *overrides.values()],
+        reads=reads, include_headers=True,
+    )
+    # Failed batches do not publish scalar/source success. Per-scope overlays
+    # and period movements never enter this immutable base-revision cache.
+    cache.update(pending)
+    states.update(overrides)
+    return states if _records else {key: state._asdict() for key, state in states.items()}
+
+
+def _copy_dashboard_source_result(value):
+    """Keep each caller's scalar result independent of snapshot success records."""
+    return {
+        **value,
+        "issues": [dict(issue) for issue in value["issues"]],
+        "categories": {key: dict(item) for key, item in value["categories"].items()},
+        "obligations": [
+            {**item, "source_business": dict(item["source_business"]), "source_events": []}
+            for item in value["obligations"]
+        ],
+    }
+
+
+def _dashboard_source_semantics(connection, states, *, reads=None):
+    """Keep every semantic source's original identity and result-byte proof."""
+    from .obligation_classification import adopted_source_semantics
+
+    semantic_sources = [
+        {
+            "key": key, "name": state.component, "category": state.category,
+            "account": state.account, "source_calculation_id": state.source_calculation_id,
+            "source_fact_id": state.source_fact_id,
+            "source_business": {"kind": state.source_kind, "subject_id": state.source_subject_id},
+        }
+        for key, state in states.items() if state.source_kind in SEMANTIC_SOURCE_KINDS
+    ]
+    return adopted_source_semantics(connection, semantic_sources, reads=reads)
+
+
+def _dashboard_source_category_key(state, semantics, labels):
+    values = (state.category, state.account, state.source_kind,
+              semantics.get(state.source_calculation_id))
+    identity = tuple((type(value), value) for value in values)
+    try:
+        label = labels.get(identity)
+    except TypeError:
+        identity, label = None, None
+    if label is None:
+        label = obligation_category(*values[:3], semantic=values[3])
+        if identity is not None:
+            labels[identity] = label
+    return label
+
+
+def _dashboard_source_amounts(state):
+    source = None if state.bad_source else state.source_amount
+    paid = None if state.bad_paid else state.paid
+    other = None if state.bad_other else state.other_settled
+    remaining = None if source is None or paid is None or other is None else checked(
+        source - paid - other,
+    )
+    status = (
+        "unestablished" if remaining is None else "settled" if remaining == 0
+        else "over_settled" if remaining < 0 else "open" if remaining == source else "partial"
+    )
+    return source, paid, other, remaining, status
+
+
+def _dashboard_source_record(key, state, scope, category_key):
+    source, paid, other, remaining, status = _dashboard_source_amounts(state)
+    period_paid, period_other = scope.period_amounts.get(key, (0, 0))
+    return _DashboardSourceRecord(
+        key, state.component, state.category, state.account, state.counterparty_id,
+        state.source_kind, state.source_subject_id, state.source_calculation_id,
+        state.source_fact_id, source, paid, other,
+        None if state.bad_paid else period_paid,
+        None if state.bad_other else period_other, remaining, status,
+        state.source_event_count, category_key,
+    )
+
+
+def _dashboard_source_records(connection, scope, states, *, reads=None, _cache_eligibility=False):
+    """Build internal scalar records after independently checking all semantics."""
+    semantics = _dashboard_source_semantics(connection, states, reads=reads)
+    labels, records, scalar_only = {}, [], True
+    for key, state in states.items():
+        label = _dashboard_source_category_key(state, semantics, labels)
+        record = _dashboard_source_record(key, state, scope, label)
+        records.append(record)
+        if _cache_eligibility and scalar_only:
+            if key in scope.overrides:
+                # Only overlays contain raw Python fields. Inspect the actual
+                # output, including masked unknown amounts, as the old scan did.
+                scalar_only = all(not isinstance(value, (dict, list)) for value in record)
+            elif key in scope.period_amounts:
+                # Every base field came from JSON1 (including exceptional
+                # single-path fallback). Labels are rule strings; remaining
+                # arithmetic still passes checked(). Only period amounts come
+                # from a separate reducer and may carry a composite value.
+                scalar_only = not isinstance(record.period_paid_fen, (dict, list)) and (
+                    not isinstance(record.period_other_settled_fen, (dict, list))
+                )
+    result = tuple(records)
+    return (result, scalar_only) if _cache_eligibility else result
+
+
+def frozen_dashboard_group_sources(connection, period, *, reads=None, **kwargs):
+    """Owned snapshot only: expose immutable records to the group assembler."""
+    from .query_reads import _owns_current_selector_snapshot
+
+    if not _owns_current_selector_snapshot(reads, connection):
+        return None
+    return frozen_dashboard_open_sources(
+        connection, period, reads=reads, reuse_scope_sources=True, _records=True, **kwargs,
+    )
+
+
+def frozen_dashboard_open_sources(
+    connection, period, *, current=False, page_keys=None, exact_sources=False, reads=None,
+    reuse_scope_sources=False, _records=False,
+):
     """Authenticate open-state scalars without decoding their event histories.
 
     The directory commits membership; original state bytes commit identity and
     amounts. Only those scalar fields survive the read. Existing root measures
     still decide overall completeness, including obligations outside this page.
     """
+    from .query_reads import _owns_current_selector_snapshot
     from .settlement_projection import _obligation_view
 
     scope = _scope(connection, period, current=current, reads=reads)
     if scope is None:
         return None
-    entries = _page_entries(
+    if exact_sources and page_keys is None:
+        raise ValueError("exact sources require explicit keys")
+    cache = (
+        reads._report_snapshot_cache
+        if reuse_scope_sources and _owns_current_selector_snapshot(reads, connection) else None
+    )
+    cache_key = ("dashboard_complete_frozen_records" if _records
+                 else "dashboard_complete_frozen_sources", period)
+    historical = cache.get(cache_key) if cache is not None else None
+    if current and exact_sources and historical is not None:
+        prior, keys, value = historical
+        # _scope has already checked current's complete tail. Reuse only its
+        # exact equal reducer, never infer current completeness from old rows.
+        if (
+            scope.through == prior.through == scope.cutoff == prior.cutoff
+            and scope.base_root is prior.base_root
+            and scope.groups is prior.groups
+            and scope.period_amounts is prior.period_amounts
+            and scope.overrides is prior.overrides
+            and set(page_keys) == keys
+        ):
+            result = dict(value) if _records else _copy_dashboard_source_result(value)
+            result["current_cutoff_period"] = result["cutoff_period"]
+            return result
+    entries = {} if exact_sources else _page_entries(
         connection, scope, include_settled=False, page_keys=None,
-        limit=sum(group[_G_OPEN_COUNT] for key, group in _included_groups(scope)) + len(scope.overrides),
-        reads=reads,
+        limit=(sum(group[_G_OPEN_COUNT] for key, group in _included_groups(scope))
+               + len(scope.overrides)),
+        reads=reads, complete_open=True,
     )
     if page_keys:
         entries.update(_page_entries(
             connection, scope, include_settled=True, page_keys=set(page_keys), reads=reads,
         ))
-    fields = (
-        "obligation_key", "first_source_period", "source_event_count", "source_amount",
-        "paid", "other_settled", "bad_source", "bad_paid", "bad_other",
-        "source_subject_id", "category", "account", "counterparty_id", "component",
-        "source_calculation_id", "source_kind", "source_fact_id", "source_digest",
+    states = _dashboard_state_scalars(connection, scope, entries, reads=reads, _records=_records)
+    record_cache_candidate = (
+        _records and cache is not None and not current and not exact_sources and page_keys is None
     )
-    states = {key: dict(scope.overrides[key]) for key in entries if key in scope.overrides}
-    base = [[key, entries[key][0]] for key in entries if key not in scope.overrides]
-    if base:
-        for row in connection.execute(
-            "SELECT json_extract(ids.value,'$[0]') requested_key,"
-            "json_extract(ids.value,'$[1]') digest_hex,s.obligation_key saved_key,s.payload,"
-            + ",".join(f"json_extract(s.payload,'$.{field}') {field}" for field in fields)
-            + " FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
-            "s.digest=unhex(json_extract(ids.value,'$[1]'))",
-            (canonical(base),),
-        ):
-            key = row["requested_key"]
-            if (row["saved_key"] != key or row["payload"] is None
-                    or _sha(row["payload"]).hex() != row["digest_hex"]
-                    or row["obligation_key"] != key):
-                _fail("freeze_state_digest_mismatch", scope.base_period)
-            state = {field: row[field] for field in fields}
-            if state["first_source_period"] != entries[key][1]:
-                _fail("freeze_classification_source_period_mismatch", scope.base_period)
-            states[key] = state
-    if states.keys() != entries.keys():
-        _fail("freeze_state_missing_group_source", scope.base_period)
-    _verified_page_sources(connection, scope.base_period, list(states.values()))
-    obligations = []
-    for key, state in states.items():
-        state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
-        obligations.append(_obligation_view(state))
-    obligations = classify_obligations(connection, obligations, reads=reads)
+    if _records:
+        obligations = _dashboard_source_records(
+            connection, scope, states, reads=reads, _cache_eligibility=record_cache_candidate,
+        )
+        if record_cache_candidate:
+            obligations, scalar_only = obligations
+    else:
+        obligations = []
+        for key, state in states.items():
+            state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
+            obligations.append(_obligation_view(state))
+        obligations = classify_obligations(connection, obligations, reads=reads)
     categories = {}
     for item in obligations:
-        if item["remaining_fen"] == 0:
+        remaining = item.remaining_fen if _records else item["remaining_fen"]
+        if remaining == 0:
             continue
-        category = categories.setdefault(item["category_key"], {"count": 0, "amount": 0})
+        label = item.category_key if _records else item["category_key"]
+        category = categories.setdefault(label, {"count": 0, "amount": 0})
         category["count"] += 1
         category["amount"] = (
-            None if category["amount"] is None or item["remaining_fen"] is None
-            else checked(category["amount"] + item["remaining_fen"])
+            None if category["amount"] is None or remaining is None
+            else checked(category["amount"] + remaining)
         )
     included = list(_included_groups(scope))
     count = sum(group[_G_OBLIGATION_COUNT] for key, group in included)
     unknown = any(group[_G_UNKNOWN_COUNT] for key, group in included)
     through = str(YearMonth.from_ordinal(scope.through))
-    return {
+    measures = (
+        _dashboard_category_measures(connection, scope, reads=reads) if exact_sources else None
+    )
+    if measures is not None:
+        categories = {
+            key: {"count": item["count"], "amount": None if item["unknown_count"] else item["sum"]}
+            for key, item in measures.items()
+        }
+    result = {
         "cutoff_period": through,
-        "status": "partially_established" if unknown else "established" if count else "not_established",
+        "status": (
+            "partially_established" if unknown else "established" if count else "not_established"
+        ),
         "complete": not unknown,
-        "issues": ([{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []),
+        "issues": (
+            [{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []
+        ),
         "categories": categories,
         "obligations": obligations,
+        **({"_category_measures": measures} if exact_sources else {}),
         **({"current_cutoff_period": through} if current else {}),
     }
+    if cache is not None and not current and not exact_sources and page_keys is None:
+        # Only fixed scalar views enter this internal presentation cache. An
+        # exceptional composite keeps the original uncached rejection path.
+        scalar_only = scalar_only if record_cache_candidate else (
+            all(
+                not isinstance(field, (dict, list))
+                for item in obligations for name, field in item.items()
+                if name not in {"source_business", "source_events"}
+            )
+        )
+        if scalar_only:
+            cache[cache_key] = (
+                scope, {item.key if _records else item["key"] for item in obligations},
+                dict(result) if _records else _copy_dashboard_source_result(result),
+            )
+    return result
 
 
 def frozen_dashboard_open(
@@ -2057,32 +2516,15 @@ def frozen_dashboard_open(
         }
     if limit < 1:
         raise ValueError("page limit must be positive")
-    categories = {}
     obligation_count = 0
     unknown = False
-    for key, group in _included_groups(scope):
+    for _key, group in _included_groups(scope):
         obligation_count += group[_G_OBLIGATION_COUNT]
         unknown = unknown or bool(group[_G_UNKNOWN_COUNT])
-        if not group[_G_OPEN_COUNT] or key[4] in SEMANTIC_SOURCE_KINDS:
-            continue
-        label = obligation_category(key[1], key[2], key[4])
-        item = categories.setdefault(label, {"count": 0, "amount": 0, "unknown": False})
-        item["count"] += group[_G_OPEN_COUNT]
-        item["amount"] = checked(item["amount"] + group[_G_OPEN_SUM])
-        item["unknown"] = item["unknown"] or bool(group[_G_OPEN_UNKNOWN_COUNT])
-    semantic_states = _semantic_open_states(connection, scope, reads=reads)
-    for obligation in classify_obligations(
-        connection, [_obligation_view(state) for state in semantic_states], reads=reads,
-    ):
-        item = categories.setdefault(
-            obligation["category_key"], {"count": 0, "amount": 0, "unknown": False},
-        )
-        item["count"] += 1
-        item["amount"] = checked(item["amount"] + (obligation["remaining_fen"] or 0))
-        item["unknown"] = item["unknown"] or obligation["remaining_fen"] is None
+    measures = _dashboard_category_measures(connection, scope, reads=reads)
     category_rows = {
-        key: {"count": value["count"], "amount": None if value["unknown"] else value["amount"]}
-        for key, value in categories.items()
+        key: {"count": value["count"], "amount": None if value["unknown_count"] else value["sum"]}
+        for key, value in measures.items()
     }
     open_entries = None
     if page_keys is None or page_keys:
@@ -2104,13 +2546,17 @@ def frozen_dashboard_open(
             candidates = [scope.overrides[key] for key in selected if key in scope.overrides]
             base = [[key, open_entries[key][0]] for key in selected if key not in scope.overrides]
             if base:
-                found = list(connection.execute(
-                    "SELECT json_extract(ids.value,'$[0]') obligation_key," + ",".join(
-                        f"json_extract(s.payload,'$.{field}') {field}" for field in fields
-                    ) + " FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
+                found = [{"obligation_key": row["obligation_key"],
+                          **_packed_state_scalars(
+                              connection, row["digest_hex"], row["scalars"], fields,
+                          )} for row in connection.execute(
+                    "SELECT json_extract(ids.value,'$[0]') obligation_key,"
+                    "json_extract(ids.value,'$[1]') digest_hex,json_extract(s.payload,"
+                    + ",".join(f"'$.{field}'" for field in fields)
+                    + ") scalars FROM json_each(?) ids LEFT JOIN settlement_state_revision s ON "
                     "s.digest=unhex(json_extract(ids.value,'$[1]'))",
                     (canonical(base),),
-                ))
+                )]
                 if len(found) != len(base) or any(row["source_kind"] is None for row in found):
                     _fail("freeze_state_missing_sort_source", scope.base_period)
                 candidates.extend(dict(row) for row in found)
@@ -2140,7 +2586,7 @@ def frozen_dashboard_open(
             state = dict(state)
             state["period_paid"], state["period_other"] = scope.period_amounts.get(key, (0, 0))
             states.append(state)
-    _verified_page_sources(connection, scope.base_period, states)
+    _verified_page_sources(connection, scope.base_period, states, reads=reads)
     obligations = classify_obligations(
         connection, [_obligation_view(state) for state in states[:limit]], reads=reads,
     )

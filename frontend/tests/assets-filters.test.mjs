@@ -1,22 +1,49 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 let number = 0;
+
+test("asset and project lists preserve 20 then 500 then the ordered tail", async () => {
+  for (const section of ["assets", "projects"]) {
+    const calls = [], field = section === "assets" ? "asset_id" : "project_id";
+    const view = await assetView((period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+    const ids = Array.from({ length: 525 }, (_, index) => `item-${index}`);
+    const pageResponse = (start, count) => {
+      const value = response("all");
+      value.data.collections[section] = { items: ids.slice(start, start + count).map(id => ({ [field]: id })),
+        page: { total_count: 525, filtered_count: 525, returned_count: count, has_more: start + count < 525, next_cursor: start + count < 525 ? `cursor-${start + count}` : null } };
+      return value;
+    };
+    try {
+      const first = view.loadAssets("2026-03"); assert.equal(calls[0].query?.limit ?? 20, 20);
+      calls[0].resolve(pageResponse(0, 20)); await first;
+      const items = view.response.value.data.collections[section].items;
+      const next = view.loadMore(section); assert.equal(calls[1].query.limit, 500); assert.equal(calls[1].query.cursor, "cursor-20");
+      calls[1].resolve(pageResponse(20, 500)); await next;
+      const tail = view.loadMore(section); assert.equal(calls[2].query.cursor, "cursor-520");
+      calls[2].resolve(pageResponse(520, 5)); await tail;
+      assert.equal(view.response.value.data.collections[section].items, items);
+      assert.deepEqual(items.map(item => item[field]), ids);
+      await view.loadMore(section); assert.equal(calls.length, 3);
+    } finally { view.cleanup(); }
+  }
+});
 async function assetView(fetchAssetsDashboard, query = { asset_filter: "all" }) {
   const key = `assetFilterHarness${++number}`;
   const route = Vue.reactive({ query: { company_id: "co", period: "2026-03", ...query }, hash: "" });
   const context = Vue.ref({ current_company: { company_id: "co" }, periods: [{ key: "2026-03" }, { key: "2026-04" }], default_period: "2026-03" });
-  globalThis[key] = { Vue, route, context, fetchAssetsDashboard, appendDashboardCollection };
+  globalThis[key] = { Vue, route, context, fetchAssetsDashboard, appendDashboardCollection, prepareDashboardCollections };
   const originalDocument = globalThis.document;
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
-  const source = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const source = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const imports = `
-    const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;
-    const { appendDashboardCollection } = globalThis.${key};
+    const { computed, nextTick, ref, shallowRef, watch } = globalThis.${key}.Vue;
+    const { appendDashboardCollection, prepareDashboardCollections } = globalThis.${key};
     const onMounted = () => {}; const onBeforeUnmount = () => {};
     const { fetchAssetsDashboard } = globalThis.${key};
     const useRoute = () => globalThis.${key}.route;
@@ -189,6 +216,7 @@ test("asset and project continuations retain reactive arrays and reject detached
       const renderedCount = Vue.computed(() => view.response.value.data.collections[section].items.length);
       assert.equal(renderedCount.value, 1);
       const pending = view.loadMore(section), next = response("all", "v1", "next-asset");
+      assert.equal(calls.at(-1).query.limit, 500);
       next.data.collections.projects.items = [{ project_id: "next-project" }];
       next.data.collections[section].page.next_cursor = "following";
       calls.at(-1).resolve(next); await pending;

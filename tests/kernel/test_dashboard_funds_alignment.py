@@ -28,22 +28,31 @@ resident = resident_fixture
 def test_brief_skips_absent_investment_details_but_checks_actual_sources(
     investment_book, monkeypatch
 ):
+    from ai_accounting.kernel import dashboard_model_reads
+
     engine, save, publish = investment_book
     original = FundsRead.investment_summary
     calls = []
 
-    def counted(self):
+    def counted(self, **options):
         calls.append(True)
-        return original(self)
+        return original(self, **options)
 
-    monkeypatch.setattr(FundsRead, "investment_summary", counted)
     dashboard = Dashboard(engine)
-    assert dashboard.brief("2026-01", preparation="deferred")["data"] is not None
+
+    def brief():
+        # Observe this read only; writes also materialize the full funds page.
+        with monkeypatch.context() as patch:
+            patch.setattr(FundsRead, "investment_summary", counted)
+            patch.setattr(dashboard_model_reads, "read_page", lambda *args, **kwargs: None)
+            return dashboard.brief("2026-01", preparation="deferred")
+
+    assert brief()["data"] is not None
     assert calls == []
 
     save("money_fund_subscription", "buy", investments.subscription())
     publish("buy")
-    assert dashboard.brief("2026-01", preparation="deferred")["data"] is not None
+    assert brief()["data"] is not None
     assert calls == []
     with engine.store.connection() as connection:
         trigger = connection.execute(
@@ -57,7 +66,7 @@ def test_brief_skips_absent_investment_details_but_checks_actual_sources(
         assert changed.rowcount == 1
         connection.execute(trigger)
     with pytest.raises(KernelError):
-        dashboard.brief("2026-01", preparation="deferred")
+        brief()
 
 
 def _publish_filter_funding(engine, accounts, *, period="2026-09"):
@@ -495,6 +504,56 @@ def test_drafts_are_not_book_accounts_and_display_numbers_are_not_identity(bank_
         "bank-a",
         "bank-b",
     }
+
+
+@pytest.mark.parametrize("display_number", [None, "622200001234"])
+@pytest.mark.parametrize("native", [False, True])
+def test_account_display_does_not_invent_monthly_numbers(
+    bank_book, monkeypatch, display_number, native,
+):
+    from ai_accounting.kernel import dashboard_model_reads
+
+    engine, save, publish, _ = bank_book
+    periods = ("2026-07", "2026-08", "2026-09")
+    for index, period in enumerate(periods):
+        _publish_filter_funding(engine, ["bank-z"], period=period)
+        banking.statement(
+            save, publish, [banking.entry(day=period + "-02", amount=1)],
+            bank="bank-z", month=period, subject="statement-" + period, initial=index,
+        )
+    # Its identity sorts before the existing account, but must not renumber it.
+    save("funding", "new-september-account", {
+        "period": "2026-09", "actual_date": "2026-09-03", "bank_account_id": "bank-a",
+        "owner_id": "new-owner", "funding_kind": "capital", "amount_fen": 2,
+    })
+    publish("new-september-account")
+    Entities(engine).update_entity_profile(
+        "bank-z", {"display_name": "兴业银行", "display_number": display_number},
+        source="synthetic registered account", expected_revision=1, request_id="existing-profile",
+    )
+    Entities(engine).update_entity_profile(
+        "bank-a", {"display_name": "网商银行"}, source="synthetic new account",
+        expected_revision=1, request_id="new-profile",
+    )
+    if native:
+        monkeypatch.setattr(dashboard_model_reads, "read_page", lambda *args, **kwargs: None)
+    dashboard = Dashboard(engine)
+    for period in periods:
+        data = dashboard.funds(period)["data"]
+        account = next(item for item in data["collections"]["accounts"]["items"]
+                       if item["account_id"] == "bank-z")
+        assert (account["name"], account["code"]) == ("兴业银行", display_number or "")
+        assert (account["statement"]["account_name"], account["statement"]["account_code"]) == (
+            account["name"], account["code"],
+        )
+        for section in ("movements", "statements"):
+            rows = [row for row in data["collections"][section]["items"]
+                    if row["account_id"] == "bank-z"]
+            assert len(rows) == 1
+            assert (rows[0]["account_name"], rows[0]["account_code"]) == (
+                account["name"], account["code"],
+            )
+        assert data["account_count"] == (2 if period == "2026-09" else 1)
 
 
 def test_bank_coverage_distinguishes_missing_partial_empty_and_review(bank_book):

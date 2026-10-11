@@ -5,13 +5,15 @@ import type { BriefOpenDisplayGroup, BriefOpenItems, BriefVoucher } from "../../
 import { fen, formatFen } from "../../utils/money";
 import { businessStateLabel } from "../../api/dashboardContracts";
 import BriefGroupMembers from "./BriefGroupMembers.vue";
-const props = defineProps<{ openItems: BriefOpenItems; items: BriefOpenDisplayGroup[]; periodLabel: string; periodStatus: string; period: string; snapshotVersion?: string | null; refreshGeneration?: number; voucherIndex?: ReadonlyMap<string, BriefVoucher>; focusRequest?: number }>();
+import { briefCategoryIndex } from "../../utils/briefCategoryIndex";
+const props = defineProps<{ openItems: BriefOpenItems; items: BriefOpenDisplayGroup[]; periodLabel: string; periodStatus: string; period: string; snapshotVersion?: string | null; refreshGeneration?: number; refreshing?: boolean; voucherIndex?: ReadonlyMap<string, BriefVoucher>; focusRequest?: number }>();
 defineEmits<{ changed: []; vouchers: [items: BriefVoucher[]]; requestVoucher: [id: string] }>();
 const route = useRoute(), expandedItemId = ref(""), selectedCategoryKey = ref("");
 const isClosed = computed(() => props.periodStatus === "closed");
-const visibleCategories = computed(() => props.openItems.categories.filter(category => category.count).map(category => ({ ...category, items: props.items.filter(item => item.category_key === category.key) })));
+const categoryIndex = computed(() => briefCategoryIndex(props.items, item => item.category_key));
+const visibleCategories = computed(() => props.openItems.categories.filter(category => category.count).map(category => ({ ...category, items: categoryIndex.value.get(category.key)?.items ?? [] })));
 const selectedCategory = computed(() => visibleCategories.value.find(category => category.key === selectedCategoryKey.value) ?? null);
-const categoryNeedsMore = computed(() => !!selectedCategory.value && new Set(selectedCategory.value.items.map(item => item.group_key)).size < selectedCategory.value.group_count);
+const categoryNeedsMore = computed(() => !!selectedCategory.value && (categoryIndex.value.get(selectedCategory.value.key)?.groupKeys.size ?? 0) < selectedCategory.value.group_count);
 function canExpand(_item: BriefOpenDisplayGroup) { return true; }
 function toggleItem(item: BriefOpenDisplayGroup, event: Event) {
   if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("button, a, .group-members")) return;
@@ -120,7 +122,7 @@ onBeforeUnmount(() => { if (focusTimer) clearTimeout(focusTimer); });
               <b>{{ amountLabel(item.outstanding_fen) }}</b>
             </span>
             <svg v-if="canExpand(item)" class="row-chevron business-list-arrow" :class="{ expanded: expandedItemId === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
-            <BriefGroupMembers section="open_items" :group-key="item.group_key" :expanded="expandedItemId === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :voucher-index="voucherIndex" :open-summary="openItems" :direction="selectedCategory.direction" :period-closed="isClosed" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
+            <BriefGroupMembers section="open_items" :group-key="item.group_key" :expanded="expandedItemId === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :refreshing="refreshing" :voucher-index="voucherIndex" :open-summary="openItems" :direction="selectedCategory.direction" :period-closed="isClosed" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
           </li>
         </ul>
         <slot name="pagination" :needs-more="categoryNeedsMore" />

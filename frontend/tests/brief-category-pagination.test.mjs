@@ -41,6 +41,23 @@ test("business root continuation follows only the incomplete selected category",
         props.items = props.items.filter(item => item.group_key.startsWith("a-")); props.focusedActivityGroup = null; props.snapshotVersion = "v2";
         await flush(); assert.equal(events.at(-1), "more", "new snapshot reads the selected missing category again");
         paging.active = false; await flush(); assert.deepEqual(events.at(-1), ["pause", "v2"]);
+        for (const total of [100, 200, 400]) {
+          let classifications = 0;
+          props.items = Array.from({ length: total }, (_, index) => {
+            const value = item(`growth-${index}`, index % 2 ? "b" : "a");
+            Object.defineProperty(value, section === "activity" ? "group" : "category_key", {
+              enumerable: true, get() { classifications++; return index % 2 ? "b" : "a"; },
+            });
+            return value;
+          });
+          select("a"); await flush();
+          const read = () => section === "activity" ? state.visibleItems.value : state.selectedCategory.value.items;
+          assert.equal(read().length, total / 2);
+          assert.equal(classifications, total, "each loaded row is classified once for all categories");
+          select("b"); await flush(); assert.equal(read().length, total / 2);
+          select("a"); await flush(); assert.equal(read().length, total / 2);
+          assert.equal(classifications, total, "switching categories reuses rows and unique group counts");
+        }
       } finally { app.unmount(); }
     });
   } finally { await server.close(); }

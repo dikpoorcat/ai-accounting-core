@@ -44,8 +44,8 @@ async function withServer(run, { displayMode, assetWork, assetListInitialized } 
       }
       if (key === "assets" && assetListInitialized) code = code.replace("const listInitialized = ref(false)", "const listInitialized = ref(true)");
       if (key === "assets" && assetWork) code = code.replace(
-        "function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {",
-        "function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary { globalThis.stage7AssetRenderWork.paymentSummaries += 1;",
+        "function buildAssetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {",
+        "function buildAssetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary { globalThis.stage7AssetRenderWork.paymentSummaries += 1;",
       );
       if (key === "funds") code = code.replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")').replaceAll("{ immediate: true }", "{ immediate: false }");
@@ -499,7 +499,7 @@ test("asset list rendering does not format hidden card payment summaries as load
       assert.match(html, /¥9,007,199,254,740,993\.45/);
       assert.match(html, /¥1,318\.00/);
       assert(work.paymentSummaries > 0, "visible list payment summaries remain formatted");
-      assert(work.paymentSummaries <= 3 * count, `${count} list rows must not also format their hidden cards`);
+      assert.equal(work.paymentSummaries, count, `${count} list rows compute each payment summary once`);
     }
   }, { displayMode: "list", assetWork: work });
 });

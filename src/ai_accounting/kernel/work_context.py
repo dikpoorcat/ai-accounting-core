@@ -102,8 +102,13 @@ class WorkContext:
             ).encode()
         ).decode()
 
-    def _headers_sql(self):
+    def _headers_sql(self, *, exact_ids=False):
         replaced = self.discovery._superseded_subject("d")
+        driver = (
+            "json_each(?) ids CROSS JOIN discovery_fact_history d "
+            "INDEXED BY sqlite_autoindex_discovery_fact_history_1 ON d.fact_id=ids.value "
+            if exact_ids else "discovery_fact_history d "
+        )
         return (
             "SELECT d.fact_id,d.subject_id,d.revision,d.kind,d.period,"
             "EXISTS(SELECT 1 FROM discovery_fact_current live "
@@ -115,7 +120,7 @@ class WorkContext:
             "EXISTS(SELECT 1 FROM pending p WHERE p.subject_id=d.subject_id) pending,"
             "(SELECT c.id FROM calculation_current cc JOIN calculation c "
             "ON c.id=cc.calculation_id WHERE cc.subject_id=d.subject_id "
-            "AND c.fact_id=d.fact_id) calculation_id FROM discovery_fact_history d "
+            "AND c.fact_id=d.fact_id) calculation_id FROM " + driver
         )
 
     def _candidate_sql(self, period, area, subjects, sources):
@@ -233,8 +238,8 @@ class WorkContext:
             return []
         headers = list(
             connection.execute(
-                self._headers_sql() + "JOIN json_each(?) ids ON d.fact_id=ids.value "
-                "WHERE d.kind='material_source_v2' ORDER BY d.period DESC,d.fact_id DESC",
+                self._headers_sql(exact_ids=True)
+                + "WHERE d.kind='material_source_v2' ORDER BY d.period DESC,d.fact_id DESC",
                 (canonical(sorted(exact_ids)),),
             )
         )

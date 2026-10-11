@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "../api/dashboardContracts";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import {
@@ -18,7 +19,7 @@ import DashboardSelect from "../components/DashboardSelect.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
-import { appendDashboardCollection } from "../utils/dashboardCollections";
+import { appendDashboardCollection, prepareDashboardCollections } from "../utils/dashboardCollections";
 
 const filters = [
   { value: "all", label: "全部资产", description: "查看所选月份的全部资产" },
@@ -47,7 +48,7 @@ const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const selectedPeriod = ref("");
-const response = ref<AssetsDashboardResponse | null>(null);
+const response = shallowRef<AssetsDashboardResponse | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 const displayMode = ref<"cards" | "list">("cards");
@@ -178,7 +179,7 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
       project_id: focusedProjectId.value || undefined,
     });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
-    if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; loading.value = false; }
+    if (isCurrent(generation, selection) && activeController === controller) { prepareDashboardCollections(result.data); response.value = result; updateNotice.value = ""; loading.value = false; }
     await nextTick();
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
       const heading = document.getElementById(route.hash.slice(1));
@@ -264,6 +265,7 @@ async function reloadCollection(section: "assets" | "projects") {
     });
     if (!valid() || !next.data || !response.value?.data) return;
     if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
+    prepareDashboardCollections(next.data);
     const latest = response.value, collection = next.data.collections[section];
     if (!collection) throw new Error("所选资产明细暂时无法读取，请重试。");
     response.value = { ...latest, data: { ...latest.data!,
@@ -302,7 +304,7 @@ async function loadMore(section: "assets" | "projects" = "assets") {
   const generation = requestGeneration, selection = selectionKey();
   const request = new AbortController(); pageControllers.set(section, request); pageLoading.value[section] = true; pageErrors.value[section] = "";
   try {
-    const next = await fetchAssetsDashboard(selectedPeriod.value, request.signal, { section, asset_filter: focusedAssetId.value ? "all" : filter.value, asset_id: focusedAssetId.value || undefined, project_id: focusedProjectId.value || undefined, cursor: page.next_cursor, expected_version: current.snapshot_version });
+    const next = await fetchAssetsDashboard(selectedPeriod.value, request.signal, { section, asset_filter: focusedAssetId.value ? "all" : filter.value, asset_id: focusedAssetId.value || undefined, project_id: focusedProjectId.value || undefined, cursor: page.next_cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT, expected_version: current.snapshot_version });
     if (!isCurrent(generation, selection) || pageControllers.get(section) !== request || response.value?.snapshot_version !== current.snapshot_version || !next.data) return;
     if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
     const latest = response.value;
@@ -401,7 +403,13 @@ function paymentScopeLabel(item: EstablishedAssetItem) {
   } as Record<string, string>)[item.settlement_scope] ?? "相关款项";
 }
 
+const assetPaymentSummaries = new WeakMap<EstablishedAssetItem, AssetPaymentSummary>();
 function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {
+  let summary = assetPaymentSummaries.get(item);
+  if (!summary) { summary = buildAssetPaymentSummary(item); assetPaymentSummaries.set(item, summary); }
+  return summary;
+}
+function buildAssetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {
   const summary = item.payment_summary;
   const label = paymentScopeLabel(item);
   if (!summary.obligation_count) {

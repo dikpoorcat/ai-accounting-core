@@ -8,6 +8,9 @@ export type DashboardReadContext = DashboardPeriodPreparationContract.DashboardR
 export type DashboardPage = DashboardFundsContract.CollectionPage;
 export type DashboardCollection<T = unknown> = Omit<DashboardFundsContract.Collection, "items"> & { items: T[] };
 
+// First reads and manual voucher pages remain 20; automatic cursor continuation is bounded.
+export const AUTOMATIC_DASHBOARD_PAGE_LIMIT = 500;
+
 export interface DashboardPageQuery {
   section?: string;
   cursor?: string;

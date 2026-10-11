@@ -657,6 +657,7 @@ class LocalService:
             "rebuild": engine.rebuild_projections,
             "verify_integrity": maintenance.verify_integrity,
             "repair_read_indexes": maintenance.repair_read_indexes,
+            "rebuild_dashboard_read_model": maintenance.rebuild_dashboard_read_model,
             "report": reports.report,
             "preview_report_export": reports.preview_export,
             "confirm_report_export": reports.confirm_export,

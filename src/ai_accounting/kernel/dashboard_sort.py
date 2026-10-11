@@ -39,29 +39,102 @@ PARTIES = (
 CONTRIBUTIONS = frozenset(
     {"employee_social", "employer_social", "employee_housing", "employer_housing"}
 )
+ACTIVITY_FACT_FIELDS = (
+    "funding_kind", "side", "creditor_kind", "income_kind", "disposal_kind",
+    "payer_kind", "nature", "component", "tax_kind", "expense_class",
+)
+IDENTITY_FACT_FIELDS = (
+    "component", "employee_id", "person_id", "nature", "payer_kind", "creditor_kind",
+    "expense_class", "tax_kind", "side",
+)
+
+
+def fact_identity_scalars(snapshot, headers):
+    """Read only formal matter/object inputs; retain every caller's fact proof.
+
+    Group navigation does not consume dates, amounts or payment recipients.
+    Exact member pages obtain those independently through fact_sort_scalars.
+    """
+    from .query_reads import _owns_current_selector_snapshot
+
+    active = _owns_current_selector_snapshot(
+        getattr(snapshot, "reads", None), getattr(snapshot, "connection", None),
+    )
+    cache = (snapshot.reads._report_snapshot_cache.setdefault("dashboard_fact_identity_scalars", {})
+             if active else {})
+    complete = (snapshot.reads._report_snapshot_cache.get("dashboard_fact_sort_scalars", {})
+                if active else {})
+    groups, result, pending = {}, {}, {}
+    for row in headers:
+        groups.setdefault(row["kind"], set()).add(row["fact_id"])
+    for kind, identifiers in groups.items():
+        fields = [name for name in IDENTITY_FACT_FIELDS
+                  if name in snapshot.store.registry.models[kind].model_fields]
+        missing = set()
+        for ident in identifiers:
+            value = cache.get((kind, ident))
+            if value is None and (kind, ident) in complete:
+                value = {name: complete[kind, ident][name] for name in fields}
+                pending[kind, ident] = value
+            if value is None:
+                missing.add(ident)
+            else:
+                result[ident] = dict(value)
+        if not missing:
+            continue
+        columns = ",".join(["revision_id", *(f'"{name}"' for name in fields)])
+        for row in snapshot.connection.execute(
+            f"SELECT {columns} FROM {table_name(kind)} WHERE revision_id IN "
+            "(SELECT value FROM json_each(?))",
+            (canonical(sorted(missing)),),
+        ):
+            value = {name: row[name] for name in fields}
+            result[row["revision_id"]] = value
+            pending[kind, row["revision_id"]] = dict(value)
+        if not missing <= result.keys():
+            raise KernelError("content_integrity_failed", "清单排序的业务来源缺失")
+    cache.update(pending)
+    return result
 
 
 def fact_sort_scalars(snapshot, headers):
-    """Read only declared date/object fields, never full facts or evidence."""
+    """Read exact scalar locators; callers retain every source/fact proof.
+
+    Reusing these values in the same owned snapshot supplies no adoption or
+    content proof. Readers authenticate their own source before interpreting
+    the locators, just as when they came directly from the typed tables.
+    """
+    from .business_queries import business_amount_field
+    from .query_reads import _owns_current_selector_snapshot
+
+    active = _owns_current_selector_snapshot(
+        getattr(snapshot, "reads", None), getattr(snapshot, "connection", None),
+    )
+    cache = (
+        snapshot.reads._report_snapshot_cache.setdefault("dashboard_fact_sort_scalars", {})
+        if active else {}
+    )
     groups, result = {}, {}
     for row in headers:
         groups.setdefault(row["kind"], set()).add(row["fact_id"])
+    pending = {}
     wanted = (
         *DATES,
         *PARTIES,
         "payment_method",
         "payroll_period",
-        "component",
-        "nature",
-        "payer_kind",
-        "creditor_kind",
-        "tax_kind",
-        "side",
-        "expense_class",
+        *ACTIVITY_FACT_FIELDS,
     )
     for kind, identifiers in groups.items():
+        stored = {ident: cache[kind, ident] for ident in identifiers if (kind, ident) in cache}
+        for ident, value in stored.items():
+            result[ident] = {**value, "recipients": [dict(item) for item in value["recipients"]]}
+        identifiers = identifiers - stored.keys()
+        if not identifiers:
+            continue
         model = snapshot.store.registry.models[kind]
-        fields = [name for name in wanted if name in model.model_fields]
+        fields = [name for name in dict.fromkeys((*wanted, business_amount_field(kind)))
+                  if name in model.model_fields]
         columns = ",".join(["revision_id", "period", *(f'"{name}"' for name in fields)])
         for row in snapshot.connection.execute(
             f"SELECT {columns} FROM {table_name(kind)} WHERE revision_id IN "
@@ -93,6 +166,12 @@ def fact_sort_scalars(snapshot, headers):
                 result[row["revision_id"]]["recipients"].append(dict(row))
         if not identifiers <= result.keys():
             raise KernelError("content_integrity_failed", "清单排序的业务来源缺失")
+        pending.update({
+            (kind, ident): {**result[ident],
+                            "recipients": tuple(dict(item) for item in result[ident]["recipients"])}
+            for ident in identifiers
+        })
+    cache.update(pending)
     return result
 
 
@@ -138,9 +217,13 @@ def _prime_party_metadata(snapshot, identifiers):
     snapshot.metadata.tax_candidates.prime(without_payees)
 
 
-def business_sort_metadata(snapshot, identifiers, *, funds=False):
-    headers = calculation_headers(snapshot, identifiers)
-    scalars = fact_sort_scalars(snapshot, headers.values())
+def business_sort_metadata(snapshot, identifiers, *, funds=False, headers=None, scalars=None):
+    identifiers = set(identifiers)
+    headers = calculation_headers(snapshot, identifiers) if headers is None else headers
+    if headers.keys() != identifiers or any(header["id"] != ident
+                                           for ident, header in headers.items()):
+        raise KernelError("content_integrity_failed", "清单排序的核算来源缺失")
+    scalars = fact_sort_scalars(snapshot, headers.values()) if scalars is None else scalars
     parties = {}
     for ident, header in headers.items():
         value = scalars[header["fact_id"]]
@@ -171,19 +254,27 @@ def business_sort_metadata(snapshot, identifiers, *, funds=False):
         snapshot.connection.execute(
             "WITH RECURSIVE keys AS MATERIALIZED ("
             "SELECT ids.value root,json_extract(b.value,'$.key') obligation_key "
-            "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value,"
-            "json_each(c.outcome,'$.balances') b), "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value CROSS JOIN "
+            "jsonb_each(c.outcome,'$.balances') b), "
             "roots(id) AS (SELECT DISTINCT root FROM keys), "
             "ancestry(root,id) AS (SELECT id,id FROM roots UNION SELECT a.root,d.upstream_id "
-            "FROM ancestry a JOIN dependency_calculation d ON d.calculation_id=a.id) "
-            "SELECT DISTINCT a.root,c.id ancestor_id,c.subject_id,c.kind,"
+            "FROM ancestry a JOIN dependency_calculation d ON d.calculation_id=a.id), "
+            "ancestors(id) AS (SELECT DISTINCT id FROM ancestry), "
+            "obligations AS MATERIALIZED (SELECT c.id ancestor_id,c.subject_id,c.kind,"
+            "json_extract(o.value,'$.key') obligation_key,"
             "json_extract(o.value,'$.name') component,"
-            "json_extract(o.value,'$.counterparty_id') party FROM ancestry a "
-            "JOIN calculation c ON c.id=a.id,json_each(c.outcome,'$.values.obligations') o "
-            "JOIN keys k ON k.root=a.root AND k.obligation_key=json_extract(o.value,'$.key') "
-            "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL "
+            "json_extract(o.value,'$.counterparty_id') party FROM ancestors a "
+            # Several roots can share one exact ancestor. Expand its obligations
+            # once before linking the root-specific requested keys; the full
+            # ancestry below still includes unmatched proof-only sources.
+            "CROSS JOIN calculation c ON c.id=a.id "
+            "CROSS JOIN jsonb_each(c.outcome,'$.values.obligations') o "
+            "WHERE json_extract(o.value,'$.counterparty_id') IS NOT NULL) "
+            "SELECT DISTINCT a.root,o.ancestor_id,o.subject_id,o.kind,o.component,o.party "
+            "FROM ancestry a JOIN obligations o ON o.ancestor_id=a.id "
+            "JOIN keys k ON k.root=a.root AND k.obligation_key=o.obligation_key "
             "UNION SELECT DISTINCT a.root,a.id,NULL,NULL,NULL,NULL FROM ancestry a "
-            "JOIN calculation c ON c.id=a.id "
+            "CROSS JOIN calculation c ON c.id=a.id "
             "WHERE c.kind NOT IN ('asset_activation','asset_consumption')",
             (canonical(sorted(relation_ids)),),
         ).fetchall()
@@ -196,7 +287,7 @@ def business_sort_metadata(snapshot, identifiers, *, funds=False):
         from .report_open_contribution import verify_published_source_bindings
 
         used = {row["ancestor_id"] for row in relation_rows}
-        fallback = verify_published_source_bindings(snapshot.reads, used)
+        fallback = verify_published_source_bindings(snapshot.reads, used, _sql_outcomes=True)
         if fallback:
             snapshot.reads.verify_saved_input_identity(fallback)
         snapshot.reads.verify_sql_outcomes(used)

@@ -128,6 +128,7 @@ def command_models(registry):
         "rebuild": Engine.rebuild_projections,
         "verify_integrity": Maintenance.verify_integrity,
         "repair_read_indexes": Maintenance.repair_read_indexes,
+        "rebuild_dashboard_read_model": Maintenance.rebuild_dashboard_read_model,
         "jobs": Engine.jobs,
         "request_result": Engine.request_result,
         "retry_job": Engine.retry_job,

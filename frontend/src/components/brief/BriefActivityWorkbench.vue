@@ -5,6 +5,7 @@ import type { BriefActivityGroup, BriefActivityRow, BriefActivityDisplayGroup, B
 import type { BusinessStatusCacheEntry } from "../../api/businessStatus";
 import { fen, formatFen } from "../../utils/money";
 import BriefGroupMembers from "./BriefGroupMembers.vue";
+import { briefCategoryIndex } from "../../utils/briefCategoryIndex";
 import BusinessStatusDetails from "../BusinessStatusDetails.vue";
 
 const props = withDefaults(defineProps<{
@@ -221,6 +222,7 @@ function toggleVoucherDisplayMode() {
   if (!props.vouchersReady) { emit("initializeVouchers"); return; }
   if (voucherDisplayMode.value === "all" && props.vouchersHasMore) emit("allVouchers");
   if (voucherDisplayMode.value === "paged") {
+    emit("pauseVouchers");
     const index = props.vouchers.findIndex(item => item.voucher_version_id === selectedVoucher.value);
     voucherPage.value = index < 0 ? 1 : Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
   }
@@ -307,10 +309,9 @@ function groupTypeSummary(group: BriefActivityGroup) {
 }
 const activeGroup = computed(() => props.groups.some(group => group.key === selectedGroup.value)
   ? selectedGroup.value : props.groups[0]?.key || "");
-const availableItems = computed(() => props.focusedActivityGroup && !props.items.some(item => item.group_key === props.focusedActivityGroup?.group_key)
-  ? [props.focusedActivityGroup, ...props.items] : props.items);
-const visibleItems = computed(() => availableItems.value.filter(item => item.group === activeGroup.value));
-const categoryNeedsMore = computed(() => new Set(visibleItems.value.map(item => item.group_key)).size < (props.groups.find(group => group.key === activeGroup.value)?.group_count ?? 0));
+const categoryIndex = computed(() => briefCategoryIndex(props.items, item => item.group, props.focusedActivityGroup));
+const visibleItems = computed(() => categoryIndex.value.get(activeGroup.value)?.items ?? []);
+const categoryNeedsMore = computed(() => (categoryIndex.value.get(activeGroup.value)?.groupKeys.size ?? 0) < (props.groups.find(group => group.key === activeGroup.value)?.group_count ?? 0));
 watch(activeGroup, () => { expandedBusinessKey.value = ""; });
 watch(() => props.focusedActivity, async item => {
   if (!item) return;
@@ -362,7 +363,7 @@ watch(() => props.focusedActivity, async item => {
             <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? '待核对' : formatFen(item.amount_fen) }}</b></span>
             <span class="event-voucher-link business-list-voucher">{{ item.voucher_count }} 张</span>
             <svg class="row-chevron business-list-arrow" :class="{ expanded: expandedBusinessKey === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
-            <BriefGroupMembers section="activity" :group-key="item.group_key" :expanded="expandedBusinessKey === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :focused-activity="focusedActivity" :voucher-index="voucherPreviewIndex" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
+            <BriefGroupMembers section="activity" :group-key="item.group_key" :expanded="expandedBusinessKey === item.group_key" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :refreshing="refreshing" :focused-activity="focusedActivity" :voucher-index="voucherPreviewIndex" @vouchers="$emit('vouchers', $event)" @request-voucher="$emit('requestVoucher', $event)" @changed="$emit('changed')" />
           </li>
         </ul>
         <p v-if="!visibleItems.length" class="empty">当前已加载记录中没有此类业务。</p>
@@ -372,7 +373,13 @@ watch(() => props.focusedActivity, async item => {
     <div v-else class="voucher-view" :aria-busy="vouchersLoading || false">
       <p class="voucher-load-status"><template v-if="vouchersReady">已加载 {{ vouchers.length }} / 本月 {{ voucherCount }} 张凭证<template v-if="voucherDisplayMode === 'all' && vouchersHasMore"> · 全部凭证尚未读取完</template><template v-if="pendingVoucherPage !== null"> · 正在读取第 {{ pendingVoucherPage }} 页</template></template><template v-else-if="selectedVoucher && focusedVoucher">当前显示选中凭证 · 本月 {{ voucherCount }} 张凭证</template><template v-else>本月 {{ voucherCount }} 张凭证 · 按凭证号读取</template></p>
       <div class="voucher-list" aria-label="凭证清单" data-section-focus tabindex="-1">
-        <article v-for="voucher in visibleVouchers" :key="voucher.voucher_version_id" :id="voucher.voucher_version_id === focusedVoucher?.voucher_version_id ? 'selected-voucher' : undefined"
+        <article v-for="voucher in visibleVouchers" :key="voucher.voucher_version_id"
+          v-memo="[voucher, voucher.voucher_version_id, voucher.number, voucher.subject_id, voucher.reverses_version_id, voucher.date, voucher.recognition.label,
+            voucher.type, voucher.state, voucher.summary, voucher.business_amount_label, voucher.business_amount_fen, voucher.has_business_progress,
+            selectedVoucher === voucher.voucher_version_id, focusedVoucher?.voucher_version_id === voucher.voucher_version_id, progressVoucher?.voucher_version_id === voucher.voucher_version_id,
+            route.query.company_id, period, snapshotVersion, refreshing, refreshGeneration,
+            selectedVoucher === voucher.voucher_version_id ? JSON.stringify([voucher.lines, voucher.asset, voucher.asset_members]) : null]"
+          :id="voucher.voucher_version_id === focusedVoucher?.voucher_version_id ? 'selected-voucher' : undefined"
           :class="['voucher-card', { 'is-open': selectedVoucher === voucher.voucher_version_id }]" tabindex="-1">
           <div class="voucher-row-shell">
             <button type="button" class="voucher-row" :aria-expanded="selectedVoucher === voucher.voucher_version_id" @click="selectVoucher(voucher.voucher_version_id)">

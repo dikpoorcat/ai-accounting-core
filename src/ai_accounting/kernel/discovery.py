@@ -23,6 +23,30 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY,
 """
 
 
+def _selected_reference_rows(connection, reference_table, fact_ids, *, entity_id=None, role=None):
+    """Hydrate a selected page through the existing fact-leading primary key."""
+    if reference_table not in {"entity_reference_current", "entity_reference_recorded"}:
+        raise ValueError("invalid entity reference table")
+    where = []
+    parameters = [canonical(sorted(fact_ids))]
+    if entity_id is not None:
+        where.append("r.entity_id=?")
+        parameters.append(entity_id)
+    if role is not None:
+        where.append("r.role=?")
+        parameters.append(role)
+    return list(
+        connection.execute(
+            "SELECT r.* FROM json_each(?) ids CROSS JOIN "
+            + reference_table
+            + f" r INDEXED BY sqlite_autoindex_{reference_table}_1 ON r.fact_id=ids.value"
+            + (" WHERE " + " AND ".join(where) if where else "")
+            + " ORDER BY r.fact_id,r.path",
+            tuple(parameters),
+        )
+    )
+
+
 class Discovery:
     def __init__(self, engine):
         self.engine, self.store = engine, engine.store
@@ -498,23 +522,8 @@ class Discovery:
             if reference_table:
                 from .entity_references import verify_hits
 
-                reference_where = []
-                reference_parameters = [canonical(sorted(fact_ids))]
-                if entity_id is not None:
-                    reference_where.append("r.entity_id=?")
-                    reference_parameters.append(entity_id)
-                if role is not None:
-                    reference_where.append("r.role=?")
-                    reference_parameters.append(role)
-                reference_rows = list(
-                    connection.execute(
-                        "SELECT r.* FROM json_each(?) ids JOIN "
-                        + reference_table
-                        + " r ON r.fact_id=ids.value"
-                        + (" WHERE " + " AND ".join(reference_where) if reference_where else "")
-                        + " ORDER BY r.fact_id,r.path",
-                        tuple(reference_parameters),
-                    )
+                reference_rows = _selected_reference_rows(
+                    connection, reference_table, fact_ids, entity_id=entity_id, role=role
                 )
                 verify_hits(
                     connection,

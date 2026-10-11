@@ -16,12 +16,21 @@ from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_funds import FundsRead, funds
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.identity_corrections import IdentityCorrections
 from ai_accounting.kernel.storage import _active_fact_reads
 
 bank_book = banking.book
 opening_book = _opening_book
 MONTH = "2026-09"
+
+
+@pytest.fixture(autouse=True)
+def native_funds_projection(monkeypatch):
+    from ai_accounting.kernel import dashboard_model_reads
+
+    # These tests measure and guard the native shared-source implementation.
+    monkeypatch.setattr(dashboard_model_reads, "read_page", lambda *args, **kwargs: None)
 
 
 def old_first(dashboard, monkeypatch, *, period=MONTH, limit=2):
@@ -66,7 +75,86 @@ def test_real_first_keeps_complete_output_and_builds_money_source_once(bank_book
     assert not following["collections"]["movements"]["page"]["has_more"]
 
 
-@pytest.mark.parametrize("kind", ["zero", "empty", "case_and_prefix"])
+@pytest.mark.parametrize("selected_type", ["bank", "cash"])
+def test_named_first_account_replaces_identity_ordered_shared_page(
+    bank_book, monkeypatch, selected_type,
+):
+    engine, save, publish, _ = bank_book
+    _publish_filter_funding(engine, ["bank-a", "bank-a"])
+    selected_id = "bank-b" if selected_type == "bank" else "cash-a"
+    if selected_type == "bank":
+        for index in range(3):
+            save("funding", f"named-bank-{index}", {
+                "period": MONTH, "actual_date": f"{MONTH}-{index + 3:02}",
+                "owner_id": "owner", "bank_account_id": selected_id,
+                "funding_kind": "capital", "amount_fen": 5,
+            })
+        publish(*(f"named-bank-{index}" for index in range(3)))
+    else:
+        for index in range(3):
+            save("cash_funding", f"named-cash-{index}", {
+                "period": MONTH, "actual_date": f"{MONTH}-{index + 3:02}",
+                "owner_id": "owner", "cash_account_id": selected_id,
+                "funding_kind": "capital", "amount_fen": 5,
+            })
+        publish(*(f"named-cash-{index}" for index in range(3)))
+    for ident, name in (("bank-a", "招商银行"), (selected_id, "阿尔法账户")):
+        Entities(engine).update_entity_profile(
+            ident, {"display_name": name}, source="synthetic named account",
+            expected_revision=1, request_id="named-profile-" + ident,
+        )
+    board = Dashboard(engine)
+    actual = board.funds(MONTH, movement_account_selection="first", limit=2)
+    assert actual == old_first(board, monkeypatch)
+    data = actual["data"]
+    assert data["selected_movement_account"] == {
+        "type": selected_type, "account_id": selected_id,
+    }
+    assert data["collections"]["accounts"]["items"][0]["account_id"] == selected_id
+    movements = data["collections"]["movements"]
+    assert {(row["account_type"], row["account_id"]) for row in movements["items"]} == {
+        (selected_type, selected_id),
+    }
+    assert data["movement_count"] == 5 and data["inflow_fen"] == 17
+    assert movements["page"]["total_count"] == 5
+    assert movements["page"]["filtered_count"] == 3
+    assert movements["page"]["returned_count"] == 2
+    assert movements["page"]["has_more"]
+    following = board.funds(
+        MONTH, movement_account_type=selected_type, movement_account_id=selected_id,
+        section="movements", cursor=movements["page"]["next_cursor"],
+        expected_version=actual["snapshot_version"], limit=2,
+    )["data"]["collections"]["movements"]
+    assert len(following["items"]) == 1
+    assert following["items"][0]["account_id"] == selected_id
+    assert following["items"][0]["id"] not in {row["id"] for row in movements["items"]}
+    assert not following["page"]["has_more"]
+
+
+def test_named_first_zero_account_discards_other_accounts_shared_movements(bank_book, monkeypatch):
+    engine, save, publish, _ = bank_book
+    _publish_filter_funding(engine, ["bank-a", "bank-a"])
+    banking.opening(save, publish, bank="bank-z")
+    for ident, name in (("bank-a", "招商银行"), ("bank-z", "阿尔法账户")):
+        Entities(engine).update_entity_profile(
+            ident, {"display_name": name}, source="synthetic named zero account",
+            expected_revision=1, request_id="zero-profile-" + ident,
+        )
+    board = Dashboard(engine)
+    actual = board.funds(MONTH, movement_account_selection="first", limit=2)
+    assert actual == old_first(board, monkeypatch)
+    data = actual["data"]
+    assert data["selected_movement_account"] == {"type": "bank", "account_id": "bank-z"}
+    assert data["collections"]["accounts"]["items"][0]["account_id"] == "bank-z"
+    assert data["inflow_fen"] == data["total_fen"] == 2
+    movements = data["collections"]["movements"]
+    assert movements["items"] == []
+    assert movements["page"]["total_count"] == 2
+    assert movements["page"]["filtered_count"] == movements["page"]["returned_count"] == 0
+    assert not movements["page"]["has_more"] and movements["page"]["next_cursor"] is None
+
+
+@pytest.mark.parametrize("kind", ["zero", "empty", "case_and_prefix", "named_tie"])
 def test_first_respects_zero_accounts_empty_source_and_exact_sort(bank_book, monkeypatch, kind):
     engine, save, publish, _ = bank_book
     if kind == "zero":
@@ -79,6 +167,12 @@ def test_first_respects_zero_accounts_empty_source_and_exact_sort(bank_book, mon
         })
     else:
         _publish_filter_funding(engine, ["bank-a", "bank-A", "bank-A.1"])
+        if kind == "named_tie":
+            for ident in ("bank-a", "bank-A", "bank-A.1"):
+                Entities(engine).update_entity_profile(
+                    ident, {"display_name": "共同账户"}, source="synthetic tied account name",
+                    expected_revision=1, request_id="tied-profile-" + ident,
+                )
     board = Dashboard(engine)
     actual = board.funds(MONTH, movement_account_selection="first", limit=2)
     assert actual == old_first(board, monkeypatch)
@@ -144,6 +238,10 @@ def test_closed_receipt_and_current_reversal_keep_original_sources(bank_book, mo
 
 
 def test_first_preserves_unknown_opening_identity_and_amounts(opening_book, monkeypatch):
+    from ai_accounting.kernel import dashboard_funds
+
+    # Route the synthetic unavailable selection through the patched selector.
+    monkeypatch.setattr(dashboard_funds, "_bank_identity_states", lambda *args, **kwargs: None)
     engine, _, _, package, _ = opening_book
     package([
         ("opening_cash", "cash", {"cash_account_id": "cash", "balance_fen": 100}),
@@ -233,10 +331,13 @@ def test_combined_summary_keeps_sqlite_integer_overflow(bank_book, monkeypatch):
     # Private consumer arithmetic probe only; does not attest these synthetic rows as sources.
     source = (
         "SELECT 'bank' category,'bank-a' balance_key,1 sign,"
-        "9223372036854775807 signed_amount,0 internal_transfer,NULL actual_date,'a' page_key "
-        "UNION ALL SELECT 'bank','bank-a',1,1,0,NULL,'b'"
+        "9223372036854775807 signed_amount,0 internal_transfer,NULL actual_date,'a' page_key,"
+        "NULL calculation_id UNION ALL SELECT 'bank','bank-a',1,1,0,NULL,'b',NULL"
     )
     monkeypatch.setattr(FundsRead, "movements", lambda self: (source, []))
+    monkeypatch.setattr(
+        FundsRead, "movement_order", lambda self, rows: [row["page_key"] for row in rows],
+    )
     with Dashboard(engine)._snapshot(MONTH) as snap:
         with pytest.raises(sqlite3.OperationalError, match="integer overflow"):
             FundsRead(snap).account_summary(first_page_request={"after": None, "limit": 2})

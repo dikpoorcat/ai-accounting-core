@@ -8,22 +8,13 @@ from .business_queries import business_amount_field, business_display_amount
 from .contracts import KernelError
 from .dashboard_matters import activity_matter
 from .dashboard_reads import page_keys
-from .dashboard_sort import business_sort_metadata, calculation_headers, date_object_key
-from .schema import table_name
-from .types import YearMonth, canonical, checked, digest
-
-GROUP_PROPERTIES = (
-    "funding_kind",
-    "side",
-    "creditor_kind",
-    "income_kind",
-    "disposal_kind",
-    "payer_kind",
-    "nature",
-    "component",
-    "tax_kind",
-    "expense_class",
+from .dashboard_sort import (
+    business_sort_metadata,
+    calculation_headers,
+    date_object_key,
+    fact_sort_scalars,
 )
+from .types import YearMonth, canonical, checked, digest
 
 
 def _group_title(kind, data, direction):
@@ -52,7 +43,7 @@ def _amount_inputs(snap, headers):
     from .report_open_contribution import verify_published_source_bindings
 
     identifiers = set(headers)
-    fallback = verify_published_source_bindings(snap.reads, identifiers)
+    fallback = verify_published_source_bindings(snap.reads, identifiers, _sql_outcomes=True)
     if fallback:
         snap.reads.verify_saved_input_identity(fallback)
     snap.reads.verify_sql_outcomes(identifiers)
@@ -108,41 +99,40 @@ def _amount_inputs(snap, headers):
     return result
 
 
+def _batch_date_metadata(snap, rows, components):
+    """Batch group keys contain a unique part, so no member order uses root parties."""
+    by_basis = defaultdict(list)
+    for row in rows:
+        by_basis[row["basis_calculation_id"]].append(components.get(row["id"]))
+    result = {}
+    for ident, selections in by_basis.items():
+        key = ("activity_payment_date", ident)
+        if key in snap.semantic_cache and all(
+            parts and all(part["is_batch"] for part in parts) for parts in selections
+        ):
+            result[ident] = {"date": snap.semantic_cache[key], "party": "", "identities": ()}
+    return result
+
+
 def activity_groups(snap):
     """Reuse the month's money proof, retaining only scalar group membership."""
     cached = getattr(snap, "_brief_activity_groups", None)
     if cached is not None:
         return cached
     journal = snap.month_journal
-    rows = journal.verified_rows()
-    if rows is None:
-        query, parameters = journal.sql()
-        rows = list(snap.connection.execute(query, parameters))
-        snap.reads.verify_selected_voucher_adoptions(rows, through_period=snap.month)
+    rows = journal.authenticated_headers()
     ids = {row["basis_calculation_id"] for row in rows}
     headers = calculation_headers(snap, ids)
+    components = snap.activity_components
     outcomes = _amount_inputs(snap, headers)
-    metadata = business_sort_metadata(snap, ids)
-    fact_amounts, by_kind = {}, defaultdict(list)
-    for header in headers.values():
-        by_kind[header["kind"]].append(header["fact_id"])
-    for kind, fact_ids in by_kind.items():
-        field = business_amount_field(kind)
-        model = snap.store.registry.models[kind]
-        # Only the shared display rule's fallback column is needed. No facts,
-        # evidence or growing child collections are hydrated for group summaries.
-        column = f'"{field}"' if field in model.model_fields else "NULL"
-        properties = [name for name in GROUP_PROPERTIES if name in model.model_fields]
-        property_columns = "".join(f',"{name}"' for name in properties)
-        for row in snap.connection.execute(
-            f"SELECT revision_id,{column} amount{property_columns} FROM {table_name(kind)} "
-            "WHERE revision_id IN (SELECT value FROM json_each(?))",
-            (canonical(sorted(set(fact_ids))),),
-        ):
-            fact_amounts[row["revision_id"]] = {
-                field: row["amount"],
-                **{name: row[name] for name in properties},
-            }
+    metadata = _batch_date_metadata(snap, rows, components)
+    displayed_headers = {
+        ident: header for ident, header in headers.items() if ident not in metadata
+    }
+    fact_amounts = fact_sort_scalars(snap, displayed_headers.values())
+    metadata.update(business_sort_metadata(
+        snap, displayed_headers, headers=displayed_headers, scalars=fact_amounts,
+    ))
     classifications, _ = snap.activity_classification
     members, summaries, by_version, sort_keys = {}, {}, {}, {}
     voucher_ids = defaultdict(set)
@@ -160,9 +150,9 @@ def activity_groups(snap):
         reversal = row["reverses_id"] is not None
         kind = header["kind"]
         values = outcomes[ident]["values"]
-        data = fact_amounts[header["fact_id"]]
-        components = snap.activity_components.get(row["id"])
-        candidates = components if components is not None else [None]
+        data = fact_amounts.get(header["fact_id"], {})
+        parts = components.get(row["id"])
+        candidates = parts if parts is not None else [None]
         by_version[row["id"]] = {}
         for part in candidates:
             matter = (None if part else activity_matter(
@@ -234,8 +224,22 @@ def activity_group_members(snap, group_key, *, after=None, limit=20):
     _, members, _ = activity_groups(snap)
     if group_key not in members:
         raise KernelError("dashboard_group_not_found", "所选月份没有这组业务，请刷新数据。")
-    entries = {entry["key"]: entry for entry in members[group_key]}
-    selected, page = page_keys(entries, after, limit)
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("每页数量必须为 1 至 500")
+    cache = snap.semantic_cache.setdefault("activity_group_member_order", {})
+    if group_key not in cache:
+        entries = {entry["key"]: entry for entry in members[group_key]}
+        keys = list(entries)
+        cache[group_key] = (entries, keys, {key: index for index, key in enumerate(keys)})
+    entries, keys, positions = cache[group_key]
+    if after is not None and after not in positions:
+        raise KernelError("dashboard_snapshot_changed", "分页位置已变化，请重新加载明细。")
+    start = positions[after] + 1 if after is not None else 0
+    selected = keys[start:start + limit]
+    more = start + len(selected) < len(keys)
+    page = {"total_count": len(keys), "filtered_count": len(keys),
+            "returned_count": len(selected), "has_more": more,
+            "next_cursor": selected[-1] if more else None}
     originals = {entries[key]["row"]["id"]: entries[key]["row"] for key in selected}
     hydrated = {row["id"]: row for row in snap.month_journal.hydrate(list(originals.values()))}
     from .dashboard_reads import JournalRow
@@ -255,6 +259,10 @@ def vouchers_for_rows(snap, rows):
     from .dashboard import _brief_prime_activity, _brief_prime_voucher_profiles
 
     rows = list({row["id"]: row for row in rows}.values())
+    # Page reads do not pass through the overview's whole-month money proof.
+    # Prove the full frozen selection before authenticating the displayed lines.
+    snap.month_journal._verify_frozen_headers()
+    snap.month_journal.authenticated_selected_lines(rows)
     resolutions = _brief_prime_activity(snap, rows)
     _brief_prime_voucher_profiles(snap, rows)
     _prime_selected_voucher_groups(snap, rows)
@@ -301,7 +309,7 @@ def _prime_selected_voucher_groups(snap, rows):
                 raise KernelError("content_integrity_failed", "付款核销缺少精确业务来源")
             slots[row["id"]] = settlements
             source_ids.update(item["source_calculation"] for item in settlements)
-    fallback = verify_published_source_bindings(snap.reads, source_ids)
+    fallback = verify_published_source_bindings(snap.reads, source_ids, _sql_outcomes=True)
     if fallback:
         snap.reads.verify_saved_input_identity(fallback)
     snap.reads.verify_sql_outcomes(source_ids)
@@ -347,6 +355,8 @@ def _prime_selected_voucher_groups(snap, rows):
 
 def exact_open_voucher_rows(snap, items):
     """Locate each obligation's adopted voucher at its own posting period."""
+    from .query_reads import selected_voucher_sql
+
     ordered_versions = list(
         dict.fromkeys(
             item["voucher_version_id"] for item in items if item.get("voucher_version_id")
@@ -364,12 +374,16 @@ def exact_open_voucher_rows(snap, items):
     result = []
     for period, ids in found.items():
         journal = type(snap.month_journal)(snap, month=period)
-        query, parameters = journal.sql()
+        # Retain the independent source-scope proof, then drive the exact
+        # voucher identities. An outer ID predicate on a month selector can
+        # still scan every unrelated original in that posting month.
+        snap.reads.verify_open_voucher_scope(snap.month, posting_period=period)
+        query, parameters = selected_voucher_sql(
+            snap.period, voucher_ids=ids,
+            posting_period=str(YearMonth.from_ordinal(period)),
+        )
         selected = list(
-            snap.connection.execute(
-                f"SELECT * FROM ({query}) WHERE id IN (SELECT value FROM json_each(?))",
-                [*parameters, canonical(sorted(ids))],
-            )
+            snap.connection.execute(query, parameters)
         )
         if {row["id"] for row in selected} != ids:
             raise KernelError("content_integrity_failed", "款项采用的精确凭证版本不匹配")

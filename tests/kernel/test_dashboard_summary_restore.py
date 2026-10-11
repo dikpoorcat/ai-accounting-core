@@ -49,7 +49,10 @@ def test_financial_position_reuses_all_bank_accounts_and_pagination_omits_summar
         page = dashboard.brief("2026-09", section=section, limit=1)
         validate_response("dashboard_brief", page)
         assert {"financial_position", "workforce_cost", "long_term_assets"}.isdisjoint(page["data"])
-        assert page["data"]["position"] == data["position"]
+        assert page["scope"] == section
+        assert set(page["data"]) == {"collections"}
+        assert set(page["data"]["collections"]) == {section}
+    assert len(calls) == 1
 
 
 def test_open_and_frozen_position_keep_the_same_business_amounts(report_book):

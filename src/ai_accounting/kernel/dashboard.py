@@ -1108,12 +1108,14 @@ class _Snapshot:
                     if item.get("source_kind", (item.get("source_business") or {}).get("kind"))
                     == "opening_payroll_payable"
                 ]
-                from .dashboard_sort import fact_sort_scalars
+                from .dashboard_sort import fact_identity_scalars
 
-                scalars = fact_sort_scalars(self, opening) if opening else {}
+                scalars = fact_identity_scalars(self, opening) if opening else {}
                 components = []
                 for item in relations:
-                    source_kind = item.get("source_kind", (item.get("source_business") or {}).get("kind"))
+                    source_kind = item.get(
+                        "source_kind", (item.get("source_business") or {}).get("kind")
+                    )
                     if source_kind == "opening_payroll_payable":
                         components.append(scalars[item["source_fact_id"]].get("component"))
                     elif source_kind in {"payroll", "payroll_bounded"}:
@@ -1130,7 +1132,9 @@ class _Snapshot:
         """Owner-facing wording from exact selected facts, without inferred business causes."""
         data, kind = calc["fact"]["data"], calc["kind"]
         relations = self.voucher_relations(calc, sign) if relations is None else relations
-        standard_text = not include_sources and self.owner_uses_standard_text(calc, relations=relations)
+        standard_text = not include_sources and self.owner_uses_standard_text(
+            calc, relations=relations,
+        )
         profile = {} if standard_text else self.profile("business", calc["fact"]["subject_id"])
         short = {
             "payroll": "计提工资",
@@ -1233,7 +1237,9 @@ class _Snapshot:
         purposes = [
             profile.get("purpose"),
             profile.get("note"),
-            None if standard_text else (self.management.get(calc["fact"]["subject_id"]) or {}).get("note"),
+            None if standard_text else (
+                self.management.get(calc["fact"]["subject_id"]) or {}
+            ).get("note"),
         ]
         supplied = list(dict.fromkeys(p.strip() for p in purposes if p and p.strip()))
         if supplied:
@@ -1281,16 +1287,23 @@ class _Snapshot:
     @cached_property
     def activity_classification(self):
         """Classify exact adopted parts; whole-voucher contexts keep one label."""
-        from .dashboard_activity_parts import adopted_rows, classification_values
+        from .dashboard_activity_parts import (
+            CLASSIFICATION_KINDS,
+            adopted_rows,
+            classification_values,
+        )
 
         rows = adopted_rows(self)
-        semantic = {"expense", "opening_obligation", "employee_advance", "reimbursement_acceptance"}
-        selected = {row["basis_calculation_id"] for row in rows if row["basis_kind"] in semantic}
-        values = classification_values(self, selected)
+        selected = {row["basis_calculation_id"]: row["basis_kind"]
+                    for row in rows if row["basis_kind"] in CLASSIFICATION_KINDS}
+        # Successful components publish only their exact source scalars. Their
+        # root input proof also supplies the original decoded amount values.
+        components = self.activity_components
+        values = classification_values(self, selected, kinds=selected)
         by_basis, counts = {}, defaultdict(int)
         for row in rows:
             reversal = row["reverses_id"] is not None
-            parts = self.activity_components.get(row["id"])
+            parts = components.get(row["id"])
             if parts is not None:
                 categories = {part["group"] for part in parts}
                 group = next(iter(categories)) if len(categories) == 1 else "other"
@@ -1843,14 +1856,54 @@ class Dashboard:
         if preparation not in {"complete", "deferred"}:
             raise KernelError("invalid_command", "不支持的准备检查投影")
         validate_page("brief", section, cursor, limit)
+        if section is not None and (voucher_version_id is not None or voucher_number is not None):
+            raise KernelError("invalid_command", "精确业务定位不能与明细分区同时使用")
         if voucher_version_id is not None and voucher_number is not None:
             raise KernelError("invalid_command", "精确业务定位须只提供一个身份")
         if voucher_number is not None and (type(voucher_number) is not int or voucher_number < 1):
             raise KernelError("invalid_command", "业务编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 18}
+                return {**self._response(None, None), "schema_version": 19,
+                        "scope": section or "overview"}
             self._check_page_version(snap, cursor, expected_version)
+            if voucher_version_id is None and voucher_number is None:
+                from .dashboard_model_reads import read_page
+
+                materialized = read_page(self, snap, "brief", section=section,
+                                         cursor=cursor, limit=limit)
+                if materialized is not None:
+                    return materialized
+            else:
+                from .dashboard_model_group_details import read_focused_voucher
+
+                materialized = read_focused_voucher(
+                    self, snap, voucher_version_id=voucher_version_id,
+                    voucher_number=voucher_number, limit=limit,
+                )
+                if materialized is not None:
+                    return materialized
+            from .dashboard_brief_groups import activity_group_page, vouchers_for_rows
+
+            after = decode_cursor(snap, "brief", section, cursor, {})
+            voucher_sort = "voucher-number/1"
+            # Continuations prove their own selection and returned content.
+            # They never rebuild unrelated overview money, risks or owner tasks.
+            if section is not None:
+                if section == "activity":
+                    collection = activity_group_page(snap, after=after, limit=limit)
+                elif section == "open_items":
+                    from .dashboard_open_groups import open_group_page
+
+                    collection = open_group_page(snap, after=after, limit=limit)["collection"]
+                else:
+                    rows, page = snap.month_journal.page(after or 0, limit, include_lines=False)
+                    collection = {"items": vouchers_for_rows(snap, rows), "page": page}
+                data = seal_collections(
+                    snap, "brief", {"collections": {section: collection}}, {},
+                    sort_profiles={"vouchers": voucher_sort},
+                )
+                return {**self._response(snap, data), "schema_version": 19, "scope": section}
             # Authenticate the complete month's money first. Later scalar and
             # page reads can reuse this successful proof in this snapshot.
             position = _brief_amounts(snap)
@@ -1860,16 +1913,8 @@ class Dashboard:
                 vouchers_for_rows,
             )
 
-            voucher_sort = "voucher-number/1"
-            after = decode_cursor(snap, "brief", section, cursor, {})
-            grouped_activity = activity_group_page(
-                snap, after=after if section == "activity" else None, limit=limit,
-            ) if section in {None, "activity"} else None
+            grouped_activity = activity_group_page(snap, limit=limit)
             summaries, group_members, _ = activity_groups(snap)
-            if section == "vouchers":
-                rows, page = snap.month_journal.page(after or 0, limit, include_lines=True)
-            else:
-                rows, page = [], None
             focused_row = None
             if voucher_version_id is not None or voucher_number is not None:
                 found, _ = snap.month_journal.page(
@@ -1879,7 +1924,7 @@ class Dashboard:
                 if not found:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这项精确业务")
                 focused_row = found[0]
-            displayed_rows = [*rows, *([focused_row] if focused_row else [])]
+            displayed_rows = [focused_row] if focused_row else []
             displayed_vouchers = vouchers_for_rows(snap, displayed_rows)
             focused_parts = (
                 snap.activity_components.get(focused_row["id"], ()) if focused_row else ()
@@ -1892,7 +1937,6 @@ class Dashboard:
                 (item for item in displayed_vouchers
                  if item["voucher_version_id"] == focused_row["id"]), None,
             ) if focused_row else None
-            vouchers = displayed_vouchers[:len(rows)]
             counts = defaultdict(int)
             for key, entries in group_members.items():
                 for entry in entries:
@@ -1916,21 +1960,9 @@ class Dashboard:
             )
             from .dashboard_open_groups import open_group_page
 
-            open_items = open_group_page(
-                snap, after=after if section == "open_items" else None, limit=limit,
-                summary_only=section not in {None, "open_items"},
-            )
-            collections = {}
-            if section in {None, "activity"}:
-                collections["activity"] = grouped_activity
-            if section == "vouchers":
-                collections["vouchers"] = {
-                    "items": vouchers, "page": page,
-                }
-            if section in {None, "open_items"}:
-                collection = open_items.pop("collection")
-                collections["open_items"] = collection
-            open_items.pop("collection", None)
+            open_items = open_group_page(snap, limit=limit)
+            collections = {"activity": grouped_activity,
+                           "open_items": open_items.pop("collection")}
             for category in open_items["categories"]:
                 category.pop("groups", None)
             risks = []
@@ -1993,25 +2025,24 @@ class Dashboard:
                 "risks": risks, "owner_tasks": owner_tasks(snap),
                 "collections": collections,
             }
-            if section is None:
-                financial_position = _position(snap)
-                data["financial_position"] = {
-                    key: value for key, value in financial_position.items()
-                    if not key.startswith("month_") and key != "issues"
-                } | {
-                    "bank_calculation": funds["bank_calculation"],
-                    "issues": [
-                        {"message": item["message"]}
-                        | ({"amount_fen": item["amount_fen"]} if "amount_fen" in item else {})
-                        for item in financial_position["issues"]
-                    ],
-                }
-                data["workforce_cost"] = _brief_workforce_cost(snap)
-                data["long_term_assets"] = _long_term_assets(snap)
+            financial_position = _position(snap)
+            data["financial_position"] = {
+                key: value for key, value in financial_position.items()
+                if not key.startswith("month_") and key != "issues"
+            } | {
+                "bank_calculation": funds["bank_calculation"],
+                "issues": [
+                    {"message": item["message"]}
+                    | ({"amount_fen": item["amount_fen"]} if "amount_fen" in item else {})
+                    for item in financial_position["issues"]
+                ],
+            }
+            data["workforce_cost"] = _brief_workforce_cost(snap)
+            data["long_term_assets"] = _long_term_assets(snap)
             return {**self._response(snap, seal_collections(
                 snap, "brief", data, {}, sort_profiles={"vouchers": voucher_sort}
             )),
-                    "schema_version": 18}
+                    "schema_version": 19, "scope": "overview"}
 
     def brief_group(
         self, period: str | None = None, *, section: Literal["activity", "open_items"],
@@ -2027,6 +2058,12 @@ class Dashboard:
                 raise KernelError("dashboard_group_not_found", "没有可读取的业务月份")
             self._check_page_version(snap, cursor, expected_version)
             filters = {"group_key": group_key}
+            from .dashboard_model_group_details import read_group
+
+            materialized = read_group(self, snap, section=section, group_key=group_key,
+                                      cursor=cursor, limit=limit)
+            if materialized is not None:
+                return materialized
             after = decode_cursor(snap, "brief-group", section, cursor, filters)
             from .dashboard_brief_groups import (
                 activity_group_members,
@@ -2103,6 +2140,14 @@ class Dashboard:
                     )
                 return {**self._response(None, None), "schema_version": 9}
             self._check_page_version(snap, cursor, expected_version)
+            from .dashboard_model_reads import read_page
+
+            materialized = read_page(
+                self, snap, "funds", section=section, cursor=cursor, limit=limit,
+                filters=filters, select_first_account=movement_account_selection == "first",
+            )
+            if materialized is not None:
+                return materialized
             cursors = {section: cursor} if section and cursor is not None else {}
             decoded = {
                 key: decode_cursor(snap, "funds", key, value, filters)
@@ -2153,6 +2198,12 @@ class Dashboard:
             if snap is None:
                 return {**self._response(None, None), "schema_version": 11}
             self._check_page_version(snap, cursor, expected_version)
+            from .dashboard_model_reads import read_page
+
+            materialized = read_page(self, snap, "employees", section=section,
+                                     cursor=cursor, limit=limit, filters=filters)
+            if materialized is not None:
+                return materialized
             after = decode_cursor(snap, "employees", section, cursor, filters)
             data = _employees(
                 snap,
@@ -2192,6 +2243,12 @@ class Dashboard:
             if snap is None:
                 return {**self._response(None, None), "schema_version": 10}
             self._check_page_version(snap, cursor, expected_version)
+            from .dashboard_model_reads import read_page
+
+            materialized = read_page(self, snap, "assets", section=section,
+                                     cursor=cursor, limit=limit, filters=filters)
+            if materialized is not None:
+                return materialized
             after = decode_cursor(snap, "assets", section, cursor, filters)
             data = _assets(
                 snap,
@@ -2364,8 +2421,12 @@ class Dashboard:
                 if not rows or rows[0]["basis"]["subject_id"] != subject_id:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这项精确业务")
                 scoped_row = rows[0]
+                from .dashboard_activity_parts import payment_components
+
                 component = next((
-                    item for item in snap.activity_components.get(voucher_version_id, ())
+                    item for item in payment_components(snap, selected_rows=rows).get(
+                        voucher_version_id, (),
+                    )
                     if item["key"] == detail_scope_key
                 ), None)
                 if component is None:
@@ -2457,50 +2518,46 @@ class Dashboard:
         if preparation not in {"complete", "deferred"}:
             raise KernelError("invalid_command", "不支持的准备检查投影")
 
-        reports = Reports(self.engine)
         with QueryReads.snapshot(self.engine) as reads:
             connection = reads.connection
             as_of = _today_china()
-            opened = reports._report(
-                year,
-                quarter,
-                source="open",
-                connection=connection,
-                reads=reads,
-                _issues_only=True,
-            )
-            quarter_end = YearMonth(f"{year:04d}-{quarter * 3:02d}").ordinal
-            if (
-                connection.execute(
-                    "SELECT 1 FROM period_close WHERE period=?", (quarter_end,)
-                ).fetchone()
-                is None
-            ):
-                # The open plan has already checked the visible closed sources.
-                # An absent quarter-end close cannot produce an exportable plan.
-                closed = {
-                    "status": "needs_information",
-                    "fact_issues": [{"field": "period"}],
-                }
-            else:
-                closed = reports._report(
-                    year,
-                    quarter,
-                    source="closed",
-                    connection=connection,
-                    reads=reads,
+            from .dashboard_model_reads import read_quarterly_report
+
+            response = read_quarterly_report(self, connection, year, quarter, as_of=as_of)
+            if response is None:
+                response = self._quarterly_report_in_snapshot(
+                    year, quarter, connection=connection, reads=reads, as_of=as_of,
                 )
-            plan = closed if closed["status"] == "ready" else opened
-            response = _quarterly_view(
-                plan,
-                closed,
-            )
-            response["read_context"] = self._read_context(connection, as_of)
             if preparation == "deferred":
                 response.update(
                     projection="dashboard_quarterly_report_deferred",
                 )
             return response
+
+    def _quarterly_report_in_snapshot(self, year, quarter, *, connection, reads, as_of):
+        """Retain the native report algorithm in the caller's owned transaction."""
+        if (reads.connection is not connection or not reads._snapshot_active
+                or not connection.in_transaction):
+            raise ValueError("quarterly owner reads belong to another snapshot")
+        reports = Reports(self.engine)
+        opened = reports._report(
+            year, quarter, source="open", connection=connection, reads=reads,
+            _issues_only=True,
+        )
+        quarter_end = YearMonth(f"{year:04d}-{quarter * 3:02d}").ordinal
+        if connection.execute(
+            "SELECT 1 FROM period_close WHERE period=?", (quarter_end,),
+        ).fetchone() is None:
+            # The open plan has already checked the visible closed sources.
+            # An absent quarter-end close cannot produce an exportable plan.
+            closed = {"status": "needs_information", "fact_issues": [{"field": "period"}]}
+        else:
+            closed = reports._report(
+                year, quarter, source="closed", connection=connection, reads=reads,
+            )
+        response = _quarterly_view(closed if closed["status"] == "ready" else opened, closed)
+        response["read_context"] = self._read_context(connection, as_of)
+        return response
 
 
 def _voucher_profile_progress(voucher, context):
@@ -2674,7 +2731,9 @@ def _brief_activity_row(snap, row):
         supplied = list(dict.fromkeys(
             value.strip() for value in (
                 profile.get("purpose"), profile.get("note"),
-                None if standard_text else (snap.management.get(row["basis"]["subject_id"]) or {}).get("note"),
+                None if standard_text else (
+                    snap.management.get(row["basis"]["subject_id"]) or {}
+                ).get("note"),
             )
             if value and value.strip()
         ))
@@ -3042,7 +3101,8 @@ def _position_party_rows(snap):
             row[0]
             for row in snap.connection.execute(
                 "SELECT DISTINCT l.account FROM json_each(?) ids "
-                "JOIN voucher_line l ON l.version_id=ids.value "
+                "CROSS JOIN voucher_line l INDEXED BY voucher_line_account "
+                "ON l.version_id=ids.value "
                 "WHERE l.account IN (SELECT value FROM json_each(?))",
                 (json.dumps(sorted(classifications)), json.dumps(sorted(RECLASS))),
             )
@@ -3588,16 +3648,35 @@ def _workforce_payroll_rows(snap, *, wage_heads=None):
         ),
     )
     posted = {row["basis"]["subject_id"] for row in rows}
-    current_heads = (
-        adopted_head_metadata(snap, PAYROLL_KINDS, posting_period=snap.period)
-        if wage_heads is None
-        else wage_heads
-    )
+    if wage_heads is None:
+        from .dashboard_reads import _head_line_counts
+        from .query_reads import _owns_current_selector_snapshot
+
+        if _owns_current_selector_snapshot(snap.reads, snap.connection):
+            current_heads = adopted_head_metadata(
+                snap, PAYROLL_KINDS, posting_period=snap.period, read_line_counts=False,
+            )
+            # Every adopted head retains its complete result-byte proof,
+            # including a no-impact review distinct from the voucher basis.
+            # Only unposted subjects can contribute a no-voucher state.
+            snap.reads.verify_sql_outcomes(head["id"] for head in current_heads)
+            state_heads = [
+                head for head in current_heads if head["subject_id"] not in posted
+            ]
+            if state_heads:
+                _head_line_counts(snap, state_heads)
+        else:
+            current_heads = adopted_head_metadata(
+                snap, PAYROLL_KINDS, posting_period=snap.period,
+            )
+    else:
+        current_heads = wage_heads
     state_subjects = {
         head["subject_id"]
         for head in current_heads
         if head["posting_period"] == snap.month
-        and not head["line_count"]
+        and head["subject_id"] not in posted
+        and head["line_count"] == 0
         and head["kind"] in PAYROLL_KINDS
     }
     state_calculations = (
@@ -3890,28 +3969,15 @@ def _employees(
     known.update(unestablished_employees)
     if hasattr(snap, "metadata"):
         snap.metadata.prime_profiles("employee", known)
-    employee_states, current_employment_states = {}, {}
+    from .dashboard_model_dates import current_employment_state, employee_date_basis
+
+    employee_states, current_employment_states, date_basis = {}, {}, []
     for ident in sorted(known):
         # Current personnel status is independent of the selected month's frozen
         # profile and employment interval. The metadata uses this read transaction.
         current = snap.current_profiles.get("employee", {}).get(ident, {})
-        employment_state = current.get("employment_state")
-        if employment_state is None:
-            # Preserve already registered employment without inventing a more
-            # precise personnel fact. An explicit new unknown never falls back.
-            employment_state = "unknown"
-            start, end = current.get("employment_start"), current.get("employment_end")
-            conflict = start and end and (
-                start[:7] > end[:7] or len(start) == len(end) == 10 and start > end
-            )
-            ended = end and (end <= snap.as_of if len(end) == 10 else end < snap.as_of[:7])
-            if not conflict:
-                if ended:
-                    if current.get("employment_status") != "active":
-                        employment_state = "departed"
-                elif current.get("employment_status") == "active":
-                    employment_state = "regular"
-        current_employment_states[ident] = employment_state
+        current_employment_states[ident] = current_employment_state(current, snap.as_of)
+        date_basis.append(employee_date_basis(ident, current))
         info = snap.profile("employee", ident)
         start, end = info.get("employment_start"), info.get("employment_end")
         if info["field_conflicts"]:
@@ -3925,6 +3991,7 @@ def _employees(
         else:
             state, in_period = "unknown", None
         employee_states[ident] = (state, in_period)
+    snap.semantic_cache["model_employee_date_basis"] = tuple(date_basis)
     filtered_ids = [
         ident
         for ident in sorted(known)
@@ -4424,7 +4491,11 @@ def _active_asset_counts(snap):
     from .integrity import verify_sources
 
     kinds = ASSET_KINDS | {"reimbursed_asset_batch", "asset_activation", "asset_disposal"}
-    activation_events = snap.asset_member_events(kinds={"asset_activation"})
+    activation_events = snap.queries._selected_asset_activation_identities(
+        snap.connection, snap.period, outcome_kinds={"asset_activation_batch"},
+    )
+    if activation_events is None:
+        activation_events = snap.asset_member_events(kinds={"asset_activation"})
     heads = adopted_head_metadata(snap, kinds, read_line_counts=False)
     selected = verified_adopted_head_identities(snap, heads, kinds=kinds)
     # Batch members have no independent publication. Retain the same ordered
@@ -4688,7 +4759,7 @@ def _assets(
         snap.asset_member_events(asset_ids=fallback_assets) if fallback_assets else []
     )
     charges, monthly_charges = defaultdict(int), defaultdict(int)
-    if "asset_consumption" in snap.store.registry.models:
+    if fallback_assets and "asset_consumption" in snap.store.registry.models:
         query, parameters = snap.journal.select(kinds={"asset_consumption"}).sql()
         snap.reads.verify_sql_outcomes(
             row[0]
@@ -4703,8 +4774,9 @@ def _assets(
             "json_extract(c.outcome,'$.values.consumption_fen') ELSE 0 END) AS monthly "
             f"FROM ({query}) j JOIN calculation c "
             "ON c.id=j.basis_calculation_id JOIN fact_asset_consumption f "
-            "ON f.revision_id=c.fact_id GROUP BY f.asset_id",
-            [snap.month, *parameters],
+            "ON f.revision_id=c.fact_id "
+            "WHERE f.asset_id IN (SELECT value FROM json_each(?)) GROUP BY f.asset_id",
+            [snap.month, *parameters, canonical(sorted(fallback_assets))],
         ):
             charges[row["asset_id"]] = row["total"]
             monthly_charges[row["asset_id"]] = row["monthly"]

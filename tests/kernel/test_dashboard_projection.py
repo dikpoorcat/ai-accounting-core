@@ -153,8 +153,8 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
         expected_version=dashboard.brief("2026-09")["snapshot_version"],
     )["data"]
     assert len(following["collections"]["activity"]["items"]) == 1
-    assert following["funds_overview"]["bank_fen"] == 501
-    assert sum(group["event_count"] for group in following["activity_groups"]) == 501
+    assert set(following) == {"collections"}
+    assert sum(group["event_count"] for group in data["activity_groups"]) == 501
     default = dashboard.brief("2026-09")["data"]
     assert len(default["collections"]["activity"]["items"]) == 20
     assert default["activity_count"] == default["funds_overview"]["bank_fen"] == 501

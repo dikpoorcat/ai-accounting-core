@@ -155,8 +155,18 @@ def test_adopted_payroll_head_rejects_hidden_lines_before_sql_count(payroll_comp
 
 
 def test_second_opening_confirm_rejects_hidden_existing_opening(opening_book):
-    engine, save, publish, package, _ = opening_book
+    engine, save, publish, package, proof = opening_book
     package(opening_fixtures.complete_members(save))
+    second_data = {
+        "period": "2026-01",
+        "package_id": "second-opening",
+        "counts": dict.fromkeys(opening_fixtures.CATEGORIES.values(), 0),
+        "members": [],
+        "completeness_confirmed": True,
+    }
+    # Finish legitimate setup before corruption: every typed write now also
+    # materializes its registered dashboard periods in the same transaction.
+    save("opening_package", "second-opening", second_data)
     with engine.store.connection() as connection:
         calculation_id = connection.execute(
             "SELECT calculation_id FROM calculation_current WHERE subject_id='opening'"
@@ -176,20 +186,20 @@ def test_second_opening_confirm_rejects_hidden_existing_opening(opening_book):
             changed,
             raw_digest=True,
         )
-    save(
-        "opening_package",
-        "second-opening",
-        {
-            "period": "2026-01",
-            "package_id": "second-opening",
-            "counts": dict.fromkeys(opening_fixtures.CATEGORIES.values(), 0),
-            "members": [],
-            "completeness_confirmed": True,
-        },
-    )
+    with engine.store.connection(read_only=True) as connection:
+        before = tuple(connection.iterdump())
     with pytest.raises(KernelError) as second:
         publish("second-opening")
     assert second.value.code == "content_integrity_failed"
+    with pytest.raises(KernelError) as writing:
+        engine.save_fact(
+            "opening_package", "third-opening", {**second_data, "package_id": "third-opening"},
+            evidence=(proof,), expected_revision=0, request_id="cannot-write-over-corrupt-opening",
+        )
+    assert writing.value.code == "content_integrity_failed"
+    with engine.store.connection(read_only=True) as connection:
+        # Includes facts, epochs, audit/request and derived model rows.
+        assert tuple(connection.iterdump()) == before
 
 
 def test_duplicate_review_manifest_cannot_hide_strong_pair_from_readiness(duplicate_company):

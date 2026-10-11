@@ -228,3 +228,102 @@ def test_real_close_password_cancel_expiry_and_failed_close_keep_atomic_approval
     monkeypatch.setattr(close_storage, "write_close", original)
     assert execute("close", **close_payload)["status"] == "closed"
     assert service.close_previews == service.active_close_previews == {}
+
+
+def test_close_model_failure_rolls_back_approval_and_all_committed_state_then_retries(
+    resident, monkeypatch
+):
+    from test_dashboard_model_transactions import state
+
+    from ai_accounting.kernel import dashboard_read_model
+    from ai_accounting.kernel.maintenance import Maintenance
+
+    service, engine, company, proof, _, execute, _, preview = prepared_company(resident)
+    request = service.security_controller.request(
+        kind="approve_period_close",
+        company_id=company["id"],
+        database_id=company["database_id"],
+        period="2026-01",
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+    )
+    status, _, _, approved = resident[3].native(
+        "native_execute", request_id=request["request_id"],
+        password=PASSWORD.get_secret_value(),
+    )
+    assert status == 200, approved
+    close_payload = {
+        "period": "2026-01", "owner_confirmation": proof,
+        "preview_digest": preview["digest"], "epochs": preview["epochs"],
+        "approval_id": approved["approval_id"], "request_id": "retry-model-close",
+    }
+    before = state(engine)
+    with engine.store.connection(read_only=True) as connection:
+        before_epochs = engine.store.epochs(connection)
+        before_models = connection.execute(
+            "SELECT count(*) FROM dashboard_read_model_commit"
+        ).fetchone()[0]
+    assert before_models > 0
+    original = dashboard_read_model.persist_model
+    interrupted = []
+
+    def fail_after_model_persist(connection, prepared, **kwargs):
+        model_id = original(connection, prepared, **kwargs)
+        # Observe the late write boundary: approval, close, business receipt,
+        # epochs and the new model already exist in this uncommitted transaction.
+        assert connection.execute(
+            "SELECT consumed_at FROM security_close_approval WHERE id=?",
+            (approved["approval_id"],),
+        ).fetchone()[0] is not None
+        assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM request WHERE id=?", (close_payload["request_id"],)
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM audit WHERE request_id=? AND action='close'",
+            (close_payload["request_id"],),
+        ).fetchone()[0] == 1
+        pending_epochs = engine.store.epochs(connection)
+        for lane in ("accounting", "material"):
+            assert pending_epochs[lane] == before_epochs[lane] + 1
+        assert pending_epochs["management"] == before_epochs["management"]
+        assert connection.execute(
+            "SELECT count(*) FROM dashboard_read_model_commit"
+        ).fetchone()[0] > before_models
+        interrupted.append(model_id)
+        raise RuntimeError("synthetic close model persistence interruption")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(dashboard_read_model, "persist_model", fail_after_model_persist)
+        with pytest.raises(RuntimeError, match="close model persistence interruption"):
+            execute("close", **close_payload)
+    assert len(interrupted) == 1
+    # Includes every frozen projection, approval consumption, version, model
+    # block/current/receipt, audit, request and pending backup job.
+    assert state(engine) == before
+    with engine.store.connection(read_only=True) as connection:
+        assert engine.store.epochs(connection) == before_epochs
+        assert connection.execute(
+            "SELECT consumed_at FROM security_close_approval WHERE id=?",
+            (approved["approval_id"],),
+        ).fetchone()[0] is None
+    assert service.require_active_close_preview(
+        company["id"], company["database_id"], "2026-01", preview["digest"]
+    )[0].owner_confirmation == proof
+
+    closed = execute("close", **close_payload)
+    assert closed["status"] == "closed"
+    assert service.close_previews == service.active_close_previews == {}
+    after = state(engine)
+    assert execute("close", **close_payload) == closed
+    assert state(engine) == after
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT consumed_at FROM security_close_approval WHERE id=?",
+            (approved["approval_id"],),
+        ).fetchone()[0] is not None
+        assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM dashboard_read_model_commit"
+        ).fetchone()[0] > before_models
+    assert Maintenance(engine).verify_integrity()["status"] == "verified"

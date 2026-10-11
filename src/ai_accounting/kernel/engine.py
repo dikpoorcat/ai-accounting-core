@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -13,7 +14,14 @@ from pydantic import ValidationError
 
 from .accounting import AccountingBook, compatibility
 from .build import calculator_build_id
-from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
+from .contracts import (
+    Calculation,
+    Context,
+    FactVersion,
+    KernelError,
+    NeedsInformation,
+    read_identity_payload,
+)
 from .dependencies import checked_lanes, read_matches, scope_keys
 from .storage import Store
 from .stored_json import load_outcome, loads_unique
@@ -153,11 +161,23 @@ class Engine:
             return json.loads(row["result"])
         return None
 
-    def _write(self, key, request_hash, expected, lanes, action, operation, *, checked_lanes=None):
+    def _write(
+        self, key, request_hash, expected, lanes, action, operation,
+        *, checked_lanes=None, _dashboard_periods=(),
+    ):
+        from .dashboard_model_runtime import (
+            INTERNAL_REQUEST_PREFIX,
+            changed_periods,
+            materialize_models,
+            supports_native_production,
+        )
+
         if not isinstance(key, str) or not key or len(key) > 200:
             raise KernelError(
                 "invalid_request_id", "request id must be nonempty and at most 200 chars"
             )
+        if key.startswith(INTERNAL_REQUEST_PREFIX):
+            raise KernelError("invalid_request_id", "请求编号使用了内核保留前缀")
         with self.commit_guard(), self.store.connection() as connection:
             count = 0
 
@@ -181,7 +201,10 @@ class Engine:
                         "preview_expired", "事实或期间已变化，请重新预览", current=current
                     )
                 self.fault("begin", connection)
-                result = operation(connection)
+                with changed_periods(
+                    connection, enabled=supports_native_production(self),
+                ) as changed_months:
+                    result = operation(connection)
                 self.fault("published", connection)
                 for lane in lanes:
                     connection.execute(f"UPDATE state SET {lane}={lane}+1 WHERE id=1")
@@ -203,6 +226,10 @@ class Engine:
                 connection.execute(
                     "INSERT INTO request VALUES(?,?,?)", (key, request_hash, canonical(result))
                 )
+                materialize_models(
+                    self, connection, periods=(*_dashboard_periods, *sorted(changed_months)),
+                    evidence_registration=(action == "evidence" and tuple(lanes) == ("material",)),
+                )
                 self.fault("commit", connection)
                 connection.commit()
                 self.last_metrics = {
@@ -213,7 +240,12 @@ class Engine:
                 return result
             except BaseException:
                 # A deferred FK or I/O failure at COMMIT leaves SQLite in a transaction.
-                connection.rollback()
+                try:
+                    connection.rollback()
+                except sqlite3.ProgrammingError:
+                    # A failed guard restoration closes the connection. Keep
+                    # its original failure instead of replacing it at cleanup.
+                    pass
                 raise
 
     def register_evidence(self, content: bytes, media_type: str, name: str, *, request_id: str):
@@ -836,7 +868,7 @@ class Engine:
                 {
                     "fact": version.id,
                     "outcome": outcome,
-                    "reads": [asdict(read) for read, _items in trace.selections],
+                    "reads": [read_identity_payload(read) for read, _items in trace.selections],
                     "versions": sorted(trace.versions),
                     "program": PROGRAM_VERSION,
                 }

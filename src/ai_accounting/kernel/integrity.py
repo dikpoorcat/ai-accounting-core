@@ -9,13 +9,13 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections import defaultdict
-from dataclasses import asdict
 
+from .calculation_identity import calculation_identity_digest, calculation_identity_prefix
 from .content_history_context import month_type, read_type, source_json_loads
 from .content_history_context import source_canonical as canonical
 from .content_history_context import source_checked as checked
 from .content_history_context import source_digest as digest
-from .contracts import KernelError
+from .contracts import KernelError, read_identity_payload
 from .projections import require_projections
 from .schema import sequence_model, table_name
 from .storage import _snapshot_fact_hashes, _snapshot_fact_raws
@@ -79,13 +79,25 @@ def _lines(lines, component, ident, *, opening=False):
 
 
 def _outcome(row):
+    return _outcome_with_encoding(row)[0]
+
+
+def _outcome_with_encoding(row):
+    """Authenticate once, retaining only this call's exact canonical encoding."""
+    outcome, encoded, _normalized_lines = _outcome_with_lines(row)
+    return outcome, encoded
+
+
+def _outcome_with_lines(row):
+    """Retain this call's strict line normalization, without publishing a proof cache."""
     ident = row["id"]
     outcome = _object(row["outcome"], "calculation", ident)
-    if digest(outcome) != row["digest"]:
+    encoded = canonical(outcome)
+    if hashlib.sha256(encoded.encode("utf-8")).digest() != row["digest"]:
         _invalid("calculation", ident, "result_digest_mismatch")
     if not isinstance(outcome.get("values"), dict) or not isinstance(outcome.get("balances"), list):
         _invalid("calculation", ident, "invalid_outcome_shape")
-    _lines(outcome.get("lines"), "calculation", ident)
+    normalized_lines = _lines(outcome.get("lines"), "calculation", ident)
     opening = outcome.get("opening", False)
     opening_lines = outcome.get("opening_lines", [])
     if type(opening) is not bool or opening_lines and (not opening or outcome["lines"]):
@@ -102,7 +114,7 @@ def _outcome(row):
         ):
             _invalid("calculation", ident, "invalid_balance_effect")
         checked(balance["amount"])
-    return outcome
+    return outcome, encoded, normalized_lines
 
 
 def _rows(connection, table, key, identifiers):
@@ -348,6 +360,7 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             row["member_calculation_id"]
             for row in _rows(connection, "asset_batch_member", "member_calculation_id", identifiers)
         }
+    normalized_calculation_lines = {}
     for ident, row in calculations.items():
         if ident not in seals:
             _invalid("calculation", ident, "calculation_seal_missing")
@@ -364,21 +377,27 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
             _invalid("calculation", ident, "invalid_calculation_dependency")
         if ident not in publications and ident not in member_ids:
             _invalid("calculation", ident, "publication_or_adoption_missing")
-        row["decoded"] = _outcome(row)
+        row["decoded"], outcome_encoding, normalized_calculation_lines[ident] = (
+            _outcome_with_lines(row)
+        )
         # The released calculation identity seals saved reads and version IDs.
         # dependency_fact additionally always contains the owning fact; that
         # fact may or may not also have been selected, hence two exact variants.
         versions = dependencies[ident] | (dependency_facts[ident] - {row["fact_id"]})
-        payload = {
-            "fact": row["fact_id"],
-            "outcome": row["decoded"],
-            "reads": [asdict(read) for read in sorted(stored_reads[ident], key=repr)],
+        identity = {
+            "fact_id": row["fact_id"],
+            "outcome_encoding": outcome_encoding,
+            "reads": [
+                read_identity_payload(read) for read in sorted(stored_reads[ident], key=repr)
+            ],
             "program": row["program_version"],
+            "encode": canonical,
         }
-        first_key = "c_" + digest({**payload, "versions": sorted(versions)}).hex()
+        identity["prefix"] = calculation_identity_prefix(**identity)
+        first_key = "c_" + calculation_identity_digest(**identity, versions=sorted(versions)).hex()
         if ident != first_key:
-            second_key = "c_" + digest(
-                {**payload, "versions": sorted(versions | {row["fact_id"]})}
+            second_key = "c_" + calculation_identity_digest(
+                **identity, versions=sorted(versions | {row["fact_id"]}),
             ).hex()
             if ident != second_key:
                 _invalid("calculation", ident, "calculation_input_digest_mismatch")
@@ -457,11 +476,7 @@ def _check_sources(engine, connection, calculation_ids=None, *, extra_fact_ids=(
         else:
             if publication["voucher_id"] != row["voucher_id"]:
                 _invalid("voucher", ident, "voucher_publication_identity_mismatch")
-            expected = _lines(
-                calculations[row["calculation_id"]]["decoded"]["lines"],
-                "calculation",
-                row["calculation_id"],
-            )
+            expected = normalized_calculation_lines[row["calculation_id"]]
         if actual != expected:
             _invalid("voucher", ident, "voucher_lines_mismatch")
     # Non-impact reviews may reuse a voucher produced by an older calculation.
@@ -832,6 +847,7 @@ def _check_closes(
     predecoded_closes=None,
     _return_closes=False,
     _verified_material_versions=None,
+    _source_reads=None,
 ):
     from .content_history_context import close_contract, close_reader
 
@@ -1210,6 +1226,7 @@ def _check_closes(
                 engine,
                 manifest,
                 verify_financial_position=verify_financial_position,
+                **({"_source_reads": _source_reads} if _source_reads is not None else {}),
             )
         previous_digest, previous_trial, previous_period = (
             row["digest"].hex(),
@@ -1252,18 +1269,25 @@ def _check_heads(connection):
             _invalid("heads", table, "current_identity_mismatch")
 
 
-def verify_integrity(engine, connection, *, include_projections=True, include_indexes=True):
+def verify_integrity(
+    engine, connection, *, include_projections=True, include_indexes=True,
+    include_dashboard_models=True,
+):
     """Check all preserved versions in the caller's snapshot, including old ones."""
     from .runtime import verification_snapshot
+    from .verified_source_reads import readonly_verification
 
-    with verification_snapshot(connection):
+    with verification_snapshot(connection), readonly_verification(connection):
         return _verify_integrity_in_snapshot(
             engine, connection,
             include_projections=include_projections, include_indexes=include_indexes,
+            include_dashboard_models=include_dashboard_models,
         )
 
 
-def _verify_integrity_in_snapshot(engine, connection, *, include_projections, include_indexes):
+def _verify_integrity_in_snapshot(
+    engine, connection, *, include_projections, include_indexes, include_dashboard_models,
+):
     if include_projections and connection.in_transaction:
         from .verified_source_lease import verified_source_lease
 
@@ -1273,18 +1297,24 @@ def _verify_integrity_in_snapshot(engine, connection, *, include_projections, in
                 connection,
                 include_projections=include_projections,
                 include_indexes=include_indexes,
+                include_dashboard_models=include_dashboard_models,
             )
     return _verify_integrity_snapshot(
         engine,
         connection,
         include_projections=include_projections,
         include_indexes=include_indexes,
+        include_dashboard_models=include_dashboard_models,
     )
 
 
-def _verify_integrity_snapshot(engine, connection, *, include_projections, include_indexes):
+def _verify_integrity_snapshot(
+    engine, connection, *, include_projections, include_indexes, include_dashboard_models,
+):
     try:
         ignored_tables = set()
+        if not include_dashboard_models:
+            ignored_tables.update(("dashboard_read_model_block", "dashboard_read_model_current"))
         if not include_indexes:
             ignored_tables.update(
                 ("read_index_source", "close_reference", "job_reference", "audit_reference")
@@ -1351,6 +1381,14 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
 
         journal_reader().verify_journal(connection)
         source = _check_sources(engine, connection)
+        source_reads = None
+        source_token = None
+        if include_projections and getattr(engine.store.registry, "content_version", None) != 1:
+            from .verified_source_lease import verified_calculation_source
+            from .verified_source_reads import VerifiedSourceReads
+
+            source_token = verified_calculation_source(connection, source)
+            source_reads = VerifiedSourceReads(engine, connection, source_token)
         from .content_history_context import report_open_contribution_reader
 
         report_open_contribution_reader().compare_open_contributions(
@@ -1373,6 +1411,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
             require_index_marker=include_indexes,
             _return_closes=include_projections and connection.in_transaction,
             _verified_material_versions=material_versions,
+            _source_reads=source_reads,
         )
         close_count, limitations = close_result[:2]
         decoded_closes = close_result[2] if len(close_result) == 3 else None
@@ -1419,6 +1458,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                         connection,
                         verified_calculations=source["calculations"],
                         _return_verified=True,
+                        **({"_source_reads": source_reads} if source_reads is not None else {}),
                     )
                     settlement_reader().require_frozen_settlement_projection(
                         engine,
@@ -1431,6 +1471,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                         connection,
                         _verified_closes=decoded_closes,
                         _return_verified=True,
+                        **({"_source_reads": source_reads} if source_reads is not None else {}),
                     )
                     from . import report_semantics as current_report_semantics
 
@@ -1480,7 +1521,11 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
             from .entity_references import verify_entity_references
             from .read_indexes import _verified_closes_for_indexes, verify_read_indexes
 
-            verify_entity_references(connection, registry=engine.store.registry)
+            if source_reads is not None:
+                source_reads._require_source()
+            verify_entity_references(
+                connection, registry=engine.store.registry, _verified_source=source_token,
+            )
             verify_discovery_indexes(connection)
 
             if connection.execute(
@@ -1493,6 +1538,13 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                         connection,
                         _verified_closes=_verified_closes_for_indexes(connection, decoded_closes),
                     )
+        from .dashboard_model_integrity import verify_models
+
+        dashboard_models = verify_models(
+            engine, connection, compare_content=include_dashboard_models,
+        )
+        if source_reads is not None:
+            source_reads._require_source()
         return {
             "status": "verified",
             "coverage": {
@@ -1500,6 +1552,7 @@ def _verify_integrity_snapshot(engine, connection, *, include_projections, inclu
                 "historical_adoption": "verified",
                 "projections": "verified" if include_projections else "not_checked",
                 "read_indexes": "verified" if include_indexes else "not_checked",
+                "dashboard_read_models": dashboard_models,
             },
             "limitations": limitations,
             "counts": {

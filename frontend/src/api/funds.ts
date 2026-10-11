@@ -9,6 +9,7 @@ export type FundAccount = DashboardFundsContract.FundAccount;
 export type FundMovement = DashboardFundsContract.FundMovement;
 
 export interface FundsQuery {
+  limit?: number;
   section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";
   cursor?: string;
   expected_version?: string;
@@ -53,7 +54,8 @@ export function requestDashboardFunds(path: string, options: { signal?: AbortSig
 }
 
 export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {
-  const query = new URLSearchParams({ limit: "20", ...(periodKey ? { period: periodKey } : {}), ...options });
+  const { limit = 20, ...filters } = options;
+  const query = new URLSearchParams({ limit: String(limit), ...(periodKey ? { period: periodKey } : {}), ...filters });
   query.set("preparation", "deferred");
   return requestDashboardFunds(`/api/dashboard/funds?${query}`, {
     signal,

@@ -413,7 +413,7 @@ _OWN_SOURCE_CONTENT = SchemaValidator(core_schema.typed_dict_schema({
 }, strict=True, extra_behavior="ignore"))
 
 
-def verify_published_source_bindings(reads, calculation_ids):
+def verify_published_source_bindings(reads, calculation_ids, *, _sql_outcomes=False):
     """Authenticate only exact selected sources through their own publications.
 
     This proves saved calculation/fact bytes, not dependency inputs, current
@@ -430,6 +430,36 @@ def verify_published_source_bindings(reads, calculation_ids):
     identifiers = set(calculation_ids)
     if not identifiers:
         return frozenset()
+    from .query_reads import _owns_current_selector_snapshot
+
+    cache = (
+        reads._report_snapshot_cache if _owns_current_selector_snapshot(reads, connection) else None
+    )
+    token = reads._snapshot_token
+    requested = identifiers.copy()
+    own_proofs = cache.get("report_published_own_sources", {}) if cache is not None else {}
+    identifiers -= own_proofs.keys()
+    if not identifiers:
+        if _sql_outcomes:
+            reads.verify_sql_outcomes(requested)
+        return frozenset()
+    full_proofs = cache.get("report_open_own_source_bytes", {}) if cache is not None else {}
+    stored = cache.get("report_open_contributions", {}) if cache is not None else {}
+    reusable = {
+        ident: full_proofs[ident] for ident in identifiers
+        if ident in full_proofs and stored.get(ident) is full_proofs[ident]
+    }
+    # A complete contribution proves its anchor, source bytes and own binding,
+    # but not its immutable publication record or publication/subject relation.
+    # Fetch those exact missing proofs without reloading the contribution body.
+    reused_rows = {
+        row["selected_id"]: dict(row) for row in connection.execute(
+            "SELECT c.id selected_id,c.subject_id selected_subject,p.* "
+            "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value "
+            "LEFT JOIN calculation_publication p ON p.calculation_id=c.id",
+            (canonical(sorted(reusable)),),
+        )
+    } if reusable else {}
     candidates = {
         row["selected_id"]: dict(row)
         for row in connection.execute(
@@ -440,9 +470,10 @@ def verify_published_source_bindings(reads, calculation_ids):
             "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
             "LEFT JOIN report_open_contribution_anchor a ON a.publication_id=p.id "
             "LEFT JOIN report_open_contribution d ON d.publication_id=p.id",
-            (canonical(sorted(identifiers)),),
+            (canonical(sorted(identifiers - reusable.keys())),),
         )
-    }
+    } if identifiers - reusable.keys() else {}
+    candidates.update(reused_rows)
     if candidates.keys() != identifiers:
         raise KernelError("content_integrity_failed", "本次读取的核算来源缺失")
     for ident, row in candidates.items():
@@ -455,6 +486,34 @@ def verify_published_source_bindings(reads, calculation_ids):
         row = candidates[ident]
         if row["subject_id"] != row["selected_subject"]:
             _invalid(row["id"], "publication_subject_mismatch")
+        if ident in reusable:
+            content = reusable[ident]
+            try:
+                # Preserve the narrow reader's stricter ID/digest contract;
+                # full contribution decoding alone uses wider string shapes.
+                content = _OWN_SOURCE_CONTENT.validate_python({
+                    **{key: content[key] for key in (
+                        "format", "publication_id", "calculation_id", "result_digest", "fact_id",
+                    )},
+                    "source_bindings": [tuple(item) for item in content["source_bindings"]],
+                }, strict=True)
+            except ValidationError as exc:
+                raise KernelError(
+                    "content_integrity_failed", "当前报表来源绑定格式不一致"
+                ) from exc
+        else:
+            content = None
+        if content is not None:
+            if content["publication_id"] != row["id"] or content["calculation_id"] != ident:
+                _invalid(row["id"], "own_content_identity_mismatch")
+            own = [item for item in content["source_bindings"] if item[0] == ident]
+            if len(own) != 1:
+                _invalid(row["id"], "own_binding_not_unique")
+            if (content["result_digest"], content["fact_id"]) != (own[0][1], own[0][2]):
+                _invalid(row["id"], "source_header_mismatch")
+            if _sql_outcomes:
+                bindings.append(own[0])
+            continue
         if row["anchor_digest"] is None:
             _invalid(row["id"], "own_anchor_missing")
         if row["anchor_calculation_id"] != ident:
@@ -491,10 +550,23 @@ def verify_published_source_bindings(reads, calculation_ids):
         if (content["result_digest"], content["fact_id"]) != (binding[1], binding[2]):
             _invalid(row["id"], "source_header_mismatch")
         bindings.append(binding)
+    if _sql_outcomes and cache is not None:
+        # Include successful earlier byte-only bindings in the same syntax
+        # batch. A failure in any new source cannot publish an upgrade for them.
+        bindings.extend(reads._anchored_source_bytes[ident]
+                        for ident in requested - identifiers
+                        if ident in reads._anchored_source_bytes)
     if bindings:
         reads._verify_anchored_source_bytes(_AnchoredSourceProof(
             _SOURCE_PROOF_SEAL, connection, reads, tuple(bindings),
-        ))
+        ), _sql_outcomes=_sql_outcomes)
+    if (cache is not None and _owns_current_selector_snapshot(reads, connection)
+            and reads._snapshot_token is token):
+        # Publish only after the complete requested batch succeeds. A missing
+        # repairable body retains its original fallback and is never memoized.
+        cache.setdefault("report_published_own_sources", {}).update(
+            (ident, True) for ident in identifiers - fallback
+        )
     return frozenset(fallback)
 
 
@@ -598,6 +670,12 @@ def read_open_contributions(engine, connection, calculation_ids, *, reads):
                 if content["result_digest"] != root[1] or content["fact_id"] != root[2]:
                     _invalid(content["publication_id"], "source_header_mismatch")
         stored.update(verified)
+        from .query_reads import _owns_current_selector_snapshot
+
+        if _owns_current_selector_snapshot(reads, connection):
+            # Distinguish completed full proofs from merely cached content.
+            # Publication verification remains the own-source reader's job.
+            cache.setdefault("report_open_own_source_bytes", {}).update(verified)
     return {ident: stored[ident] for ident in identifiers if ident in stored}
 
 

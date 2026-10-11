@@ -5,6 +5,7 @@ import type { DashboardBriefGroupContract } from "./generated/dashboardBriefGrou
 import { validateDashboardBriefResponse } from "./generated/dashboardBrief.js";
 
 export type BriefResponse = DashboardBriefResponse;
+export type BriefOverviewResponse = Extract<BriefResponse, { scope: "overview" }>;
 export type BriefData = DashboardBriefContract.BriefData;
 export type BriefActivityGroup = DashboardBriefContract.BriefActivityGroup;
 export type BriefActivityDisplayGroup = DashboardBriefContract.BriefActivityDisplayGroup;
@@ -28,15 +29,17 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
   const section = url.searchParams.get("section");
   const voucherVersionId = url.searchParams.get("voucher_version_id");
   const voucherNumber = url.searchParams.get("voucher_number");
+  const overview = response.scope === "overview";
   return response.read_context.company_id === companyId
+    && response.scope === (section ?? "overview")
+    && !(section !== null && (voucherVersionId !== null || voucherNumber !== null))
     && validDashboardCollections(response.data)
-    && (!response.data?.focused_activity || response.data.focused_activity.detail_scope_key === null || response.data.focused_activity.detail_scope_key === response.data.focused_activity.key)
-    && (section !== null || response.data === null || (response.data.financial_position !== undefined && response.data.workforce_cost !== undefined && response.data.long_term_assets !== undefined))
+    && (!overview || !response.data?.focused_activity || response.data.focused_activity.detail_scope_key === null || response.data.focused_activity.detail_scope_key === response.data.focused_activity.key)
     && (period === null || response.selected_period?.key === period)
     && (expectedVersion === null || response.snapshot_version === expectedVersion)
-    && (section === null || (response.data !== null && section in response.data.collections))
-    && (response.data === null || voucherVersionId === null || response.data.focused_voucher?.voucher_version_id === voucherVersionId)
-    && (response.data === null || voucherNumber === null || response.data.focused_voucher?.number === voucherNumber);
+    && (section === null || response.data === null || section in response.data.collections)
+    && (voucherVersionId === null || (overview && (response.data === null || response.data.focused_voucher?.voucher_version_id === voucherVersionId)))
+    && (voucherNumber === null || (overview && (response.data === null || response.data.focused_voucher?.number === voucherNumber)));
 }
 
 export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {

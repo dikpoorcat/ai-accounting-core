@@ -1,22 +1,23 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
 async function harness(query) {
   const key = `assetLocation${++sequence}`, calls = [], focus = [], cleanup = [];
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-09", ...query }, hash: "" });
-  globalThis[key] = { Vue, route, focus, cleanup, appendDashboardCollection, fetch: (...args) => new Promise(resolve => calls.push({ args, resolve })) };
+  globalThis[key] = { Vue, route, focus, cleanup, appendDashboardCollection, prepareDashboardCollections, fetch: (...args) => new Promise(resolve => calls.push({ args, resolve })) };
   const script = readFileSync(new URL("../src/views/AssetsView.vue", import.meta.url), "utf8")
-    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const { outputText } = ts.transpileModule(`
     const environment = globalThis.${key};
     export function instantiate() {
-      const { computed, ref, watch, nextTick } = environment.Vue;
-      const { appendDashboardCollection } = environment;
+      const { computed, ref, shallowRef, watch, nextTick } = environment.Vue;
+      const { appendDashboardCollection, prepareDashboardCollections } = environment;
       const useRoute = () => environment.route, useRouter = () => ({ push() {}, replace() {} });
       const onMounted = () => {}, onBeforeUnmount = callback => environment.cleanup.push(callback);
       const useDashboardContext = () => ({ context: ref(null), load: async () => ({ periods: [] }), refresh() {} });
@@ -57,7 +58,7 @@ test("exact project lookup is independent of pagination and changing the target 
   assert.deepEqual(view.focus, []);
   const next = view.loadAssets("2026-09");
   assert.equal(view.calls[1].args[2].project_id, "replacement-project");
-  view.calls[1].resolve({ data: { marker: "new" } }); await next;
+  view.calls[1].resolve({ data: { marker: "new", collections: {} } }); await next;
   assert.equal(view.response.value.data.marker, "new");
   assert.deepEqual(view.focus, ["project-card-target"]);
   view.close();

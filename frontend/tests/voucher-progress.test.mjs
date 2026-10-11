@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -155,7 +156,7 @@ async function harness(cache = new Map(), voucherContext = voucher()) {
   const route = Vue.reactive({ query: { company_id: "company-a" } });
   const props = Vue.reactive({ subjectId: "salary-business", period: "2026-09", snapshotVersion: "v1", settlementView: "historical", presentation: "voucher", voucherContext, detailCache: cache, expanded: false, hideSummary: true });
   globalThis[key] = { Vue, props, route, cleanup, events, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
-  const source = readFileSync(new URL("../src/components/BusinessStatusDetails.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+  const source = readFileSync(new URL("../src/components/BusinessStatusDetails.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const prefix = `const environment = globalThis.${key}; const { ref, computed, watch } = environment.Vue;
     const { appendDashboardCollection } = environment; const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route, defineProps = () => environment.props;
@@ -173,12 +174,36 @@ const result = (id = "first", next = "next") => {
 };
 const tick = async () => { await Promise.resolve(); await Vue.nextTick(); };
 
+test("expanded progress reads 20 then 500 then its tail in the same voucher scope", async () => {
+  const view = await harness(), ids = Array.from({ length: 525 }, (_, index) => `payment-${index}`);
+  const pageResult = (start, count) => {
+    const value = result();
+    value.data.collections.settlement_events = { items: ids.slice(start, start + count).map(id => ({ id })),
+      page: { total_count: 525, filtered_count: 525, returned_count: count, has_more: start + count < 525, next_cursor: start + count < 525 ? `cursor-${start + count}` : null } };
+    return value;
+  };
+  try {
+    view.props.expanded = true; await tick(); assert.equal(view.calls[0].args[3].limit, 20);
+    view.calls[0].resolve(pageResult(0, 20)); await tick();
+    const items = view.data.value.collections.settlement_events.items;
+    const next = view.loadMore(); assert.equal(view.calls[1].args[3].limit, 500);
+    assert.equal(view.calls[1].args[3].cursor, "cursor-20");
+    assert.equal(view.calls[1].args[3].expected_version, "v1");
+    view.calls[1].resolve(pageResult(20, 500)); await next;
+    const tail = view.loadMore(); assert.equal(view.calls[2].args[3].cursor, "cursor-520");
+    view.calls[2].resolve(pageResult(520, 5)); await tail;
+    assert.equal(view.data.value.collections.settlement_events.items, items);
+    assert.deepEqual(items.map(item => item.id), ids);
+    await view.loadMore(); assert.equal(view.calls.length, 3);
+  } finally { view.unmount(); }
+});
+
 test("voucher progress requests only on expansion and rejects late first responses after collapse", async () => {
   const view = await harness();
   try {
     assert.equal(view.calls.length, 0);
     view.props.expanded = true; await tick(); assert.equal(view.calls.length, 1);
-    assert.equal(view.calls[0].args[3].expected_version, "v1"); assert.equal(view.calls[0].args[3].settlement_view, "historical");
+    assert.equal(view.calls[0].args[3].expected_version, "v1"); assert.equal(view.calls[0].args[3].settlement_view, "historical"); assert.equal(view.calls[0].args[3].limit, 20);
     view.props.expanded = false; await tick(); assert.equal(view.calls[0].args[2].aborted, true);
     view.calls[0].resolve(result()); await tick(); assert.equal(view.data.value, null); assert.equal(view.cache.size, 0);
     view.props.expanded = true; await tick(); assert.equal(view.calls.length, 2);
@@ -192,7 +217,7 @@ test("successful cached pages survive close and unmount while cancelled pages ne
   try {
     view.props.expanded = true; await tick(); view.calls[0].resolve(result()); await tick();
     const items = view.data.value.collections.settlement_events.items;
-    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].cursor, "next");
+    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].cursor, "next"); assert.equal(view.calls[1].args[3].limit, 500);
     view.props.expanded = false; await tick(); assert.equal(view.calls[1].args[2].aborted, true);
     view.calls[1].resolve(result("late", null)); await pending; assert.deepEqual(items.map(item => item.id), ["first"]);
     view.props.expanded = true; await tick(); assert.equal(view.calls.length, 2, "same detail cache must avoid another first page");

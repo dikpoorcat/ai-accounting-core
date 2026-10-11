@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 from copy import deepcopy
 from pathlib import Path
 
@@ -21,6 +22,26 @@ from scripts.benchmark_stage9_browser import (
     validate_book_report,
 )
 from scripts.benchmark_stage9_switch_company import complete_switch_report
+
+
+def test_voucher_tail_diagnostic_cannot_enter_formal_or_requalification_modes():
+    options = dict(diagnostic_voucher_tail=False, interaction_only=True, layout_only=False,
+                   navigation_only=None, instrument=False, qualify_output=None,
+                   switch_book_report=None, warmups=3, repeats=30)
+    formal = SimpleNamespace(**options)
+    assert benchmark_stage9_browser.voucher_tail_diagnostic_options(formal, {}) is False
+    assert (formal.warmups, formal.repeats) == (3, 30)
+    diagnostic = SimpleNamespace(**(options | {"diagnostic_voucher_tail": True}))
+    assert benchmark_stage9_browser.voucher_tail_diagnostic_options(diagnostic, {}) is True
+    assert (diagnostic.warmups, diagnostic.repeats) == (1, 3)
+    diagnostic = SimpleNamespace(**options)
+    assert benchmark_stage9_browser.voucher_tail_diagnostic_options(diagnostic, {"STAGE9_DIAGNOSTIC_VOUCHER_TAIL": "1"})
+    assert (diagnostic.warmups, diagnostic.repeats) == (1, 3)
+    for changed in ({"interaction_only": False}, {"layout_only": True}, {"instrument": True},
+                    {"navigation_only": "cold"}, {"qualify_output": "new"}, {"switch_book_report": "other"}):
+        with pytest.raises(ValueError, match="existing interactions"):
+            benchmark_stage9_browser.voucher_tail_diagnostic_options(
+                SimpleNamespace(**(options | changed | {"diagnostic_voucher_tail": True})), {})
 
 
 def complete_report():
@@ -78,8 +99,13 @@ def fake_current_preview(report):
 def qualification_input(tmp_path):
     (tmp_path / ".tmp").mkdir(exist_ok=True)
     book = complete_report()
-    book.update(source=str(tmp_path / "old-source"), root=str(tmp_path / ".tmp/stage9-root"),
-                employee_count=0, registered_object_count=50, measurements={"old": "timing"})
+    book.update(
+        source=str(tmp_path / "old-source"),
+        root=str(tmp_path / ".tmp/stage9-root"),
+        employee_count=0,
+        registered_object_count=50,
+        measurements={"old": "timing"},
+    )
     book["verified_open_preview"] = fake_current_preview(book)
     input_path = tmp_path / "input.json"
     input_path.write_text(json.dumps(book), encoding="utf-8")
@@ -102,47 +128,87 @@ def test_explicit_qualification_uses_one_real_dispatch_and_fresh_proof(tmp_path,
     def independent(selected_engine, **options):
         assert selected_engine is engine
         assert options["dimensions"] == {
-            "distribution": "independent_local_pairs", "businesses": 1000,
-            "month_stats": book["months"], "objects_count": 50, "business_count": 2000,
+            "distribution": "independent_local_pairs",
+            "businesses": 1000,
+            "month_stats": book["months"],
+            "objects_count": 50,
+            "business_count": 2000,
         }
         events.append("registered-verifier")
         preview = options["preview_close"]("2016-02", owner_confirmation="synthetic-proof")
-        current = {**fake_current_preview(book), "source": str(source),
-                   "digest": preview["digest"]}
-        return {"integrity": deepcopy(original["integrity"]), "integrity_ms": 11,
-                "preview_ms": 22, "checkpoint_sha256": "checkpoint-bytes",
-                "verified_open_preview": current, "integrity_contract": {"version": 1}}
+        current = {**fake_current_preview(book), "source": str(source), "digest": preview["digest"]}
+        return {
+            "integrity": deepcopy(original["integrity"]),
+            "integrity_ms": 11,
+            "preview_ms": 22,
+            "checkpoint_sha256": "checkpoint-bytes",
+            "verified_open_preview": current,
+            "integrity_contract": {"version": 1},
+        }
 
     monkeypatch.setattr(stage9_verified_open_preview, "verify_book_open_preview", independent)
-    monkeypatch.setattr(benchmark_stage9_browser, "qualification_source_files",
-                        lambda _: ({"file": "hash"}, "source-manifest"))
+    monkeypatch.setattr(
+        benchmark_stage9_browser,
+        "qualification_source_files",
+        lambda _: ({"file": "hash"}, "source-manifest"),
+    )
     app = SimpleNamespace(engine=lambda _: engine, dispatch=dispatch)
     result = qualify_book_report(
-        app, token="session", book=book, input_path=input_path, output_path=output_path,
-        source=source, workspace=tmp_path, company_name=book["company"]["name"], preparation_ms=3,
+        app,
+        token="session",
+        book=book,
+        input_path=input_path,
+        output_path=output_path,
+        source=source,
+        workspace=tmp_path,
+        company_name=book["company"]["name"],
+        preparation_ms=3,
     )
     assert result["status"] == "complete" and result["measurements"] == {}
     assert result["source"] == str(source)
     assert result["verified_open_preview"]["digest"] == "resident-real-preview"
-    assert events == ["registered-verifier", ("preview_close", {
-        "company_id": book["company"]["id"], "period": "2016-02",
-        "owner_confirmation": "synthetic-proof",
-    }, "session")]
+    assert events == [
+        "registered-verifier",
+        (
+            "preview_close",
+            {
+                "company_id": book["company"]["id"],
+                "period": "2016-02",
+                "owner_confirmation": "synthetic-proof",
+            },
+            "session",
+        ),
+    ]
     assert result["qualification"]["original_source"] == original["source"]
     assert result["qualification"]["input_report_sha256"]
     assert result["qualification"]["checkpoint_sha256"] == "checkpoint-bytes"
     assert book == original and json.loads(input_path.read_text()) == original
     assert json.loads(output_path.read_text(encoding="utf-8"))["status"] == "complete"
     with pytest.raises(FileExistsError):
-        qualify_book_report(app, token="session", book=book, input_path=input_path,
-                            output_path=output_path, source=source,
-                            workspace=tmp_path, company_name=book["company"]["name"])
+        qualify_book_report(
+            app,
+            token="session",
+            book=book,
+            input_path=input_path,
+            output_path=output_path,
+            source=source,
+            workspace=tmp_path,
+            company_name=book["company"]["name"],
+        )
     assert len(events) == 2
 
 
-@pytest.mark.parametrize("damage", (
-    "verifier", "input", "source", "coverage", "dimensions", "real-root",
-))
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "verifier",
+        "input",
+        "source",
+        "coverage",
+        "dimensions",
+        "real-root",
+    ),
+)
 def test_qualification_failure_keeps_new_failure_without_old_proof(tmp_path, monkeypatch, damage):
     from types import SimpleNamespace
 
@@ -151,8 +217,10 @@ def test_qualification_failure_keeps_new_failure_without_old_proof(tmp_path, mon
 
     def inventory(_):
         source_calls.append(1)
-        return ({"file": "changed" if damage == "source" and len(source_calls) > 1 else "hash"},
-                "manifest")
+        return (
+            {"file": "changed" if damage == "source" and len(source_calls) > 1 else "hash"},
+            "manifest",
+        )
 
     def independent(*args, **options):
         if damage == "verifier":
@@ -162,8 +230,11 @@ def test_qualification_failure_keeps_new_failure_without_old_proof(tmp_path, mon
         integrity = deepcopy(book["integrity"])
         if damage == "coverage":
             integrity["coverage"].pop("sources")
-        return {"integrity": integrity, "checkpoint_sha256": "checkpoint",
-                "verified_open_preview": {**fake_current_preview(book), "source": str(tmp_path)}}
+        return {
+            "integrity": integrity,
+            "checkpoint_sha256": "checkpoint",
+            "verified_open_preview": {**fake_current_preview(book), "source": str(tmp_path)},
+        }
 
     if damage == "dimensions":
         book["registered_object_count"] = True
@@ -174,9 +245,16 @@ def test_qualification_failure_keeps_new_failure_without_old_proof(tmp_path, mon
     monkeypatch.setattr(benchmark_stage9_browser, "qualification_source_files", inventory)
     monkeypatch.setattr(stage9_verified_open_preview, "verify_book_open_preview", independent)
     with pytest.raises(ValueError):
-        qualify_book_report(SimpleNamespace(engine=lambda _: object()), token="session", book=book,
-                            input_path=input_path, output_path=output_path, source=tmp_path,
-                            workspace=tmp_path, company_name=book["company"]["name"])
+        qualify_book_report(
+            SimpleNamespace(engine=lambda _: object()),
+            token="session",
+            book=book,
+            input_path=input_path,
+            output_path=output_path,
+            source=tmp_path,
+            workspace=tmp_path,
+            company_name=book["company"]["name"],
+        )
     failed = json.loads(output_path.read_text(encoding="utf-8"))
     assert failed["status"] == "qualification_failed" and failed["measurements"] == {}
     assert failed.get("verified_open_preview") != book["verified_open_preview"]
@@ -188,8 +266,13 @@ def test_qualification_source_requires_complete_inventory_and_rejects_drift(tmp_
 
     files = {"src/example.py": "original"}
     monkeypatch.setattr(snapshot_stage9_source, "_inventory", lambda _: dict(files))
-    manifest = {"status": "complete", "target": str(tmp_path), "files": dict(files),
-                "file_count": 1, "sha256": snapshot_stage9_source._digest(files)}
+    manifest = {
+        "status": "complete",
+        "target": str(tmp_path),
+        "files": dict(files),
+        "file_count": 1,
+        "sha256": snapshot_stage9_source._digest(files),
+    }
     (tmp_path / "source-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert benchmark_stage9_browser.qualification_source_files(tmp_path)[0] == files
     files["src/example.py"] = "drift"
@@ -203,17 +286,37 @@ def test_qualification_cli_refuses_reused_or_shared_output(tmp_path, monkeypatch
     folder.mkdir()
     input_path, timing_path = folder / "stage9-input.json", folder / "stage9-timing.json"
     gate = folder / "stage9-ready.json"
-    qualification = {"input": input_path, "timing-output": timing_path,
-                     "gate": gate, "existing": folder / "stage9-existing.json"}[alias]
+    qualification = {
+        "input": input_path,
+        "timing-output": timing_path,
+        "gate": gate,
+        "existing": folder / "stage9-existing.json",
+    }[alias]
     if alias == "existing":
         qualification.write_text("preserve", encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", [
-        "benchmark_stage9_browser.py", "--workspace", str(tmp_path),
-        "--book-report", str(input_path), "--output", str(timing_path),
-        "--qualify-output", str(qualification), "--node", "unused-node",
-        "--playwright-module", "unused-module", "--timing-ready-file", str(gate),
-        "--timing-start-file", str(folder / "stage9-start"),
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark_stage9_browser.py",
+            "--workspace",
+            str(tmp_path),
+            "--book-report",
+            str(input_path),
+            "--output",
+            str(timing_path),
+            "--qualify-output",
+            str(qualification),
+            "--node",
+            "unused-node",
+            "--playwright-module",
+            "unused-module",
+            "--timing-ready-file",
+            str(gate),
+            "--timing-start-file",
+            str(folder / "stage9-start"),
+        ],
+    )
     with pytest.raises(SystemExit, match="2"):
         benchmark_stage9_browser.main()
     assert "distinct new synthetic file" in capsys.readouterr().err
@@ -223,12 +326,25 @@ def test_qualification_cli_refuses_reused_or_shared_output(tmp_path, monkeypatch
 
 
 def test_qualification_cli_explicitly_rejects_switch_before_preparation(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", [
-        "benchmark_stage9_browser.py", "--book-report", "unused-input",
-        "--output", "unused-output", "--qualify-output", "unused-qualification",
-        "--switch-book-report", "unused-switch", "--node", "unused-node",
-        "--playwright-module", "unused-module",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark_stage9_browser.py",
+            "--book-report",
+            "unused-input",
+            "--output",
+            "unused-output",
+            "--qualify-output",
+            "unused-qualification",
+            "--switch-book-report",
+            "unused-switch",
+            "--node",
+            "unused-node",
+            "--playwright-module",
+            "unused-module",
+        ],
+    )
     with pytest.raises(SystemExit, match="2"):
         benchmark_stage9_browser.main()
     assert "does not support company switching" in capsys.readouterr().err
@@ -274,7 +390,9 @@ def test_timing_gate_waits_until_after_ready_without_exposing_credentials(tmp_pa
     def allow_timing(delay):
         waits.append(delay)
         assert json.loads(ready.read_text()) == {
-            "status": "timing_ready", "pid": 123, "output": "report.json"
+            "status": "timing_ready",
+            "pid": 123,
+            "output": "report.json",
         }
         release.touch()
 
@@ -405,7 +523,9 @@ const { waitForLater } = require(process.argv[1]);
 """
     result = subprocess.run(
         [node, "--unhandled-rejections=strict", "-e", script, str(harness)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
 
@@ -447,7 +567,9 @@ for (const owner_review_request of invalidLocators) {
 """
     result = subprocess.run(
         [node, "--unhandled-rejections=strict", "-e", script, str(harness)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
 
@@ -468,7 +590,9 @@ def test_browser_stderr_diagnostic_redacts_secrets_and_keeps_timeout():
 
 @pytest.mark.parametrize("failed_call", ("request", "native_execute", "native_update"))
 def test_browser_login_failure_keeps_original_report_and_cleans_up(
-    tmp_path, monkeypatch, failed_call,
+    tmp_path,
+    monkeypatch,
+    failed_call,
 ):
     from contextlib import nullcontext
     from types import SimpleNamespace
@@ -520,9 +644,11 @@ def test_browser_login_failure_keeps_original_report_and_cleans_up(
     app = SimpleNamespace(
         catalog=SimpleNamespace(
             companies=lambda: [book["company"]],
-            connection=lambda **kwargs: nullcontext(SimpleNamespace(
-                execute=lambda _: [("synthetic-stage9-owner",)],
-            )),
+            connection=lambda **kwargs: nullcontext(
+                SimpleNamespace(
+                    execute=lambda _: [("synthetic-stage9-owner",)],
+                )
+            ),
         ),
         security=SimpleNamespace(catalog_instance_id="synthetic-catalog", logout=logout),
         dispatch=lambda *args, **kwargs: pytest.fail("login failure dispatched business read"),
@@ -530,7 +656,8 @@ def test_browser_login_failure_keeps_original_report_and_cleans_up(
     )
     server = SimpleNamespace(
         RequestHandlerClass=SimpleNamespace(send_response=lambda *args: None),
-        server_port=1234, build_id="synthetic-build",
+        server_port=1234,
+        build_id="synthetic-build",
         serve_forever=lambda: pytest.fail("test started a real server"),
         shutdown=lambda: events.append("shutdown"),
         server_close=lambda: events.append("server-close"),
@@ -540,23 +667,48 @@ def test_browser_login_failure_keeps_original_report_and_cleans_up(
     monkeypatch.setattr(benchmark_stage9_browser, "configure_source", lambda *args: source)
     monkeypatch.setattr(benchmark_stage9_browser, "prepare_browser_static_runtime", lambda: ((), 0))
     monkeypatch.setattr(benchmark_stage9_browser, "prepare_browser_service", lambda *args: (app, 0))
-    monkeypatch.setattr(benchmark_stage9_browser, "browser_source_paths",
-                        lambda *args, **kwargs: (static, source / "unused-harness.cjs"))
-    monkeypatch.setattr(http, "create_server", lambda *args, **kwargs: (server, "synthetic-capability"))
+    monkeypatch.setattr(
+        benchmark_stage9_browser,
+        "browser_source_paths",
+        lambda *args, **kwargs: (static, source / "unused-harness.cjs"),
+    )
+    monkeypatch.setattr(
+        http, "create_server", lambda *args, **kwargs: (server, "synthetic-capability")
+    )
     monkeypatch.setattr(credentials, "InMemoryCredentialStore", lambda: store)
-    monkeypatch.setattr(daemon, "build_native_security_controller",
-                        lambda *args, **kwargs: SimpleNamespace(request=request))
-    monkeypatch.setattr(transport, "NativeHttpClient",
-                        lambda **kwargs: SimpleNamespace(call=native_call))
-    monkeypatch.setattr(benchmark_stage9_browser.threading, "Thread", lambda **kwargs: SimpleNamespace(
-        start=lambda: events.append("thread-start"),
-        join=lambda **kwargs: events.append("thread-join"),
-    ))
-    monkeypatch.setattr(sys, "argv", [
-        "benchmark_stage9_browser.py", "--book-report", str(report_path),
-        "--workspace", str(tmp_path), "--output", str(output_path),
-        "--node", "unused-node", "--playwright-module", "unused-module",
-    ])
+    monkeypatch.setattr(
+        daemon,
+        "build_native_security_controller",
+        lambda *args, **kwargs: SimpleNamespace(request=request),
+    )
+    monkeypatch.setattr(
+        transport, "NativeHttpClient", lambda **kwargs: SimpleNamespace(call=native_call)
+    )
+    monkeypatch.setattr(
+        benchmark_stage9_browser.threading,
+        "Thread",
+        lambda **kwargs: SimpleNamespace(
+            start=lambda: events.append("thread-start"),
+            join=lambda **kwargs: events.append("thread-join"),
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark_stage9_browser.py",
+            "--book-report",
+            str(report_path),
+            "--workspace",
+            str(tmp_path),
+            "--output",
+            str(output_path),
+            "--node",
+            "unused-node",
+            "--playwright-module",
+            "unused-module",
+        ],
+    )
     with pytest.raises(RuntimeError) as caught:
         benchmark_stage9_browser.main()
     assert caught.value is failure
@@ -583,8 +735,11 @@ const assert = require('node:assert/strict');
 const { verifyCollection, verifyVoucher, verifyMainPayload, formatFen } = require(process.argv[1]);
 const schemas = require(require('node:path').join(require('node:path').dirname(process.argv[1]),
   '../src/api/generated/dashboardResponseSchemas.json'));
-const version = name => schemas[name].properties.schema_version.const
-  ?? schemas[name].properties.schema_version.enum[0];
+const version = name => {
+  const schema = schemas[name];
+  const shape = schema.oneOf ? schema.$defs[schema.oneOf[0].$ref.split('/').at(-1)] : schema;
+  return shape.properties.schema_version.const ?? shape.properties.schema_version.enum[0];
+};
 const copy = value => JSON.parse(JSON.stringify(value));
 const collection = (total = 0) => ({ items: Array.from({length: Math.min(20, total)}, () => ({})),
   page: {total_count: total, filtered_count: total, returned_count: Math.min(20, total),
@@ -625,17 +780,19 @@ const base = {read_context: {company_id: 'company', as_of: '2017-01-10', read_ve
   snapshot_version: 'snapshot', selected_period: {key: selected.period},
   read_semantics: {knowledge: 'current_knowledge', accounting: 'as_posted',
     system_time_replay: false}};
-const sections = {brief: ['activity', 'vouchers', 'open_items'],
+const sections = {brief: ['activity', 'open_items'],
   funds: ['accounts', 'movements', 'statements', 'investment_products', 'investment_events'],
   employees: ['employees', 'labor_sources'], assets: ['assets', 'projects']};
 for (const [key, names] of Object.entries(sections)) {
   const payload = {...copy(base), schema_version: version('dashboard_' + key),
     data: {collections: Object.fromEntries(names.map(name => [name, collection()]))}};
-  if (key === 'brief') Object.assign(payload.data, {month_state: 'open', owner_review_request: null,
-    voucher_count: 0, activity_count: 0, focused_voucher: null,
+  if (key === 'brief') {payload.scope = 'overview'; Object.assign(payload.data, {
+    month_state: 'open', owner_review_request: null,
+    voucher_count: 0, activity_count: 0, group_count: 0, focused_voucher: null,
+    open_items: {group_count: 0},
     financial_position: {assets_fen: '0', liabilities_fen: '0', equity_fen: '0'},
     workforce_cost: {has_activity: false},
-    long_term_assets: {net_fen: '0', fixed_active_count: 0, intangible_active_count: 0}});
+    long_term_assets: {net_fen: '0', fixed_active_count: 0, intangible_active_count: 0}});}
   const url = new URL('http://test/api/dashboard/' + key);
   verifyMainPayload(payload, key, selected, url, {requireVouchers: false});
   const old = copy(payload); old.schema_version--;
@@ -656,9 +813,17 @@ for (const [key, names] of Object.entries(sections)) {
       assert.throws(() => verifyMainPayload(absentSummary, key, selected, url,
         {requireVouchers: false}), /main financial.*workforce summaries missing/);
     }
-    const missingVouchers = copy(payload); delete missingVouchers.data.collections.vouchers;
-    assert.throws(() => verifyMainPayload(missingVouchers, key, selected, url,
-      {requireVouchers: false}), /vouchers.*missing/);
+    const preloaded = copy(payload); preloaded.data.collections.vouchers = collection();
+    assert.throws(() => verifyMainPayload(preloaded, key, selected, url,
+      {requireVouchers: false}), /preloaded independent vouchers/);
+    for (const scope of ['activity', 'open_items', 'vouchers']) {
+      const partition = {...copy(base), schema_version: version('dashboard_brief'), scope,
+        data: {collections: {[scope]: collection()}}};
+      const target = new URL(url); target.searchParams.set('section', scope);
+      verifyMainPayload(partition, key, selected, target, {requireVouchers: false});
+      const wrongScope = copy(partition); wrongScope.scope = 'overview';
+      assert.throws(() => verifyMainPayload(wrongScope, key, selected, target), /scope/);
+    }
   }
 }
 const report = {...copy(base), schema_version: version('dashboard_quarterly_report'), statements:
@@ -674,7 +839,9 @@ assert.throws(() => verifyMainPayload(report, 'reports', selected, new URL('http
 """
     result = subprocess.run(
         [node, "--unhandled-rejections=strict", "-e", script, str(harness)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
 
@@ -740,7 +907,8 @@ def test_browser_harness_requires_its_own_generated_versions(tmp_path, mutation,
     else:
         assert result.returncode != 0
         assert "generated schema version" in result.stderr or mutation in {
-            "missing_file", "invalid_json"
+            "missing_file",
+            "invalid_json",
         }
 
 

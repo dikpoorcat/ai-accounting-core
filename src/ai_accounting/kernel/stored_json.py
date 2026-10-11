@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 
 class DuplicateStoredKey(ValueError):
@@ -28,6 +29,30 @@ def loads_unique(raw):
     """Preserve normal JSON value semantics while rejecting duplicate keys."""
 
     return json.loads(raw, object_pairs_hook=_unique_object)
+
+
+def _finite_float(raw):
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("non-finite stored JSON number")
+    return value
+
+
+def _reject_constant(_raw):
+    raise ValueError("non-finite stored JSON number")
+
+
+def loads_finite_unique(raw):
+    """Decode finite UI JSON once; ordinary and fixed source readers stay unchanged.
+
+    parse_constant covers named non-finite values; parse_float also rejects
+    ordinary exponent literals whose conversion overflows, such as 1e400.
+    Finite floats retain their original JSON interpretation.
+    """
+    return json.loads(
+        raw, object_pairs_hook=_unique_object,
+        parse_constant=_reject_constant, parse_float=_finite_float,
+    )
 
 
 def load_outcome(raw):

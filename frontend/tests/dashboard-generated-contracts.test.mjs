@@ -87,7 +87,7 @@ test("new page contracts keep detail rows only under collections", () => {
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
     workflow: 2, period_readiness: 1,
-    dashboard_context: 3, dashboard_brief: 18, dashboard_brief_group: 3, dashboard_funds: 9,
+    dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 9,
     dashboard_employees: 11, dashboard_assets: 10, dashboard_business_status: 10,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };

@@ -438,6 +438,7 @@ def _schema_for_models(models) -> str:
     )
     from .change_journal import journal_ddl
     from .close_storage import CLOSE_STORAGE_DDL
+    from .dashboard_read_model import DASHBOARD_READ_MODEL_DDL
     from .discovery_indexes import DISCOVERY_INDEX_DDL
     from .display import DISPLAY_DDL
     from .domains.banking import BANK_RECONCILIATION_READ_DDL
@@ -482,9 +483,7 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + "\n".join(
             sql for kind, sql in DUPLICATE_ACTUAL_INDEX_DDL.items() if kind in registry.models
         )
-        + "\n".join(
-            sql for kind, sql in MATERIAL_READ_INDEX_DDL.items() if kind in registry.models
-        )
+        + "\n".join(sql for kind, sql in MATERIAL_READ_INDEX_DDL.items() if kind in registry.models)
         + immutable_sql("entity")
         + immutable_sql("entity_profile_revision")
         + immutable_sql("entity_resolution")
@@ -515,6 +514,7 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + journal_ddl()
         + DUPLICATE_FREEZE_DDL
         + MATERIAL_WATCH_DDL
+        + DASHBOARD_READ_MODEL_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
     )

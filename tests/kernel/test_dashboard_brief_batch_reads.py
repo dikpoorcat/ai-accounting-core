@@ -37,23 +37,47 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
     response = Dashboard(engine).brief(
-        "2026-09", section="vouchers", limit=30, voucher_number=31, preparation="deferred"
+        "2026-09", section="vouchers", limit=30, preparation="deferred"
+    )
+    page_calls = calls.copy()
+    page_lines = list(line_batches)
+    calls.clear()
+    line_batches.clear()
+    focused_response = Dashboard(engine).brief(
+        "2026-09", limit=30, voucher_number=31, preparation="deferred",
+        expected_version=response["snapshot_version"],
     )
     data = response["data"]
+    focused = focused_response["data"]["focused_activity"]
+    focused_voucher = focused_response["data"]["focused_voucher"]
+    assert focused_response["data"]["voucher_count"] == 31
+    assert focused_response["data"]["activity_count"] == 31
+    assert focused_response["data"]["funds_overview"]["inflow_fen"] == 31
     page = data["collections"]["vouchers"]
     assert page["page"]["total_count"] == 31
     assert page["page"]["returned_count"] == len(page["items"]) == 30
     assert {item["subject_id"] for item in page["items"]} == {
         f"filter-2026-09-{index:04}" for index in range(30)
     }
-    assert data["focused_activity"]["subject_id"] == "filter-2026-09-0030"
-    assert data["focused_activity"]["voucher_version_id"] not in {
+    assert focused["subject_id"] == "filter-2026-09-0030"
+    assert focused["voucher_version_id"] == focused_voucher["voucher_version_id"]
+    assert focused["voucher_version_id"] not in {
         item["voucher_version_id"] for item in page["items"]
     }
-    for item in [*page["items"], data["focused_activity"]]:
+    for item in [*page["items"], focused]:
         assert item["amount_fen"] == 1
-        assert item["group"] == "financing_owner"
         assert {"components", "evidence"}.isdisjoint(item)
+    assert focused["group"] == "financing_owner"
+    for item in [*page["items"], focused_voucher]:
+        assert item["amount_fen"] == item["business_amount_fen"] == 1
+        assert sum(line["debit_fen"] for line in item["lines"]) == 1
+        assert sum(line["credit_fen"] for line in item["lines"]) == 1
+    # Each independent request keeps its own batched profile and line reads.
+    for measured in (page_calls, calls):
+        assert sum(count for sql, count in measured.items()
+                   if "FROM display_profile_revision p" in sql and "p.kind=?" in sql) <= 2
+        assert sum(count for sql, count in measured.items()
+                   if "FROM management_revision p" in sql and "p.subject_id IN" in sql) <= 2
     assert (
         sum(
             count
@@ -78,7 +102,8 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
         )
         == 1
     )
-    # Owner rows omit lines, but full-month money still needs all posted line proof.
+    # The partition proves exactly its displayed lines; the overview proves
+    # complete money separately and returns the distant exact voucher.
     with engine.store.connection(read_only=True) as connection:
         month_versions = {
             row[0]
@@ -88,7 +113,9 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
                 (YearMonth("2026-09").ordinal,),
             )
         }
-    assert line_batches == [month_versions]
+    assert page_lines == [{item["voucher_version_id"] for item in page["items"]}]
+    assert focused_voucher["voucher_version_id"] in set().union(*line_batches)
+    assert set().union(*page_lines, *line_batches) == month_versions
     assert len(month_versions) == 31
     assert (
         sum(
@@ -99,7 +126,7 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
         == 0
     )
     # Exact party/source evidence is still available through the accountant contract.
-    for index, item in enumerate([*page["items"], data["focused_activity"]]):
+    for index, item in enumerate([*page["items"], focused]):
         core = BusinessQueries(engine).business_status(item["subject_id"], "2026-09")
         fact = core["latest_fact"]
         assert fact["data"]["owner_id"] == f"filter-owner-2026-09-{index:04}"

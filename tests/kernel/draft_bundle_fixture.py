@@ -27,9 +27,13 @@ def synthetic_draft_bundle(directory, *, development=False):
             family=schema_bundle.FAMILY,
             application_id=schema_bundle.APPLICATION_ID,
         )
-        transitions = {"company": (
-            (fingerprints[0], fingerprints[1]), (fingerprints[1], company["sha256"]),
-        )}
+        transitions = {
+            "company": (
+                (fingerprints[0], fingerprints[1]),
+                (fingerprints[1], fingerprints[2]),
+                (fingerprints[2], company["sha256"]),
+            )
+        }
     return schema_bundle.load_bundle(
         registry,
         directory,

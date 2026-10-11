@@ -317,7 +317,7 @@ def _head_line_counts(snapshot, heads, *, line_count_period=None, read_line_coun
             "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value",
             (canonical(sorted(line_ids)),),
         )
-    }
+    } if line_ids else {}
     for row in heads:
         row["line_count"] = line_counts.get(row["id"])
     return heads
@@ -1217,6 +1217,9 @@ class Journal:
         self.snapshot.reads.verify_selected_voucher_adoptions(
             rows, through_period=self.snapshot.month,
         )
+        # Even a focused business detail without rendered lines consumes this
+        # voucher identity. Prove only the returned rows and reversal originals.
+        self.authenticated_selected_lines(rows)
         self.snapshot.reads.metadata({row["basis_calculation_id"] for row in rows})
         # Lines are prefetched only for an actual returned batch, never summaries.
         if include_lines:
@@ -1357,6 +1360,149 @@ class Journal:
         """Exact headers from a successful whole-scope money proof, if available."""
         cache = self._cache()
         return None if cache is None else cache.get(self._key("journal_verified_rows"))
+
+    def authenticated_headers(self):
+        """Prove the complete selected header scope without reading line bodies."""
+        owned = _owns_current_selector_snapshot(self.snapshot.reads, self.snapshot.connection)
+        proved = self.verified_rows() if owned else None
+        if proved is not None:
+            return proved
+        cache = self._cache() if owned else None
+        key = self._key("journal_authenticated_headers")
+        if cache is not None and key in cache:
+            return cache[key]
+        query, parameters = self.sql()
+        rows = tuple(self.snapshot.connection.execute(query, parameters))
+        self._verify_frozen_headers(rows=rows)
+        self.snapshot.reads.verify_selected_voucher_adoptions(
+            rows, through_period=self.snapshot.month,
+        )
+        self.authenticated_frozen_adoptions(rows)
+        if cache is not None:
+            cache[key] = rows
+        return rows
+
+    def authenticated_frozen_adoptions(self, rows):
+        """Bind exact frozen adopted results independently of voucher owners.
+
+        A no-impact review retains the old voucher owner while the frozen leaf
+        adopts a newer calculation. Neither a current head nor the owner body
+        proves that independently selected result. Only successful proofs in
+        this owned current read snapshot may be reused.
+        """
+        from .integrity import _invalid
+
+        reads = self.snapshot.reads
+        selected = {row["id"]: row for row in rows}
+        original_ids = {row["reverses_id"] for row in selected.values() if row["reverses_id"]}
+        missing_originals = original_ids - selected.keys()
+        if missing_originals:
+            query, parameters = selected_voucher_sql(
+                self.snapshot.period, voucher_ids=missing_originals,
+            )
+            selected.update((row["id"], row) for row in self.snapshot.connection.execute(
+                query, parameters,
+            ))
+        if not original_ids <= selected.keys() or any(
+            selected[ident]["close_period"] is None
+            or selected[ident]["reverses_id"] is not None
+            or selected[ident]["period"] >= row["period"]
+            for row in selected.values() if (ident := row["reverses_id"])
+        ):
+            _invalid("voucher", self.snapshot.month, "reversal_frozen_source_missing")
+        frozen_rows = {ident: row for ident, row in selected.items()
+                       if row["close_period"] is not None}
+        if not frozen_rows:
+            return {}
+        reads.verify_selected_voucher_adoptions(
+            frozen_rows.values(), through_period=self.snapshot.month,
+        )
+        owned = _owns_current_selector_snapshot(reads, self.snapshot.connection)
+        cache = self._cache() if owned else None
+        keys = {
+            ident: ("authenticated_frozen_voucher_adoption", self.snapshot.month,
+                    row["close_period"], ident, row["voucher_calculation_id"],
+                    row["voucher_id"], row["period"], row["number"], row["total"],
+                    row["reverses_id"])
+            for ident, row in frozen_rows.items()
+        }
+        pending = {ident: row for ident, row in frozen_rows.items()
+                   if cache is None or keys[ident] not in cache}
+        if not pending:
+            return {ident: cache[keys[ident]] for ident in frozen_rows}
+        owners = reads.metadata(
+            {row["voucher_calculation_id"] for row in pending.values()}, state=False,
+        )
+        closes = reads.authoritative_close_rows(
+            periods={row["close_period"] for row in pending.values()},
+        )
+        subjects = {meta["subject_id"] for meta in owners.values()}
+        scopes = {
+            close["period"]: {owners[row["voucher_calculation_id"]]["subject_id"]
+                              for row in pending.values()
+                              if row["close_period"] == close["period"]}
+            for close in closes
+        }
+        slices = reads.close_accounting_many(
+            closes, subjects=subjects, subjects_by_period=scopes,
+        )
+        vouchers, adopted = {}, {}
+        for close, selection in zip(closes, slices, strict=True):
+            vouchers.update(((close["period"], item["id"]), item)
+                            for item in selection.vouchers)
+            adopted.update(((close["period"], item["calculation_id"]), item)
+                           for item in selection.adopted_results)
+        staged = {}
+        for ident, row in pending.items():
+            frozen = vouchers.get((row["close_period"], ident))
+            if frozen is None or any(
+                row[field] != frozen[field]
+                for field in ("voucher_id", "number", "total", "reverses_id")
+            ) or row["voucher_calculation_id"] != frozen["calculation_id"]:
+                _invalid("voucher", ident, "frozen_voucher_header_mismatch")
+            staged[ident] = frozen
+        identifiers = {item["adopted_calculation_id"] for item in staged.values()}
+        metadata = reads.metadata(identifiers, state=False)
+        for ident, frozen in staged.items():
+            row = pending[ident]
+            adopted_id = frozen["adopted_calculation_id"]
+            entry = adopted.get((row["close_period"], adopted_id))
+            meta = metadata[adopted_id]
+            owner = owners[row["voucher_calculation_id"]]
+            if (
+                (meta["subject_id"], meta["kind"], meta["period"])
+                != (owner["subject_id"], owner["kind"], owner["period"])
+                or entry is None or frozen["result_digest"] != meta["result_digest"]
+                or any(
+                    entry[field] != meta[actual]
+                    for field, actual in (
+                        ("publication_id", "publication_id"), ("subject_id", "subject_id"),
+                        ("fact_id", "fact_id"), ("source_period", "period"),
+                        ("posting_period", "posting_period"), ("result_digest", "result_digest"),
+                    )
+                )
+            ):
+                _invalid("voucher", ident, "frozen_adopted_result_mismatch")
+        if owned:
+            from .report_open_contribution import verify_published_source_bindings
+
+            fallback = verify_published_source_bindings(reads, identifiers, _sql_outcomes=True)
+            if fallback:
+                reads.verify_saved_input_identity(fallback)
+            reads.verify_sql_outcomes(identifiers)
+        else:
+            # Fixed history and unowned connections retain complete source
+            # checks, without consuming current contribution anchors or caches.
+            reads.verify_saved_input_identity(identifiers)
+            publications = self.snapshot.connection.execute(
+                "SELECT p.* FROM json_each(?) ids JOIN calculation_publication p "
+                "ON p.calculation_id=ids.value", (canonical(sorted(identifiers)),),
+            ).fetchall()
+            reads.verify_publication_records(publications)
+        if cache is not None:
+            cache.update((keys[ident], item) for ident, item in staged.items())
+        return {ident: staged[ident] if ident in staged else cache[keys[ident]]
+                for ident in frozen_rows}
 
     def _verify_frozen_headers(self, *, rows=None):
         """Bind selected live headers before aggregating their saved directions.
@@ -1607,8 +1753,13 @@ class Journal:
         from .integrity import _invalid, _lines
 
         rows = tuple(rows)
-        self._verify_frozen_headers(rows=rows)
-        reads, cache = self.snapshot.reads, self._cache()
+        # A returned page is not the complete frozen header set. Unowned and
+        # fixed readers may lack a reusable whole-scope proof from page counts.
+        self._verify_frozen_headers()
+        reads = self.snapshot.reads
+        cache = self._cache() if _owns_current_selector_snapshot(
+            reads, self.snapshot.connection,
+        ) else None
         keys = {
             row["id"]: ("authenticated_voucher_lines", row["id"],
                         row["voucher_calculation_id"], row["basis_calculation_id"])
@@ -1633,10 +1784,12 @@ class Journal:
                 original_headers, through_period=self.snapshot.month,
             )
         used_rows = (*original_headers, *pending)
+        frozen = self.authenticated_frozen_adoptions(used_rows)
         identifiers = {
             row[field] for row in used_rows
             for field in ("voucher_calculation_id", "basis_calculation_id")
         }
+        identifiers.update(item["adopted_calculation_id"] for item in frozen.values())
         outcomes = reads.verify_selected_content(identifiers)
         owner_ids = {row["voucher_calculation_id"] for row in used_rows}
         publications = {
@@ -1666,6 +1819,11 @@ class Journal:
                     _invalid("voucher", ident, "voucher_publication_identity_mismatch")
                 expected = _lines(outcomes[owner]["lines"], "calculation", owner)
             actual = _checked_posted_lines(row, lines[ident], expected)
+            if ident in frozen and not row["reverses_id"]:
+                frozen_adopted_id = frozen[ident]["adopted_calculation_id"]
+                if actual != _lines(outcomes[frozen_adopted_id]["lines"],
+                                    "calculation", frozen_adopted_id):
+                    _invalid("voucher", ident, "frozen_adopted_lines_mismatch")
             if ident in originals:
                 verified_originals[ident] = actual
             if not row["reverses_id"]:

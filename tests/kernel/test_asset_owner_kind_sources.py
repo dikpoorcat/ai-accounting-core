@@ -69,7 +69,7 @@ def assert_private_lanes_reject(engine, period, *, warm):
                     consume()
                 assert failure.value.code == "content_integrity_failed"
                 assert failure.value.details["reason"] in {
-                    "owner_typed_fact_missing", "invalid_stored_content",
+                    "owner_typed_fact_missing", "typed_fact_missing", "invalid_stored_content",
                 }
                 assert_no_owner_identity_success(snap.reads, snap.month)
                 assert snap.reads._fact_versions == typed_before

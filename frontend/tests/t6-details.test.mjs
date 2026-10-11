@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -14,7 +15,7 @@ async function harness(component, exported, suppliedProps = {}) {
   globalThis[key] = { Vue, route, props, events, cleanup, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   const source = readFileSync(new URL(`../src/components/${component}.vue`, import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
-    .replace(/import[\s\S]*?from "[^"]+";/g, "");
+    .replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const prefix = `
     const environment = globalThis.${key};
     const { ref, computed, watch } = environment.Vue;
@@ -60,7 +61,7 @@ test("business settlement continuation appends records under the exact scope and
   assert.equal(view.calls[1].args[3].section, "settlement_events");
   assert.equal(view.calls[1].args[3].settlement_view, "historical");
   assert.equal(view.calls[1].args[3].expected_version, "business-v1");
-  assert.equal(view.calls[1].args[3].limit, 20);
+  assert.equal(view.calls[1].args[3].limit, AUTOMATIC_DASHBOARD_PAGE_LIMIT);
   view.calls[1].resolve(statusResult(null, "settlement-second")); await pending;
   assert.deepEqual(view.data.value.collections.settlement_events.items.map(item => item.id), ["settlement-first", "settlement-second"]);
   assert.equal(view.data.value.collections.settlement_events.items, originalItems);

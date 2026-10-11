@@ -541,7 +541,7 @@ def business_adopted_basis(connection, engine, calculation_ids, *, reads=None):
     }
 
 
-def _basis_inventory(connection, manifest):
+def _basis_inventory(connection, manifest, *, _source_reads=None):
     roots = [item["calculation_id"] for item in manifest["adopted_results"]]
     roots.extend(item["calculation_id"] for item in manifest["asset_card_adoptions"])
     roots.extend(item["acceptance_calculation_id"] for item in manifest["asset_card_adoptions"])
@@ -550,7 +550,8 @@ def _basis_inventory(connection, manifest):
     raw = {
         row["id"]: dict(row)
         for row in connection.execute(
-            "SELECT id,fact_id,kind,outcome,digest FROM calculation WHERE id IN "
+            "SELECT id,fact_id,kind," + ("" if _source_reads is not None else "outcome,")
+            + "digest FROM calculation WHERE id IN "
             "(SELECT value FROM json_each(?)) ORDER BY id",
             (canonical(calculations),),
         )
@@ -564,7 +565,9 @@ def _basis_inventory(connection, manifest):
             (canonical(calculations),),
         )
     )
-    reads = QueryReads(manifest["_engine"], connection) if "_engine" in manifest else None
+    reads = _source_reads or (
+        QueryReads(manifest["_engine"], connection) if "_engine" in manifest else None
+    )
     if reads is None:
         raise RuntimeError("owner review construction requires engine")
     facts = reads.facts(fact_ids)
@@ -579,12 +582,20 @@ def _basis_inventory(connection, manifest):
         fact["digest"] = fact_digests[ident]
     policies = sorted(ident for ident, fact in facts.items() if fact["kind"] in POLICY_FACT_KINDS)
     payroll = []
+    verified_outcomes = (
+        reads.verify_selected_content(
+            ident for ident, row in raw.items() if row["kind"] in PAYROLL_RESULT_KINDS
+        ) if _source_reads is not None else {}
+    )
     for ident, row in raw.items():
         if row["kind"] not in PAYROLL_RESULT_KINDS:
             continue
         from .stored_json import verify_outcome_bytes
 
-        outcome = verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+        outcome = (
+            verified_outcomes[ident] if _source_reads is not None else
+            verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+        )
         confirmation = outcome.get("values", {}).get("payroll_confirmation")
         if confirmation is not None:
             payroll.append(ident)
@@ -646,7 +657,8 @@ def _confirmation_fact_ids(confirmation):
 
 
 def _voucher_cards(connection, vouchers, keys):
-    selected = {item["id"]: item for item in vouchers if item["id"] in set(keys)}
+    selected_keys = set(keys)
+    selected = {item["id"]: item for item in vouchers if item["id"] in selected_keys}
     cards = {}
     if selected:
         rows = {
@@ -738,9 +750,14 @@ def _adopted_cards(connection, adopted_results, asset_cards, asset_batches, keys
     cards = {}
     declared = {item["calculation_id"]: item for item in adopted_results}
     asset_roles = {}
+    asset_digests = {}
     for item in asset_cards:
         asset_roles[item["calculation_id"]] = "asset_card_basis"
         asset_roles[item["acceptance_calculation_id"]] = "asset_acceptance_basis"
+        asset_digests.setdefault(item["calculation_id"], item["result_digest"])
+        asset_digests.setdefault(
+            item["acceptance_calculation_id"], item["acceptance_result_digest"],
+        )
     for item in asset_batches:
         asset_roles[item["owner_calculation_id"]] = "asset_batch_owner"
     for ident, row in rows.items():
@@ -748,18 +765,7 @@ def _adopted_cards(connection, adopted_results, asset_cards, asset_batches, keys
         expected_digest = (
             item["result_digest"]
             if item is not None
-            else next(
-                (
-                    value[field]
-                    for value in asset_cards
-                    for key, field in (
-                        ("calculation_id", "result_digest"),
-                        ("acceptance_calculation_id", "acceptance_result_digest"),
-                    )
-                    if value[key] == ident
-                ),
-                row["digest"].hex(),
-            )
+            else asset_digests.get(ident, row["digest"].hex())
         )
         if row["digest"].hex() != expected_digest:
             _fail("adopted_detail_source_missing")
@@ -792,8 +798,8 @@ def _adopted_cards(connection, adopted_results, asset_cards, asset_batches, keys
     return [cards[key] for key in keys]
 
 
-def _policy_cards(connection, engine, keys):
-    reads = QueryReads(engine, connection)
+def _policy_cards(connection, engine, keys, *, _source_reads=None):
+    reads = _source_reads or QueryReads(engine, connection)
     facts = reads.facts(keys)
     digests = {
         row["id"]: row["digest"].hex()
@@ -823,31 +829,49 @@ def _policy_cards(connection, engine, keys):
     return [cards[key] for key in keys]
 
 
-def _payroll_cards(connection, keys):
+def _payroll_cards(connection, keys, *, _source_reads=None):
     cards = {}
-    for row in connection.execute(
-        "SELECT c.id,c.kind,c.fact_id,c.outcome,c.digest,f.revision,f.digest fact_digest "
+    rows = list(connection.execute(
+        "SELECT c.id,c.kind,c.fact_id," + ("" if _source_reads is not None else "c.outcome,")
+        + "c.digest,f.revision,f.digest fact_digest "
         "FROM calculation c JOIN fact_revision f ON f.id=c.fact_id "
         "WHERE c.id IN (SELECT value FROM json_each(?))",
         (canonical(keys),),
-    ):
-        from .stored_json import verify_outcome_bytes
+    ))
+    from .stored_json import verify_outcome_bytes
 
-        outcome = verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
-        confirmation = outcome.get("values", {}).get("payroll_confirmation")
+    outcomes = (
+        _source_reads.verify_selected_content(row["id"] for row in rows)
+        if _source_reads is not None else {
+            row["id"]: verify_outcome_bytes(row["outcome"], row["digest"], row["id"])
+            for row in rows
+        }
+    )
+    confirmation_by_id = {
+        row["id"]: outcomes[row["id"]].get("values", {}).get("payroll_confirmation")
+        for row in rows
+    }
+    confirmation_ids_by_id = {}
+    for row in rows:
+        confirmation = confirmation_by_id[row["id"]]
         if row["kind"] not in PAYROLL_RESULT_KINDS or confirmation is None:
             _fail("payroll_confirmation_source_missing")
-        confirmation_ids = _confirmation_fact_ids(confirmation)
-        fact_rows = {
-            item["id"]: item
-            for item in connection.execute(
-                "SELECT id,revision,digest FROM fact_revision WHERE id IN "
-                "(SELECT value FROM json_each(?))",
-                (canonical(confirmation_ids),),
-            )
-        }
-        if set(fact_rows) != set(confirmation_ids):
-            _fail("payroll_confirmation_fact_missing")
+        confirmation_ids_by_id[row["id"]] = _confirmation_fact_ids(confirmation)
+    all_confirmation_ids = {
+        ident for identifiers in confirmation_ids_by_id.values() for ident in identifiers
+    }
+    all_fact_rows = {
+        item["id"]: item for item in connection.execute(
+            "SELECT id,revision,digest FROM fact_revision WHERE id IN "
+            "(SELECT value FROM json_each(?))", (canonical(sorted(all_confirmation_ids)),),
+        )
+    }
+    if all_fact_rows.keys() != all_confirmation_ids:
+        _fail("payroll_confirmation_fact_missing")
+    for row in rows:
+        confirmation = confirmation_by_id[row["id"]]
+        confirmation_ids = confirmation_ids_by_id[row["id"]]
+        fact_rows = {ident: all_fact_rows[ident] for ident in confirmation_ids}
         adopted = _adopted_payroll_confirmation(row, fact_rows, confirmation)
         mode = confirmation.get("mode")
         mode_label = {
@@ -910,7 +934,7 @@ def _evidence_cards(connection, keys):
     ]
 
 
-def _render_keys(connection, engine, manifest, section, keys):
+def _render_keys(connection, engine, manifest, section, keys, *, _source_reads=None):
     if section == "vouchers":
         return _voucher_cards(connection, manifest["vouchers"], keys)
     if section == "adopted_bases":
@@ -922,9 +946,9 @@ def _render_keys(connection, engine, manifest, section, keys):
             keys,
         )
     if section == "policies":
-        return _policy_cards(connection, engine, keys)
+        return _policy_cards(connection, engine, keys, _source_reads=_source_reads)
     if section == "payroll_confirmations":
-        return _payroll_cards(connection, keys)
+        return _payroll_cards(connection, keys, _source_reads=_source_reads)
     if section == "evidence":
         return _evidence_cards(connection, keys)
     raise ValueError("unsupported close review section")
@@ -996,10 +1020,11 @@ def build_owner_review(
     _frozen_followups=None,
     _frozen_position=None,
     _checked_open=None,
+    _source_reads=None,
 ):
     """Build the complete immutable v1 owner review inside the caller transaction."""
     working = {**manifest, "_engine": engine}
-    basis = _basis_inventory(connection, working)
+    basis = _basis_inventory(connection, working, _source_reads=_source_reads)
     working.pop("_engine", None)
     voucher_keys = [item["id"] for item in manifest["vouchers"]]
     adopted_keys = [item["calculation_id"] for item in manifest["adopted_results"]]
@@ -1019,7 +1044,9 @@ def build_owner_review(
     }
     directories = []
     for section, keys in keys_by_section.items():
-        cards = _render_keys(connection, engine, manifest, section, keys)
+        cards = _render_keys(
+            connection, engine, manifest, section, keys, _source_reads=_source_reads,
+        )
         directories.append(_directory(section, cards))
 
     voucher_ids = voucher_keys
@@ -1045,7 +1072,7 @@ def build_owner_review(
         for row in manifest["trial_balance"]
     ]
     if _frozen_position is None:
-        snapshot = _Snapshot(engine, connection, manifest["period"])
+        snapshot = _Snapshot(engine, connection, manifest["period"], reads=_source_reads)
         try:
             position = _position(snapshot)
         finally:
@@ -1072,7 +1099,7 @@ def build_owner_review(
     actual_receipts = actual_payments = internal_transfer = 0
 
     grouped = {}
-    reads = QueryReads(engine, connection)
+    reads = _source_reads or QueryReads(engine, connection)
     represented = set()
     reversed_ids = sorted(
         {voucher["reverses_id"] for voucher in manifest["vouchers"] if voucher["reverses_id"]}
@@ -1087,10 +1114,18 @@ def build_owner_review(
     }
     if set(reversed_owners) != set(reversed_ids):
         _fail("reversed_voucher_source_missing")
+    business_ids = set(reversed_owners.values())
+    business_ids.update(item["calculation_id"] for item in manifest["adopted_results"])
+    business_ids.update(item["adopted_calculation_id"] for item in manifest["vouchers"]
+                        if item["reverses_id"] is None)
+    business_calculations = reads.calculations(business_ids)
+    declarations = {}
+    for item in manifest["adopted_results"]:
+        declarations.setdefault(item["calculation_id"], item)
 
     def add_business(calculation_id, *, action, reversal, journal_total=None):
         nonlocal actual_receipts, actual_payments, internal_transfer
-        calculation = reads.calculation(calculation_id)
+        calculation = business_calculations[calculation_id]
         kind = calculation["kind"]
         amount, amount_label = _Snapshot.business_amount(
             calculation | {"fact": {"data": calculation["fact_data"]}}
@@ -1142,14 +1177,7 @@ def build_owner_review(
             if reversal
             else voucher["adopted_calculation_id"]
         )
-        declaration = next(
-            (
-                item
-                for item in manifest["adopted_results"]
-                if item["calculation_id"] == voucher["adopted_calculation_id"]
-            ),
-            None,
-        )
+        declaration = declarations.get(voucher["adopted_calculation_id"])
         action = (
             "correction"
             if reversal or declaration is None or declaration["source_period"] != manifest["period"]
@@ -1319,13 +1347,16 @@ def require_owner_review(value):
         _fail("invalid_owner_review_contract")
 
 
-def verify_owner_review_integrity(connection, engine, manifest, *, verify_financial_position=True):
+def verify_owner_review_integrity(
+    connection, engine, manifest, *, verify_financial_position=True, _source_reads=None,
+):
     review = require_owner_review(manifest.get("owner_review"))
     rebuilt = build_owner_review(
         connection,
         engine,
         {key: value for key, value in manifest.items() if key != "owner_review"},
         _frozen_followups=review["followup_summary"],
+        _source_reads=_source_reads,
         _frozen_position=(
             None
             if verify_financial_position

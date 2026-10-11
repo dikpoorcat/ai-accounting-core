@@ -35,10 +35,18 @@ class _Profile(BaseModel):
     display_name: ShortText | None = None
     display_number: ShortText | None = None
     purpose: NoteText | None = Field(
-        default=None, description="老板可理解的补充用途；不重述已展示的日期、金额、对象和清偿结果，不写核算依据"
+        default=None,
+        description=(
+            "老板可理解的补充用途；不重述已展示的日期、金额、对象和清偿结果，"
+            "不写核算依据"
+        ),
     )
     note: NoteText | None = Field(
-        default=None, description="老板可理解的补充备注；不重述结构化业务事实，核算来源定位写入source"
+        default=None,
+        description=(
+            "老板可理解的补充备注；不重述结构化业务事实，"
+            "核算来源定位写入source"
+        ),
     )
     source: Annotated[str, Field(
         min_length=1, max_length=2000, description="真实来源文件名和具体位置，不作为看板用途展示"
@@ -447,7 +455,8 @@ class Display:
             from .asset_batches import frozen_members
 
             owners = connection.execute(
-                "SELECT c.id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+                "SELECT c.id FROM json_each(?) ids CROSS JOIN calculation c "
+                "INDEXED BY sqlite_autoindex_calculation_1 ON c.id=ids.value "
                 "WHERE c.kind IN ('asset_activation_batch','asset_consumption_month') "
                 "ORDER BY c.id",
                 (canonical(sorted(calculations)),),
@@ -520,10 +529,11 @@ class Display:
         supplementary = [
             Display._record(row)
             for row in connection.execute(
-                "SELECT DISTINCT f.id,f.subject_id,s.kind,f.revision,f.digest FROM fact_scope x "
-                "JOIN json_each(?) k ON k.value=x.scope_key "
-                "JOIN fact_current a ON a.fact_id=x.fact_id "
-                "JOIN fact_revision f ON f.id=a.fact_id JOIN subject s ON s.id=f.subject_id "
+                "SELECT DISTINCT f.id,f.subject_id,s.kind,f.revision,f.digest "
+                "FROM json_each(?) k CROSS JOIN fact_scope x INDEXED BY fact_scope_any_kind "
+                "ON k.value=x.scope_key CROSS JOIN fact_current a ON a.fact_id=x.fact_id "
+                "CROSS JOIN fact_revision f ON f.id=a.fact_id "
+                "CROSS JOIN subject s ON s.id=f.subject_id "
                 "WHERE s.kind IN ('payroll_tax_declaration_actual','payroll_disbursement_basis') "
                 "ORDER BY s.kind,f.subject_id",
                 (canonical(sorted(scopes)),),

@@ -207,22 +207,28 @@ def profiles_for_entities(connection, entity_ids):
     return result
 
 
-def employee_entities(connection, period, *, registry):
+def employee_entities(connection, period, *, registry, entity_ids=None):
     """Explicit employment records or profiles, with scoped corrections applied."""
     cutoff = YearMonth(period).ordinal
+    requested = None if entity_ids is None else tuple(sorted(set(entity_ids)))
+    if requested == ():
+        return []
     # Every latest person profile can influence this negative membership test.
     # Verify its exact JSON before applying the same predicates in Python;
     # SQLite JSON1 picks the first duplicate key while Python picks the last.
     candidates = list(
         connection.execute(
             "SELECT p.*,EXISTS(SELECT 1 FROM entity_reference_current r "
-            "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
+            "INDEXED BY entity_current_entity_role "
+            "CROSS JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
             "AND r.role='employee' AND r.period<=?) AS employee_reference,"
             "EXISTS(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id) "
             "AS resolved FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
             "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
-            "FROM entity_profile_revision q WHERE q.entity_id=e.id) ORDER BY e.id",
-            (cutoff,),
+            "FROM entity_profile_revision q WHERE q.entity_id=e.id)"
+            + (" AND e.id IN(SELECT value FROM json_each(?))" if requested is not None else "")
+            + " ORDER BY e.id",
+            [cutoff, *([canonical(requested)] if requested is not None else [])],
         )
     )
     selected = []
@@ -239,7 +245,8 @@ def employee_entities(connection, period, *, registry):
     if selected:
         witnesses = connection.execute(
             "SELECT ids.value entity_id,(SELECT r.fact_id FROM entity_reference_current r "
-            "JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=ids.value "
+            "INDEXED BY entity_current_entity_role "
+            "CROSS JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=ids.value "
             "AND r.role='employee' AND r.period<=? "
             "ORDER BY r.period DESC,r.fact_id DESC LIMIT 1) fact_id "
             "FROM json_each(?) ids",

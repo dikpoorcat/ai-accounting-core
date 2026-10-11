@@ -56,7 +56,10 @@ def assert_context(response, engine):
 def assert_pending_checks(response):
     data = response["data"]
     assert {"period_preparation", "material_completeness", "validation"}.isdisjoint(data)
-    assert all(item["status"] == "ai_reviewing" for item in data["risks"])
+    if response["scope"] == "overview":
+        assert all(item["status"] == "ai_reviewing" for item in data["risks"])
+    else:
+        assert set(data) == {"collections"}
 
 
 def without_clock(value):
@@ -110,7 +113,8 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
     )["data"]["collections"]["members"]["items"][0]
     assert member["subject_id"]
     deferred = dashboard.brief("2026-03", limit=1, preparation="deferred")
-    assert deferred["schema_version"] == complete["schema_version"] == 18
+    assert deferred["schema_version"] == complete["schema_version"] == 19
+    assert deferred["scope"] == complete["scope"] == "overview"
     context = assert_context(deferred, engine)
     assert context["read_version"] != deferred["snapshot_version"]
     assert_pending_checks(deferred)
@@ -121,10 +125,11 @@ def test_deferred_brief_and_all_sections_skip_checks_and_keep_main_evidence(book
         page = dashboard.brief("2026-03", section=section, limit=1, preparation="deferred")
         assert page["read_context"] == context
         assert_pending_checks(page)
-        assert section in page["data"]["collections"]
-        assert page["data"]["position"]["month_expense_fen"] == 2000
-        assert page["data"]["funds_overview"]["outflow_fen"] == 10000
-        assert page["data"]["position"] == deferred["data"]["position"]
+        assert page["scope"] == section
+        assert set(page["data"]) == {"collections"}
+        assert set(page["data"]["collections"]) == {section}
+        assert deferred["data"]["position"]["month_expense_fen"] == 2000
+        assert deferred["data"]["funds_overview"]["outflow_fen"] == 10000
         if section == "activity":
             cursor = page["data"]["collections"][section]["page"]["next_cursor"]
             assert cursor
@@ -294,7 +299,8 @@ def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch
     )
     forbid_preparation(monkeypatch)
     result = Dashboard(engine).brief(preparation="deferred")
-    assert result["schema_version"] == 18
+    assert result["schema_version"] == 19
+    assert result["scope"] == "overview"
     assert result["read_context"]["company_id"] == "empty"
     assert result["read_context"]["database_id"] == "empty-db"
     assert result["data"] is None

@@ -931,6 +931,18 @@ class BusinessQueries:
                 selection = reads._report_snapshot_cache.get(
                     ("asset_owner_identity_selection", cutoff),
                 )
+                if cached_events is None or selection is None:
+                    # Count-only activation reads prove the same complete
+                    # frozen directories. Reuse their exact identity evidence,
+                    # without supplying a partial decoded owner set to full
+                    # consumers or publishing a default-scope cache entry.
+                    scope = frozenset({"asset_activation_batch"})
+                    cached_events = reads._report_snapshot_cache.get(
+                        ("asset_activation_identity_events", cutoff, scope),
+                    )
+                    selection = reads._report_snapshot_cache.get(
+                        ("asset_owner_identity_selection", cutoff, scope),
+                    )
                 if cached_events is not None and selection is not None:
                     _, owners, membership, _ = selection
                     proofs = {
@@ -1183,13 +1195,14 @@ class BusinessQueries:
             cached[1][cutoff.ordinal] = discovered
         return discovered
 
-    def _asset_owner_metadata_selection(self, connection, period):
+    def _asset_owner_metadata_selection(self, connection, period, *, outcome_kinds=None):
         """Select owner events without interpreting independently frozen bodies.
 
         The complete small frozen owner list locates missing sources. Its
         membership digest authenticates each complete directory later; it is
         neither an outcome-content proof nor a negative member-index lookup.
-        Open and otherwise unanchored owners retain strict outcome reads.
+        Open and otherwise unanchored owners consumed by this scope retain
+        strict outcome reads; all owner kinds retain their source proofs.
         """
         from . import asset_batches, close_storage, publication
         from .content_history_context import (
@@ -1209,7 +1222,10 @@ class BusinessQueries:
         ):
             return None
         cutoff = YearMonth(period)
-        selection_key = ("asset_owner_identity_selection", cutoff.ordinal)
+        outcome_kinds = None if outcome_kinds is None else frozenset(outcome_kinds)
+        selection_key = ("asset_owner_identity_selection", cutoff.ordinal) + (
+            () if outcome_kinds is None else (outcome_kinds,)
+        )
         if selection_key in reads._report_snapshot_cache:
             return reads._report_snapshot_cache[selection_key]
         owner_kinds = {"asset_activation_batch", "asset_consumption_month"}
@@ -1225,39 +1241,37 @@ class BusinessQueries:
             "WHERE kind IN (SELECT value FROM json_each(?))",
             (json.dumps(sorted(owner_kinds)),) * 2,
         ))
+        narrow = outcome_kinds == frozenset({"asset_activation_batch"})
         current = self._current_accounting_heads(
             connection, subjects, cutoff=cutoff.ordinal, current_heads=False,
         )
-        selections = reads.close_asset_owner_accounting_many(close_rows, subjects=subjects)
-        adopted_by_period, vouchers_by_period = {}, {}
-        for selection in selections:
-            adopted = {item["calculation_id"]: item for item in selection.adopted_results}
-            owners = {
-                ident for ident, item in adopted.items() if item["role"] == "asset_batch_owner"
-            }
-            if owners != declarations[selection.period].keys():
-                raise KernelError("content_integrity_failed", "冻结资产所有者采用集合不匹配")
-            adopted_by_period[selection.period] = adopted
-            vouchers_by_period[selection.period] = {item["id"]: item for item in selection.vouchers}
-        authoritative = {
-            ident: close_period for close_period, vouchers in vouchers_by_period.items()
-            for ident in vouchers
-        }
-        query, parameters = selected_voucher_sql(
-            cutoff, subject_ids=subjects, authoritative_vouchers=authoritative,
-        )
-        selected = list(connection.execute(query, parameters))
-        if {
-            (row["close_period"], row["id"]) for row in selected
-            if row["close_period"] is not None
-        } != {
-            (period, ident) for period, vouchers in vouchers_by_period.items() for ident in vouchers
-        }:
-            raise KernelError("content_integrity_failed", "冻结资产凭证集合与独立采用不一致")
-        reads.verify_selected_voucher_adoptions(selected, through_period=cutoff.ordinal)
         owner_ids = set(membership) | {row["id"] for row in current}
-        owner_ids.update(row["basis_calculation_id"] for row in selected)
         headers = frozen_headers | reads.calculation_identity_headers(owner_ids - membership.keys())
+        if narrow:
+            # The immutable roster anchors known closed owners. An actual head
+            # absent from it must still locate an omitted activation declaration
+            # or a later no-impact source, without rereading every known header.
+            actual_heads = dict(connection.execute(
+                "SELECT h.subject_id,h.calculation_id FROM json_each(?) ids "
+                "CROSS JOIN calculation_current h ON h.subject_id=ids.value "
+                "WHERE h.calculation_id NOT IN (SELECT value FROM json_each(?))",
+                (json.dumps(sorted(subjects)), json.dumps(sorted(headers))),
+            ))
+            additional = reads.calculation_identity_headers(actual_heads.values())
+            reads.verify_publication_records(additional.values())
+            for subject, ident in actual_heads.items():
+                header = additional[ident]
+                if header["source_subject"] != subject or header["subject_id"] != subject:
+                    raise KernelError("content_integrity_failed", "资产所有者当前身份不匹配")
+            for header in headers.values():
+                target = headers.get(header["current_id"])
+                if target is not None and target["source_subject"] != header["source_subject"]:
+                    raise KernelError("content_integrity_failed", "资产所有者当前身份不匹配")
+            headers.update({
+                ident: header for ident, header in additional.items()
+                if header["posting_period"] <= cutoff.ordinal
+            })
+            owner_ids.update(headers)
         reads.verify_publication_records(headers.values())
         for header in headers.values():
             if (header["source_kind"] not in owner_kinds or not header["cs"] or not header["fs"]
@@ -1278,6 +1292,62 @@ class BusinessQueries:
                 component="asset_owner", reason="owner_typed_fact_missing",
             ) from error
 
+        owner_subjects = frozenset(subjects)
+        if narrow:
+            subjects = {
+                header["source_subject"] for header in headers.values()
+                if header["source_kind"] == "asset_activation_batch"
+            }
+            current = tuple(row for row in current if row["subject_id"] in subjects)
+        selections = reads.close_asset_owner_accounting_many(
+            close_rows, subjects=subjects,
+            **({"owner_subjects": owner_subjects} if narrow else {}),
+        )
+        adopted_by_period, vouchers_by_period = {}, {}
+        for selection in selections:
+            adopted = {item["calculation_id"]: item for item in selection.adopted_results}
+            owners = {
+                ident for ident, item in adopted.items() if item["role"] == "asset_batch_owner"
+            }
+            expected_owners = {
+                ident for ident in declarations[selection.period]
+                if not narrow or headers[ident]["source_subject"] in subjects
+            }
+            if owners != expected_owners:
+                raise KernelError("content_integrity_failed", "冻结资产所有者采用集合不匹配")
+            adopted_by_period[selection.period] = adopted
+            vouchers_by_period[selection.period] = {item["id"]: item for item in selection.vouchers}
+        authoritative = {
+            ident: close_period for close_period, vouchers in vouchers_by_period.items()
+            for ident in vouchers
+        }
+        query, parameters = selected_voucher_sql(
+            cutoff, subject_ids=subjects, authoritative_vouchers=authoritative,
+        )
+        selected = list(connection.execute(query, parameters))
+        if {
+            (row["close_period"], row["id"]) for row in selected
+            if row["close_period"] is not None
+        } != {
+            (period, ident) for period, vouchers in vouchers_by_period.items() for ident in vouchers
+        }:
+            raise KernelError("content_integrity_failed", "冻结资产凭证集合与独立采用不一致")
+        reads.verify_selected_voucher_adoptions(selected, through_period=cutoff.ordinal)
+        # Old voucher owners and reversal bases can differ from the adopted
+        # head. Every consumed exact basis retains its own source proof.
+        basis_ids = {row["basis_calculation_id"] for row in selected} - headers.keys()
+        if basis_ids:
+            basis_headers = reads.calculation_identity_headers(basis_ids)
+            reads.verify_publication_records(basis_headers.values())
+            for header in basis_headers.values():
+                if (header["source_kind"] not in owner_kinds or not header["cs"] or not header["fs"]
+                        or header["subject_id"] != header["source_subject"]):
+                    raise KernelError("content_integrity_failed", "资产所有者精确来源不匹配")
+            reads.verify_fact_versions(
+                header["source_fact_id"] for header in basis_headers.values()
+            )
+            headers.update(basis_headers)
+        owner_ids.update(row["basis_calculation_id"] for row in selected)
         def adopted_header(item):
             header = headers[item["calculation_id"]]
             if any(item[field] != value for field, value in (
@@ -1293,9 +1363,18 @@ class BusinessQueries:
 
         for close_period, declared in declarations.items():
             for ident in declared:
+                if narrow and headers[ident]["source_subject"] not in subjects:
+                    continue
                 adopted_header(adopted_by_period[close_period][ident])
         decoded = {}
-        full = reads.metadata(owner_ids - membership.keys(), _decoded_outcomes=decoded)
+        # All owner identities and typed facts remain proved before kind
+        # exclusion. The activation count consumes only activation subjects'
+        # direct frozen leaves; the complete asset reader consumes both kinds.
+        interpreted = {
+            ident for ident in owner_ids - membership.keys()
+            if outcome_kinds is None or headers[ident]["source_kind"] in outcome_kinds
+        }
+        full = reads.metadata(interpreted, _decoded_outcomes=decoded)
         events, represented = [], set()
         for row in selected:
             ident = row["basis_calculation_id"]
@@ -1323,6 +1402,8 @@ class BusinessQueries:
             })
         states = {}
         for row in current:
+            if row["id"] not in full:
+                continue
             calc = full[row["id"]]
             if not calc["line_count"]:
                 states[calc["id"]] = {
@@ -1332,6 +1413,8 @@ class BusinessQueries:
                 }
         for close_period, declared in declarations.items():
             for ident in declared:
+                if narrow and headers[ident]["source_subject"] not in subjects:
+                    continue
                 header = headers[ident]
                 # A review can adopt a nonempty result while retaining a voucher
                 # from another month. It is not an independent zero-line state.
@@ -1348,7 +1431,7 @@ class BusinessQueries:
         }
         return (*events, *states.values()), owners, membership, decoded
 
-    def _selected_asset_activation_identities(self, connection, period):
+    def _selected_asset_activation_identities(self, connection, period, *, outcome_kinds=None):
         """Reuse frozen complete membership only for card identity and status.
 
         Owner kinds are authenticated before choosing activation directories.
@@ -1356,12 +1439,16 @@ class BusinessQueries:
         ordinary complete member/outcome reads. No amount or content proof is
         inferred from frozen identity evidence.
         """
-        selection = self._asset_owner_metadata_selection(connection, period)
+        outcome_kinds = None if outcome_kinds is None else frozenset(outcome_kinds)
+        selection = self._asset_owner_metadata_selection(
+            connection, period, outcome_kinds=outcome_kinds,
+        ) if outcome_kinds is not None else self._asset_owner_metadata_selection(connection, period)
         if selection is None:
             return None
         reads = self._reads(connection)
         cutoff = YearMonth(period).ordinal
-        identity_key = ("asset_activation_identity_events", cutoff)
+        scope = () if outcome_kinds is None else (outcome_kinds,)
+        identity_key = ("asset_activation_identity_events", cutoff) + scope
         if identity_key in reads._report_snapshot_cache:
             return reads._report_snapshot_cache[identity_key]
         events, owners, membership, decoded = selection
@@ -1409,7 +1496,7 @@ class BusinessQueries:
         # Publish only after all selected activation directories and open member
         # bodies succeed. Later card details reuse the same complete owner
         # selection, then perform their own required member/money checks.
-        reads._report_snapshot_cache[("asset_owner_identity_selection", cutoff)] = selection
+        reads._report_snapshot_cache[("asset_owner_identity_selection", cutoff) + scope] = selection
         reads._report_snapshot_cache[identity_key] = result
         return result
 
@@ -2243,9 +2330,9 @@ class BusinessQueries:
             row[0]
             for row in connection.execute(
                 "SELECT c.id FROM json_each(?) ids "
-                "JOIN calculation_current a ON a.subject_id=ids.value "
-                "JOIN calculation c ON c.id=a.calculation_id "
-                "JOIN subject s ON s.id=a.subject_id WHERE s.kind='external_completion'",
+                "CROSS JOIN calculation_current a ON a.subject_id=ids.value "
+                "CROSS JOIN calculation c ON c.id=a.calculation_id "
+                "CROSS JOIN subject s ON s.id=a.subject_id WHERE s.kind='external_completion'",
                 (json.dumps(sorted(related_subjects)),),
             )
         }

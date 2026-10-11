@@ -7,6 +7,7 @@ effects and selects page keys; only returned rows need facts and display sources
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 
 from .contracts import KernelError
 from .dashboard_reads import page_keys
@@ -16,6 +17,37 @@ from .types import YearMonth, canonical, checked
 
 FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 SECTIONS = {"accounts", "movements", "statements", "investment_products", "investment_events"}
+
+_ordered_page_request = ContextVar("funds_ordered_page_request", default=None)
+_ORDERED_PAGE_FUNCTION = "dashboard_funds_ordered_page"
+
+
+class _OrderedFundsPage:
+    """Connection-wide function with no retained business request or snapshot."""
+
+    def __init__(self):
+        self.rows = []
+
+    def step(self, page_key, calculation_id, internal_transfer):
+        self.rows.append({
+            "page_key": page_key, "calculation_id": calculation_id,
+            "internal_transfer": internal_transfer,
+        })
+
+    def finalize(self):
+        order_rows, after, limit, errors = _ordered_page_request.get()
+        try:
+            ordered = order_rows(self.rows)
+            picked, _ = page_keys(ordered, after, limit + 1 if limit < 500 else 500)
+            if limit == 500:
+                start = ordered.index(after) + 1 if after is not None else 0
+                picked = ordered[start:start + limit + 1]
+            return canonical(picked)
+        except Exception as error:
+            # SQLite wraps callback errors; retain their original business
+            # code and structured metadata for the public caller.
+            errors.append(error)
+            raise
 
 # Each actual fact drives its own complete role lookup. The role-only index
 # would scan all matching roles for each candidate; keep every path for this
@@ -75,24 +107,29 @@ def _sql_summary_page(
     """Return a full source summary and bounded page from one selected event set."""
     summary_json = "json_group_array(json_array(" + ",".join(summary_columns) + "))"
     order_values = []
+    order_token = None
+    order_errors = []
     if order_rows is not None:
-        candidates = connection.execute(
-            f"WITH source_rows AS MATERIALIZED ({source}), "
-            f"summary_rows AS MATERIALIZED ({summary_sql}) "
-            f"SELECT page_key,calculation_id,internal_transfer FROM source_rows WHERE {where}",
-            [*parameters, *filters],
-        ).fetchall()
-        ordered = order_rows(candidates)
-        picked, _ = page_keys(ordered, after, limit + 1 if limit < 500 else 500)
-        # page_keys limits public sizes to 500; the final page still needs one
-        # extra scalar candidate to establish continuation at the maximum size.
-        if limit == 500:
-            start = ordered.index(after) + 1 if after is not None else 0
-            picked = ordered[start:start + limit + 1]
-        order_values = [canonical(picked)]
+        # Keep complete event payloads inside the one materialized SQL source.
+        # The existing business sorter consumes only scalar identities; its
+        # bounded result locates page rows without evaluating the source again.
+        if not getattr(connection, "_funds_page_order_registered", False):
+            if connection.execute(
+                "SELECT 1 FROM pragma_function_list WHERE name=? LIMIT 1",
+                (_ORDERED_PAGE_FUNCTION,),
+            ).fetchone() is None:
+                connection.create_aggregate(_ORDERED_PAGE_FUNCTION, 3, _OrderedFundsPage)
+            try:
+                connection._funds_page_order_registered = True
+            except AttributeError:
+                # Plain SQLite connections have no attribute dictionary.
+                pass
+        order_token = _ordered_page_request.set((order_rows, after, limit, order_errors))
         page_relation = (
             "page_rows AS (SELECT f.*,CAST(ids.key AS INTEGER) sort_position "
-            "FROM json_each(?) ids JOIN filtered_rows f ON f.page_key=ids.value) "
+            f"FROM json_each((SELECT {_ORDERED_PAGE_FUNCTION}(page_key,calculation_id,"
+            "internal_transfer) FROM filtered_rows)) ids "
+            "JOIN filtered_rows f ON f.page_key=ids.value) "
         )
         page_order = "page_rows.sort_position"
     else:
@@ -116,9 +153,17 @@ def _sql_summary_page(
         f"(SELECT {summary_json} FROM summary_rows) summary_json) counts "
         f"LEFT JOIN page_rows ON 1=1 ORDER BY {page_order}"
     )
-    found = connection.execute(
-        query, [*parameters, *filters, *order_values, after]
-    ).fetchall()
+    try:
+        found = connection.execute(
+            query, [*parameters, *filters, *order_values, after]
+        ).fetchall()
+    except Exception:
+        if order_errors:
+            raise order_errors[0] from None
+        raise
+    finally:
+        if order_token is not None:
+            _ordered_page_request.reset(order_token)
     summary = json.loads(found[0]["summary_json"])
     if any(row["summary_json"] is not None for row in found[1:]):
         raise ValueError("funds summary returned more than once")
@@ -339,6 +384,7 @@ class FundsRead:
         self.bank_match_calculations = {}
         self.investment_registered = None
         self.shared_pages = {}
+        self.shared_first_account = None
 
     def _verify_event_sources(self, identifiers, frozen_periods):
         """Prove consumed bodies and bind frozen bases to their independent adoption."""
@@ -409,7 +455,6 @@ class FundsRead:
         reads = self.snap.reads
         if (
             not current
-            or subjects is not None
             or self.snap.close is not None
             or not reads._snapshot_active
             or not self.connection.in_transaction
@@ -424,10 +469,26 @@ class FundsRead:
         rows = self.snap.month_journal.verified_rows()
         if rows is None:
             return None
+        selected_subjects = None if subjects is None else set(
+            (subjects,) if isinstance(subjects, str) else subjects
+        )
+        original_subjects = {}
+        if selected_subjects is not None:
+            originals = reads.vouchers({row["reverses_id"] for row in rows
+                                        if row["reverses_id"] is not None})
+            headers = reads.calculation_identity_headers({
+                voucher["calculation_id"] for voucher in originals.values()
+            })
+            original_subjects = {
+                ident: headers[voucher["calculation_id"]]["source_subject"]
+                for ident, voucher in originals.items()
+            }
         lines = reads.voucher_lines({row["id"] for row in rows})
         return [
             row for row in rows
             if any(line["account"] in accounts for line in lines[row["id"]])
+            and (selected_subjects is None or row["voucher_subject_id"] in selected_subjects
+                 or original_subjects.get(row["reverses_id"]) in selected_subjects)
         ]
 
     def events(self, *, current=False, accounts=None, subjects=None):
@@ -897,14 +958,17 @@ class FundsRead:
                 movement_totals["movement_count"] += row["movement_count"]
         if not identities_prepared:
             self._prepare_account_identities()
-        for index, (key, item) in enumerate(sorted(self.account_rows.items()), 1):
+        if first_page_request is not None and page_request is not None:
+            # The shared SQL page chooses by identity; display-name ordering is
+            # resolved later, after the complete account scope is available.
+            self.shared_first_account = min(self.account_rows, default=None)
+        for key, item in sorted(self.account_rows.items()):
             item["net_change_fen"] = item["inflow_fen"] - item["outflow_fen"]
             item["closing_fen"] = (
                 projected_closing.get(key, 0) if item["opening_fen"] is not None else None
             )
             if self.amounts_only:
                 continue
-            item["fallback_code"] = f"账户 {index}"
             item["attribution_adjustment_fen"] = (
                 checked(item["closing_fen"] - item["opening_fen"] - item["net_change_fen"])
                 if item["closing_fen"] is not None and item["opening_fen"] is not None
@@ -982,18 +1046,15 @@ class FundsRead:
         return self.profiles[key]
 
     def account_display(self, category, ident):
-        item = self.account_rows.get((category, ident))
         profile = self.profile("fund_account", ident)
         return {
-            "code": profile.get("display_number")
-            or (item["fallback_code"] if item else "未确认账户"),
+            "code": profile.get("display_number") or "",
             "name": profile.get("display_name") or "未提供账户名称",
             "active": profile.get("active"),
         }
 
     def account_item(self, key):
         item = dict(self.account_rows[key])
-        item.pop("fallback_code")
         display = self.account_display(*key)
         item.update(display)
         item["statement"] = item["statement"] | {
@@ -1992,7 +2053,10 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
             where, values = "category=? AND balance_key=?", (category, ident)
         else:
             where, values = "0=1", ()
-        if "movements" not in read.shared_pages:
+        if (
+            "movements" not in read.shared_pages
+            or read.shared_first_account != first
+        ):
             source, parameters = read.movements()
             # The company summary is already proved. Reuse the bounded SQL page
             # primitive with an empty summary instead of computing it a second time.

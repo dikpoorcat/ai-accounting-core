@@ -1,11 +1,37 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 let sequence = 0;
+
+test("employee and labor lists preserve 20 then 500 then the ordered tail", async () => {
+  for (const section of ["employees", "labor_sources"]) {
+    const h = await harness(), field = section === "employees" ? "employee_id" : "source_id";
+    const ids = Array.from({ length: 525 }, (_, index) => `item-${index}`);
+    const pageResponse = (start, count) => {
+      const value = response();
+      value.data.collections[section] = { items: ids.slice(start, start + count).map(id => ({ [field]: id })),
+        page: { total_count: 525, filtered_count: 525, returned_count: count, has_more: start + count < 525, next_cursor: start + count < 525 ? `cursor-${start + count}` : null } };
+      return value;
+    };
+    try {
+      const first = h.loadPeriod("2026-09"); assert.equal(h.calls[0].query?.limit ?? 20, 20);
+      h.calls[0].resolve(pageResponse(0, 20)); await first;
+      const items = h.response.value.data.collections[section].items;
+      const next = h.loadMore(section); assert.equal(h.calls[1].query.limit, 500); assert.equal(h.calls[1].query.cursor, "cursor-20");
+      h.calls[1].resolve(pageResponse(20, 500)); await next;
+      const tail = h.loadMore(section); assert.equal(h.calls[2].query.cursor, "cursor-520");
+      h.calls[2].resolve(pageResponse(520, 5)); await tail;
+      assert.equal(h.response.value.data.collections[section].items, items);
+      assert.deepEqual(items.map(item => item[field]), ids);
+      await h.loadMore(section); assert.equal(h.calls.length, 3);
+    } finally { h.close(); }
+  }
+});
 const flush = async () => { for (let index = 0; index < 4; index++) { await Vue.nextTick(); } };
 const page = { total_count: 50, filtered_count: 50, returned_count: 1, has_more: true, next_cursor: "next" };
 const employmentFilters = ["employment_active", "employment_unpaid_leave", "employment_departed", "employment_unknown"];
@@ -21,13 +47,13 @@ async function harness(query = {}) {
   const calls = [], key = `employeeFilters${++sequence}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09", ...query } });
   const context = Vue.ref({ current_company: { company_id: "company-a" }, periods: [{ key: "2026-09" }] });
-  globalThis[key] = { Vue, route, context, calls, appendDashboardCollection };
+  globalThis[key] = { Vue, route, context, calls, appendDashboardCollection, prepareDashboardCollections };
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null };
   const source = readFileSync(new URL("../src/views/EmployeesView.vue", import.meta.url), "utf8")
-    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const prelude = `const env = globalThis.${key};
-    const { computed, nextTick, ref, watch } = env.Vue;
-    const { appendDashboardCollection } = env;
+    const { computed, nextTick, ref, shallowRef, watch } = env.Vue;
+    const { appendDashboardCollection, prepareDashboardCollections } = env;
     const useRoute = () => env.route;
     const useRouter = () => ({ push: async target => { env.route.query = target.query; }, replace: async target => { env.route.query = target.query; } });
     const useDashboardContext = () => ({ context: env.context, load: async () => env.context.value, refresh: async () => env.context.value });
@@ -239,6 +265,7 @@ test("employee and labor continuations retain reactive arrays and discard late p
       const renderedCount = Vue.computed(() => h.response.value.data.collections[section].items.length);
       assert.equal(renderedCount.value, 1);
       const pending = h.loadMore(section);
+      assert.equal(h.calls.at(-1).query.limit, 500);
       const next = response(h.filter.value, "next-employee");
       next.data.collections.labor_sources.items = [{ source_id: "next-labor" }];
       next.data.collections[section].page.next_cursor = "following";

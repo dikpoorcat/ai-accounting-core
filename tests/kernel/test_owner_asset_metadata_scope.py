@@ -11,6 +11,7 @@ from test_asset_batches import month
 from test_asset_owner_outcome_reads import complete_head_events
 from test_banking import book as _bank_book
 from test_banking import funding
+from test_dashboard_model_transactions import comparable, raw_read
 from test_engine import close as close_simple
 from test_engine import engine as _simple_engine
 from test_engine import evidence as simple_evidence
@@ -19,6 +20,7 @@ from test_engine import save as save_simple
 from test_integrity_content import damage, verify
 from test_payroll_corrections import Company
 from test_payroll_corrections import company as _payroll_company
+from test_reimbursement_assets import consume_assets
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.backup import BackupError, verify_file
@@ -26,6 +28,8 @@ from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.domains.assets import AssetDisposal
+from ai_accounting.kernel.domains.transactions import ProjectCost
 from ai_accounting.kernel.maintenance import Maintenance
 from ai_accounting.kernel.query_reads import QueryReads
 
@@ -56,6 +60,12 @@ def closed_consumption(company, evidence):
     company.close("2026-02")
     month(company.engine, evidence, "2026-03", "consume-march")
     company.close("2026-03")
+
+
+def comparable_owner_page(value):
+    value = comparable(value)
+    value.pop("checked_at", None)
+    return value
 
 
 @pytest.mark.parametrize("months", [1, 3])
@@ -91,10 +101,24 @@ def test_declared_frozen_owner_missing_source_is_never_absence(metadata_company,
     company, evidence = metadata_company
     engine = company.engine
     closed_consumption(company, evidence)
+    dashboard = Dashboard(engine)
+    expected_assets = dashboard.assets("2026-03", preparation="deferred")
+    expected_overview = comparable_owner_page(dashboard.brief("2026-03"))
+    assert expected_assets["data"]["month_charge_fen"] > 0
+    assert {
+        item["asset_id"] for item in expected_assets["data"]["collections"]["assets"]["items"]
+    } == {"computer", "chair"}
     with engine.store.connection(read_only=True) as connection:
         owner = dict(connection.execute(
             "SELECT * FROM calculation WHERE kind='asset_consumption_month'"
         ).fetchone())
+        voucher_version = connection.execute(
+            "SELECT v.version_id FROM calculation_publication p JOIN voucher_current v "
+            "ON v.voucher_id=p.voucher_id WHERE p.calculation_id=?", (owner["id"],),
+        ).fetchone()[0]
+    assert any(item["voucher_version_id"] == voucher_version
+               for item in dashboard.brief("2026-03", section="vouchers")["data"][
+                   "collections"]["vouchers"]["items"])
     if missing in {"calculation", "calculation_and_subject"}:
         damage(engine, "calculation", "DELETE FROM calculation WHERE id=?", (owner["id"],),
                foreign_keys=False)
@@ -130,10 +154,91 @@ def test_declared_frozen_owner_missing_source_is_never_absence(metadata_company,
         assert not snap.reads._asset_members
     with pytest.raises(KernelError):
         read_heads(engine, "2026-03", complete=True)
-    with pytest.raises(KernelError):
-        Dashboard(engine).assets("2026-03", preparation="deferred")
+    # The independent verifier really executes even if a later page assertion
+    # fails. The ordinary asset card does not display consumption owner/member
+    # bodies; its monthly charge and carrying values are certified aggregates.
     with pytest.raises(KernelError):
         verify(engine)
+    before_reads = database_snapshot(engine)
+    assert dashboard.assets("2026-03", preparation="deferred") == expected_assets
+    assert comparable_owner_page(dashboard.brief("2026-03")) == expected_overview
+    with raw_read(), pytest.raises(KernelError):
+        dashboard.assets("2026-03", preparation="deferred")
+    # A voucher displays the owner's actual source and physical lines. The
+    # unseen member directory is checked by metadata/full history above, not
+    # mistaken for an owner body returned by this voucher.
+    if missing != "member":
+        for options in ({"section": "vouchers"}, {"voucher_version_id": voucher_version}):
+            with pytest.raises(KernelError) as rejected:
+                dashboard.brief("2026-03", **options)
+            # The native frozen-publication resolver reports an absent adopted
+            # publication as unknown_calculation. Both this explicit absence
+            # and the raw integrity checker must refuse a displayed voucher.
+            assert rejected.value.code in (
+                {"content_integrity_failed", "unknown_calculation"}
+                if missing == "publication" else {"content_integrity_failed"}
+            )
+    assert database_snapshot(engine) == before_reads
+
+
+@pytest.mark.parametrize("source", ["acquisition", "activation", "disposal", "project"])
+@pytest.mark.parametrize("damaged", ["outcome", "fact"])
+def test_displayed_asset_and_project_sources_are_still_raw_hits(metadata_company, source, damaged):
+    company, evidence = metadata_company
+    engine = company.engine
+    subject, period = {
+        "acquisition": ("computer", "2026-02"),
+        "activation": ("activate-computer", "2026-02"),
+        "disposal": ("dispose-computer", "2026-03"),
+        "project": ("project-source", "2026-02"),
+    }[source]
+    if source == "disposal":
+        month(engine, evidence, period, "consume-before-disposal")
+        company.save(AssetDisposal(
+            period=period, asset_id="computer", disposal_date="2026-03-31",
+            disposal_kind="scrap", gross_proceeds_fen=0,
+        ), subject)
+        consume_assets(engine, period, (evidence,), expected_revision=1,
+                       request_id="consume-after-disposal")
+    elif source == "project":
+        company.save(ProjectCost(
+            period=period, project_id="unfinished-project", supplier_id="supplier",
+            amount_fen=17000, project_nature="purchased_intangible",
+            capitalization_conditions_confirmed=True,
+        ), subject)
+        company.publish(subject)
+    dashboard = Dashboard(engine)
+    before = dashboard.assets(period)
+    if source == "project":
+        assert [
+            item["source_id"] for item in before["data"]["collections"]["projects"]["items"]
+        ] == [subject]
+        exact = {"section": "projects", "project_id": "unfinished-project"}
+    else:
+        item = next(item for item in before["data"]["collections"]["assets"]["items"]
+                    if item["asset_id"] == "computer")
+        assert item["status"] == ("disposed" if source == "disposal" else "active")
+        exact = {"section": "assets", "asset_id": "computer"}
+    assert dashboard.assets(period, **exact)["data"]["collections"][exact["section"]]["items"]
+    with engine.store.connection(read_only=True) as connection:
+        selected = dict(connection.execute(
+            "SELECT id,fact_id FROM calculation WHERE subject_id=? ORDER BY rowid DESC LIMIT 1",
+            (subject,),
+        ).fetchone())
+    if damaged == "outcome":
+        damage(engine, "calculation", "UPDATE calculation SET outcome='{}' WHERE id=?",
+               (selected["id"],))
+    else:
+        damage(engine, "fact_revision", "UPDATE fact_revision SET digest=zeroblob(32) WHERE id=?",
+               (selected["fact_id"],))
+    with pytest.raises(KernelError):
+        verify(engine)
+    before_reads = database_snapshot(engine)
+    for options in ({}, exact):
+        with pytest.raises(KernelError) as rejected:
+            dashboard.assets(period, **options)
+        assert rejected.value.code == "content_integrity_failed"
+    assert database_snapshot(engine) == before_reads
 
 
 def test_metadata_does_not_claim_unread_frozen_owner_body_proof(metadata_company):
@@ -370,40 +475,71 @@ def test_non_native_metadata_keeps_actual_complete_body_scope(metadata_company, 
             selected()
 
 
-@pytest.mark.parametrize("consumer", ["metadata", "history", "page", "member_publication"])
+@pytest.mark.parametrize("consumer", [
+    "metadata", "history", "page", "member_publication", "brief_overview",
+    "brief_vouchers", "brief_exact",
+])
 def test_missing_open_owner_voucher_pointer_is_not_empty_history(metadata_company, consumer):
     company, evidence = metadata_company
     engine = company.engine
     company.close("2026-02")
     month(engine, evidence, "2026-03", "consume-positive")
+    dashboard = Dashboard(engine)
+    expected_assets = dashboard.assets("2026-03", preparation="deferred")
+    expected_overview = comparable_owner_page(dashboard.brief("2026-03"))
     with engine.store.connection(read_only=True) as connection:
         owner = connection.execute(
-            "SELECT p.voucher_id,c.outcome FROM calculation c JOIN calculation_publication p "
-            "ON p.calculation_id=c.id WHERE c.kind='asset_consumption_month'"
+            "SELECT p.voucher_id,c.outcome,v.version_id FROM calculation c "
+            "JOIN calculation_publication p ON p.calculation_id=c.id "
+            "JOIN voucher_current v ON v.voucher_id=p.voucher_id "
+            "WHERE c.kind='asset_consumption_month'"
         ).fetchone()
     assert json.loads(owner["outcome"])["lines"]
     assert owner["voucher_id"] is not None
     damage(engine, "voucher_current", "DELETE FROM voucher_current WHERE voucher_id=?",
            (owner["voucher_id"],), foreign_keys=False)
     with pytest.raises(KernelError):
-        if consumer == "page":
-            Dashboard(engine).assets("2026-03", preparation="deferred")
-        elif consumer == "member_publication":
-            with QueryReads.snapshot(engine) as reads:
-                member = reads.connection.execute(
-                    "SELECT m.member_subject_id FROM asset_batch_member m JOIN calculation c "
-                    "ON c.id=m.owner_calculation_id WHERE c.kind='asset_consumption_month' "
-                    "ORDER BY m.position LIMIT 1",
-                ).fetchone()[0]
-                BusinessQueries(engine, reads=reads)._current_publication(reads.connection, member)
-        else:
-            read_heads(engine, "2026-03", complete=consumer == "history")
-    with pytest.raises(KernelError):
         verify(engine)
+    before_reads = database_snapshot(engine)
+    if consumer == "brief_overview":
+        assert comparable_owner_page(dashboard.brief("2026-03")) == expected_overview
+    elif consumer == "page":
+        assert dashboard.assets("2026-03", preparation="deferred") == expected_assets
+        with raw_read(), pytest.raises(KernelError):
+            dashboard.assets("2026-03", preparation="deferred")
+    else:
+        with pytest.raises(KernelError) as rejected:
+            if consumer == "member_publication":
+                with QueryReads.snapshot(engine) as reads:
+                    member = reads.connection.execute(
+                        "SELECT m.member_subject_id FROM asset_batch_member m JOIN calculation c "
+                        "ON c.id=m.owner_calculation_id WHERE c.kind='asset_consumption_month' "
+                        "ORDER BY m.position LIMIT 1",
+                    ).fetchone()[0]
+                    BusinessQueries(engine, reads=reads)._current_publication(
+                        reads.connection, member,
+                    )
+            elif consumer.startswith("brief_"):
+                options = (
+                    {"voucher_version_id": owner["version_id"]} if consumer == "brief_exact"
+                    else {"section": "vouchers"}
+                )
+                dashboard.brief("2026-03", **options)
+            else:
+                read_heads(engine, "2026-03", complete=consumer == "history")
+        assert rejected.value.code == "content_integrity_failed"
+    assert database_snapshot(engine) == before_reads
 
 
-@pytest.mark.parametrize("consumer", ["accounting", "current_publication"])
-@pytest.mark.parametrize("domain", ["bank", "payroll", "ordinary"])
+@pytest.mark.parametrize("domain,consumer", [
+    (domain, consumer)
+    for domain in ("bank", "payroll", "ordinary")
+    for consumer in (
+        ("accounting", "current_publication") if domain == "ordinary" else
+        ("accounting", "current_publication", "funds", "quarterly_report",
+         "brief_overview", "brief_vouchers", "brief_exact")
+    )
+])
 def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, domain, consumer):
     if domain == "bank":
         engine, save, publish, _ = _bank_book.__wrapped__(tmp_path)
@@ -427,35 +563,56 @@ def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, dom
             return queries._selected_accounting(reads.connection, subject, period)
 
     baseline = consume()
-    if consumer == "accounting":
+    if consumer != "current_publication":
         assert baseline["through_period"]["voucher_events"]
     else:
         assert baseline["current_voucher_version_id"] is not None
-    pages = {}
-    if consumer == "accounting" and domain != "ordinary":
-        dashboard = Dashboard(engine)
-        pages = {
-            "funds": lambda: dashboard.funds(period),
-            "brief": lambda: dashboard.brief(period),
-            "quarterly_report": lambda: dashboard.quarterly_report(
-                int(period[:4]), (int(period[5:]) - 1) // 3 + 1, preparation="deferred",
-            ),
-        }
-        for page, read in pages.items():
-            assert isinstance(read(), dict), page
+    dashboard = Dashboard(engine)
     with engine.store.connection(read_only=True) as connection:
         voucher = connection.execute(
-            "SELECT p.voucher_id FROM calculation_current a JOIN calculation_publication p "
-            "ON p.calculation_id=a.calculation_id WHERE a.subject_id=?", (subject,),
-        ).fetchone()[0]
+            "SELECT p.voucher_id,v.version_id FROM calculation_current a "
+            "JOIN calculation_publication p ON p.calculation_id=a.calculation_id "
+            "JOIN voucher_current v ON v.voucher_id=p.voucher_id WHERE a.subject_id=?", (subject,),
+        ).fetchone()
+
+    def page():
+        if consumer == "funds":
+            return dashboard.funds(period)
+        if consumer == "quarterly_report":
+            return dashboard.quarterly_report(
+                int(period[:4]), (int(period[5:]) - 1) // 3 + 1, preparation="deferred",
+            )
+        options = (
+            {"voucher_version_id": voucher["version_id"]} if consumer == "brief_exact" else
+            {"section": "vouchers"} if consumer == "brief_vouchers" else {}
+        )
+        return dashboard.brief(period, **options)
+
+    expected_page = comparable_owner_page(page()) if consumer in {
+        "funds", "quarterly_report", "brief_overview", "brief_vouchers", "brief_exact",
+    } else None
+    if consumer == "brief_vouchers":
+        assert any(item["voucher_version_id"] == voucher["version_id"] for item in
+                   expected_page["data"]["collections"]["vouchers"]["items"])
+    elif consumer == "brief_exact":
+        assert expected_page["data"]["focused_voucher"]["voucher_version_id"] == (
+            voucher["version_id"]
+        )
     damage(engine, "voucher_current", "DELETE FROM voucher_current WHERE voucher_id=?",
-           (voucher,), foreign_keys=False)
-    for page, read in pages.items():
-        with pytest.raises(KernelError) as failure:
-            read()
-        assert failure.value.code == "content_integrity_failed", page
+           (voucher["voucher_id"],), foreign_keys=False)
+    # Run both authoritative paths independently of a later dashboard result.
     with pytest.raises(KernelError):
         consume()
+    with pytest.raises(KernelError):
+        verify(engine)
+    before_reads = database_snapshot(engine)
+    if consumer in {"funds", "quarterly_report", "brief_overview"}:
+        assert comparable_owner_page(page()) == expected_page
+    elif consumer.startswith("brief_"):
+        with pytest.raises(KernelError) as failure:
+            page()
+        assert failure.value.code == "content_integrity_failed"
+    assert database_snapshot(engine) == before_reads
 
 
 @pytest.mark.parametrize("mode", ["cleared", "no_impact", "two_reviews", "future", "closed_review"])

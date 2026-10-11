@@ -6,6 +6,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
+function briefForRequest(overview, requestUrl) {
+  const url = new URL(requestUrl), section = url.searchParams.get("section");
+  assert.equal(overview.scope, "overview", "synthetic source must be a complete overview");
+  if (!section) return overview;
+  assert(["activity", "open_items", "vouchers"].includes(section), "unknown brief section");
+  assert(!url.searchParams.has("voucher_version_id") && !url.searchParams.has("voucher_number"), "section requests cannot include precise voucher locators");
+  if (overview.data === null) return { ...overview, scope: section, data: null };
+  const collection = overview.data.collections[section];
+  assert(collection, `synthetic overview has no ${section} page`);
+  return { ...overview, scope: section, data: { collections: { [section]: collection } } };
+}
+
 async function run(config) {
   const { chromium } = require(config.playwright_module);
   const { validateDashboardBriefResponse: validateBrief } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBrief.js")));
@@ -30,6 +42,7 @@ async function run(config) {
   const money = value => { if (value == null) return "待核对"; const number = BigInt(value), absolute = number < 0n ? -number : number; return `${number < 0n ? "−" : ""}¥${new Intl.NumberFormat("zh-CN").format(absolute / 100n)}.${String(absolute % 100n).padStart(2, "0")}`; };
   const fulfill = async (route, payload, validator) => {
     try {
+      if (validator === validateBrief) payload = briefForRequest(payload, route.request().url());
       if (!validator(payload)) {
         routeErrors.push({ phase, url: route.request().url(), message: "synthetic response failed generated validation", validation_errors: structuredClone(validator.errors) });
         await route.abort("failed").catch(() => {});
@@ -451,4 +464,4 @@ if (require.main === module) {
   let input = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => input += chunk);
   process.stdin.on("end", async () => { try { const result = await run(JSON.parse(input)); process.stdout.write(`${JSON.stringify(result)}\n`); if (result.status !== "passed") process.exitCode = 1; } catch (error) { process.stdout.write(`${JSON.stringify({ status: "failed", message: error.message })}\n`); process.exitCode = 1; } });
 }
-module.exports = { run };
+module.exports = { run, briefForRequest };

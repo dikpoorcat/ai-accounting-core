@@ -11,8 +11,11 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from .backup import (
-    _retained_history_digest, _verify_connection, copy_to_unpublished_database,
-    create_portable, verify_file,
+    _retained_history_digest,
+    _verify_connection,
+    copy_to_unpublished_database,
+    create_portable,
+    verify_file,
 )
 from .contracts import KernelError
 from .development_contracts import get_contract_sha
@@ -26,6 +29,8 @@ from .versions import fingerprint, objects, verify_schema
 SOURCE_FINGERPRINT = "923584f720781cb28a369dd5b269537f64a4551034d306e9447bc2935d263861"
 INDEX_SOURCE_FINGERPRINT = "c9f9f7051bca67f1241ee5c89676fb9476bc819dc8f92c1a0c0bd1e940f459cb"
 INDEX_TARGET_FINGERPRINT = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
+READ_MODEL_SOURCE_FINGERPRINT = INDEX_TARGET_FINGERPRINT
+READ_MODEL_TARGET_FINGERPRINT = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
 _DIRECT_ADOPTION_SQL = (
     "CREATE INDEX close_reference_direct_adoption ON close_reference(\n"
     " reference_type,reference_id,path,close_period,position)\n"
@@ -50,7 +55,11 @@ def _quote(name):
 def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
     """Decode the preserved exact source with the unchanged existing fact types."""
     source = get_contract_sha(bundle, "company", source_fingerprint)
-    if source is None or source_fingerprint not in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT):
+    if source is None or source_fingerprint not in (
+        SOURCE_FINGERPRINT,
+        INDEX_SOURCE_FINGERPRINT,
+        READ_MODEL_SOURCE_FINGERPRINT,
+    ):
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
     registry = copy.copy(bundle.registry)
     registry.models = dict(registry.models)
@@ -73,14 +82,19 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
 def _declared_changes(bundle):
     source = get_contract_sha(bundle, "company", SOURCE_FINGERPRINT)
     intermediate = get_contract_sha(bundle, "company", INDEX_SOURCE_FINGERPRINT)
+    read_model_source = get_contract_sha(bundle, "company", READ_MODEL_SOURCE_FINGERPRINT)
     target = bundle.current("company")
-    transitions = ((SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT),
-                   (INDEX_SOURCE_FINGERPRINT, INDEX_TARGET_FINGERPRINT))
+    transitions = (
+        (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT),
+        (INDEX_SOURCE_FINGERPRINT, INDEX_TARGET_FINGERPRINT),
+        (READ_MODEL_SOURCE_FINGERPRINT, READ_MODEL_TARGET_FINGERPRINT),
+    )
     if (
         bundle.status != "draft"
         or source is None
         or intermediate is None
-        or target["sha256"] != INDEX_TARGET_FINGERPRINT
+        or read_model_source is None
+        or target["sha256"] != READ_MODEL_TARGET_FINGERPRINT
         or set(transitions) != bundle.draft_transitions.get("company", frozenset())
     ):
         raise KernelError("migration_not_declared", "开发结构变化缺少明确来源和目标声明")
@@ -112,13 +126,31 @@ def _declared_changes(bundle):
                 raise KernelError("migration_not_declared", "类型封存迁移超出新类型声明")
         elif item["old_sql"] is not None or item["new_sql"] is None:
             raise KernelError("migration_not_declared", "开发迁移只能添加明确的新对象")
-    index_differences = diff_contracts(intermediate, target)
-    if index_differences != [{
-        "type": "index", "name": "close_reference_direct_adoption",
-        "old_sql": None, "new_sql": _DIRECT_ADOPTION_SQL,
-    }]:
+    index_differences = diff_contracts(intermediate, read_model_source)
+    if index_differences != [
+        {
+            "type": "index",
+            "name": "close_reference_direct_adoption",
+            "old_sql": None,
+            "new_sql": _DIRECT_ADOPTION_SQL,
+        }
+    ]:
         raise KernelError("migration_not_declared", "直接采用索引迁移与精确声明不一致")
-    return ((source, intermediate, differences), (intermediate, target, index_differences))
+    from .dashboard_read_model import DASHBOARD_READ_MODEL_DDL
+    from .versions import contract
+
+    model_differences = diff_contracts(read_model_source, target)
+    expected_models = [
+        {"type": item["type"], "name": item["name"], "old_sql": None, "new_sql": item["sql"]}
+        for item in contract(DASHBOARD_READ_MODEL_DDL)
+    ]
+    if model_differences != expected_models:
+        raise KernelError("migration_not_declared", "看板读取结构迁移与逐对象精确声明不一致")
+    return (
+        (source, intermediate, differences),
+        (intermediate, read_model_source, index_differences),
+        (read_model_source, target, model_differences),
+    )
 
 
 def _all_existing_rows(connection, source_contract):
@@ -197,9 +229,25 @@ def _apply_first_step(connection, target, differences, *, fault=None):
             connection.execute(item["new_sql"])
 
 
+def _apply_read_model_step(connection, differences, *, fault=None):
+    """Add only authenticated derived storage, leaving every new table empty."""
+    for kind in ("table", "index", "trigger"):
+        for item in differences:
+            if item["type"] == kind:
+                connection.execute(item["new_sql"])
+                if fault:
+                    fault("after_read_model_object:" + kind + ":" + item["name"])
+
+
 def upgrade_company(
-    connection, bundle, *, fault=None, expected_source_fingerprint=None,
-    expected_company_id=None, expected_database_id=None, expected_taxpayer_id=None,
+    connection,
+    bundle,
+    *,
+    fault=None,
+    expected_source_fingerprint=None,
+    expected_company_id=None,
+    expected_database_id=None,
+    expected_taxpayer_id=None,
 ):
     """Atomic explicit source-to-target DDL; no accounting facts are changed."""
     if connection.in_transaction:
@@ -212,8 +260,10 @@ def upgrade_company(
     }
     with verification_snapshot(connection):
         previous = _company_bundle(connection, bundle)
-        if (expected_source_fingerprint is not None
-                and previous.current("company")["sha256"] != expected_source_fingerprint):
+        if (
+            expected_source_fingerprint is not None
+            and previous.current("company")["sha256"] != expected_source_fingerprint
+        ):
             raise KernelError("schema_fingerprint_mismatch", "开发升级来源在备份后发生变化")
         verify_schema(connection, bundle=previous)
         initial = _verify_connection(connection, previous, allow_previous=False, **identity_checks)
@@ -224,7 +274,10 @@ def upgrade_company(
         return {"status": "verified_skip"}
     source = previous.current("company")
     target = bundle.current("company")
-    steps = declared if source["sha256"] == SOURCE_FINGERPRINT else declared[1:]
+    start = next(
+        index for index, step in enumerate(declared) if step[0]["sha256"] == source["sha256"]
+    )
+    steps = declared[start:]
     replace_tables = source["sha256"] == SOURCE_FINGERPRINT
     try:
         if replace_tables:
@@ -244,20 +297,32 @@ def upgrade_company(
             # new receipt so every original value remains bound by this hash.
             # The first source is still the exact same locked snapshot as the
             # original receipt baseline; subsequent steps include new receipts.
-            step_rows = (original_rows if step_index == 0 else
-                         _all_existing_rows(connection, step_source))
+            step_rows = (
+                original_rows if step_index == 0 else _all_existing_rows(connection, step_source)
+            )
             if step_source["sha256"] == SOURCE_FINGERPRINT:
                 _apply_first_step(connection, step_target, differences, fault=fault)
-            else:
+            elif step_source["sha256"] == INDEX_SOURCE_FINGERPRINT:
                 connection.execute(differences[0]["new_sql"])
+            else:
+                _apply_read_model_step(connection, differences, fault=fault)
             if fault:
-                fault("after_ddl" if step_source["sha256"] == SOURCE_FINGERPRINT
-                      else "after_index_ddl")
-            if (objects(connection) != step_target["objects"]
-                    or fingerprint(objects(connection)).hex() != step_target["sha256"]):
+                fault(
+                    "after_ddl"
+                    if step_source["sha256"] == SOURCE_FINGERPRINT
+                    else "after_index_ddl"
+                    if step_source["sha256"] == INDEX_SOURCE_FINGERPRINT
+                    else "after_read_model_ddl"
+                )
+            if (
+                objects(connection) != step_target["objects"]
+                or fingerprint(objects(connection)).hex() != step_target["sha256"]
+            ):
                 raise KernelError("schema_fingerprint_mismatch", "开发升级未生成精确目标结构")
-            if (_all_existing_rows(connection, step_source) != step_rows
-                    or _retained_history_digest(connection) != retained):
+            if (
+                _all_existing_rows(connection, step_source) != step_rows
+                or _retained_history_digest(connection) != retained
+            ):
                 raise KernelError("migration_integrity_failed", "开发升级改变了原始数据或保留历史")
             sequence = connection.execute(
                 "SELECT coalesce(max(sequence),0)+1 FROM schema_draft_history"
@@ -265,14 +330,24 @@ def upgrade_company(
             connection.execute(
                 "INSERT INTO schema_draft_history(sequence,source_fingerprint,target_fingerprint,"
                 "retained_history_digest) VALUES(?,?,?,?)",
-                (sequence, bytes.fromhex(step_source["sha256"]),
-                 bytes.fromhex(step_target["sha256"]), bytes.fromhex(retained)),
+                (
+                    sequence,
+                    bytes.fromhex(step_source["sha256"]),
+                    bytes.fromhex(step_target["sha256"]),
+                    bytes.fromhex(retained),
+                ),
             )
-            step_bundle = (bundle if step_target is target else
-                           source_bundle(bundle, step_target["sha256"]))
+            step_bundle = (
+                bundle if step_target is target else source_bundle(bundle, step_target["sha256"])
+            )
             verify_schema(connection, bundle=step_bundle)
-            applied.append({"sequence": sequence, "source_fingerprint": step_source["sha256"],
-                            "target_fingerprint": step_target["sha256"]})
+            applied.append(
+                {
+                    "sequence": sequence,
+                    "source_fingerprint": step_source["sha256"],
+                    "target_fingerprint": step_target["sha256"],
+                }
+            )
         if connection.execute("PRAGMA foreign_key_check").fetchone():
             raise KernelError("migration_integrity_failed", "开发升级后引用核验失败")
         result = _verify_connection(connection, bundle, allow_previous=False, **identity_checks)
@@ -309,7 +384,7 @@ def _company_bundle(connection, bundle):
     if actual == bundle.current("company")["sha256"]:
         verify_schema(connection, bundle=bundle)
         return bundle
-    if actual in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT):
+    if actual in (SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT, READ_MODEL_SOURCE_FINGERPRINT):
         previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)
         return previous
@@ -368,7 +443,9 @@ def upgrade_root(root, *, bundle=None, fault=None):
             try:
                 with closing(connect(row["path"])) as connection:
                     result = upgrade_company(
-                        connection, bundle, fault=fault,
+                        connection,
+                        bundle,
+                        fault=fault,
                         expected_source_fingerprint=sources[row["id"]].current("company")["sha256"],
                         expected_company_id=row["id"],
                         expected_database_id=row["database_id"],

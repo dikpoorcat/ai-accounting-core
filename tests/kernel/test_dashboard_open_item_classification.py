@@ -111,40 +111,49 @@ def _category_totals(expected):
 
 def _read_and_check_pages(engine, expected, *, period=PERIOD, limit=1):
     dashboard = Dashboard(engine)
-    response = dashboard.brief(period, section="open_items", preparation="deferred", limit=limit)
+    overview = dashboard.brief(period, preparation="deferred", limit=limit)
+    validate_response("dashboard_brief", overview)
+    assert overview["scope"] == "overview"
+    summary = overview["data"]["open_items"]
+    response = dashboard.brief(
+        period, section="open_items", preparation="deferred", limit=limit,
+        expected_version=overview["snapshot_version"],
+    )
     seen = {}
     groups = {}
     totals = _category_totals(expected)
+    assert {
+        category["key"]: [category["count"], category["outstanding_fen"]]
+        for category in summary["categories"]
+    } == totals
+    for direction in ("receivable", "payable"):
+        amounts = (
+            [
+                amount
+                for category, amount in expected.values()
+                if category.endswith("receivables") or category == "supplier_advances"
+            ]
+            if direction == "receivable"
+            else [
+                amount
+                for category, amount in expected.values()
+                if not category.endswith("receivables") and category != "supplier_advances"
+            ]
+        )
+        assert summary[direction + "_count"] == len(amounts)
+        assert summary[direction + "_fen"] == sum(amounts)
+    assert (
+        sum(category["group_count"] for category in summary["categories"])
+        == summary["group_count"]
+    )
     while True:
         validate_response("dashboard_brief", response)
+        assert response["scope"] == "open_items"
         data = response["data"]
-        summary = data["open_items"]
-        assert {
-            category["key"]: [category["count"], category["outstanding_fen"]]
-            for category in summary["categories"]
-        } == totals
-        for direction in ("receivable", "payable"):
-            amounts = (
-                [
-                    amount
-                    for category, amount in expected.values()
-                    if category.endswith("receivables") or category == "supplier_advances"
-                ]
-                if direction == "receivable"
-                else [
-                    amount
-                    for category, amount in expected.values()
-                    if not category.endswith("receivables") and category != "supplier_advances"
-                ]
-            )
-            assert summary[direction + "_count"] == len(amounts)
-            assert summary[direction + "_fen"] == sum(amounts)
+        assert set(data) == {"collections"}
+        assert set(data["collections"]) == {"open_items"}
         collection = data["collections"]["open_items"]
         assert collection["page"]["total_count"] == summary["group_count"]
-        assert (
-            sum(category["group_count"] for category in summary["categories"])
-            == summary["group_count"]
-        )
         for item in collection["items"]:
             assert item["id"] == item["group_key"]
             assert item["id"] not in groups

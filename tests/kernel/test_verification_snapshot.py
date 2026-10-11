@@ -271,7 +271,9 @@ def test_nonempty_frozen_values_and_actual_decode_work_survive_unrelated_history
         "2026-01", "2026-02", "2026-03",
     )] == frozen_before
     counts = {"full_closes": 0, "outcomes": 0, "report_rows": 0}
-    original_close, original_outcome = close_storage.decode_close, integrity._outcome
+    original_close, original_outcome = (
+        close_storage.decode_close, integrity._outcome_with_lines,
+    )
     original_rows = report_projection._manifest_rows
     def decoded_close(*args, **kwargs):
         counts["full_closes"] += 1
@@ -284,7 +286,7 @@ def test_nonempty_frozen_values_and_actual_decode_work_survive_unrelated_history
         counts["report_rows"] += len(result)
         return result
     monkeypatch.setattr(close_storage, "decode_close", decoded_close)
-    monkeypatch.setattr(integrity, "_outcome", decoded_outcome)
+    monkeypatch.setattr(integrity, "_outcome_with_lines", decoded_outcome)
     monkeypatch.setattr(report_projection, "_manifest_rows", rebuilt_rows)
     with company.store.connection(read_only=True) as connection:
         calculation_count = connection.execute("SELECT count(*) FROM calculation").fetchone()[0]

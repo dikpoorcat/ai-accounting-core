@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "../api/dashboardContracts";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -22,7 +23,7 @@ import DashboardSelect from "../components/DashboardSelect.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
-import { appendDashboardCollection } from "../utils/dashboardCollections";
+import { appendDashboardCollection, prepareDashboardCollections } from "../utils/dashboardCollections";
 import type { DashboardFundsContract } from "../api/generated/dashboardFunds";
 
 const route = useRoute();
@@ -52,6 +53,8 @@ const selectedAccount = ref(routeAccount());
 const selectedBankAccount = ref(queryText("statement_account_id"));
 const selectedDetailView = ref<"book" | "bank">(queryText("funds_view") === "bank" ? "bank" : "book");
 const expandedMovementId = ref("");
+// Hidden progress mounts on first open; valid instances survive local collapse.
+const openedMovementIds = ref(new Set<string>());
 type BankStatementRow = DashboardFundsContract.BankStatementRow;
 const expandedBatchId = ref(""), previewBatchId = ref("");
 const batchPreviewPanel = ref<HTMLElement | null>(null);
@@ -62,7 +65,7 @@ let expandedBatchAnchor: HTMLElement | null = null;
 let batchPreviewGeneration = 0;
 let batchCloseTimer: ReturnType<typeof setTimeout> | undefined;
 let batchTriggerHovered = false, batchPanelHovered = false, restoringBatchFocus = false;
-const funds = ref<FundsData | null>(null);
+const funds = shallowRef<FundsData | null>(null);
 const snapshotVersion = ref("");
 const selectedPeriodLabel = ref("");
 const responsePeriod = ref("");
@@ -216,7 +219,7 @@ function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   activeRequest?.abort(); cancelPages();
   activeRequest = null;
-  if (!keepContent) { snapshotVersion.value = ""; funds.value = null; responsePeriod.value = ""; }
+  if (!keepContent) { openedMovementIds.value.clear(); snapshotVersion.value = ""; funds.value = null; responsePeriod.value = ""; }
   loading.value = keepContent;
 }
 
@@ -228,6 +231,7 @@ function selectMovementAccount(value: string) {
 function toggleMovement(item: FundMovement, event?: Event) {
   if (!item.subject_id || (event?.target instanceof Element && event.target.closest("button,a,details,.business-status-details"))) return;
   expandedMovementId.value = expandedMovementId.value === item.id ? "" : item.id;
+  if (expandedMovementId.value) openedMovementIds.value.add(item.id);
 }
 
 function handleMovementKey(item: FundMovement, event: KeyboardEvent) {
@@ -419,7 +423,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   lockSectionSync();
   const sectionToRestore = activeSection.value;
   const shouldRestoreSection = funds.value !== null;
-  if (!contextGate) { snapshotVersion.value = ""; funds.value = null; }
+  if (!contextGate) { openedMovementIds.value.clear(); snapshotVersion.value = ""; funds.value = null; }
   activeRequest = controller;
   loading.value = true;
   requestError.value = "";
@@ -434,6 +438,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
       requestedFilters = JSON.stringify(queryFilters());
     }
     const data = response.data;
+    prepareDashboardCollections(data);
     funds.value = data;
     if (data) rememberFundAccounts(queryText("company_id"), periodKey, data.collections.accounts?.items ?? []);
     snapshotVersion.value = response.snapshot_version;
@@ -490,6 +495,7 @@ async function loadDetail(kind: "book" | "bank") {
       { ...queryFilters(), expected_version: version, section });
     if (!valid() || !next.data || !funds.value || !next.data.collections[section]) return;
     if (next.snapshot_version !== version) { await refreshChanged(); return; }
+    prepareDashboardCollections(next.data);
     const latest = funds.value;
     funds.value = { ...latest,
       ...(kind === "book" ? { selected_movement_account: next.data.selected_movement_account } : {}),
@@ -518,7 +524,7 @@ async function loadMore(kind: PageKind) {
   const request = new AbortController(); pageRequests.set(kind, request); state.loading = true; state.error = "";
   try {
     const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
-      { ...queryFilters(), expected_version: snapshotVersion.value, section, cursor: page.next_cursor });
+      { ...queryFilters(), expected_version: snapshotVersion.value, section, cursor: page.next_cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT });
     if (!isPageCurrent(kind, generation, selection) || pageRequests.get(kind) !== request || !next.data || !funds.value || snapshotVersion.value !== version) return;
     const latest = funds.value;
     const collection = next.data.collections[section];
@@ -752,6 +758,11 @@ function reconciliationAttention(state: string): boolean {
 watch(
   () => [route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, snapshotVersion.value, selectedDetailView.value],
   () => { expandedMovementId.value = ""; },
+  { flush: "sync" },
+);
+watch(
+  () => [route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, snapshotVersion.value],
+  () => { openedMovementIds.value.clear(); },
   { flush: "sync" },
 );
 watch(
@@ -1216,7 +1227,11 @@ onBeforeUnmount(() => {
                 <span>日期</span><span>对象</span><span>事项</span><span>方向</span><span class="book-column-number">金额</span><span></span>
               </div>
               <ol class="book-activity-list">
-                <li v-for="item in visibleMovements" :key="item.id" class="book-activity-row business-list-row"
+                <li v-for="item in visibleMovements" :key="item.id"
+                  v-memo="[item, item.id, item.subject_id, item.date, item.account_id, item.account_code, item.account_name, item.account_type,
+                    item.direction, item.correction, item.amount_fen, item.signed_amount_fen, item.type, item.display_summary, item.list_summary, item.party, item.internal_transfer,
+                    expandedMovementId === item.id, openedMovementIds.has(item.id), route.query.company_id, selectedPeriod, snapshotVersion]"
+                  class="book-activity-row business-list-row"
                   :class="{ expandable: item.subject_id, expanded: expandedMovementId === item.id }"
                   :role="item.subject_id ? 'button' : undefined" :tabindex="item.subject_id ? 0 : undefined"
                   :aria-expanded="item.subject_id ? expandedMovementId === item.id : undefined"
@@ -1229,7 +1244,7 @@ onBeforeUnmount(() => {
                   </span>
                   <div class="book-movement-end business-list-money"><strong class="book-movement-amount" :class="item.correction ? 'correction' : item.direction">{{ item.correction ? formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong></div>
                   <svg v-if="item.subject_id" class="book-expand-arrow business-list-arrow" :class="{ expanded: expandedMovementId === item.id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
-                  <BusinessStatusDetails v-if="item.subject_id" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
+                  <BusinessStatusDetails v-if="item.subject_id && openedMovementIds.has(item.id)" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
                     presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary
                     @click.stop @keydown.stop @changed="refreshChanged" />
                 </li>

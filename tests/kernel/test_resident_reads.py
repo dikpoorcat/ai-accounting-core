@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from threading import Event
 
 import pytest
@@ -85,6 +86,37 @@ def test_pool_reuses_across_threads_and_evicts_other_company(resident):
         assert pool._total == 1
     finally:
         pool.close()
+
+
+def test_four_company_connections_keep_actual_page_budget_and_evict_fifth(resident):
+    service, first, second = resident
+    companies = [first, second] + [
+        service.catalog.create_company(f"91310000123456789{suffix}", f"合成{suffix}")
+        for suffix in ("C", "D", "E")
+    ]
+    stores = [service.engine(company["id"], dashboard_read=True).store for company in companies]
+    connections = []
+    with ExitStack() as held:
+        for store, company in zip(stores[:4], companies[:4], strict=True):
+            connection = held.enter_context(store.connection(read_only=True))
+            connections.append(connection)
+            assert connection.execute("PRAGMA cache_size").fetchone()[0] == -READ_PAGE_CACHE_KIB
+            assert _read_taxpayer(connection) == company["taxpayer_id"]
+        assert service.read_pool._total == 4
+        assert len({id(connection) for connection in connections}) == 4
+    with stores[4].connection(read_only=True) as connection:
+        assert connection not in connections
+        assert service.read_pool._total == 4
+        assert connection.execute("PRAGMA cache_size").fetchone()[0] == -READ_PAGE_CACHE_KIB
+        assert _read_taxpayer(connection) == companies[4]["taxpayer_id"]
+    # ExitStack released its first borrower last, so another idle slot was evicted.
+    closed = 0
+    for connection in connections:
+        try:
+            connection.execute("SELECT 1")
+        except sqlite3.ProgrammingError:
+            closed += 1
+    assert closed == 1
 
 
 def test_pool_wait_is_bounded_when_all_connections_are_busy(resident):

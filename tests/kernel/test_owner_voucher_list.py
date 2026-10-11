@@ -34,14 +34,13 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 15
+    assert response["schema_version"] == 19 and response["scope"] == "overview"
     assert data["voucher_count"] == data["activity_count"] == 23
-    vouchers = data["collections"]["vouchers"]["items"]
+    assert "vouchers" not in data["collections"]
+    voucher_response = dashboard.brief("2026-09", section="vouchers")
+    vouchers = voucher_response["data"]["collections"]["vouchers"]["items"]
     assert len(vouchers) == 20
-    assert [row["voucher_version_id"] for row in vouchers] == [
-        row["voucher_version_id"] for row in data["collections"]["activity"]["items"]
-    ]
-    page = data["collections"]["vouchers"]["page"]
+    page = voucher_response["data"]["collections"]["vouchers"]["page"]
     activity_page = data["collections"]["activity"]["page"]
     assert page["next_cursor"] != activity_page["next_cursor"]
     activity_response = dashboard.brief(
@@ -49,12 +48,8 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
         expected_version=response["snapshot_version"], limit=7,
     )
     following = activity_response["data"]["collections"]
-    assert set(following) == {"activity", "vouchers"}
-    assert [row["voucher_version_id"] for row in following["activity"]["items"]] == [
-        row["voucher_version_id"] for row in following["vouchers"]["items"]
-    ]
+    assert set(following) == {"activity"}
     assert following["activity"]["page"]["returned_count"] == 3
-    assert following["vouchers"]["page"]["returned_count"] == 3
     validate_response("dashboard_brief", activity_response)
     next_response = dashboard.brief(
         "2026-09", section="vouchers", cursor=page["next_cursor"],
@@ -62,7 +57,6 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
     )
     assert set(next_response["data"]["collections"]) == {"vouchers"}
     final = next_response["data"]["collections"]["vouchers"]
-    assert final["items"] == following["vouchers"]["items"]
     assert len(final["items"]) == 3 and final["page"]["has_more"] is False
     all_rows = vouchers + final["items"]
     assert len({row["voucher_version_id"] for row in all_rows}) == 23
@@ -73,7 +67,7 @@ def test_default_and_cursor_vouchers_share_selection_and_show_every_saved_line(
         assert not {
             "evidence", "evidence_details", "field_sources", "components", "funds", "settlements"
         } & row.keys()
-    wire = http_response("dashboard_brief", response)
+    wire = http_response("dashboard_brief", voucher_response)
     assert wire["data"]["collections"]["vouchers"]["items"][0]["amount_fen"] == "1"
 
 
@@ -83,7 +77,9 @@ def test_voucher_cursor_is_bound_to_its_collection_and_focus_preserves_public_nu
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09", limit=2)
     activity_cursor = response["data"]["collections"]["activity"]["page"]["next_cursor"]
-    voucher_cursor = response["data"]["collections"]["vouchers"]["page"]["next_cursor"]
+    voucher_cursor = dashboard.brief("2026-09", section="vouchers", limit=2)[
+        "data"
+    ]["collections"]["vouchers"]["page"]["next_cursor"]
     with pytest.raises(KernelError) as rejected:
         dashboard.brief(
             "2026-09", section="vouchers", cursor=activity_cursor,
@@ -100,20 +96,15 @@ def test_voucher_cursor_is_bound_to_its_collection_and_focus_preserves_public_nu
         "2026-09", section="activity", cursor=activity_cursor,
         expected_version=response["snapshot_version"], limit=1,
     )["data"]["collections"]
-    assert following["activity"]["page"]["next_cursor"] != (
-        following["vouchers"]["page"]["next_cursor"]
-    )
+    assert following["activity"]["page"]["next_cursor"] != voucher_cursor
     assert following["activity"]["page"]["has_more"]
-    assert following["vouchers"]["page"]["has_more"]
     focused = dashboard.brief("2026-09", limit=2, voucher_number=4)
     selected = focused["data"]["focused_voucher"]
     assert selected["number"] == "4"
     assert selected["voucher_version_id"] == (
         focused["data"]["focused_activity"]["voucher_version_id"]
     )
-    assert selected["voucher_version_id"] not in {
-        row["voucher_version_id"] for row in focused["data"]["collections"]["vouchers"]["items"]
-    }
+    assert "vouchers" not in focused["data"]["collections"]
     assert validate_response("dashboard_brief", focused)["data"]["focused_voucher"] == selected
 
 
@@ -121,7 +112,7 @@ def test_business_amount_remains_separate_from_voucher_total(tax_company):
     sale(tax_company, tax_obligation_date="2026-04-02")
     receipt(tax_company, "first", 40000, "2026-04-02")
     tax_company.publish("first")
-    response = Dashboard(tax_company.engine).brief("2026-04")
+    response = Dashboard(tax_company.engine).brief("2026-04", section="vouchers")
     row = next(item for item in response["data"]["collections"]["vouchers"]["items"]
                if item["subject_id"] == "first")
     assert row["business_amount_fen"] == 40000
@@ -158,12 +149,12 @@ def test_activity_owner_page_work_ignores_unrelated_objects_and_display_history(
             profile(engine, "business", subject, revision, display_name=f"无关历史 {revision}")
     refreshed = dashboard.brief("2026-09", limit=2)
     grown_work, after = measure_work(engine, lambda: following(refreshed))
-    for section in ("activity", "vouchers"):
+    for section in ("activity",):
         assert after["data"]["collections"][section]["items"] == (
             before["data"]["collections"][section]["items"]
         )
         assert len(after["data"]["collections"][section]["items"]) == 2
-    assert after["data"]["voucher_count"] == default["data"]["voucher_count"] == 23
+    assert default["data"]["voucher_count"] == refreshed["data"]["voucher_count"] == 23
     for counter in (
         "calculation_result_rows_loaded", "calculation_result_bytes_loaded",
         "calculation_result_json_decodes", "calculation_result_input_bytes",
@@ -184,7 +175,7 @@ def test_asset_members_and_line_parties_match_exact_saved_voucher(asset_book):
     diagnostic = {
         item["voucher_version_id"]: item for item in diagnostic_vouchers(engine, "2026-02")
     }
-    response = Dashboard(engine).brief("2026-02")
+    response = Dashboard(engine).brief("2026-02", section="vouchers")
     rows = response["data"]["collections"]["vouchers"]["items"]
     validate_response("dashboard_brief", response)
     for row in rows:
@@ -199,11 +190,11 @@ def test_asset_members_and_line_parties_match_exact_saved_voucher(asset_book):
             assert line["parties"] == original["parties"]
             assert line["party_state"] == original["party_state"]
             assert line["source_label"] == original["source_label"]
-    first = Dashboard(engine).brief("2026-02", limit=1)
-    cursor = first["data"]["collections"]["activity"]["page"]["next_cursor"]
+    first = Dashboard(engine).brief("2026-02", section="vouchers", limit=1)
+    cursor = first["data"]["collections"]["vouchers"]["page"]["next_cursor"]
     if cursor:
         following = Dashboard(engine).brief(
-            "2026-02", section="activity", cursor=cursor,
+            "2026-02", section="vouchers", cursor=cursor,
             expected_version=first["snapshot_version"],
         )
         assert following["data"]["collections"]["vouchers"]["items"] == rows[1:]
@@ -218,7 +209,7 @@ def test_activity_vouchers_keep_frozen_saved_lines_and_original_reversal(bank_bo
     save("expense", "expense", fields)
     publish("expense")
     dashboard = Dashboard(engine)
-    original = dashboard.brief("2026-09", section="activity")["data"]["collections"][
+    original = dashboard.brief("2026-09", section="vouchers")["data"]["collections"][
         "vouchers"
     ]["items"][0]
     investments.close(engine, "2026-09")
@@ -228,15 +219,15 @@ def test_activity_vouchers_keep_frozen_saved_lines_and_original_reversal(bank_bo
         ["expense"], posting_period="2026-10", preview_digest=preview["digest"],
         epochs=preview["epochs"], request_id="expense-correction",
     )
-    frozen = dashboard.brief("2026-09", section="activity")["data"]["collections"][
+    frozen = dashboard.brief("2026-09", section="vouchers")["data"]["collections"][
         "vouchers"
     ]["items"][0]
     assert frozen == original
-    correction = dashboard.brief("2026-10", limit=1)
+    correction = dashboard.brief("2026-10", section="vouchers", limit=1)
     first = correction["data"]["collections"]["vouchers"]["items"][0]
     following = dashboard.brief(
-        "2026-10", section="activity", limit=1,
-        cursor=correction["data"]["collections"]["activity"]["page"]["next_cursor"],
+        "2026-10", section="vouchers", limit=1,
+        cursor=correction["data"]["collections"]["vouchers"]["page"]["next_cursor"],
         expected_version=correction["snapshot_version"],
     )
     second = following["data"]["collections"]["vouchers"]["items"][0]

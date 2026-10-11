@@ -116,6 +116,47 @@ class _VerifiedReports:
     lease: object
 
 
+@dataclass(frozen=True)
+class _PartySourceLine:
+    """Only fields interpreted by party attribution, never a complete source row."""
+
+    version_id: str
+    line_no: int
+    source_id: str
+    reverses_id: str | None
+    account: str
+    debit: int
+    credit: int
+    cashflow: str | None
+
+
+def _verified_party_source_rows(reads, connection, period, cutoff):
+    """Reuse only the exact complete month money proof in its owned snapshot."""
+    if period != cutoff or not _owns_current_selector_snapshot(reads, connection):
+        return None
+    rows = reads._report_snapshot_cache.get(
+        ("journal_verified_rows", cutoff, period, None, None, None)
+    )
+    if rows is None or any(
+        row["period"] != period or row["id"] not in reads._lines
+        or reads._report_snapshot_cache.get((
+            "authenticated_voucher_lines", row["id"], row["voucher_calculation_id"],
+            row["basis_calculation_id"],
+        )) is not True
+        for row in rows
+    ):
+        return None
+    from .account_definitions import RECLASS
+
+    return tuple(
+        _PartySourceLine(
+            row["id"], line["line_no"], row["basis_calculation_id"], row["reverses_id"],
+            line["account"], line["debit"], line["credit"], line["cashflow"],
+        )
+        for row in rows for line in reads._lines[row["id"]] if line["account"] in RECLASS
+    )
+
+
 def _ordinal(period):
     return period.ordinal if isinstance(period, YearMonth) else YearMonth(period).ordinal
 
@@ -263,7 +304,8 @@ def _manifest_rows(connection, period, manifest):
             "l.line_no,l.account,l.debit,l.credit,l.cashflow,c.kind,c.fact_id,"
             "c.period calculation_period,c.subject_id,c.digest,p.id publication_id,"
             "c.id basis_calculation_id "
-            "FROM json_each(?) ids JOIN voucher_version v ON v.id=ids.value "
+            "FROM json_each(?) ids CROSS JOIN voucher_version v "
+            "INDEXED BY sqlite_autoindex_voucher_version_1 ON v.id=ids.value "
             "JOIN voucher n ON n.id=v.voucher_id "
             "JOIN voucher_line l ON l.version_id=v.id "
             "LEFT JOIN voucher_version original ON original.id=v.reverses_id "
@@ -365,7 +407,13 @@ def _party_delta(
     )
     if cache is not None and cache_key in cache:
         return cache[cache_key]
-    relevant = [row for row in source_rows if row[8] in RECLASS]
+    relevant = [
+        row if isinstance(row, _PartySourceLine) else _PartySourceLine(
+            row[2], row[3], row[5], row[7], row[8], row[9], row[10], row[11],
+        )
+        for row in source_rows
+        if (row.account if isinstance(row, _PartySourceLine) else row[8]) in RECLASS
+    ]
     if not relevant:
         return (), True
     if (
@@ -377,7 +425,7 @@ def _party_delta(
         return (), False
     reads = reads or QueryReads(engine, connection)
     end = YearMonth.from_ordinal(period)
-    source_vouchers = {row[7] or row[2] for row in relevant}
+    source_vouchers = {row.reverses_id or row.version_id for row in relevant}
     problems = []
     if classification_refs is None:
         from .report_classification_directory import classification_directory_scope
@@ -453,26 +501,28 @@ def _party_delta(
             item.fact.voucher_version_id: item.fact
             for item in reads.fact_versions(selected_ids).values()
         }
-    originals = reads.vouchers({row[7] for row in relevant if row[7]})
+    originals = reads.vouchers({row.reverses_id for row in relevant if row.reverses_id})
     prepared_rows = []
     lines_by_source = defaultdict(list)
     for item in relevant:
-        source_id = originals[item[7]]["calculation_id"] if item[7] else item[5]
-        selected = classifications.get(item[7] or item[2])
+        source_id = (originals[item.reverses_id]["calculation_id"]
+                     if item.reverses_id else item.source_id)
+        selected = classifications.get(item.reverses_id or item.version_id)
         explicit = (
-            [entry.counterparty_id for entry in selected.counterparties if entry.line_no == item[3]]
+            [entry.counterparty_id for entry in selected.counterparties
+             if entry.line_no == item.line_no]
             if selected
             else []
         )
         row = {
-            "version_id": item[2],
-            "line_no": item[3],
-            "account": item[8],
-            "amount": item[9] - item[10],
-            "debit": item[9],
-            "credit": item[10],
-            "cashflow": item[11],
-            "reverses_id": item[7],
+            "version_id": item.version_id,
+            "line_no": item.line_no,
+            "account": item.account,
+            "amount": item.debit - item.credit,
+            "debit": item.debit,
+            "credit": item.credit,
+            "cashflow": item.cashflow,
+            "reverses_id": item.reverses_id,
         }
         prepared_rows.append((item, source_id, explicit, row))
         lines_by_source[source_id].append(row)
@@ -510,7 +560,7 @@ def _party_delta(
         if party["splits"] is None:
             return (), False
         for key, amount in party["splits"]:
-            totals[item[8], canonical(key)] += amount
+            totals[item.account, canonical(key)] += amount
     if problems:
         return (), False
     result = (
@@ -924,12 +974,22 @@ def _party_balance_position_lines(
         result_key = (*result_key, selected_accounts, _validate_party_keys)
     if result_key in cache:
         return cache[result_key].copy()
-    inputs = _party_balance_inputs(engine, connection, cutoff, source=source, reads=reads)
+    staged_checkpoint = {} if _validate_party_keys else None
+    inputs = _party_balance_inputs(
+        engine, connection, cutoff, source=source, reads=reads,
+        _checkpoint_summary=staged_checkpoint,
+    )
     if inputs is None:
         return None
     checkpoint, base, changes = inputs
     base_key = ("report_party_checkpoint_position_lines", checkpoint)
     base_lines = cache.get(base_key) if checkpoint is not None else None
+    fused = staged_checkpoint.get("summary") if staged_checkpoint is not None else None
+    if fused is not None:
+        supported, base_lines, fused_shapes = fused
+        if not supported:
+            _party_balance_nets(engine, connection, cutoff, source=source, reads=reads)
+            return _PARTY_POSITION_SUMMARY_UNSAFE
     if base_lines is None:
         # Unsupported keys may later cancel to zero. Keep their original
         # full-net behavior, and never rescan an already classified base.
@@ -980,7 +1040,7 @@ def _party_balance_position_lines(
     if _validate_party_keys:
         shapes = cache.get(shape_key) if checkpoint is not None else None
         if shapes is None:
-            shapes = _party_key_shape_problems(base)
+            shapes = fused_shapes if fused is not None else _party_key_shape_problems(base)
             staged_shapes = shapes
         decode_bad, classify_bad = (set(items) for items in shapes)
         extra_decode, extra_classify = _party_key_shape_problems(changed)
@@ -1028,30 +1088,66 @@ def _string_party_identity(value):
     )
 
 
-def _party_key_shape_problems(amounts):
+def _party_key_shape_problem(raw):
     import json
 
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return True, False
+    try:
+        # Strings and nested string arrays are intrinsically hashable after
+        # freezing. This summary only needs their validity, not a display key:
+        # leave actual tuple construction to consumers of party_balance_rows.
+        bad = not _string_party_identity(decoded) or canonical(decoded) != raw
+    except (TypeError, ValueError):
+        bad = True
+    return False, bad
+
+
+def _party_key_shape_problems(amounts):
     decode_bad, classify_bad = set(), set()
     for key, amount in amounts.items():
-        try:
-            decoded = json.loads(key[1])
-            party = _freeze_party_key(decoded)
-        except (TypeError, ValueError):
+        decode, classify = _party_key_shape_problem(key[1])
+        if decode:
             decode_bad.add(key)
-            continue
-        try:
-            if (
-                party is None or type(amount) is not int or not _string_party_identity(decoded)
-                or canonical(decoded) != key[1]
-            ):
-                # Noncanonical aliases can decode to the same party. Retain
-                # the full row path's cross-key netting instead of classifying
-                # their raw-string nets separately.
-                classify_bad.add(key)
-            hash(party)
-        except (TypeError, ValueError):
+        elif classify or type(amount) is not int:
             classify_bad.add(key)
     return frozenset(decode_bad), frozenset(classify_bad)
+
+
+def _checkpoint_party_summary(rows):
+    """Materialize exact last-key totals and classify/validate that same pass."""
+    from .account_definitions import RECLASS
+
+    totals, lines, shape_by_raw = {}, {}, {}
+    unsupported, decode_bad, classify_bad = set(), set(), set()
+    for row in rows:
+        account, raw, amount = row[1], row[2], row[3]
+        key = account, raw
+        old = totals.get(key, 0)
+        if key not in unsupported and old:
+            line = account, RECLASS[account][0 if old >= 0 else 1]
+            lines[line] = lines.get(line, 0) - abs(old)
+        supported = account in RECLASS and type(amount) is int
+        if supported:
+            unsupported.discard(key)
+            if amount:
+                line = account, RECLASS[account][0 if amount >= 0 else 1]
+                lines[line] = lines.get(line, 0) + abs(amount)
+        else:
+            unsupported.add(key)
+        totals[key] = amount
+        if raw not in shape_by_raw:
+            shape_by_raw[raw] = _party_key_shape_problem(raw)
+        decode, classify = shape_by_raw[raw]
+        decode_bad.discard(key)
+        classify_bad.discard(key)
+        if decode:
+            decode_bad.add(key)
+        elif classify or type(amount) is not int:
+            classify_bad.add(key)
+    return totals, (not unsupported, lines, (frozenset(decode_bad), frozenset(classify_bad)))
 
 
 def _party_balance_nets(engine, connection, cutoff, *, source, reads):
@@ -1095,7 +1191,9 @@ def _party_balance_nets_uncached(engine, connection, cutoff, *, source, reads):
     )
 
 
-def _party_balance_inputs(engine, connection, cutoff, *, source, reads):
+def _party_balance_inputs(
+    engine, connection, cutoff, *, source, reads, _checkpoint_summary=None,
+):
     """Select and authenticate one base and its tail for both consumers."""
 
     from .account_definitions import RECLASS
@@ -1164,9 +1262,14 @@ def _party_balance_inputs(engine, connection, cutoff, *, source, reads):
             totals = {(row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]}
         else:
             if key not in cache:
-                cache[key] = {
-                    (row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]
-                }
+                if _checkpoint_summary is not None:
+                    totals, summary = _checkpoint_party_summary(checkpoint["checkpoint_rows"])
+                    cache[key] = totals
+                    _checkpoint_summary["summary"] = summary
+                else:
+                    cache[key] = {
+                        (row[1], row[2]): row[3] for row in checkpoint["checkpoint_rows"]
+                    }
             totals = cache[key]
     else:
         start = cutoff - cutoff % 12
@@ -1187,6 +1290,16 @@ def _party_balance_inputs(engine, connection, cutoff, *, source, reads):
             elif source == "closed":
                 continue
             else:
+                proved_rows = _verified_party_source_rows(reads, connection, month, cutoff)
+                if proved_rows is not None:
+                    rows, usable = _party_delta(
+                        engine, connection, month, proved_rows, reads=reads,
+                    )
+                    if not usable:
+                        yield None
+                        return
+                    yield rows
+                    continue
                 source_rows, no_close_references = _authoritative_rows(
                     connection, "open", month, with_absence=True, reads=reads
                 )
@@ -1296,8 +1409,11 @@ def source_rows(connection, scope, periods):
     ]
 
 
-def compare_report_projection(engine, connection, *, through_period=None, _verified_closes=None):
+def compare_report_projection(
+    engine, connection, *, through_period=None, _verified_closes=None, _source_reads=None,
+):
     """Rebuild expected derived rows from authority, verifying every frozen root."""
+    from .query_reads import QueryReads
 
     restriction = "" if through_period is None else " WHERE posting_period<=?"
     parameters = () if through_period is None else (through_period,)
@@ -1337,6 +1453,7 @@ def compare_report_projection(engine, connection, *, through_period=None, _verif
     expected_checkpoint_rows, expected_checkpoint_seals, expected_months = [], [], {}
     verified_closed = []
     frozen_classification_refs = set()
+    reads = _source_reads or QueryReads(engine, connection)
     for scope, period in sorted(wanted):
         if scope == "closed":
             reader = close_reader()
@@ -1356,6 +1473,7 @@ def compare_report_projection(engine, connection, *, through_period=None, _verif
                 rows,
                 source="closed",
                 classification_refs=frozen_classification_refs,
+                reads=reads,
             )
             checkpoint_rows, checkpoint_usable, checkpoint_inputs = _expected_checkpoint(
                 connection, period, party_rows, party_usable, expected_months
@@ -1513,13 +1631,15 @@ def compare_report_projection(engine, connection, *, through_period=None, _verif
 
 
 def require_report_projection(
-    engine, connection, *, through_period=None, _verified_closes=None, _return_verified=False
+    engine, connection, *, through_period=None, _verified_closes=None, _return_verified=False,
+    _source_reads=None,
 ):
     compared = compare_report_projection(
         engine,
         connection,
         through_period=through_period,
         _verified_closes=_verified_closes,
+        _source_reads=_source_reads,
     )
     if compared["changed"]:
         raise KernelError(

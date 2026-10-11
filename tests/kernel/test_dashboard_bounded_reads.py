@@ -340,7 +340,8 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
     layered_book, read_probe, endpoint, section, identity, count
 ):
     dashboard = Dashboard(layered_book["engine"])
-    first = getattr(dashboard, endpoint)("2026-01", section=section, limit=1)
+    filters = {"employee_filter": "all"} if endpoint == "employees" else {}
+    first = getattr(dashboard, endpoint)("2026-01", section=section, limit=1, **filters)
     collection = first["data"]["collections"][section]
     assert collection["page"]["total_count"] == collection["page"]["filtered_count"] == count
     items = collection["items"]
@@ -353,6 +354,7 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
         limit=1,
         cursor=collection["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
+        **filters,
     )
     next_items = second["data"]["collections"][section]["items"]
     assert next_items[0][identity] != items[0][identity]

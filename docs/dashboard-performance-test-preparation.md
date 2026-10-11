@@ -2,9 +2,9 @@
 
 # 看板性能测量样本准备
 
-本文记录可复用的合成规模样本、构造来源和后续浏览器测量方式。样本用于隔离性能观察，不代表真实企业账簿，也不构成正式性能验收结果。
+本文记录可复用的合成规模样本、构造来源和后续浏览器测量方式。样本用于隔离性能观察，不代表真实企业账簿，也不构成正式性能验收结果。按用户当前决定，普通规模验收只使用main12／main48／main120（三档50人、每月1,000笔）；independent12／48／120及stress12仅为按需辅助对照／压力诊断，不每轮重复、不作为普通三档固定门禁。历史七样本、资格及有效raw保留，不继承给新源码。本文历史压力样本键为pressure12，对应当前所称stress12。
 
-## 本轮准备结果
+## 历史七样本准备结果
 
 本轮构造 ledger 为 `.tmp/stage9-preparation-20261009-recovery2-preparation.json`，状态为 `ready`，七个样本均为 `verified`。实际 Python 进程退出回执为 `.tmp/stage9-preparation-20261009-recovery2-process-exit.json`，退出码为 0。各样本的核验报告按 `.tmp/stage9-preparation-20261009-recovery2-{key}-verified.json` 命名。
 
@@ -17,10 +17,10 @@
 | `main12` | `.tmp/stage9-preparation-20261008-ready-main12` | `.tmp/stage9-preparation-20261009-recovery2-main12-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
 | `main48` | `.tmp/stage9-preparation-20261008-ready-main48` | `.tmp/stage9-preparation-20261009-recovery2-main48-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
 | `main120` | `.tmp/stage9-preparation-20261008-ready-main120` | `.tmp/stage9-preparation-20261009-recovery2-main120-verified.json` | 50 人、每月 1,000 笔；主库规模样本 |
-| `independent12` | `.tmp/stage9-preparation-20261008-ready-independent12` | `.tmp/stage9-preparation-20261009-recovery2-independent12-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
-| `independent48` | `.tmp/stage9-preparation-20261008-ready-independent48` | `.tmp/stage9-preparation-20261009-recovery2-independent48-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
-| `independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120-verified.json` | 50 个登记对象、每月 1,000 笔；独立业务对照 |
-| `pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12-verified.json` | 200 人、每月 5,000 笔；压力诊断样本 |
+| `independent12` | `.tmp/stage9-preparation-20261008-ready-independent12` | `.tmp/stage9-preparation-20261009-recovery2-independent12-verified.json` | 50 个登记对象、每月 1,000 笔；按需辅助独立业务对照，非固定门禁 |
+| `independent48` | `.tmp/stage9-preparation-20261008-ready-independent48` | `.tmp/stage9-preparation-20261009-recovery2-independent48-verified.json` | 50 个登记对象、每月 1,000 笔；按需辅助独立业务对照，非固定门禁 |
+| `independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120` | `.tmp/stage9-preparation-20261009-recovery2-independent120-verified.json` | 50 个登记对象、每月 1,000 笔；按需辅助独立业务对照，非固定门禁 |
+| `pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12` | `.tmp/stage9-preparation-20261009-recovery2-pressure12-verified.json` | 200 人、每月 5,000 笔；按需压力诊断，非固定门禁 |
 
 上述样本根目录和核验报告路径均来自 ready ledger。旧的 101 月和 62 月中断现场保留作历史排查，不属于完整样本，不纳入本矩阵。
 
@@ -32,11 +32,11 @@
 
 双小库两个月、五页面烟雾测量已技术完成，使用 3 次 warmup 和 1 次诊断；报告分别为 `.tmp/stage9-preparation-20261008-ready-smoke-main-browser.json` 与 `.tmp/stage9-preparation-20261008-ready-smoke-independent-browser.json`。已声明的 `over_target` 退出1仅表示诊断超500ms，五页完整且无技术失败才算烟雾完成；不能把它称为性能通过。七个完整规模样本均由本轮独立新进程完成注册完整核验及开放月预览。
 
-正式 30 次刷新测量和 500 ms 验收尚未执行。当前工作区兼容性证据覆盖215个相关文件的精确审查、30项持久依赖原字节对照、双小库预览和指定分组读取及费用标题检查；批量付款、单凭证多事项、期初工资付款等分支未动态覆盖，不能据此声称最新源码已完成七库完整核验或所有入口验证。测量最新代码时，先保存新的 release/source，再用已有 `--book-report` 指向这些库，配合新 `--source` 和新 `--qualify-output`，让测量入口先核验、后计时。不得改写旧资格报告。
+该历史准备轮当时未执行正式30次刷新及500ms验收；后续各固定源码实际成绩见[阶段9集中结果](kernel-refactor-stages/09-performance-results/dashboard-500ms-20261010.md)。当前工作区兼容性证据覆盖215个相关文件的精确审查、30项持久依赖原字节对照、双小库预览和指定分组读取及费用标题检查；批量付款、单凭证多事项、期初工资付款等分支未动态覆盖，不能据此声称最新源码已完成七库完整核验或所有入口验证。测量最新代码时，先保存新的 release/source，再用已有 `--book-report` 指向这些库，配合新 `--source` 和新 `--qualify-output`，让测量入口先核验、后计时。不得改写旧资格报告。
 
 ## 新一轮样本准备
 
-需要新的业务分布或重新构造整组样本时，使用新的 run-id 和源码目录，不覆盖现有产物。本机依赖路径沿用下方已验证的 Node 与 Playwright 路径。
+仅在已授权需要新的业务分布或重新构造整组样本时，使用新的 run-id 和源码目录，不覆盖现有产物。下方phase all是显式构造历史七样本的入口示例，不是每轮普通验收步骤；已有样本按当前来源资格复用，普通测量只选择main12／main48／main120。本机依赖路径沿用下方已验证的 Node 与 Playwright 路径。
 
 ```powershell
 npm --prefix frontend run build:release
@@ -61,7 +61,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $workspace = 'D:/GitHub/ai-accounting-core'
 $ledgerPath = Join-Path $workspace '.tmp/stage9-preparation-20261009-recovery2-preparation.json'
 $ledger = Get-Content -Raw $ledgerPath | ConvertFrom-Json
-$sampleKey = 'main12' # 改为 main48、main120、independent12、independent48、independent120 或 pressure12
+$sampleKey = 'main12' # 普通规模选择 main48/main120；辅助 independent12/48/120 或 pressure12 仅按需选择
 $sample = $ledger.samples.$sampleKey
 if ($null -eq $sample -or $sample.status -ne 'verified') { throw "样本不可用或未核验：$sampleKey" }
 

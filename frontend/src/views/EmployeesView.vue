@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "../api/dashboardContracts";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -20,7 +21,7 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
-import { appendDashboardCollection } from "../utils/dashboardCollections";
+import { appendDashboardCollection, prepareDashboardCollections } from "../utils/dashboardCollections";
 
 const employeeFilterGroups: {
   label: string;
@@ -44,7 +45,7 @@ const employeeFilterOptions = employeeFilterGroups.flatMap(group => group.option
 const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
-const response = ref<EmployeesDashboardResponse | null>(null);
+const response = shallowRef<EmployeesDashboardResponse | null>(null);
 const loading = ref(false);
 const error = ref("");
 const displayMode = ref<"cards" | "list">("cards");
@@ -155,6 +156,7 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
     const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: focusedEmployeeId.value ? "all" : filter.value, employee_id: focusedEmployeeId.value || undefined });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || controller !== activeController) return;
+    prepareDashboardCollections(result.data);
     response.value = result;
     loading.value = false;
     await nextTick();
@@ -244,7 +246,7 @@ async function loadMore(section: EmployeesQuery["section"] = "employees") {
   const generation = requestGeneration, selection = selectionKey();
   const request = new AbortController(); pageControllers.set(key, request); pageLoading.value[key] = true; pageErrors.value[key] = "";
   try {
-    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, { section, employee_id: focusedEmployeeId.value || undefined, employee_filter: focusedEmployeeId.value ? "all" : filter.value, cursor: page.next_cursor, expected_version: current.snapshot_version });
+    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, { section, employee_id: focusedEmployeeId.value || undefined, employee_filter: focusedEmployeeId.value ? "all" : filter.value, cursor: page.next_cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT, expected_version: current.snapshot_version });
     if (!isCurrent(generation, selection) || pageControllers.get(key) !== request || !next.data || response.value?.snapshot_version !== current.snapshot_version) return;
     if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
     const latest = response.value;
@@ -278,6 +280,7 @@ async function loadEmployeeList() {
       { section: "employees", employee_filter: filter.value, expected_version: current.snapshot_version });
     if (!valid() || !next.data || !response.value?.data || !next.data.collections.employees) return;
     if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
+    prepareDashboardCollections(next.data);
     const latest = response.value;
     response.value = { ...latest, data: { ...latest.data!, employee_filter: next.data.employee_filter,
       collections: { ...latest.data!.collections, employees: next.data.collections.employees } } };

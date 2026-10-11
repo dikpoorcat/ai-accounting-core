@@ -160,6 +160,7 @@ def expected_settlement_projection(
     subject_ids=None,
     verified_calculations=None,
     publication_highwater=None,
+    _source_reads=None,
 ):
     """Derive exact contribution rows without consulting current projections."""
 
@@ -186,7 +187,10 @@ def expected_settlement_projection(
         for ident in (item.get("calculation_id"), item.get("baseline_calculation_id"))
         if ident is not None
     }
-    reads = QueryReads(engine, connection)
+    reads = _source_reads or QueryReads(engine, connection)
+    from .verified_source_reads import VerifiedSourceReads
+
+    standard_source_shapes = type(reads) in (_STANDARD_QUERY_READS, VerifiedSourceReads)
     calculations, filter_relations = (
         _projection_calculations(reads, calculation_ids, verified_calculations)
         if calculation_ids
@@ -196,7 +200,7 @@ def expected_settlement_projection(
         ident
         for ident, calculation in calculations.items()
         if not filter_relations
-        or type(reads) is not _STANDARD_QUERY_READS
+        or not standard_source_shapes
         or _may_contribute_settlement(calculation, reads.store.registry.models)
     }
     if relation_ids:
@@ -428,10 +432,13 @@ def sync_settlement_publications(
     return {"changed": changed, "periods": len(periods)}
 
 
-def compare_settlement_projection(engine, connection, *, verified_calculations=None):
+def compare_settlement_projection(
+    engine, connection, *, verified_calculations=None, _source_reads=None,
+):
     periods = _publication_periods(connection)
     expected = expected_settlement_projection(
-        engine, connection, verified_calculations=verified_calculations
+        engine, connection, verified_calculations=verified_calculations,
+        _source_reads=_source_reads,
     )
     actual = [
         tuple(row)
@@ -455,10 +462,11 @@ def compare_settlement_projection(engine, connection, *, verified_calculations=N
 
 
 def require_settlement_projection(
-    engine, connection, *, verified_calculations=None, _return_verified=False
+    engine, connection, *, verified_calculations=None, _return_verified=False, _source_reads=None,
 ):
     compared = compare_settlement_projection(
-        engine, connection, verified_calculations=verified_calculations
+        engine, connection, verified_calculations=verified_calculations,
+        _source_reads=_source_reads,
     )
     if compared["changed"]:
         raise KernelError(
@@ -967,7 +975,10 @@ def settlement_dashboard_open(
     }
 
 
-def settlement_dashboard_open_sources(connection, period, *, current=False, page_keys=None, reads=None):
+def settlement_dashboard_open_sources(
+    connection, period, *, current=False, page_keys=None, exact_sources=False, reads=None,
+    reuse_scope_sources=False,
+):
     """Read verified scalar amounts/identities for complete dashboard grouping.
 
     Group totals require every open obligation, but no result or fact body. Exact
@@ -976,20 +987,32 @@ def settlement_dashboard_open_sources(connection, period, *, current=False, page
     from .settlement_freeze import frozen_dashboard_open_sources
 
     frozen = frozen_dashboard_open_sources(
-        connection, period, current=current, page_keys=page_keys, reads=reads,
+        connection, period, current=current, page_keys=page_keys,
+        exact_sources=exact_sources, reads=reads,
+        reuse_scope_sources=reuse_scope_sources,
     )
     if frozen is not None:
         return frozen
     cutoff, through, source_keys, parameters = _summary_scope(
         connection, period, subject_ids=None, current=current, reads=reads,
     )
-    rows = list(connection.execute(
-        _summary_relation(source_keys) + "SELECT * FROM obligations",
-        [*parameters, through, cutoff, cutoff],
-    ))
-    unknown = any(row["remaining"] is None for row in rows)
-    selected = [_obligation_view(row) for row in rows if row["remaining"] is None
-                or row["remaining"] != 0 or row["obligation_key"] in (page_keys or ())]
+    if exact_sources and page_keys is None:
+        raise ValueError("exact sources require explicit keys")
+    relation = _summary_relation(source_keys)
+    scope_parameters = [*parameters, through, cutoff, cutoff]
+    summary = connection.execute(
+        relation + "SELECT count(*) count,coalesce(sum(remaining IS NULL),0) unknown "
+        "FROM obligations", scope_parameters,
+    ).fetchone()
+    unknown = bool(summary["unknown"])
+    keys = canonical(sorted(page_keys or ()))
+    condition = "obligation_key IN (SELECT value FROM json_each(?))"
+    if not exact_sources:
+        condition = "remaining IS NULL OR remaining<>0 OR " + condition
+    selected = [_obligation_view(row) for row in connection.execute(
+        relation + "SELECT * FROM obligations WHERE " + condition,
+        [*scope_parameters, keys],
+    )]
     from .obligation_classification import classify_obligations
 
     obligations = classify_obligations(connection, selected, reads=reads)
@@ -1003,14 +1026,64 @@ def settlement_dashboard_open_sources(connection, period, *, current=False, page
             None if category["amount"] is None or item["remaining_fen"] is None
             else checked(category["amount"] + item["remaining_fen"])
         )
+    measures = None
+    if exact_sources:
+        # Full completeness and category amounts are independent of which
+        # historical keys need a current scalar. Only ambiguous meanings need
+        # their exact adopted source identities outside that selected set.
+        semantic_rows = connection.execute(
+            relation + "SELECT obligation_key,component,category,account,source_calculation_id,"
+            "source_fact_id,source_kind,source_subject_id FROM obligations "
+            "WHERE source_kind IN (SELECT value FROM json_each(?)) "
+            "AND (remaining IS NULL OR remaining<>0)",
+            [*scope_parameters, canonical(sorted(SEMANTIC_SOURCE_KINDS))],
+        )
+        semantics = adopted_source_semantics(connection, [{
+            "key": row["obligation_key"], "name": row["component"],
+            "category": row["category"], "account": row["account"],
+            "source_calculation_id": row["source_calculation_id"],
+            "source_fact_id": row["source_fact_id"],
+            "source_business": {"kind": row["source_kind"], "subject_id": row["source_subject_id"]},
+        } for row in semantic_rows], reads=reads)
+        category_sql = obligation_category_sql(semantic=(
+            "CASE WHEN source_kind='opening_obligation' THEN "
+            "json_extract(meaning.outcome,'$.values.nature') ELSE "
+            "json_extract(meaning.outcome,'$.values.payer_kind') END"
+        ))
+        measures = {
+            row["category_key"]: {
+                "count": row["count"], "sum": checked(row["amount"]),
+                "unknown_count": row["unknown_count"],
+            }
+            for row in connection.execute(
+                relation + f", classified AS (SELECT o.*,{category_sql} category_key "
+                "FROM obligations o LEFT JOIN calculation meaning "
+                "ON meaning.id=o.source_calculation_id "
+                "AND meaning.id IN (SELECT value FROM json_each(?))) "
+                "SELECT category_key,count(*) count,coalesce(sum(remaining),0) amount,"
+                "sum(remaining IS NULL) unknown_count FROM classified "
+                "WHERE remaining IS NULL OR remaining<>0 GROUP BY category_key",
+                [*scope_parameters, canonical(sorted(semantics))],
+            )
+        }
+        categories = {
+            key: {"count": item["count"], "amount": None if item["unknown_count"] else item["sum"]}
+            for key, item in measures.items()
+        }
     through_label = str(YearMonth.from_ordinal(through))
     return {
         "cutoff_period": through_label,
-        "status": "partially_established" if unknown else "established" if rows else "not_established",
+        "status": (
+            "partially_established" if unknown
+            else "established" if summary["count"] else "not_established"
+        ),
         "complete": not unknown,
-        "issues": ([{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []),
+        "issues": (
+            [{"field": "settlements", "message": "存在尚未确立的清偿关系"}] if unknown else []
+        ),
         "categories": categories,
         "obligations": obligations,
+        **({"_category_measures": measures} if exact_sources else {}),
         **({"current_cutoff_period": through_label} if current else {}),
     }
 

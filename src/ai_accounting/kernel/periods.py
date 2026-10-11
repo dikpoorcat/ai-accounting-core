@@ -116,6 +116,9 @@ class Periods:
                 "INSERT INTO material_item VALUES(?,?)",
                 [(row[0], bytes.fromhex(item)) for item in items],
             )
+            from .dashboard_model_runtime import record_period
+
+            record_period(connection, month)
             return {"status": "saved", "inventory_id": row[0]}
 
         return self.engine._write(

@@ -1,11 +1,23 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as Vue from "vue";
 import ts from "typescript";
-import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
+import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 let harnessNumber = 0;
+
+test("funds API serializes first read 20 and explicit automatic cursor limit 500", async () => {
+  const requests = [], api = await fundsApi(async url => { requests.push(new URL(url, "http://local")); return {}; });
+  await api.fetchFundsDashboard("2026-09");
+  await api.fetchFundsDashboard("2026-09", undefined, { section: "movements", cursor: "next", limit: 500, expected_version: "v1" });
+  assert.equal(requests[0].searchParams.get("limit"), "20");
+  assert.equal(requests[0].searchParams.has("cursor"), false);
+  assert.equal(requests[1].searchParams.get("limit"), "500");
+  assert.equal(requests[1].searchParams.get("cursor"), "next");
+  assert.equal(requests[1].searchParams.get("expected_version"), "v1");
+});
 async function fundsApi(requestDashboardFunds = async () => ({})) {
   const key = `fundsApiHarness${++harnessNumber}`;
   globalThis[key] = requestDashboardFunds;
@@ -15,18 +27,31 @@ async function fundsApi(requestDashboardFunds = async () => ({})) {
   });
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 }
+
+test("fund account labels use the registered name and omit absent account numbers", async () => {
+  const api = await fundsApi();
+  assert.equal(api.fundAccountDisplayLabel("兴业银行公司基本户", ""), "兴业银行公司基本户");
+  assert.equal(api.fundAccountDisplayName("兴业银行公司基本户", ""), "兴业银行公司基本户");
+  assert.equal(api.fundAccountDisplayLabel("浙江网商银行", "123456789"), "浙江网商银行（123456789）");
+  assert.equal(api.fundAccountDisplayLabel("浙江网商银行123456789", "123456789"), "浙江网商银行（123456789）");
+  api.rememberFundAccounts("company-names", "2026-09", [
+    { type: "bank", account_id: "bank-a", name: "兴业银行公司基本户", code: "" },
+  ]);
+  assert.equal(api.fundAccountLabel("company-names", "2026-09", "bank", "bank-a"), "兴业银行公司基本户");
+});
+
 async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, query = {}) {
   const key = `fundsViewHarness${++harnessNumber}`;
   const route = Vue.reactive({ query: { company_id: "company-a", period: "2026-09", ...query }, hash: "" });
   const dashboardContext = Vue.ref(null);
-  globalThis[key] = { Vue, route, fetchFundsDashboard, refreshContext, dashboardContext, api: await fundsApi(), appendDashboardCollection };
+  globalThis[key] = { Vue, route, fetchFundsDashboard, refreshContext, dashboardContext, api: await fundsApi(), appendDashboardCollection, prepareDashboardCollections };
   globalThis.document = { addEventListener() {}, removeEventListener() {}, getElementById: () => null, querySelector: () => null };
   const source = readFileSync(new URL("../src/views/FundsView.vue", import.meta.url), "utf8")
     .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
-    .replace(/import[\s\S]*?from "[^"]+";/g, "");
+    .replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const imports = `
-    const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;
-    const { appendDashboardCollection } = globalThis.${key};
+    const { computed, nextTick, ref, shallowRef, watch } = globalThis.${key}.Vue;
+    const { appendDashboardCollection, prepareDashboardCollections } = globalThis.${key};
     const onMounted = () => {}; const onBeforeUnmount = () => {};
     const { fetchFundsDashboard } = globalThis.${key};
     const { fundAccountDisplayLabel, fundAccountDisplayName, fundAccountLabel, rememberFundAccounts } = globalThis.${key}.api;
@@ -68,6 +93,29 @@ function data(account = "bank-a", next = "next") {
   };
   return value;
 }
+
+test("fund book and bank continuations preserve 20 then 500 then the ordered tail", async () => {
+  for (const [kind, section] of [["book", "movements"], ["bank", "statements"]]) {
+    const calls = [], view = await fundsView((period, signal, query) => new Promise(resolve => calls.push({ query, resolve })));
+    const ids = Array.from({ length: 525 }, (_, index) => `row-${index}`);
+    const pageResponse = (start, count) => {
+      const value = data();
+      value.collections[section] = { items: ids.slice(start, start + count).map(id => ({ id, account_type: "bank", account_id: "bank-a" })),
+        page: { total_count: 525, filtered_count: 525, returned_count: count, has_more: start + count < 525, next_cursor: start + count < 525 ? `cursor-${start + count}` : null } };
+      return response(value);
+    };
+    const first = view.loadFunds("2026-09"); assert.equal(calls[0].query.limit ?? 20, 20);
+    calls[0].resolve(pageResponse(0, 20)); await first;
+    const items = view.funds.value.collections[section].items;
+    const next = view.loadMore(kind); assert.equal(calls[1].query.limit, 500); assert.equal(calls[1].query.cursor, "cursor-20");
+    calls[1].resolve(pageResponse(20, 500)); await next;
+    const tail = view.loadMore(kind); assert.equal(calls[2].query.cursor, "cursor-520");
+    calls[2].resolve(pageResponse(520, 5)); await tail;
+    assert.equal(view.funds.value.collections[section].items, items);
+    assert.deepEqual(items.map(item => item.id), ids);
+    await view.loadMore(kind); assert.equal(calls.length, 3);
+  }
+});
 
 function response(value, snapshot = "version") {
   return { schema_version: 9, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
@@ -245,6 +293,7 @@ test("all fund collection kinds append to their reactive array and retain the ot
     const other = section === "movements" ? "statements" : "movements";
     const otherCollection = view.funds.value.collections[other];
     const pending = view.loadMore(kind), next = data();
+    assert.equal(calls[0].query.limit, 500);
     next.collections[section].items = section === "accounts" ? [next.collections.accounts.items[0]] : [{ id: "new-record" }];
     next.collections[section].page = { ...continuationPage, has_more: false, next_cursor: null };
     calls[0].resolve(response(next)); await pending;

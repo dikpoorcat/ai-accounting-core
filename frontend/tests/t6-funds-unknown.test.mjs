@@ -18,7 +18,7 @@ test("owner funds keep unknown balances and AI review state without technical ca
     plugins: [{ name: "t6-funds-historical-unknown", enforce: "pre", transform(code, id) {
       const path = id.replaceAll("\\", "/");
       if (path.endsWith("/src/views/FundsView.vue")) return code
-        .replace("const funds = ref<FundsData | null>(null)", "const funds = ref(globalThis.t6FundsData)")
+        .replace("const funds = shallowRef<FundsData | null>(null)", "const funds = shallowRef(globalThis.t6FundsData)")
         .replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-01")')
         .replaceAll("{ immediate: true }", "{ immediate: false }");

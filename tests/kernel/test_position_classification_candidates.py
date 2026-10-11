@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from test_integrity_content import damage
+from test_integrity_content import damage, verify
 from test_reports import book as _book
 from test_reports import close_quarter, scenario
 
@@ -46,6 +46,15 @@ def test_position_directory_keys_exclude_future_sources_but_keep_frozen_revision
     monkeypatch.setattr(report_classification_directory, "classification_directory_scope", observe)
     dashboard = Dashboard(engine)
     baseline = dashboard.brief("2026-03")["data"]["financial_position"]
+    assert baseline["assets_fen"] == 40000
+    assert baseline["liabilities_fen"] == 0
+    # The public page may use its authenticated model. Directory candidates
+    # belong to the native exact-source reader, exercised explicitly here.
+    requests.clear()
+    with dashboard._snapshot("2026-03") as snap:
+        native_baseline = _position(snap)
+    assert native_baseline["assets_fen"] == baseline["assets_fen"]
+    assert native_baseline["liabilities_fen"] == baseline["liabilities_fen"]
     initial_keys = requests[0][1]
     assert initial_keys == {voucher}
     # Replacing the current head does not withdraw the earlier frozen revision.
@@ -73,6 +82,9 @@ def test_position_directory_keys_exclude_future_sources_but_keep_frozen_revision
         )
     requests.clear()
     assert dashboard.brief("2026-03")["data"]["financial_position"] == baseline
+    requests.clear()
+    with dashboard._snapshot("2026-03") as snap:
+        assert _position(snap) == native_baseline
     assert requests[0][1] == initial_keys
     requests.clear()
     with dashboard._snapshot("2026-04") as snap:
@@ -82,6 +94,7 @@ def test_position_directory_keys_exclude_future_sources_but_keep_frozen_revision
         item["field"] == "report_classification" and item["voucher_version_id"] == voucher
         for item in later["issues"]
     )
+    assert verify(engine)["status"] == "verified"
 
 
 @pytest.mark.parametrize("damage_header", ["future_period", "missing"])

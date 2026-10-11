@@ -58,7 +58,8 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
     dashboard = Dashboard(engine)
     response = dashboard.brief("2026-09")
     data = response["data"]
-    assert response["schema_version"] == 18
+    assert response["schema_version"] == 19
+    assert response["scope"] == "overview"
     assert data["month_state"] == "open"
     assert data["owner_review_request"] is None
     assert data["activity_count"] == 31
@@ -95,8 +96,10 @@ def test_brief_default_is_bounded_and_does_not_load_technical_payload(bank_book,
         cursor=data["collections"]["activity"]["page"]["next_cursor"],
     )
     assert len(following["data"]["collections"]["activity"]["items"]) == 11
-    assert following["data"]["funds_overview"] == data["funds_overview"]
-    assert {"financial_position", "workforce_cost"}.isdisjoint(following["data"])
+    assert following["scope"] == "activity"
+    assert set(following["data"]) == {"collections"}
+    assert set(following["data"]["collections"]) == {"activity"}
+    assert data["funds_overview"]["total_fen"] == 31
     assert summary_reads == {"position": 1, "workforce": 1}
     assert http_response("dashboard_brief", response)["data"]["funds_overview"]["total_fen"] == "31"
     # An explicit former mode cannot re-enable the removed technical workload.

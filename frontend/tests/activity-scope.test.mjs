@@ -1,3 +1,4 @@
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "./helpers/dashboardPageLimit.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -12,7 +13,7 @@ async function harness(component, suppliedProps, exported) {
   const props = Vue.reactive(suppliedProps);
   globalThis[key] = { Vue, props, route, calls, events, cleanup, appendDashboardCollection };
   const source = readFileSync(new URL(`../src/components/${component}.vue`, import.meta.url), "utf8")
-    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "");
+    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const prefix = `const env = globalThis.${key}; const { ref, shallowRef, shallowReactive, computed, watch } = env.Vue;
     const { appendDashboardCollection } = env; const useRoute = () => env.route;
     const defineProps = () => env.props; const withDefaults = (value, defaults) => { for (const [key, fallback] of Object.entries(defaults)) if (value[key] === undefined) value[key] = fallback; return value; };

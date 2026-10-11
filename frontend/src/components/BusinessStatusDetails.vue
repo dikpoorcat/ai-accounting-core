@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { fetchBusinessStatus, type BusinessStatusCacheEntry, type BusinessStatusData } from "../api/businessStatus";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
-import { businessStateLabel } from "../api/dashboardContracts";
+import { AUTOMATIC_DASHBOARD_PAGE_LIMIT, businessStateLabel } from "../api/dashboardContracts";
 import { localBusinessName } from "../api/localKernel";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
@@ -380,7 +380,7 @@ async function loadMore() {
   pageController = request; moreLoading.value = true; moreError.value = "";
   const valid = () => mounted && generation === version && selection() === key && pageController === request;
   try {
-    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", ...detailScope(), limit: 20 });
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { section: "settlement_events", cursor: page.next_cursor, expected_version: responseVersion.value, settlement_view: props.settlementView ?? "current", ...detailScope(), limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT });
     if (!valid() || !data.value || !result.data.collections.settlement_events) return;
     const next = result.data.collections.settlement_events, latest = data.value;
     const previous = latest.collections.settlement_events;

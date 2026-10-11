@@ -26,13 +26,14 @@ def test_employee_candidate_scope_reuses_only_successful_live_snapshot(engine, m
     calls = []
     fail_once = {"2026-02"}
 
-    def selected(connection, period, *, registry):
+    def selected(connection, period, *, registry, entity_ids=None):
         assert registry is engine.store.registry
-        calls.append((connection, period))
+        scope = None if entity_ids is None else frozenset(entity_ids)
+        calls.append((connection, period, scope))
         if period in fail_once:
             fail_once.remove(period)
             raise RuntimeError("candidate read failed")
-        return ["employee-for-" + period]
+        return ["employee-for-" + period] if scope is None else sorted(scope)
 
     monkeypatch.setattr(entities, "employee_entities", selected)
     with QueryReads.snapshot(engine) as reads:
@@ -47,7 +48,14 @@ def test_employee_candidate_scope_reuses_only_successful_live_snapshot(engine, m
         second_query, second_params = records._query(records=True, identifiers={"second"})
         assert first_query == second_query
         assert first_params[-1] != second_params[-1]
-        assert calls == [(reads.connection, "2026-01")]
+        records._query(records=True, identifiers={"first"})
+        records._query(records=True)
+        records._query(records=True)
+        assert calls == [
+            (reads.connection, "2026-01", frozenset({"first"})),
+            (reads.connection, "2026-01", frozenset({"second"})),
+            (reads.connection, "2026-01", None),
+        ]
         snapshot.period = "2026-02"
         with pytest.raises(RuntimeError, match="candidate read failed"):
             records._query(records=True, identifiers={"first"})
@@ -56,27 +64,53 @@ def test_employee_candidate_scope_reuses_only_successful_live_snapshot(engine, m
             engine.store.company_id,
             engine.store.database_id,
             "2026-02",
+            frozenset({"first"}),
         ) not in reads._report_snapshot_cache
         records._query(records=True, identifiers={"first"})
+        records._query(records=True, identifiers={"first"})
         records._query(records=True, identifiers={"second"})
-        assert [period for _, period in calls] == ["2026-01", "2026-02", "2026-02"]
+        assert [(period, scope) for _, period, scope in calls[3:]] == [
+            ("2026-02", frozenset({"first"})),
+            ("2026-02", frozenset({"first"})),
+            ("2026-02", frozenset({"second"})),
+        ]
     assert reads._report_snapshot_cache == {}
     with QueryReads.snapshot(engine) as another:
         snapshot.reads = another
         snapshot.connection = another.connection
         records = Records(snapshot, "profile", kind="employee")
         records._query(records=True, identifiers={"first"})
-        assert [period for _, period in calls][-1] == "2026-02"
-        assert len(calls) == 4
+        assert calls[-1][1:] == ("2026-02", frozenset({"first"}))
+        assert len(calls) == 7
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         snapshot.reads = QueryReads(engine, connection)
         snapshot.connection = connection
         records = Records(snapshot, "profile", kind="employee")
         records._query(records=True, identifiers={"first"})
+        records._query(records=True, identifiers={"first"})
         records._query(records=True, identifiers={"second"})
-        assert len(calls) == 6
+        assert len(calls) == 10
         assert snapshot.reads._report_snapshot_cache == {}
+
+
+def test_frozen_employee_candidates_use_the_frozen_management_scope(engine, monkeypatch):
+    def current_membership(*_args, **_kwargs):
+        raise AssertionError("Frozen scope must not enumerate current employment")
+
+    monkeypatch.setattr(entities, "employee_entities", current_membership)
+    with QueryReads.snapshot(engine) as reads:
+        snapshot = SimpleNamespace(
+            reads=reads, connection=reads.connection, store=engine.store,
+            period="2026-01", month=YearMonth("2026-01").ordinal,
+            close=SimpleNamespace(section=lambda name: {
+                "employee_entities": ["frozen-employee"],
+            } if name == "management_snapshot" else None),
+        )
+        records = Records(snapshot, "profile", kind="employee", frozen=True)
+        _query, parameters = records._query(records=True, identifiers={"frozen-employee"})
+        assert parameters[-2:] == ['["frozen-employee"]', '["frozen-employee"]']
+        assert not any(key[0] == "employee_entities" for key in reads._report_snapshot_cache)
 
 
 def profile(engine, kind, entity_id, revision=0, **fields):
