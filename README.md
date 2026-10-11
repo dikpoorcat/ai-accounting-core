@@ -45,7 +45,7 @@ Vite 在服务状态变化或连接失败时重新发现后台，核验同一资
 
 唯一业务命令体系为 `finance-local`，MCP 是同一服务的薄适配：
 
-- `finance_local_schema`：无参返回完整操作协议、版本和事实／命令目录；`view="selected"` 按 `fact_kinds`、`commands`、`response_types` 获取当前事项合同及简短说明。同一会话、同一程序版本复用已读合同；旧MCP连接未传选择参数时用通用 `schema` 命令。`view="full"` 显式读取完整合同，CLI 使用相同载荷。
+- `finance_local_schema`：无参返回通用操作协议、专项规则目录、版本和事实／命令目录；`view="selected"` 按 `fact_kinds`、`commands`、`response_types` 获取当前事项合同及相关专项规则，也可通过 `protocol_topics` 单独选择规则。同一会话、同一程序版本复用已读内容；旧MCP连接未传选择参数时用通用 `schema` 命令。`view="full"` 显式读取完整合同与全部规则，CLI 使用相同载荷。会计执行规则统一维护于 `kernel/operating_protocol.py`，记账 Skill 只提供任务入口。
 - `finance_local_command(command, payload)`：公司查询、资料登记、事实版本、预览确认、报表及后台任务。
 - `finance_local_security(action, payload)`：请求、查询、取消原生窗口及查询登录状态；不接收密码。
 

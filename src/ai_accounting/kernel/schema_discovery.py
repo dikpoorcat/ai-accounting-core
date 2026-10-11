@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import KernelError
+from .operating_protocol import overview_protocol, topic_names_for
 
 REGISTRATION_COMMANDS = frozenset({"save_fact", "amend_fact", "save_facts"})
 
@@ -18,10 +19,13 @@ class SchemaQuery(BaseModel):
     fact_kinds: list[str] = Field(default_factory=list)
     commands: list[str] = Field(default_factory=list)
     response_types: list[str] = Field(default_factory=list)
+    protocol_topics: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def selections(self):
-        selected = bool(self.fact_kinds or self.commands or self.response_types)
+        selected = bool(
+            self.fact_kinds or self.commands or self.response_types or self.protocol_topics
+        )
         if self.view == "selected" and not selected:
             raise ValueError("selected requires at least one explicit selection")
         if self.view != "selected" and selected:
@@ -95,12 +99,13 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
         ("fact_kinds", query.fact_kinds, registry.models),
         ("commands", query.commands, command_models),
         ("response_types", query.response_types, response_adapters),
+        ("protocol_topics", query.protocol_topics, metadata["agent_operating_protocol"]["topics"]),
     ):
         unknown = sorted(set(selected) - set(known))
         if unknown:
             raise KernelError("invalid_command", "接口合同选择不存在", field=field, unknown=unknown)
-    # Selected contracts are reused within a conversation/build. The initial
-    # overview carries the operating instructions; do not retransmit them here.
+    # The overview carries common rules once per conversation/build. Selected
+    # contracts carry only their relevant specialized rules.
     if query.view == "selected":
         result = {
             key: metadata[key]
@@ -110,19 +115,23 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
         result["agent_operating_protocol_version"] = metadata["agent_operating_protocol"]["version"]
         result["error_handling"] = {
             "version": metadata["error_handling"]["version"],
-            "instruction": "按status、code、fact_issues和resolution处理；提问前先查来源并自检"
-            "能否推理出唯一明确答案，技术错误不转为业务追问；响应未确认时核对原请求或工作稿版本",
+            "instruction": "响应格式沿用概要；处置遵守agent_operating_protocol.core.owner_questions"
+            "及core.recovery，专项任务遵守当前agent_operating_rules",
         }
     else:
         result = dict(metadata)
+        if query.view == "overview":
+            result["agent_operating_protocol"] = overview_protocol(
+                metadata["agent_operating_protocol"]
+            )
     result.update(
         view=query.view,
         schema_query=SchemaQuery.model_json_schema(),
         schema_discovery={
-            "version": 2,
+            "version": 3,
             "entry": "finance_local_schema / schema",
             "views": ["overview", "selected", "full"],
-            "selection_fields": ["fact_kinds", "commands", "response_types"],
+            "selection_fields": ["fact_kinds", "commands", "response_types", "protocol_topics"],
             "registration_rule": "选择通用登记命令时必须明确fact_kinds；专用事实使用其指定入口",
         },
     )
@@ -162,12 +171,19 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
         )
         if not generic_kinds:
             commands.difference_update(REGISTRATION_COMMANDS)
+        topics = set(query.protocol_topics) | topic_names_for(kinds, commands, responses)
         result["selection"] = {
             "requested": query.model_dump(exclude={"view"}),
             "fact_kinds": sorted(kinds),
             "commands": sorted(commands),
             "response_types": sorted(responses),
+            "protocol_topics": sorted(topics),
         }
+        if topics:
+            result["agent_operating_rules"] = {
+                name: metadata["agent_operating_protocol"]["topics"][name]
+                for name in sorted(topics)
+            }
     result["facts"] = {kind: _fact_schema(kind, registry.models[kind]) for kind in sorted(kinds)}
     result["commands"] = sorted(commands)
     result["command_schemas"] = {
