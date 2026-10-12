@@ -402,6 +402,7 @@ class FundsRead:
         self.opening_ids = [ident for ident, item in self.states.items() if item["opening"]]
         self.issues = list(self.selected["unestablished_state_selections"])
         self.account_rows = {}
+        self.account_start_periods = {}
         self.omitted_account_rows = {}
         self.product_rows = {}
         self.profiles = {}
@@ -767,6 +768,34 @@ class FundsRead:
             },
         )
 
+    def remember_account_start(self, category, ident, period):
+        key = category, ident
+        self.account_start_periods[key] = min(
+            period, self.account_start_periods.get(key, period)
+        )
+
+    def ordered_account_keys(self):
+        """Order by the first adopted bookkeeping month, including zero starts."""
+        if self.account_rows:
+            categories = ("bank", "cash", "platform")
+            # The complete scope proves earlier contributions have not vanished.
+            # Reuse the existing seals/publication checks without loading old bodies.
+            self.snap.reads.verify_balance_scope(self.snap.month, categories)
+            for row in self.connection.execute(
+                "SELECT category,balance_key,min(posting_period) first_period "
+                "FROM period_balance WHERE posting_period<=? "
+                "AND category IN (SELECT value FROM json_each(?)) "
+                "GROUP BY category,balance_key",
+                (self.snap.month, canonical(categories)),
+            ):
+                self.remember_account_start(
+                    row["category"], row["balance_key"], row["first_period"]
+                )
+        return sorted(self.account_rows, key=lambda key: (
+            self.account_start_periods.get(key, self.snap.month + 1),
+            pinyin_key(self.account_display(*key)["name"]), key,
+        ))
+
     def base_product(self, ident):
         return self.product_rows.setdefault(
             ident,
@@ -824,8 +853,11 @@ class FundsRead:
             if historical_bank
             else {}
         )
-        for account in historical_accounts.values():
+        for ident, account in historical_accounts.items():
             self.base_account("bank", account)
+            self.remember_account_start(
+                "bank", account, YearMonth(self.state_selections[ident]["posting_period"]).ordinal
+            )
         complete_states = self.states.keys() - historical_bank.keys()
         self._verify_event_sources(
             complete_states,
@@ -835,17 +867,25 @@ class FundsRead:
         # their precise saved input identity before consuming account/match data.
         self.snap.reads.verify_saved_input_identity(complete_states - frozen_states.keys())
         for row in self.connection.execute(
-            "SELECT c.kind,json_extract(c.outcome,'$.values.bank_account_id') bank_id,"
+            "SELECT c.id,c.kind,json_extract(c.outcome,'$.values.bank_account_id') bank_id,"
             "json_extract(c.outcome,'$.values.cash_account_id') cash_id FROM json_each(?) ids "
             "JOIN calculation c ON c.id=ids.value",
             (canonical(sorted(complete_states)),),
         ):
             if row["bank_id"] is not None:
                 self.base_account("bank", row["bank_id"])
+                self.remember_account_start(
+                    "bank", row["bank_id"],
+                    YearMonth(self.state_selections[row["id"]]["posting_period"]).ordinal,
+                )
             if row["cash_id"] is not None:
                 self.base_account("cash", row["cash_id"])
+                self.remember_account_start(
+                    "cash", row["cash_id"],
+                    YearMonth(self.state_selections[row["id"]]["posting_period"]).ordinal,
+                )
         for row in self.connection.execute(
-            "SELECT json_extract(m.value,'$.kind') "
+            "SELECT c.id,json_extract(m.value,'$.kind') "
             "kind,json_extract(m.value,'$.values.bank_account_id') "
             "bank_id,json_extract(m.value,'$.values.cash_account_id') cash_id FROM json_each(?) "
             "ids "
@@ -854,8 +894,16 @@ class FundsRead:
         ):
             if row["kind"] == "opening_bank":
                 self.base_account("bank", row["bank_id"])
+                self.remember_account_start(
+                    "bank", row["bank_id"],
+                    YearMonth(self.state_selections[row["id"]]["posting_period"]).ordinal,
+                )
             elif row["kind"] == "opening_cash":
                 self.base_account("cash", row["cash_id"])
+                self.remember_account_start(
+                    "cash", row["cash_id"],
+                    YearMonth(self.state_selections[row["id"]]["posting_period"]).ordinal,
+                )
         # An uncertain opening contributes identities, never invented zero amounts.
         unknown = [
             candidate["calculation_id"]
@@ -985,7 +1033,7 @@ class FundsRead:
         if not identities_prepared:
             self._prepare_account_identities()
         if first_page_request is not None and page_request is not None:
-            # The shared SQL page chooses by identity; display-name ordering is
+            # The shared SQL page chooses by identity; bookkeeping-month ordering is
             # resolved later, after the complete account scope is available.
             self.shared_first_account = min(self.account_rows, default=None)
         for key, item in sorted(self.account_rows.items()):
@@ -2065,9 +2113,7 @@ def funds(snap, *, sections=None, cursors=None, limit=20, filters=None, summary_
         snap.metadata.prime_profiles(
             "fund_account", {ident for _category, ident in read.account_rows}
         )
-        account_keys = sorted(read.account_rows, key=lambda key: (
-            pinyin_key(read.account_display(*key)["name"]), key,
-        ))
+        account_keys = read.ordered_account_keys()
     if select_first_account:
         # Selection uses the proved visible account set, including zero-activity
         # openings, and excludes identities retired by opening corrections.
