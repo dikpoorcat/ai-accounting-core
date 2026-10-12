@@ -133,6 +133,17 @@ function currentEmploymentLabel(item: EstablishedEmployeeItem) {
   return { regular: "在职", unpaid_leave: "停薪留职", departed: "已离职", unknown: "用工状态未确认" }[item.employment_state];
 }
 
+const employeeDotDescriptions: Record<string, string> = {
+  wage_income: "绿色：本月按工资薪金核算，实发为零也可能属于此类。",
+  contributions_only: "黄色：本月仅核算社保、公积金。",
+  mixed: "蓝色：本月不同工资批次包含工资薪金与仅社保、公积金两种情况。",
+  none: "灰色：本月暂无工资核算记录。",
+};
+const laborDotDescription = "绿色：个人劳务报酬。";
+function employeeDotDescription(item: EstablishedEmployeeItem) {
+  return employeeDotDescriptions[item.wage_tax_scope] ?? "灰色：本月薪酬类别暂未确认。";
+}
+
 function selectEmployeeFilter(value: string) {
   const option = employeeFilterOptions.find(item => item.value === value);
   if (option) filter.value = option.value;
@@ -413,12 +424,12 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
                 <summary class="employee-card-summary dashboard-record-card-summary">
                   <div v-if="displayMode === 'list'" class="employee-list-summary">
-                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}</p></div></div>
+                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="employeeDotDescription(item)" :title="employeeDotDescription(item)"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}</p></div></div>
                     <strong v-for="column in employeeListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': ['gross', 'bonus', 'employer-social', 'employer-housing'].includes(column.key) }" :data-label="column.label" :aria-labelledby="`employee-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
                     <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                   </div>
                   <template v-else>
-                    <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="item.wage_tax_scope_label" :title="item.wage_tax_scope_label"></span><span>{{ item.name }}</span></h3><strong class="cost-amount">{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
+                    <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="employeeDotDescription(item)" :title="employeeDotDescription(item)"></span><span>{{ item.name }}</span></h3><strong class="cost-amount">{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
                     <p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
                     <div class="amount-grid"><div><span>本月应付净薪</span><strong class="payable-amount">{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong :class="cashFlowClass(item.direct_net_payments_fen, 'outflow')">{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong class="payable-amount">{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
                     <p class="muted">{{ item.has_payroll_activity ? item.payroll_periods.join('、') + ' 工资' : '本月暂无工资记录' }} · 展开查看本月薪酬</p>
@@ -455,12 +466,12 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
             <details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="displayMode === 'list'" class="employee-list-summary">
-                  <div class="employee-list-identity"><span class="employee-status labor" role="img" aria-label="个人劳务" title="个人劳务"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p></div></div>
+                  <div class="employee-list-identity"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p></div></div>
                   <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': column.key === 'gross' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(labor)) }}</strong>
                   <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                 </div>
                 <template v-else>
-                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" aria-label="个人劳务" title="个人劳务"></span><span>{{ labor.name }}</span></h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
+                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><span>{{ labor.name }}</span></h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
                 </template>
               </summary>
               <div class="employee-detail" :class="{ 'dashboard-business-expansion': displayMode === 'list' }">
@@ -546,7 +557,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .employee-list-summary .employee-list-identity h3, .employee-list article.employee-card h3 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.5; }
 .employee-list-identity p, .employee-list article.employee-card p { margin: 0; font-size: 11px; font-weight: 400; line-height: 1.5; }
 .employee-list article.employee-card p { margin-top: 4px; }
-.employee-status { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.employee-status { display: inline-flex; flex: 0 0 auto; align-items: center; cursor: help; }
 .employee-status::before { width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); content: ""; }
 .employee-status.wage_income::before, .employee-status.labor::before { background: var(--accent); }
 .employee-status.contributions_only::before { background: var(--warning); }
