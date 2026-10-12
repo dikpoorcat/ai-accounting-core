@@ -248,6 +248,51 @@ def test_independent_asset_project_and_employee_labor_dimensions():
     )
 
 
+@pytest.mark.parametrize("selected,expected", [
+    ("all", {"active", "ended", "converted", "unknown"}),
+    ("employment_active", {"active", "converted"}),
+    ("in_period", {"active", "converted"}),
+    ("ended", {"ended"}),
+    ("employment_departed", {"ended", "converted"}),
+    ("unknown", {"unknown"}),
+    ("employment_unknown", {"unknown"}),
+    ("employment_unpaid_leave", set()),
+])
+def test_labor_person_directory_matches_month_membership_and_reads_only_hits(
+    snap, monkeypatch, selected, expected,
+):
+    rows = [
+        {"seek": key, "person_id": key, "in_period": member, "employment_state": state,
+         "period_states": states}
+        for key, member, state, states in (
+            ("active", True, "labor", ["labor"]),
+            ("converted", True, "regular", ["labor", "regular"]),
+            ("ended", False, "labor_ended", ["labor_ended"]),
+            ("unknown", None, "unknown", ["unknown"]),
+        )
+    ]
+    model = Model("employees", "labor_workers", rows, variant="all")
+    hits = capture_hits(monkeypatch)
+    result = read_filtered_collection(
+        model, snap, "employees", "labor_workers",
+        filters={"employee_filter": selected, "employee_id": None},
+    )
+    assert {item["person_id"] for item in result["items"]} == expected
+    assert result["page"]["total_count"] == 4
+    assert result["page"]["filtered_count"] == len(expected)
+    assert {source[0] for source in hits[0]} == expected
+    assert len(model.loaded) <= len(expected)
+
+
+def test_labor_person_directory_rejects_a_different_displayed_identity():
+    with pytest.raises(KernelError) as failure:
+        decorate_keys("employees", "labor_workers", ["expected"], [{
+            "person_id": "different", "in_period": True,
+            "employment_state": "labor", "period_states": ["labor"],
+        }])
+    assert failure.value.code == "content_integrity_failed"
+
+
 @pytest.mark.parametrize(
     ("selected", "expected"),
     [

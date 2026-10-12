@@ -7,7 +7,7 @@ export namespace DashboardEmployeesDeliveryContract {
   export type Period = string | null;
   export type ModelVersion = string | null;
   export type State = "ready";
-  export type SchemaVersion1 = 12;
+  export type SchemaVersion1 = 13;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -133,6 +133,12 @@ export namespace DashboardEmployeesDeliveryContract {
   export type RelationshipSegments2 = WorkforceRelationshipSegment[];
   export type InPeriod1 = boolean | null;
   export type HasLaborActivity = boolean;
+  export type GrossFen = string;
+  export type BookedTaxFen = string;
+  export type NetFen = string;
+  export type PersonalLaborFen = string;
+  export type CapitalizedLaborFen = string;
+  export type SourceCount = number;
   export type Items1 = LaborWorkerItem[];
   export type SubjectId = string;
   export type CutoffPeriod = string;
@@ -152,16 +158,16 @@ export namespace DashboardEmployeesDeliveryContract {
   export type Name4 = string;
   export type Capitalized = boolean;
   export type ProjectId = string | null;
-  export type GrossFen = string;
-  export type NetFen = string;
-  export type BookedTaxFen = string;
+  export type GrossFen1 = string;
+  export type NetFen1 = string;
+  export type BookedTaxFen1 = string;
   export type WithholdingMethod = string;
   export type WithholdingLabel = string;
   export type RelationshipConfirmed = boolean;
   export type Items2 = LaborSource[];
   export type TotalFen = string;
-  export type PersonalLaborFen = string;
-  export type CapitalizedLaborFen = string;
+  export type PersonalLaborFen1 = string;
+  export type CapitalizedLaborFen1 = string;
   export type OutstandingRemunerationFen = string | null;
   export type SchemaVersion2 = 6;
   export type CompanyId2 = string;
@@ -343,6 +349,12 @@ export namespace DashboardEmployeesDeliveryContract {
     relationship_segments: RelationshipSegments2;
     in_period: InPeriod1;
     has_labor_activity: HasLaborActivity;
+    gross_fen: GrossFen;
+    booked_tax_fen: BookedTaxFen;
+    net_fen: NetFen;
+    personal_labor_fen: PersonalLaborFen;
+    capitalized_labor_fen: CapitalizedLaborFen;
+    source_count: SourceCount;
   }
   export interface Collection2 {
     items: Items2;
@@ -359,9 +371,9 @@ export namespace DashboardEmployeesDeliveryContract {
     name: Name4;
     capitalized: Capitalized;
     project_id: ProjectId;
-    gross_fen: GrossFen;
-    net_fen: NetFen;
-    booked_tax_fen: BookedTaxFen;
+    gross_fen: GrossFen1;
+    net_fen: NetFen1;
+    booked_tax_fen: BookedTaxFen1;
     withholding_method: WithholdingMethod;
     withholding_label: WithholdingLabel;
     relationship_confirmed: RelationshipConfirmed;
@@ -378,8 +390,8 @@ export namespace DashboardEmployeesDeliveryContract {
   }
   export interface OwnerWorkforceCost {
     total_fen: TotalFen;
-    personal_labor_fen: PersonalLaborFen;
-    capitalized_labor_fen: CapitalizedLaborFen;
+    personal_labor_fen: PersonalLaborFen1;
+    capitalized_labor_fen: CapitalizedLaborFen1;
   }
   export interface DashboardPreparing {
     schema_version: SchemaVersion2;

@@ -11,12 +11,12 @@ from .contracts import KernelError
 from .dashboard_pages import decode_cursor, seal_page
 
 # Part of the producer content contract; changes require its version advance.
-FILTER_DIRECTORY_VERSION = 2
+FILTER_DIRECTORY_VERSION = 3
 _WIDTHS = {
     ("funds", "movements"): 3,
     ("funds", "statements"): 2,
     ("employees", "employees"): 5,
-    ("employees", "labor_workers"): 2,
+    ("employees", "labor_workers"): 4,
     ("employees", "labor_sources"): 2,
     ("assets", "assets"): 3,
     ("assets", "projects"): 2,
@@ -49,7 +49,17 @@ def decorate_keys(page, section, keys, items):
                 item["selection_status"],
                 ",".join(sorted(item["period_states"])) or "-",
             )
-        elif page == "employees" and section in {"labor_workers", "labor_sources"}:
+        elif (page, section) == ("employees", "labor_workers"):
+            if key != item["person_id"]:
+                raise _invalid()
+            entry = (
+                key,
+                "true" if item["in_period"] is True else "false"
+                if item["in_period"] is False else "unknown",
+                item["employment_state"],
+                ",".join(sorted(item["period_states"])) or "-",
+            )
+        elif (page, section) == ("employees", "labor_sources"):
             entry = (key, item["person_id"])
         elif (page, section) == ("assets", "assets"):
             entry = (key, item["asset_type"], item["status"])
@@ -86,6 +96,14 @@ def _check_entry(page, section, entry):
                 or entry[4] != ",".join(sorted(set(entry[4].split(","))))
             )
         ):
+            raise _invalid()
+    elif (page, section) == ("employees", "labor_workers"):
+        states = {"regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"}
+        if (entry[1] not in {"true", "false", "unknown"} or entry[2] not in states
+            or entry[3] != "-" and (
+                not set(entry[3].split(",")) <= states
+                or entry[3] != ",".join(sorted(set(entry[3].split(","))))
+            )):
             raise _invalid()
     elif (page, section) == ("assets", "assets"):
         if entry[1] not in {"fixed", "intangible"} or entry[2] not in {
@@ -137,7 +155,15 @@ def directory_matches(page, section, entry, filters, *, employee_states=None):
         return matches and (
             filters.get("employee_id") is None or entry[0] == filters["employee_id"]
         )
-    if page == "employees" and section in {"labor_workers", "labor_sources"}:
+    if (page, section) == ("employees", "labor_workers"):
+        from .employee_employment import labor_filter_matches
+
+        membership = True if entry[1] == "true" else False if entry[1] == "false" else None
+        states = () if entry[3] == "-" else entry[3].split(",")
+        return labor_filter_matches(filters["employee_filter"], membership, states, entry[2]) and (
+            filters.get("employee_id") is None or entry[0] == filters["employee_id"]
+        )
+    if (page, section) == ("employees", "labor_sources"):
         return filters.get("employee_id") is None or entry[1] == filters["employee_id"]
     if (page, section) == ("assets", "assets"):
         selected = filters["asset_filter"]
@@ -180,6 +206,7 @@ def read_filtered_collection(
         in {
             ("funds", "movements"),
             ("employees", "employees"),
+            ("employees", "labor_workers"),
         }
         else "default"
     )

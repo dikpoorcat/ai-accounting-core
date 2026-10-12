@@ -314,8 +314,8 @@ test("stage9 selector bounds the real helper's continuously changing scroll cali
     },
   };
   const page = { getByRole: () => trigger, keyboard: { press: () => { throw new Error("unstable selector must not select"); } } };
-  await assert.rejects(selectStage9Option(page, "筛选员工", "all", Date.now() + 20),
-    /select 筛选员工=all: stage9 wait deadline exceeded/);
+  await assert.rejects(selectStage9Option(page, "筛选人员", "all", Date.now() + 20),
+    /select 筛选人员=all: stage9 wait deadline exceeded/);
   assert.equal(frames, 12);
 });
 
@@ -388,7 +388,7 @@ function localSelectionFixture(page = "employees", section = page) {
   const action = { action_id: 11, page, section,
     before: { url: `https://synthetic.invalid/${page}?${scope}`, brief_view: "按业务", movement_account_index: 0 },
     after: { url: `https://synthetic.invalid/${page}?${scope}&${page === "assets" ? "asset_filter=fixed" : "employee_filter=in_period"}`,
-      filters: [{ label: "筛选员工", value: "in_period" }, { label: "筛选资产", value: "fixed" }], brief_view: "按凭证",
+      filters: [{ label: "筛选人员", value: "in_period" }, { label: "筛选资产", value: "fixed" }], brief_view: "按凭证",
       funds_view: "fund-detail-tab-book", movement_account_index: 1, statement_account_id: "bank-2",
       movement_account: { movement_account_type: "bank", movement_account_id: "current" } },
   };
@@ -538,7 +538,7 @@ function cancellationFixture({ page = "funds", section = "statements", beforeQue
   action.before.movement_account = { movement_account_type: "bank", movement_account_id: "old" };
   action.after.movement_account = { movement_account_type: "bank", movement_account_id: "new" };
   if (["employees", "assets"].includes(page)) {
-    const field = page === "employees" ? "employee_filter" : "asset_filter", label = page === "employees" ? "筛选员工" : "筛选资产";
+    const field = page === "employees" ? "employee_filter" : "asset_filter", label = page === "employees" ? "筛选人员" : "筛选资产";
     for (const selection of [action.before, action.after]) selection.filters = [{ label,
       value: new URL(selection.url).searchParams.get(field) ?? (page === "employees" ? "employment_active" : "active") }];
   }
@@ -1439,16 +1439,16 @@ test("employee combined overview amounts remain exact and preserve either unknow
     assert.equal(sumFen(first, second), null);
 });
 
-test("employee unpaid headline reads the full remuneration field in contract 12, preserving zero and unknown", () => {
+test("employee unpaid headline reads the full remuneration field in contract 13, preserving zero and unknown", () => {
   const data = { employees: { outstanding_net_fen: "12345" }, outstanding_remuneration_fen: "67890" };
-  assert.equal(employeeOutstandingFen(data, 12), "67890");
+  assert.equal(employeeOutstandingFen(data, 13), "67890");
   for (const value of ["0", null, "9007199254740993"]) {
     data.outstanding_remuneration_fen = value;
-    assert.equal(employeeOutstandingFen(data, 12), value);
+    assert.equal(employeeOutstandingFen(data, 13), value);
   }
   delete data.outstanding_remuneration_fen;
-  assert.throws(() => employeeOutstandingFen(data, 12), "Missing total must not fall back to wages");
-  for (const version of [9, 10, 11]) assert.throws(() => employeeOutstandingFen(data, version));
+  assert.throws(() => employeeOutstandingFen(data, 13), "Missing total must not fall back to wages");
+  for (const version of [9, 10, 11, 12]) assert.throws(() => employeeOutstandingFen(data, version));
 });
 
 test("each of the six employee overview values must be visible and populated before the first warmup completes", () => {
@@ -1481,7 +1481,7 @@ test("all employee metrics, conditional notes and default detail rows participat
 
 
 test("selected employee and asset filters bind UI, request and response independently", () => {
-  for (const [section, label, field, value] of [["employees", "筛选员工", "employee_filter", "in_period"], ["assets", "筛选资产", "asset_filter", "fixed"]]) {
+  for (const [section, label, field, value] of [["employees", "筛选人员", "employee_filter", "in_period"], ["assets", "筛选资产", "asset_filter", "fixed"]]) {
     const selected = { filters: [{ label, value }] }, target = new URL(`https://synthetic.invalid/api/dashboard/${section}?${field}=${value}`), payload = { data: { [field]: value } };
     verifySelectedFilter(selected, target, payload, section, value);
     assert.throws(() => verifySelectedFilter({ filters: [{ label, value: "all" }] }, target, payload, section, value), /UI filter/);
@@ -1506,4 +1506,74 @@ test("grouped brief reads bind member pages to group, snapshot and voucher assoc
   const cursor = new URL(target); cursor.searchParams.set("cursor", "page21");
   verifyBriefGroup(continued, cursor, selected, snapshot);
   assert.throws(() => verifyBriefGroup(continued, target, selected, snapshot), /truncated/);
+});
+
+
+test("employee default response validates two personnel collections and rejects preloaded labor detail", () => {
+  const { verifyMainPayload } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+  const fixtures = createRequire(import.meta.url)("./fixtures/dashboard-contracts.json");
+  const payload = structuredClone(fixtures.employees_month_dates.response);
+  delete payload.data.collections.labor_sources;
+  const selected = { id: payload.read_context.company_id, period: payload.selected_period.key };
+  const target = new URL(`https://synthetic.invalid/api/dashboard/employees?company_id=${selected.id}&period=${selected.period}`);
+  verifyMainPayload(payload, "employees", selected, target);
+  const empty = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+  payload.data.collections.labor_sources = empty;
+  assert.throws(() => verifyMainPayload(payload, "employees", selected, target), /preloaded unrelated labor details/);
+  delete payload.data.collections.labor_sources;
+  delete payload.data.collections.labor_workers;
+  assert.throws(() => verifyMainPayload(payload, "employees", selected, target), /labor_workers/);
+});
+
+test("labor detail response is bound to the expanded formal person", () => {
+  const { verifyMainPayload } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+  const fixtures = createRequire(import.meta.url)("./fixtures/dashboard-contracts.json");
+  const payload = structuredClone(fixtures.employees_labor_sources.response);
+  const person = payload.data.collections.labor_sources.items[0].person_id;
+  payload.data.employee_id = person;
+  const selected = { id: payload.read_context.company_id, period: payload.selected_period.key };
+  const target = new URL(`https://synthetic.invalid/api/dashboard/employees?company_id=${selected.id}&period=${selected.period}&section=labor_sources&employee_id=${person}&expected_version=${payload.snapshot_version}`);
+  verifyMainPayload(payload, "employees", selected, target);
+  const noPerson = new URL(target); noPerson.searchParams.delete("employee_id");
+  assert.throws(() => verifyMainPayload(payload, "employees", selected, noPerson), /exact personnel identity/);
+  for (const mutate of [p => { p.data.employee_id = "another-person"; },
+    p => { p.data.collections.labor_sources.items[0].person_id = "another-person"; }]) {
+    const wrong = structuredClone(payload); mutate(wrong);
+    assert.throws(() => verifyMainPayload(wrong, "employees", selected, target), /personnel identity|another person leaked/);
+  }
+});
+
+test("shared personnel filter requires separate current first-page proof for labor workers", () => {
+  const { verifyLocalRead } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+  const fixture = localSelectionFixture("employees", "labor_workers");
+  const target = new URL(fixture.record.url), selected = { id: "synthetic", period: "2016-12" };
+  verifyLocalRead(target, { key: "employees", action: "employees" }, selected, "snapshot", "employees");
+  assert(localReadMatchesSelection(fixture.record, fixture.action, "snapshot", "labor_workers", { fresh: true }));
+  verifySelectedFilter(fixture.action.after, target, { data: { employee_filter: "in_period" } }, "labor_workers", "in_period");
+  const wrong = { ...fixture.record, url: fixture.record.url.replace("employee_filter=in_period", "employee_filter=all") };
+  assert.equal(localReadMatchesSelection(wrong, fixture.action, "snapshot", "labor_workers", { fresh: true }), false);
+  assert.throws(() => verifySelectedFilter(fixture.action.after, target, { data: { employee_filter: "all" } }, "labor_workers", "in_period"), /response filter/);
+  const unrelated = new URL(target); unrelated.searchParams.set("section", "labor_sources"); unrelated.searchParams.set("employee_id", "person");
+  assert.throws(() => verifyLocalRead(unrelated, { key: "employees", action: "employees" }, selected, "snapshot", "employees"), /unrelated collection/);
+});
+
+test("retained labor pages stay independent for each expanded person", () => {
+  const read = (person, cursor, ids) => ({ url: `http://localhost/api/dashboard/employees?company_id=B&period=2026-01&section=labor_sources&employee_id=${person}${cursor ? `&cursor=${cursor}` : ""}`,
+    payload: { data: { collections: { labor_sources: { items: ids.map(source_id => ({ source_id })) } } } } });
+  const reads = [read("person-A", null, ["A-1"]), read("person-B", null, ["B-1"]), read("person-A", "A-next", ["A-21"])];
+  assert.deepEqual(retainedCollectionIdentities(reads), {
+    "/api/dashboard/employees:person-A:labor_sources": ["A-1", "A-21"],
+    "/api/dashboard/employees:person-B:labor_sources": ["B-1"],
+  });
+  assert.throws(() => retainedCollectionIdentities([...reads, read("person-A", "A-more", ["A-1"])]), /duplicate identity/);
+});
+
+test("obsolete labor worker tail needs its own replacement, employee proof alone cannot excuse it", () => {
+  const f = cancellationFixture({ page: "employees", section: "labor_workers", beforeQuery: "employee_filter=in_period", afterQuery: "employee_filter=all" });
+  f.action.section = "employees";
+  const current = f.failure.url.replace("employee_filter=in_period", "employee_filter=all").replace("&cursor=page21", "");
+  f.action.verified_reads = [{ action_id: 7, section: "employees", url: current.replace("section=labor_workers", "section=employees") }];
+  assert.equal(obsoleteLocalCancellation(f.failure, f.action, "snapshot"), null);
+  f.action.verified_reads.push({ action_id: 7, section: "labor_workers", url: current });
+  assert.equal(obsoleteLocalCancellation(f.failure, f.action, "snapshot"), "previous_employee_filter_page");
 });

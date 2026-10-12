@@ -8,9 +8,9 @@ import { appendDashboardCollection, prepareDashboardCollections } from "./helper
 
 let sequence = 0;
 
-test("employee, labor worker and remuneration lists preserve 20 then 500 then the ordered tail", async () => {
-  for (const section of ["employees", "labor_workers", "labor_sources"]) {
-    const h = await harness(), field = section === "employees" ? "employee_id" : section === "labor_workers" ? "person_id" : "source_id";
+test("employee and labor worker lists preserve 20 then 500 then the ordered tail", async () => {
+  for (const section of ["employees", "labor_workers"]) {
+    const h = await harness(), field = section === "employees" ? "employee_id" : "person_id";
     const ids = Array.from({ length: 525 }, (_, index) => `item-${index}`);
     const pageResponse = (start, count) => {
       const value = response();
@@ -40,7 +40,7 @@ function response(filter = "employment_active", employee = "first") {
   return { snapshot_version: "version", selected_period: { key: "2026-09" }, data: {
     employee_filter: filter, employee_id: null, employees: { registered_count: 50 }, workforce_cost: { total_fen: "1234" },
     collections: { employees: { items: [{ employee_id: employee }], page: { ...page } },
-      labor_workers: { items: [{ person_id: "labor-worker" }], page: { ...page } },
+      labor_workers: { items: [{ person_id: "labor-worker", source_count: 2, gross_fen: "300", booked_tax_fen: "30", net_fen: "270", personal_labor_fen: "100", capitalized_labor_fen: "200" }], page: { ...page } },
       labor_sources: { items: [{ source_id: "labor" }], page: { ...page } } },
   } };
 }
@@ -64,7 +64,7 @@ async function harness(query = {}) {
     const dashboardErrorMessage = error => error.message; const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String;
   `;
-  const { outputText } = ts.transpileModule(prelude + source + "\ninitialized = true; export { response, loading, filter, displayMode, pageLoading, pageErrors, loadMore, loadPeriod, selectPeriod, paginationScope };", {
+  const { outputText } = ts.transpileModule(prelude + source + "\ninitialized = true; export { response, loading, filter, displayMode, pageLoading, pageErrors, loadMore, loadPeriod, selectPeriod, paginationScope, laborSources, openedLaborWorkers, openedLaborPayments, loadLaborSources, toggleLaborWorker, toggleLaborPayment, laborPaginationScope, pauseLaborSources, refreshCurrent };", {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   const scope = Vue.effectScope();
@@ -102,20 +102,20 @@ test("all and monthly roster filters stay explicit while currently employed rest
     h.filter.value = "all"; await flush();
     assert.equal(h.route.query.employee_filter, "all");
     assert.equal(h.filter.value, "all");
-    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls.length, 2);
     assert.equal(h.calls[0].query.employee_filter, "all");
-    h.calls[0].resolve(response("all")); await flush();
+    for (const call of h.calls) call.resolve(response("all")); await flush();
     h.filter.value = "in_period"; await flush();
     assert.equal(h.route.query.employee_filter, "in_period");
     assert.equal(h.filter.value, "in_period");
-    assert.equal(h.calls.length, 2);
-    assert.equal(h.calls[1].query.employee_filter, "in_period");
-    h.calls[1].resolve(response("in_period")); await flush();
+    assert.equal(h.calls.length, 4);
+    assert.equal(h.calls[2].query.employee_filter, "in_period");
+    for (const call of h.calls.slice(2)) call.resolve(response("in_period")); await flush();
     h.filter.value = "employment_active"; await flush();
     assert.equal(h.route.query.employee_filter, undefined);
     assert.equal(h.filter.value, "employment_active");
-    assert.equal(h.calls[2].query.employee_filter, "employment_active");
-    h.calls[2].resolve(response()); await flush();
+    assert.equal(h.calls[4].query.employee_filter, "employment_active");
+    for (const call of h.calls.slice(4)) call.resolve(response()); await flush();
   } finally { h.close(); }
 });
 
@@ -164,8 +164,8 @@ test("shared employee and labor display mode preserves loaded data, filter and p
     assert.equal(h.displayMode.value, "cards");
     const current = h.response.value, collections = current.data.collections, scope = h.paginationScope();
     const filter = h.filter.value, query = { ...h.route.query };
-    const employeeItems = collections.employees.items, laborItems = collections.labor_sources.items;
-    const employeePage = h.loadMore("employees"), laborPage = h.loadMore("labor_sources");
+    const employeeItems = collections.employees.items, laborItems = collections.labor_workers.items;
+    const employeePage = h.loadMore("employees"), laborPage = h.loadMore("labor_workers");
     const requests = [...h.calls];
     assert.equal(requests.length, 2);
     h.displayMode.value = "list"; await flush();
@@ -184,63 +184,71 @@ test("shared employee and labor display mode preserves loaded data, filter and p
       assert.equal(request.query.expected_version, "version");
       assert.equal(request.query.employee_filter, "employment_active");
       const next = response("employment_active", "next-employee");
-      next.data.collections.labor_sources.items = [{ source_id: "next-labor" }];
+      next.data.collections.labor_workers.items = [{ person_id: "next-labor" }];
       next.data.collections[request.query.section].page.next_cursor = "following";
       request.resolve(next);
     }
     await Promise.all([employeePage, laborPage]);
     assert.equal(h.response.value.data.collections.employees.items, employeeItems);
-    assert.equal(h.response.value.data.collections.labor_sources.items, laborItems);
+    assert.equal(h.response.value.data.collections.labor_workers.items, laborItems);
     assert.equal(employeeItems.length, 2);
     assert.equal(laborItems.length, 2);
     assert.equal(h.response.value.data.collections.employees.page.next_cursor, "following");
-    assert.equal(h.response.value.data.collections.labor_sources.page.next_cursor, "following");
+    assert.equal(h.response.value.data.collections.labor_workers.page.next_cursor, "following");
     assert.equal(h.paginationScope(), scope);
   } finally { h.close(); }
 });
 
 for (const selectedFilter of employmentFilters) {
-test(`employee filter ${selectedFilter} retains overview and labor while replacing only the server-filtered list`, async () => {
+test(`person filter ${selectedFilter} retains overview while replacing employee and labor worker lists`, async () => {
   const h = await harness({ employee_filter: "all" });
   try {
-    const summary = h.response.value.data.employees, labor = h.response.value.data.collections.labor_sources;
-    const workers = h.response.value.data.collections.labor_workers;
+    const summary = h.response.value.data.employees, workforce = h.response.value.data.workforce_cost;
     h.filter.value = selectedFilter; await flush();
     assert.equal(h.loading.value, false);
     assert.equal(h.response.value.data.employees, summary);
-    assert.equal(h.response.value.data.collections.labor_sources, labor);
-    assert.equal(h.response.value.data.collections.labor_workers, workers);
-    assert.equal(h.calls.length, 1);
+    assert.equal(h.response.value.data.workforce_cost, workforce);
+    assert.equal(h.response.value.data.collections.employees.items.length, 0);
+    assert.equal(h.response.value.data.collections.labor_workers.items.length, 0);
+    assert.equal(h.calls.length, 2);
     assert.deepEqual(h.calls[0].query, { section: "employees", employee_filter: selectedFilter, expected_version: "version" });
+    assert.deepEqual(h.calls[1].query, { section: "labor_workers", employee_filter: selectedFilter, expected_version: "version" });
     const filtered = response(selectedFilter, "matching"); filtered.data.collections.employees.page.filtered_count = 27;
-    h.calls[0].resolve(filtered); await flush();
+    filtered.data.collections.labor_workers.items = [{ person_id: "matching-worker" }];
+    filtered.data.collections.labor_workers.page.filtered_count = 3;
+    for (const call of h.calls) call.resolve(filtered); await flush();
     assert.equal(h.response.value.data.collections.employees.page.filtered_count, 27);
     assert.equal(h.response.value.data.collections.employees.items[0].employee_id, "matching");
     assert.equal(h.response.value.data.employees, summary);
-    assert.equal(h.response.value.data.collections.labor_sources, labor);
-    assert.equal(h.response.value.data.collections.labor_workers, workers);
+    assert.equal(h.response.value.data.workforce_cost, workforce);
+    assert.equal(h.response.value.data.collections.labor_workers.page.filtered_count, 3);
+    assert.equal(h.response.value.data.collections.labor_workers.items[0].person_id, "matching-worker");
   } finally { h.close(); }
 });
 }
 
-test("employee filter retries stay local and company changes discard all old results", async () => {
+test("person filter retries stay local and company changes discard all old results", async () => {
   const h = await harness();
   try {
     h.filter.value = "employment_unpaid_leave"; await flush();
     h.filter.value = "ended"; await flush();
-    assert.equal(h.calls[0].signal.aborted, true);
-    h.calls[0].resolve(response("employment_unpaid_leave", "old")); await flush();
+    for (const call of h.calls.slice(0, 2)) {
+      assert.equal(call.signal.aborted, true); call.resolve(response("employment_unpaid_leave", "old"));
+    } await flush();
     assert.deepEqual(h.response.value.data.collections.employees.items, []);
-    h.calls[1].reject(new Error("名单暂不可用")); await flush();
+    for (const call of h.calls.slice(2, 4)) call.reject(new Error("名单暂不可用")); await flush();
     assert.equal(h.pageErrors.value["employees:"], "名单暂不可用");
     const retry = h.loadMore();
-    assert.equal(h.calls[2].query.section, "employees");
-    assert.equal(h.calls[2].query.cursor, undefined);
-    h.calls[2].resolve(response("ended", "current")); await retry;
+    assert.equal(h.calls[4].query.section, "employees");
+    assert.equal(h.calls[4].query.cursor, undefined);
+    h.calls[4].resolve(response("ended", "current")); await retry;
+    const workerRetry = h.loadMore("labor_workers");
+    assert.equal(h.calls[5].query.section, "labor_workers");
+    assert.equal(h.calls[5].query.cursor, undefined);
+    h.calls[5].resolve(response("ended")); await workerRetry;
     h.filter.value = "unknown"; await flush();
     h.route.query.company_id = "company-b"; await flush();
-    assert.equal(h.calls[3].signal.aborted, true);
-    h.calls[3].resolve(response("unknown", "late")); await flush();
+    for (const call of h.calls.slice(6, 8)) { assert.equal(call.signal.aborted, true); call.resolve(response("unknown", "late")); } await flush();
     assert.equal(h.response.value, null);
   } finally { h.close(); }
 });
@@ -252,10 +260,11 @@ test("an expired employee-list snapshot refreshes the full page before continuin
     h.calls[0].reject(Object.assign(new Error("changed"), { code: "dashboard_snapshot_changed" })); await flush();
     assert.equal(h.response.value, null);
     assert.equal(h.loading.value, true);
-    assert.equal(h.calls[1].query.section, undefined);
-    assert.equal(h.calls[1].query.employee_filter, "employment_unpaid_leave");
+    assert.equal(h.calls[1].signal.aborted, true);
+    assert.equal(h.calls[2].query.section, undefined);
+    assert.equal(h.calls[2].query.employee_filter, "employment_unpaid_leave");
     const fresh = response("employment_unpaid_leave", "fresh"); fresh.snapshot_version = "fresh-version";
-    h.calls[1].resolve(fresh); await flush();
+    h.calls[2].resolve(fresh); await flush();
     assert.equal(h.response.value.snapshot_version, "fresh-version");
     assert.equal(h.loading.value, false);
   } finally { h.close(); }
@@ -264,7 +273,7 @@ test("an expired employee-list snapshot refreshes the full page before continuin
 test("employee and labor continuations retain reactive arrays and discard late pages on filter changes", async () => {
   const h = await harness();
   try {
-    for (const section of ["employees", "labor_workers", "labor_sources"]) {
+    for (const section of ["employees", "labor_workers"]) {
       const original = h.response.value.data.collections[section].items;
       const renderedCount = Vue.computed(() => h.response.value.data.collections[section].items.length);
       assert.equal(renderedCount.value, 1);
@@ -279,12 +288,194 @@ test("employee and labor continuations retain reactive arrays and discard late p
       assert.equal(renderedCount.value, 2);
       assert.equal(h.response.value.data.collections[section].page.next_cursor, "following");
       const late = h.loadMore(section), request = h.calls.at(-1);
-      h.filter.value = section === "employees" ? "employment_unpaid_leave" : section === "labor_workers" ? "employment_departed" : "employment_unknown"; await flush();
+      h.filter.value = section === "employees" ? "employment_unpaid_leave" : "employment_departed"; await flush();
       assert.equal(request.signal.aborted, true);
       request.resolve(response(request.query.employee_filter, "late")); await late;
       assert.equal(original.length, 2);
       const filtered = response(h.filter.value, "filtered");
-      h.calls.at(-1).resolve(filtered); await flush();
+      for (const call of h.calls.slice(-2)) call.resolve(filtered); await flush();
     }
+  } finally { h.close(); }
+});
+
+function sourceResponse(personId, start, count, total = 525, filter = "employment_active") {
+  const result = response(filter);
+  result.data.employee_id = personId;
+  result.data.collections = { labor_sources: {
+    items: Array.from({ length: count }, (_, index) => ({ source_id: `${personId}-source-${start + index}`, person_id: personId })),
+    page: { total_count: total, filtered_count: total, returned_count: count, has_more: start + count < total,
+      next_cursor: start + count < total ? `source-cursor-${start + count}` : null },
+  } };
+  return result;
+}
+function toggleWorker(h, personId, open) { h.toggleLaborWorker(personId, { target: { open } }); }
+
+test("labor sources load only after their person is expanded and zero-record people never request sources", async () => {
+  const h = await harness();
+  try {
+    h.response.value.data.collections.labor_workers.items.push({ person_id: "zero-worker", source_count: 0 });
+    h.displayMode.value = "list"; await flush();
+    assert.equal(h.calls.length, 0);
+    toggleWorker(h, "zero-worker", true); await flush();
+    assert.equal(h.calls.length, 0, "a confirmed zero-source person has no payment or source read");
+    toggleWorker(h, "labor-worker", true);
+    assert.equal(h.calls.length, 1);
+    assert.deepEqual(h.calls[0].query, { section: "labor_sources", employee_id: "labor-worker",
+      employee_filter: "employment_active", expected_version: "version" });
+    h.calls[0].resolve(sourceResponse("labor-worker", 0, 2, 2)); await flush();
+    assert.equal(h.laborSources.value["labor-worker"].items.length, 2);
+    toggleWorker(h, "labor-worker", false); toggleWorker(h, "labor-worker", true); await flush();
+    assert.equal(h.calls.length, 1, "reopening a complete same-snapshot person uses cached sources");
+  } finally { h.close(); }
+});
+
+test("expanded labor source pages preserve ordered arrays, cache and the shared display mode", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true);
+    assert.equal(h.calls[0].query.limit ?? 20, 20);
+    h.calls[0].resolve(sourceResponse("labor-worker", 0, 20)); await flush();
+    const collection = h.laborSources.value["labor-worker"], items = collection.items;
+    const pending = h.loadLaborSources("labor-worker");
+    assert.equal(h.calls[1].query.limit, 500);
+    assert.equal(h.calls[1].query.cursor, "source-cursor-20");
+    h.displayMode.value = "list"; await flush();
+    h.displayMode.value = "cards"; await flush();
+    assert.equal(h.openedLaborWorkers.value["labor-worker"], true);
+    assert.equal(h.calls.length, 2); assert.equal(h.calls[1].signal.aborted, false);
+    h.calls[1].resolve(sourceResponse("labor-worker", 20, 500)); await pending;
+    assert.equal(h.laborSources.value["labor-worker"].items, items);
+    toggleWorker(h, "labor-worker", false);
+    toggleWorker(h, "labor-worker", true);
+    assert.equal(h.calls[2].query.cursor, "source-cursor-520");
+    h.calls[2].resolve(sourceResponse("labor-worker", 520, 5)); await flush();
+    assert.equal(h.laborSources.value["labor-worker"].items, items);
+    assert.deepEqual(items.map(item => item.source_id), Array.from({ length: 525 }, (_, index) => `labor-worker-source-${index}`));
+    await h.loadLaborSources("labor-worker");
+    assert.equal(h.calls.length, 3);
+  } finally { h.close(); }
+});
+
+test("collapsing a labor person cancels source reads, closes payment panels and rejects late responses", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true);
+    const first = h.calls[0];
+    toggleWorker(h, "labor-worker", false);
+    assert.equal(first.signal.aborted, true);
+    first.resolve(sourceResponse("labor-worker", 0, 2, 2)); await flush();
+    assert.equal(h.laborSources.value["labor-worker"], undefined);
+    toggleWorker(h, "labor-worker", true);
+    h.calls[1].resolve(sourceResponse("labor-worker", 0, 20)); await flush();
+    const items = h.laborSources.value["labor-worker"].items;
+    h.toggleLaborPayment("labor-worker-source-0", { target: { open: true } });
+    const pending = h.loadLaborSources("labor-worker"), request = h.calls[2];
+    toggleWorker(h, "labor-worker", false);
+    assert.equal(request.signal.aborted, true);
+    assert.equal(h.openedLaborPayments.value["labor-worker-source-0"], false);
+    request.resolve(sourceResponse("labor-worker", 20, 500)); await pending;
+    assert.equal(items.length, 20);
+    assert.equal(h.pageLoading.value["labor_sources:labor-worker"], false);
+  } finally { h.close(); }
+});
+
+test("labor source reads are independent by person and failures retry without losing cached pages", async () => {
+  const h = await harness();
+  try {
+    h.response.value.data.collections.labor_workers.items.push({ person_id: "second-worker", source_count: 1 });
+    toggleWorker(h, "labor-worker", true); toggleWorker(h, "second-worker", true);
+    h.calls[1].resolve(sourceResponse("second-worker", 0, 1, 1));
+    h.calls[0].resolve(sourceResponse("labor-worker", 0, 20)); await flush();
+    const firstItems = h.laborSources.value["labor-worker"].items;
+    const pending = h.loadLaborSources("labor-worker");
+    h.calls[2].reject(new Error("报酬后续页暂不可用")); await pending;
+    assert.equal(h.pageErrors.value["labor_sources:labor-worker"], "报酬后续页暂不可用");
+    assert.equal(h.laborSources.value["labor-worker"].items, firstItems);
+    const retry = h.loadLaborSources("labor-worker");
+    assert.equal(h.calls[3].query.cursor, "source-cursor-20");
+    h.calls[3].resolve(sourceResponse("labor-worker", 20, 500)); await retry;
+    assert.equal(firstItems.length, 520);
+    assert.equal(h.laborSources.value["second-worker"].items[0].person_id, "second-worker");
+  } finally { h.close(); }
+});
+
+test("filter, month and company changes clear labor detail scope and cannot accept delayed sources", async () => {
+  for (const change of ["filter", "month", "company"]) {
+    const h = await harness();
+    try {
+      toggleWorker(h, "labor-worker", true);
+      h.calls[0].resolve(sourceResponse("labor-worker", 0, 20)); await flush();
+      const pending = h.loadLaborSources("labor-worker"), request = h.calls[1];
+      if (change === "filter") h.filter.value = "employment_unknown";
+      else if (change === "month") h.selectPeriod("2026-10");
+      else h.route.query.company_id = "company-b";
+      await flush();
+      assert.equal(request.signal.aborted, true, change);
+      assert.deepEqual(h.laborSources.value, {}); assert.deepEqual(h.openedLaborWorkers.value, {});
+      request.resolve(sourceResponse("labor-worker", 20, 500)); await pending;
+      assert.deepEqual(h.laborSources.value, {}, "late pages cannot re-create a discarded person cache");
+    } finally { h.close(); }
+  }
+});
+
+test("a changed snapshot during a labor source read refreshes the page and clears cached details", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true);
+    h.calls[0].reject(Object.assign(new Error("changed"), { code: "dashboard_snapshot_changed" })); await flush();
+    assert.equal(h.loading.value, true);
+    assert.deepEqual(h.laborSources.value, {}); assert.deepEqual(h.openedLaborWorkers.value, {});
+    assert.equal(h.calls[1].query.section, undefined);
+    h.calls[1].resolve({ ...response(), snapshot_version: "fresh-version" }); await flush();
+    assert.equal(h.response.value.snapshot_version, "fresh-version"); assert.equal(h.loading.value, false);
+  } finally { h.close(); }
+});
+
+test("rapid labor collapse and reopen cannot let an aborted first read replace the resumed read", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true); const abandoned = h.calls[0];
+    toggleWorker(h, "labor-worker", false); toggleWorker(h, "labor-worker", true);
+    const resumed = h.calls[1];
+    assert.equal(abandoned.signal.aborted, true); assert.equal(resumed.signal.aborted, false);
+    const old = sourceResponse("labor-worker", 0, 2, 2); old.data.collections.labor_sources.items[0].source_id = "abandoned";
+    abandoned.resolve(old); await flush();
+    assert.equal(h.laborSources.value["labor-worker"], undefined);
+    assert.equal(h.pageLoading.value["labor_sources:labor-worker"], true, "aborted session cannot clear a resumed loading state");
+    resumed.resolve(sourceResponse("labor-worker", 0, 2, 2)); await flush();
+    assert.equal(h.laborSources.value["labor-worker"].items[0].source_id, "labor-worker-source-0");
+    assert.equal(h.pageLoading.value["labor_sources:labor-worker"], false);
+  } finally { h.close(); }
+});
+
+test("same-snapshot manual refresh closes labor payment panels and discards source caches before rereading", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true); h.calls[0].resolve(sourceResponse("labor-worker", 0, 20)); await flush();
+    h.toggleLaborPayment("labor-worker-source-0", { target: { open: true } });
+    const unfinished = h.loadLaborSources("labor-worker"), request = h.calls[1];
+    const refresh = h.refreshCurrent(true);
+    assert.equal(request.signal.aborted, true);
+    assert.deepEqual(h.laborSources.value, {}); assert.deepEqual(h.openedLaborWorkers.value, {}); assert.deepEqual(h.openedLaborPayments.value, {});
+    assert.equal(h.loading.value, true); assert.notEqual(h.response.value, null, "refresh can retain company summary while details close");
+    request.resolve(sourceResponse("labor-worker", 20, 500)); await unfinished;
+    assert.deepEqual(h.laborSources.value, {});
+    h.calls[2].resolve(response()); await refresh;
+    assert.deepEqual(h.laborSources.value, {});
+    assert.equal(h.calls.length, 3, "fresh personnel response does not preload any previously expanded detail");
+  } finally { h.close(); }
+});
+
+test("an old labor pagination pause cannot cancel a person read in a newly selected filter scope", async () => {
+  const h = await harness();
+  try {
+    toggleWorker(h, "labor-worker", true); const oldScope = h.laborPaginationScope("labor-worker");
+    h.filter.value = "all"; await flush();
+    for (const call of h.calls.slice(-2)) call.resolve(response("all")); await flush();
+    toggleWorker(h, "labor-worker", true); const request = h.calls.at(-1);
+    h.pauseLaborSources("labor-worker", oldScope);
+    assert.equal(request.signal.aborted, false);
+    request.resolve(sourceResponse("labor-worker", 0, 2, 2, "all")); await flush();
+    assert.equal(h.laborSources.value["labor-worker"].items.length, 2);
   } finally { h.close(); }
 });

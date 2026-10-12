@@ -84,7 +84,10 @@ def test_unpaid_remuneration_covers_prior_labor_beyond_current_page_and_employee
     assert february["employees"]["outstanding_net_fen"] == 1814800
     # 1,814,800 wages + 840,000 taxed labor + 208,330 accrual + 1,600,000 capital labor.
     assert february["outstanding_remuneration_fen"] == 4463130
-    first_page = february["collections"]["labor_sources"]
+    assert "labor_sources" not in february["collections"]
+    first_page = employee_data(company.engine, "2026-02", section="labor_sources", limit=1)[
+        "collections"
+    ]["labor_sources"]
     assert first_page["page"]["total_count"] == 2
     assert first_page["page"]["returned_count"] == 1 and first_page["page"]["has_more"]
     assert {item["source_id"] for item in first_page["items"]}.isdisjoint(

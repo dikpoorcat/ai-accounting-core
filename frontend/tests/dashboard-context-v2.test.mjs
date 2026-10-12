@@ -215,13 +215,13 @@ function recoveryResult(name, marker) {
   const value = result(name, marker);
   value.snapshot_version = "v1";
   value.read_context = { company_id: "company-a" };
-  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_workers", "labor_sources", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
+  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_workers", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
   return value;
 }
 const recoveryPaths = [
   ["Brief", "activity"], ["Brief", "open_items"],
   ["Funds", "book"], ["Funds", "bank"], ["Funds", "investment"], ["Funds", "accounts"], ["Funds", "investment_products"],
-  ["Employees", "employees"], ["Employees", "labor_workers"], ["Employees", "labor_sources"],
+  ["Employees", "employees"], ["Employees", "labor_workers"],
   ["Assets", "assets"], ["Assets", "projects"],
 ];
 function continueRecovery(view, section) {
@@ -334,7 +334,9 @@ test("funds API keeps the displayed first account associated with its movement p
     const movements = response.data.collections.movements.items;
     for (const row of movements) { row.account_id = first.account_id; row.account_name = first.name; }
     globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${response.read_context.company_id}` } };
-    globalThis.fetch = async () => new Response(JSON.stringify(response));
+    globalThis.fetch = async () => new Response(JSON.stringify({ schema_version: 6,
+      company_id: response.read_context.company_id, period: response.selected_period.key,
+      model_version: response.snapshot_version, state: "ready", response }));
     const query = { movement_account_selection: "first" };
     assert(validateDashboardFundsResponse(response));
     const result = await fetchFundsDashboard(response.selected_period.key, undefined, query);

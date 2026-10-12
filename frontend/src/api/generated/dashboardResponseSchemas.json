@@ -5936,7 +5936,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 12,
+            "const": 13,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -7048,6 +7048,41 @@
           "has_labor_activity": {
             "title": "Has Labor Activity",
             "type": "boolean"
+          },
+          "gross_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Gross Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "booked_tax_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Booked Tax Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "net_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Net Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "personal_labor_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Personal Labor Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "capitalized_labor_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Capitalized Labor Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "source_count": {
+            "minimum": 0,
+            "title": "Source Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -7058,7 +7093,13 @@
           "possible_period_states",
           "relationship_segments",
           "in_period",
-          "has_labor_activity"
+          "has_labor_activity",
+          "gross_fen",
+          "booked_tax_fen",
+          "net_fen",
+          "personal_labor_fen",
+          "capitalized_labor_fen",
+          "source_count"
         ],
         "title": "LaborWorkerItem",
         "type": "object"
@@ -20717,6 +20758,41 @@
           "has_labor_activity": {
             "title": "Has Labor Activity",
             "type": "boolean"
+          },
+          "gross_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Gross Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "booked_tax_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Booked Tax Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "net_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Net Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "personal_labor_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Personal Labor Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "capitalized_labor_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Capitalized Labor Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "source_count": {
+            "minimum": 0,
+            "title": "Source Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -20727,7 +20803,13 @@
           "possible_period_states",
           "relationship_segments",
           "in_period",
-          "has_labor_activity"
+          "has_labor_activity",
+          "gross_fen",
+          "booked_tax_fen",
+          "net_fen",
+          "personal_labor_fen",
+          "capitalized_labor_fen",
+          "source_count"
         ],
         "title": "LaborWorkerItem",
         "type": "object"
@@ -21133,7 +21215,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 12,
+        "const": 13,
         "title": "Schema Version",
         "type": "integer"
       },

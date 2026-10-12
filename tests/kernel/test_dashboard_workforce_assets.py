@@ -11,7 +11,7 @@ from test_integrity_content import damage
 from test_labor_assets import book as _labor_book
 from test_labor_assets import chain, cost
 from test_opening_continuation import book as _opening_book
-from test_payroll import bonus, bonus_sources, opening, payroll, profile
+from test_payroll import bonus, bonus_sources, payroll, profile
 from test_payroll_corrections import Company, actual
 from test_payroll_corrections import company as _company
 from test_payroll_tax_declarations import adopt, declare, pay
@@ -489,9 +489,9 @@ def test_employee_employment_and_name_order_is_global_across_pages_and_filters(t
 
 def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company):
     company.save(profile(employee_id="employee-2", effective_to="2026-02"), "profile-2")
-    company.save(opening(employee_id="employee-2"), "opening-2")
     company.save(payroll(employee_id="employee-2", profile_id="profile-2"), "january-2")
     company.confirm_payroll("january-2")
+    company.tax_basis("january-2", 12_600)
     company.publish("january", "january-2")
     company.close("2026-01")
     with company.engine.store.connection() as connection:
@@ -500,11 +500,11 @@ def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company
             "ON c.id=h.calculation_id WHERE h.subject_id='january'"
         ).fetchone()[0]
         trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='immutable_fact_payroll_UPDATE'"
+            "SELECT sql FROM sqlite_master WHERE name='immutable_fact_payroll_confirmed_UPDATE'"
         ).fetchone()[0]
-        connection.execute("DROP TRIGGER immutable_fact_payroll_UPDATE")
+        connection.execute("DROP TRIGGER immutable_fact_payroll_confirmed_UPDATE")
         connection.execute(
-            "UPDATE fact_payroll SET employee_id='employee-2' WHERE revision_id=?", (fact_id,)
+            "UPDATE fact_payroll_confirmed SET employee_id='employee-2' WHERE revision_id=?", (fact_id,)
         )
         connection.execute(trigger)
     with pytest.raises(KernelError) as failure:
@@ -773,10 +773,13 @@ def test_personal_labor_items_only_include_selected_posting_month(tmp_path):
     labor = data["workforce_cost"]
 
     assert labor["personal_labor_fen"] == 700000
-    labor_items = data["collections"]["labor_sources"]["items"]
+    source_data = Dashboard(company.engine).employees(
+        "2026-02", section="labor_sources", employee_filter="all"
+    )["data"]
+    labor_items = source_data["collections"]["labor_sources"]["items"]
     assert [item["source_id"] for item in labor_items] == ["february-labor"]
     assert labor_items[0]["period"] == "2026-02"
-    assert data["collections"]["labor_sources"]["page"]["total_count"] == 1
+    assert source_data["collections"]["labor_sources"]["page"]["total_count"] == 1
 
 
 @pytest.mark.parametrize("activated", [False, True])

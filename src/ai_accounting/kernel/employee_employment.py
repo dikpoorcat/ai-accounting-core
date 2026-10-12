@@ -324,6 +324,25 @@ def monthly_projection(timeline, period):
     }
 
 
+def labor_filter_matches(selected, in_period, period_states, end_state):
+    """Apply the shared personnel controls to a month's labor membership."""
+    if selected == "all":
+        return True
+    if selected in {"in_period", "employment_active"}:
+        return in_period is True
+    if selected in {"unknown", "employment_unknown"}:
+        return in_period is None
+    if selected == "ended":
+        return in_period is False
+    if selected == "employment_departed":
+        return (
+            in_period is False
+            or "labor_ended" in period_states
+            or in_period is True and end_state != "labor"
+        )
+    return False
+
+
 def monthly_membership(timeline, period, relationship="employee"):
     if relationship not in {"employee", "labor"}:
         raise ValueError("relationship must be employee or labor")

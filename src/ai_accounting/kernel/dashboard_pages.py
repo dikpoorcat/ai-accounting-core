@@ -38,7 +38,7 @@ SORT_PROFILES = {
     ("funds", "investment_products"): "product-name-pinyin/1",
     ("funds", "movements"): "business-date-object/2",
     ("employees", "employees"): "employment-start-name/3",
-    ("employees", "labor_workers"): "worker-name-pinyin/1",
+    ("employees", "labor_workers"): "worker-name-pinyin/2",
     ("employees", "labor_sources"): "labor-period-name-pinyin/1",
     ("assets", "assets"): "asset-name-pinyin/1",
 }
@@ -61,7 +61,7 @@ def validate_page(endpoint, section, cursor, limit):
 
 
 def page_scope(snapshot, endpoint, section, filters, *, collection_version=None, sort_profile=None):
-    if endpoint == "employees" and section in {"labor_workers", "labor_sources"}:
+    if endpoint == "employees" and section == "labor_sources":
         filters = {key: value for key, value in filters.items() if key != "employee_filter"}
     return hashlib.sha256(
         canonical(

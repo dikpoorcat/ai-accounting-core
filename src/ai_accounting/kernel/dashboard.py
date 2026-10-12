@@ -2269,7 +2269,7 @@ class Dashboard:
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 12}
+                return {**self._response(None, None), "schema_version": 13}
             self._check_page_version(snap, cursor, expected_version)
             from .dashboard_model_reads import read_page
 
@@ -2297,7 +2297,7 @@ class Dashboard:
                 data["collections"] = {section: data["collections"][section]}
             return {
                 **self._response(snap, seal_collections(snap, "employees", data, filters)),
-                "schema_version": 12,
+                "schema_version": 13,
             }
 
     def assets(
@@ -3929,7 +3929,7 @@ def _employees(
 ):
     cursors = cursors or {}
     requested = (
-        set(sections) if sections is not None else {"employees", "labor_workers", "labor_sources"}
+        set(sections) if sections is not None else {"employees", "labor_workers"}
     )
     money_keys = tuple(key for key in _WORKFORCE_MONEY_KEYS if key != "tax_reported_salary_fen")
     wage_kinds = PAYROLL_KINDS | {"opening_payroll_payable"}
@@ -4370,24 +4370,6 @@ def _employees(
     labor_heads = adopted_head_metadata(
         snap, LABOR_KINDS | {"labor_project_cost"}, posting_period=snap.period
     )
-    labor_worker_ids = sorted(
-        (
-            ident
-            for ident in timelines
-            if personnel_month(ident)["labor_member"] is True
-            or "labor" in personnel_month(ident)["possible_period_states"]
-        ),
-        key=lambda ident: (pinyin_key(snap.party(ident)), ident),
-    )
-    filtered_labor_workers = [
-        ident for ident in labor_worker_ids if employee_id is None or ident == employee_id
-    ]
-    selected_labor_workers, labor_worker_page = page_keys(
-        filtered_labor_workers,
-        cursors.get("labor_workers"),
-        limit,
-        total_count=len(labor_worker_ids),
-    )
     order_labor = "labor_sources" in requested and not summary_only
     labor_identities = (
         verified_scalar_facts(snap, labor_heads)
@@ -4395,6 +4377,64 @@ def _employees(
         else {}
     )
     labor_activity_ids = {value["person_id"] for value in labor_identities.values()}
+    labor_history_ids = {
+        ident for ident, timeline in timelines.items()
+        if any(segment["state"] == "labor" and segment["start"][:7] <= snap.period
+               for segment in timeline["segments"])
+    }
+    labor_membership = {
+        ident: personnel_month(ident)["labor_member"] if ident in labor_history_ids else None
+        for ident in labor_history_ids | labor_activity_ids
+    }
+    labor_worker_ids = sorted(
+        labor_membership, key=lambda ident: (pinyin_key(snap.party(ident)), ident)
+    )
+    from .employee_employment import labor_filter_matches
+
+    filtered_labor_workers = [
+        ident for ident in labor_worker_ids
+        if (employee_id is None or ident == employee_id)
+        and labor_filter_matches(
+            employee_filter, labor_membership[ident],
+            personnel_month(ident)["period_states"], personnel_month(ident)["period_end_state"],
+        )
+    ]
+    selected_labor_workers, labor_worker_page = page_keys(
+        filtered_labor_workers, cursors.get("labor_workers"), limit,
+        total_count=len(labor_worker_ids),
+    )
+    source_ids_by_person = defaultdict(set)
+    for head in labor_heads:
+        if head["fact_id"] in labor_identities:
+            source_ids_by_person[labor_identities[head["fact_id"]]["person_id"]].add(head["id"])
+    snap.semantic_cache["model_labor_worker_sources"] = source_ids_by_person
+    labor_totals = {
+        ident: dict.fromkeys(("gross_fen", "net_fen", "booked_tax_fen",
+                              "personal_labor_fen", "capitalized_labor_fen", "source_count"), 0)
+        for ident in selected_labor_workers
+    }
+    worker_head_ids = {
+        source_id for ident in selected_labor_workers for source_id in source_ids_by_person[ident]
+    } if "labor_workers" in requested and not summary_only else set()
+    if worker_head_ids:
+        snap.reads.verify_sql_outcomes(worker_head_ids)
+        for row in snap.connection.execute(
+            "SELECT c.id,c.kind,c.fact_id,json_extract(c.outcome,'$.values.gross_fen') gross_fen,"
+            "json_extract(c.outcome,'$.values.net_fen') net_fen,"
+            "json_extract(c.outcome,'$.values.tax_fen') tax_fen,"
+            "json_extract(c.outcome,'$.values.capitalized_fen') capitalized_fen "
+            "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value",
+            (canonical(sorted(worker_head_ids)),),
+        ):
+            totals = labor_totals[labor_identities[row["fact_id"]]["person_id"]]
+            totals["gross_fen"] += row["gross_fen"]
+            totals["net_fen"] += row["net_fen"]
+            totals["booked_tax_fen"] += row["tax_fen"]
+            totals["source_count"] += 1
+            if row["kind"] == "labor_project_cost":
+                totals["capitalized_labor_fen"] += row["capitalized_fen"]
+            else:
+                totals["personal_labor_fen"] += row["gross_fen"]
     labor_workers = (
         [
             {
@@ -4406,8 +4446,9 @@ def _employees(
                 "relationship_segments": [
                     segment for segment in displayed_segments(ident) if segment["state"] == "labor"
                 ],
-                "in_period": personnel_month(ident)["labor_member"],
+                "in_period": labor_membership[ident],
                 "has_labor_activity": ident in labor_activity_ids,
+                **labor_totals[ident],
             }
             for ident in selected_labor_workers
         ]
@@ -4450,7 +4491,8 @@ def _employees(
             raise KernelError(
                 "content_integrity_failed", "劳务来源采用身份不匹配", component="labor"
             )
-    _prepare_people_asset_settlements(snap, {calc["subject_id"] for calc in displayed_labor})
+    if displayed_labor:
+        _prepare_people_asset_settlements(snap, {calc["subject_id"] for calc in displayed_labor})
     for calc in displayed_labor:
         if calc["kind"] not in LABOR_KINDS | {"labor_project_cost"}:
             continue
@@ -4500,7 +4542,7 @@ def _employees(
             },
             "unestablished_count": len(unestablished_employees),
             "registered_count": len(all_items),
-            "labor_worker_count": len(labor_worker_ids),
+            "labor_worker_count": sum(member is True for member in labor_membership.values()),
             "in_period_count": sum(item["in_period"] is True for item in all_items),
             "unknown_period_count": unknown,
             "payroll_count": sum(item["has_payroll_activity"] for item in all_items),
@@ -4533,7 +4575,8 @@ def _employees(
         "collections": {
             "employees": {"items": items, "page": employee_page},
             "labor_workers": {"items": labor_workers, "page": labor_worker_page},
-            "labor_sources": {"items": labor_items, "page": labor_page},
+            **({"labor_sources": {"items": labor_items, "page": labor_page}}
+               if "labor_sources" in requested else {}),
         },
         "workforce_cost": {
             "total_fen": ledger + labor_cost,

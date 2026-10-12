@@ -118,6 +118,23 @@ def _employee_sources(snap, items):
     return {source for item in items for source in cache.get(item["employee_id"], ())}
 
 
+def _labor_worker_sources(snap, items):
+    """Bind every exact adopted source contributing to the displayed person totals."""
+    cache = snap.semantic_cache.get("model_labor_worker_sources")
+    if cache is None:
+        from .dashboard import LABOR_KINDS
+        from .dashboard_reads import adopted_head_metadata, verified_scalar_facts
+
+        heads = adopted_head_metadata(snap, LABOR_KINDS | {"labor_project_cost"},
+                                      posting_period=snap.period)
+        identities = verified_scalar_facts(snap, heads)
+        cache = {}
+        for head in heads:
+            cache.setdefault(identities[head["fact_id"]]["person_id"], set()).add(head["id"])
+        snap.semantic_cache["model_labor_worker_sources"] = cache
+    return {source for item in items for source in cache.get(item["person_id"], ())}
+
+
 def _asset_sources(snap, items):
     """Bind the selected card's acquisition and current lifecycle, not every charge."""
     from .dashboard import _asset_card_sources
@@ -371,6 +388,8 @@ def _page_sources(snap, page, section, items):
         )
     elif page == "employees" and section == "employees":
         identifiers = _employee_sources(snap, items)
+    elif page == "employees" and section == "labor_workers":
+        identifiers = _labor_worker_sources(snap, items)
     elif page == "assets" and section == "assets":
         identifiers = _asset_sources(snap, items)
     elif page == "funds" and section in {"accounts", "investment_products"}:
@@ -407,7 +426,7 @@ def _page_sources(snap, page, section, items):
 
 
 def _native_frame(dashboard, snap, page, data, *, section=None, filters=None):
-    versions = {"brief": 19, "funds": 9, "employees": 12, "assets": 10}
+    versions = {"brief": 19, "funds": 9, "employees": 13, "assets": 10}
     filters = (
         dict(filters)
         if filters is not None
@@ -701,19 +720,20 @@ def build_model(dashboard, period, *, block_size=100, default_only=False):
             ),
             variant="all",
         )
-        collect(
-            "employees",
-            "employees",
-            all_employee_filters,
-            lambda after: _employees(
-                snap,
-                sections={"employees"},
-                cursors={"employees": after},
-                limit=block_size,
-                employee_filter="all",
-            ),
-            variant="all",
-        )
+        for section in all_employees_data["collections"]:
+            collect(
+                "employees",
+                section,
+                all_employee_filters,
+                lambda after, section=section: _employees(
+                    snap,
+                    sections={section},
+                    cursors={section: after},
+                    limit=block_size,
+                    employee_filter="all",
+                ),
+                variant="all",
+            )
         asset_filters = {"asset_filter": "all", "asset_id": None, "project_id": None}
         for section in defaults["assets"]["data"]["collections"]:
             collect(

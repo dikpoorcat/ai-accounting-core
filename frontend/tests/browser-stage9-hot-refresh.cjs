@@ -46,7 +46,7 @@ const modules = [
 const defaultCollections = {
   brief: ["activity", "open_items"],
   funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
-  employees: ["employees", "labor_workers", "labor_sources"],
+  employees: ["employees", "labor_workers"],
   assets: ["assets", "projects"],
 };
 // Only the default business result, not global jobs or on-demand details.
@@ -305,7 +305,8 @@ function retainedItemIdentity(pathname, section, item, payload) {
 function retainedResource(url, payload, section) {
   const target = new URL(url), pathname = target.pathname;
   const scope = pathname === "/api/dashboard/brief-group" ? `${payload.data.section}:${target.searchParams.get("group_key")}:`
-    : pathname === "/api/dashboard/business-status" ? `${target.searchParams.get("subject_id")}:` : "";
+    : pathname === "/api/dashboard/business-status" ? `${target.searchParams.get("subject_id")}:`
+    : pathname === "/api/dashboard/employees" && section === "labor_sources" ? `${target.searchParams.get("employee_id")}:` : "";
   return `${pathname}:${scope}${section}`;
 }
 function retainedCollectionIdentities(reads) {
@@ -723,8 +724,8 @@ async function closeStage9Browser(context, browser, failureReport) {
 
 // Keep filter and cursor identity in diagnostics; never report login material.
 function verifySelectedFilter(selection, target, payload, section, expected) {
-  const employee = section === "employees";
-  const label = employee ? "筛选员工" : "筛选资产";
+  const employee = ["employees", "labor_workers"].includes(section);
+  const label = employee ? "筛选人员" : "筛选资产";
   const field = employee ? "employee_filter" : "asset_filter";
   assert.equal(selection.filters.find(item => item.label === label)?.value, expected, `${section}: wrong selected UI filter`);
   assert.equal(target.searchParams.get(field), expected, `${section}: wrong requested filter`);
@@ -745,7 +746,7 @@ function localReadMatchesSelection(record, action, snapshot, requestedSection = 
   if (action.page === "employees" || action.page === "assets") {
     const employee = action.page === "employees", field = employee ? "employee_filter" : "asset_filter";
     const identity = employee ? "employee_id" : "asset_id";
-    const label = employee ? "筛选员工" : "筛选资产";
+    const label = employee ? "筛选人员" : "筛选资产";
     const expected = selected.searchParams.get(identity) ? "all"
       : action.after.filters?.find(item => item.label === label)?.value;
     if (!expected || target.searchParams.get(field) !== expected
@@ -964,10 +965,10 @@ function obsoleteLocalCancellation(failure, action, snapshot, previousActions = 
       if (replaced) return "previous_movement_account_page";
     }
   }
-  if (["employees", "assets"].includes(action.page) && section === action.page && url.pathname === `/api/dashboard/${action.page}`) {
+  if ((action.page === "employees" && ["employees", "labor_workers"].includes(section) || action.page === "assets" && section === "assets") && url.pathname === `/api/dashboard/${action.page}`) {
     const field = action.page === "employees" ? "employee_filter" : "asset_filter";
     const defaultFilter = action.page === "employees" ? "employment_active" : "active";
-    const label = action.page === "employees" ? "筛选员工" : "筛选资产";
+    const label = action.page === "employees" ? "筛选人员" : "筛选资产";
     const previous = action.before.filters?.find(item => item.label === label)?.value;
     const current = action.after.filters?.find(item => item.label === label)?.value;
     const otherScope = target => {
@@ -1024,12 +1025,15 @@ function verifyLocalRead(url, module, selected, snapshot, requestedSection = nul
   assert.equal(url.pathname, `/api/dashboard/${module.action}`, `${module.key}: display change read unrelated data`);
   const section = url.searchParams.get("section");
   assert(section && (section === requestedSection
+    || module.key === "employees" && requestedSection === "employees" && section === "labor_workers"
     || (defaultCollections[module.key]?.includes(section) && url.searchParams.get("cursor"))),
   `${module.key}: display change reloaded whole page or unrelated collection`);
   assert.equal(url.searchParams.get("company_id"), selected.id, "local filter: company changed");
   assert.equal(url.searchParams.get("period"), selected.period, "local filter: month changed");
   assert(snapshot && url.searchParams.get("expected_version") === snapshot,
     "local filter: snapshot boundary changed or missing");
+  if (module.key === "employees" && section === "labor_sources")
+    assert(url.searchParams.get("employee_id"), "labor detail: exact personnel identity is required");
   stage9RequestPageLimit(url);
 }
 
@@ -1240,6 +1244,16 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
   if (target.searchParams.has("expected_version")) assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), `${key}: local read crossed snapshots`);
   const section = target.searchParams.get("section"), cursor = target.searchParams.has("cursor");
   for (const name of section ? [section] : defaultCollections[key]) verifyCollection(payload.data.collections?.[name], `${key}/${name}`, { cursor, limit: stage9RequestPageLimit(target) });
+  if (key === "employees") {
+    assert.deepEqual(Object.keys(payload.data.collections).sort(), (section ? [section] : defaultCollections.employees).toSorted(),
+      "employees: response preloaded unrelated labor details or omitted personnel collections");
+    if (section === "labor_sources") {
+      const person = target.searchParams.get("employee_id");
+      assert(person && payload.data.employee_id === person, "employees: labor detail has no exact personnel identity");
+      assert(payload.data.collections.labor_sources.items.every(item => item.person_id === person),
+        "employees: another person leaked into labor detail");
+    }
+  }
   if (key === "brief") {
     assert.equal(payload.scope, section ?? "overview", "brief: response scope does not match request");
     const { vouchers, activity } = payload.data.collections;
@@ -1587,7 +1601,7 @@ async function run(config) {
       const employeeRows = await page.locator(".employee-grid").first().locator(".employee-card").count();
       if (!retainedRefreshOnly) {
         verifyEmployeeRootRows(employeeRows, data.collections.employees.items.length, allowEmployeeContinuation);
-        assert.equal(await page.locator("[aria-label='个人劳务明细记录'] .employee-card").count(), data.collections.labor_sources.items.length, "employees: default labor rows incomplete");
+        assert.equal(await page.locator("[aria-label='个人劳务明细记录'] .employee-card").count(), data.collections.labor_workers.items.length, "employees: default labor personnel rows incomplete");
       }
     } else if (module.key === "assets") {
       if (!retainedRefreshOnly) {
@@ -2049,7 +2063,7 @@ async function run(config) {
             ["movements", ".book-activity-row"], ["statements", ".bank-activity-item"]]) await check(section, selector);
         } else if (module.key === "employees") {
           await check("employees", '[aria-label="员工明细记录"] .employee-card');
-          await check("labor_sources", '[aria-label="个人劳务明细记录"] .employee-card');
+          await check("labor_workers", '[aria-label="个人劳务明细记录"] .employee-card');
         } else if (module.key === "assets") {
           await check("assets", ".asset-grid .asset-card"); await check("projects", ".project-card");
         }
@@ -2153,13 +2167,15 @@ async function run(config) {
                 assert.equal(payload.data?.selected_movement_account?.account_id, url.searchParams.get("movement_account_id"), "local account response: wrong selected account");
                 assert.equal(payload.data?.selected_movement_account?.type, url.searchParams.get("movement_account_type"), "local account response: wrong selected type");
               }
-              if (module.key === "employees" && readSection === "employees") assert.equal(payload.data?.employee_filter, url.searchParams.get("employee_filter"), "local employee response: wrong selected filter");
-              if (expectedFilter !== null && readSection === section) verifySelectedFilter(diagnostic.after, url, payload, section, expectedFilter);
+              if (module.key === "employees" && ["employees", "labor_workers"].includes(readSection)) assert.equal(payload.data?.employee_filter, url.searchParams.get("employee_filter"), "local employee response: wrong selected filter");
+              if (expectedFilter !== null && (readSection === section || module.key === "employees" && readSection === "labor_workers")) verifySelectedFilter(diagnostic.after, url, payload, readSection, expectedFilter);
               diagnostic.verified_reads.push({ action_id: actionId, section: readSection, url: diagnosticUrl(reply.url()) });
             },
           }));
-          if (section) assert(diagnostic.verified_reads.some(read => localReadMatchesSelection({ ...read, started_action: actionId }, diagnostic, snapshot, section, { fresh })),
-            `${module.key}: current selected response missing or incomplete`);
+          const requiredSections = module.key === "employees" && section === "employees" && expectedFilter !== null
+            ? ["employees", "labor_workers"] : section ? [section] : [];
+          for (const requiredSection of requiredSections) assert(diagnostic.verified_reads.some(read => localReadMatchesSelection({ ...read, started_action: actionId }, diagnostic, snapshot, requiredSection, { fresh })),
+            `${module.key}/${requiredSection}: current selected response missing or incomplete`);
           diagnostic.after = await wait("final selection", readSelection); diagnostic.after.url = diagnosticUrl(diagnostic.after.url);
           assert.deepEqual(await wait("observer failures", () => page.evaluate(() => window.__stage9LocalFailures)), [], `${module.key}: local change flashed whole page`);
           assert.equal(await wait("header state", () => page.locator(".module-header").getAttribute("aria-busy")), "false");
@@ -2379,7 +2395,7 @@ async function run(config) {
           return payloads;
         }
         async function selectFilter(module, value) {
-          const label = module.key === "employees" ? "筛选员工" : "筛选资产";
+          const label = module.key === "employees" ? "筛选人员" : "筛选资产";
           if (await page.getByRole("button", { name: label, exact: true }).getAttribute("data-value") !== value)
             await change(module, () => selectDashboardOption(page, label, value), module.key, `prepare ${value}`, value);
         }
@@ -2388,8 +2404,8 @@ async function run(config) {
           for (const value of values) specs.push({ key: `${module.key}_filter_${value}`, module, root: refreshRoots[module.key], requireNewResponse: true,
             trigger: `[role=option][data-value=${JSON.stringify(value)}]`, counts: [],
             prepare: async () => { await openModule(module); await selectFilter(module, values.find(item => item !== value)); return true; },
-            perform: () => change(module, () => selectDashboardOption(page, module.key === "employees" ? "筛选员工" : "筛选资产", value), module.key, `timed ${value}`, value),
-            verify: async () => assert.equal(await page.getByRole("button", { name: module.key === "employees" ? "筛选员工" : "筛选资产", exact: true }).getAttribute("data-value"), value),
+            perform: () => change(module, () => selectDashboardOption(page, module.key === "employees" ? "筛选人员" : "筛选资产", value), module.key, `timed ${value}`, value),
+            verify: async () => assert.equal(await page.getByRole("button", { name: module.key === "employees" ? "筛选人员" : "筛选资产", exact: true }).getAttribute("data-value"), value),
           });
           let identity;
           specs.push({ key: `${module.key}_exact_target`, module, root: refreshRoots[module.key], navigation: true, requireNewResponse: true,
@@ -2635,7 +2651,7 @@ async function run(config) {
               active_section: document.querySelector('.section-nav button[aria-current]')?.textContent.trim() ?? null,
               employee_rows: document.querySelectorAll('[aria-label="员工明细记录"] .employee-card').length,
               labor_rows: document.querySelectorAll('[aria-label="个人劳务明细记录"] .employee-card').length,
-              employee_filter: document.querySelector('[aria-label="筛选员工"].select-trigger')?.getAttribute('data-value') ?? null,
+              employee_filter: document.querySelector('[aria-label="筛选人员"].select-trigger')?.getAttribute('data-value') ?? null,
               busy: document.querySelector('.module-header')?.getAttribute('aria-busy') ?? null,
             }), { root: spec.root, rows: spec.rows });
             result.prepare_diagnostic.page_url = diagnosticUrl(page.url());
@@ -2824,8 +2840,8 @@ async function run(config) {
               }
               await checkOwnerLayout(module, "current_payroll");
             }
-            await localChange(module, () => selectDashboardOption(page, "筛选员工", "in_period"), "employees", "select in-period employees", "in_period");
-            await localChange(module, () => selectDashboardOption(page, "筛选员工", "all"), "employees", "select all employees", "all");
+            await localChange(module, () => selectDashboardOption(page, "筛选人员", "in_period"), "employees", "select in-period employees", "in_period");
+            await localChange(module, () => selectDashboardOption(page, "筛选人员", "all"), "employees", "select all employees", "all");
           }
           if (module.key === "assets") {
             await localChange(module, () => selectDashboardOption(page, "筛选资产", "fixed"), "assets", "select fixed assets", "fixed");

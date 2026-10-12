@@ -32,7 +32,7 @@ onBeforeUnmount(() => pause(props.scope));
   <div v-if="error || progressError || (page && (!compact || page.has_more))" class="dashboard-pagination" :aria-busy="loading">
     <span v-if="page && (!compact || page.has_more)">
       <template v-if="compact">已加载 {{ loaded }} / {{ page.filtered_count }} {{ itemLabel }}</template>
-      <template v-else>完整总计 {{ page.total_count }} 项 · 筛选总计 {{ page.filtered_count }} 项 · 已加载 {{ loaded }} 项</template>
+      <template v-else>完整总计 {{ page.total_count }} {{ itemLabel }} · 筛选总计 {{ page.filtered_count }} {{ itemLabel }} · 已加载 {{ loaded }} {{ itemLabel }}</template>
     </span>
     <p v-if="error || progressError" role="alert">{{ error || progressError }} <button type="button" :disabled="loading" @click="retry">重试读取</button></p>
     <button v-else-if="page?.has_more && !automatic" type="button" :disabled="loading" @click="$emit('more')">{{ loading ? "加载中…" : "加载更多" }}</button>

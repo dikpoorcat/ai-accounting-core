@@ -9,7 +9,6 @@ import {
   type EstablishedEmployeeItem,
   type EmployeesDashboardResponse,
   type EmployeesSummary,
-  type EmployeesQuery,
   type EmployeeFilter,
   type PersonalLaborItem,
   type LaborWorkerItem,
@@ -29,16 +28,16 @@ const employeeFilterGroups: {
   label: string;
   options: { value: EmployeeFilter; label: string; description: string }[];
 }[] = [
-  { label: "", options: [{ value: "all", label: "全部员工", description: "查看截至所选月份的员工及本月薪酬记录" }] },
+  { label: "", options: [{ value: "all", label: "全部人员", description: "查看截至所选月份的员工、劳务人员及本月薪酬记录" }] },
   { label: "用工状态", options: [
-    { value: "employment_active", label: "在职", description: "所选月份曾正常任职，整月停薪单独列示" },
+    { value: "employment_active", label: "在职", description: "所选月份曾正常任职或提供劳务，整月停薪单独列示" },
     { value: "employment_unpaid_leave", label: "停薪留职", description: "所选月份有已确认的停薪期间" },
-    { value: "employment_departed", label: "已离职", description: "所选月份月末已明确离职" },
+    { value: "employment_departed", label: "已离职／劳务结束", description: "所选月份月内或月末已离职、结束劳务或转为员工" },
     { value: "employment_unknown", label: "未确认", description: "所选月份用工关系或转换期间尚未明确" },
   ] },
   { label: "在册状态", options: [
-    { value: "in_period", label: "已确认在册", description: "所选月份有已确认的员工任职期间" },
-    { value: "ended", label: "已确认不在册", description: "所选月份没有员工任职期间" },
+    { value: "in_period", label: "已确认在册", description: "所选月份有已确认的员工任职期间或劳务期间" },
+    { value: "ended", label: "已确认不在册", description: "所选月份明确没有相应用工期间" },
     { value: "unknown", label: "在册状态未确认", description: "人员资料缺失或有冲突，需核对" },
   ] },
 ];
@@ -64,11 +63,18 @@ let requestGeneration = 0;
 const pageLoading = ref<Record<string, boolean>>({});
 const pageErrors = ref<Record<string, string>>({});
 const pageControllers = new Map<string, AbortController>();
+type LaborSourcesCollection = NonNullable<NonNullable<EmployeesDashboardResponse["data"]>["collections"]["labor_sources"]>;
+const laborSources = ref<Record<string, LaborSourcesCollection>>({});
+const openedLaborWorkers = ref<Record<string, boolean>>({});
+const openedLaborPayments = ref<Record<string, boolean>>({});
 const updateNotice = ref("");
-function pageKey(section: string) { return `${section}:`; }
+function pageKey(section: string, personId = "") { return `${section}:${personId}`; }
 function clearPageRequests() {
   pageControllers.forEach(request => request.abort());
   pageControllers.clear(); pageLoading.value = {}; pageErrors.value = {};
+}
+function clearLaborDetails() {
+  laborSources.value = {}; openedLaborWorkers.value = {}; openedLaborPayments.value = {};
 }
 
 const employees = computed(() => response.value?.data?.employees ?? null);
@@ -80,7 +86,6 @@ const grossSalaryAndBonus = computed(() => {
 });
 const data = computed(() => response.value?.data ?? null);
 const workforce = computed(() => response.value?.data?.workforce_cost ?? null);
-const personalLaborItems = computed(() => data.value?.collections.labor_sources?.items ?? []);
 const laborWorkers = computed(() => data.value?.collections.labor_workers?.items ?? []);
 const sectionLinks = computed(() => {
   if (!employees.value || !response.value?.selected_period) return [];
@@ -115,9 +120,9 @@ const employeeListColumns = [
   { key: "net", label: "应付净薪", amount: (item: EstablishedEmployeeItem) => item.net_salary_fen },
 ];
 const laborListColumns = [
-  { key: "gross", label: "劳务报酬", amount: (item: PersonalLaborItem) => item.gross_fen },
-  { key: "tax", label: "扣税（入账）", amount: (item: PersonalLaborItem) => item.booked_tax_fen },
-  { key: "net", label: "应付净额", amount: (item: PersonalLaborItem) => item.net_fen },
+  { key: "gross", label: "劳务报酬", amount: (item: LaborWorkerItem) => item.gross_fen },
+  { key: "tax", label: "扣税（入账）", amount: (item: LaborWorkerItem) => item.booked_tax_fen },
+  { key: "net", label: "应付净额", amount: (item: LaborWorkerItem) => item.net_fen },
 ];
 const filterLabel = computed(
   () => focusedEmployeeId.value ? "已定位员工" :
@@ -132,6 +137,11 @@ const filterLabel = computed(
       unknown: "在册状态未确认",
     })[filter.value],
 );
+const laborFilterLabel = computed(() => focusedEmployeeId.value ? "已定位人员" : ({
+  all: "全部劳务人员", employment_active: "当月在职劳务人员", employment_unpaid_leave: "停薪留职劳务人员",
+  employment_departed: "劳务已结束人员", employment_unknown: "用工状态未确认",
+  in_period: "已确认在册劳务人员", ended: "已确认不在册劳务人员", unknown: "在册状态未确认",
+})[filter.value]);
 
 function employmentStateLabel(state: EstablishedEmployeeItem["employment_state"]) {
   return {
@@ -179,6 +189,7 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
   const selection = selectionKey();
   controller?.abort();
   clearPageRequests();
+  clearLaborDetails();
   if (!contextGate) response.value = null;
   controller = new AbortController();
   const activeController = controller;
@@ -269,14 +280,15 @@ function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   controller?.abort(); controller = null;
   clearPageRequests();
+  clearLaborDetails();
   if (!keepContent) response.value = null;
   loading.value = keepContent; preparing.value = false;
 }
 
-async function loadMore(section: EmployeesQuery["section"] = "employees") {
-  section = section ?? "employees";
+async function loadMore(section: "employees" | "labor_workers" = "employees") {
   const key = pageKey(section);
-  if (section === "employees" && pageErrors.value[key] && !filteredEmployees.value.length) return loadEmployeeList();
+  if ((section === "employees" || section === "labor_workers") && pageErrors.value[key]
+    && !(response.value?.data?.collections[section]?.items.length)) return loadPeopleList(section);
   const current = response.value;
   const page = current?.data?.collections[section]?.page;
   if (!current?.data || !page?.has_more || !page.next_cursor || pageLoading.value[key]) return;
@@ -301,31 +313,77 @@ async function loadMore(section: EmployeesQuery["section"] = "employees") {
   } finally { if (isCurrent(generation, selection) && pageControllers.get(key) === request) { pageLoading.value[key] = false; pageControllers.delete(key); } }
 }
 
-async function loadEmployeeList() {
+async function loadPeopleList(section: "employees" | "labor_workers") {
   const current = response.value;
   if (!current?.data || loading.value) return;
-  const key = pageKey("employees"), generation = requestGeneration, selection = selectionKey();
+  const key = pageKey(section), generation = requestGeneration, selection = selectionKey();
   pageControllers.get(key)?.abort();
   const request = new AbortController(); pageControllers.set(key, request);
   pageLoading.value[key] = true; pageErrors.value[key] = "";
-  const collection = current.data.collections.employees;
+  const collection = current.data.collections[section];
   if (collection) response.value = { ...current, data: { ...current.data,
-    collections: { ...current.data.collections, employees: { ...collection, items: [] } } } };
+    collections: { ...current.data.collections, [section]: { ...collection, items: [] } } } };
   const valid = () => isCurrent(generation, selection) && pageControllers.get(key) === request && response.value?.snapshot_version === current.snapshot_version;
   try {
     const next = await fetchEmployeesDashboard(routePeriod(), request.signal,
-      { section: "employees", employee_filter: filter.value, expected_version: current.snapshot_version });
-    if (!valid() || !next.data || !response.value?.data || !next.data.collections.employees) return;
+      { section, employee_filter: filter.value, expected_version: current.snapshot_version });
+    if (!valid() || !next.data || !response.value?.data || !next.data.collections[section]) return;
     if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
     prepareDashboardCollections(next.data);
     const latest = response.value;
     response.value = { ...latest, data: { ...latest.data!, employee_filter: next.data.employee_filter,
-      collections: { ...latest.data!.collections, employees: next.data.collections.employees } } };
+      collections: { ...latest.data!.collections, [section]: next.data.collections[section] } } };
   } catch (caught) {
     if (!valid()) return;
     if (isDashboardSnapshotChanged(caught)) await refreshChanged();
     else pageErrors.value[key] = dashboardErrorMessage(caught);
   } finally { if (valid()) { pageLoading.value[key] = false; pageControllers.delete(key); } }
+}
+
+async function loadLaborSources(personId: string) {
+  const current = response.value, worker = laborWorkers.value.find(item => item.person_id === personId);
+  const key = pageKey("labor_sources", personId), previous = laborSources.value[personId];
+  if (!current?.data || !worker?.source_count || !openedLaborWorkers.value[personId] || pageLoading.value[key]
+    || (previous && (!previous.page.has_more || !previous.page.next_cursor))) return;
+  const generation = requestGeneration, selection = selectionKey(), request = new AbortController();
+  pageControllers.set(key, request); pageLoading.value[key] = true; pageErrors.value[key] = "";
+  const valid = () => isCurrent(generation, selection) && pageControllers.get(key) === request
+    && openedLaborWorkers.value[personId] && response.value?.snapshot_version === current.snapshot_version;
+  try {
+    const next = await fetchEmployeesDashboard(routePeriod(), request.signal, {
+      section: "labor_sources", employee_id: personId, employee_filter: focusedEmployeeId.value ? "all" : filter.value,
+      expected_version: current.snapshot_version, ...(previous ? { cursor: previous.page.next_cursor!, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT } : {}),
+    });
+    if (!valid() || !next.data?.collections.labor_sources) return;
+    if (next.snapshot_version !== current.snapshot_version) { await refreshChanged(); return; }
+    prepareDashboardCollections(next.data);
+    const collection = next.data.collections.labor_sources;
+    laborSources.value[personId] = previous ? appendDashboardCollection(previous, collection) : collection;
+  } catch (caught) {
+    if (!valid()) return;
+    if (isDashboardSnapshotChanged(caught)) await refreshChanged();
+    else pageErrors.value[key] = dashboardErrorMessage(caught);
+  } finally {
+    if (valid()) { pageLoading.value[key] = false; pageControllers.delete(key); }
+  }
+}
+
+function toggleLaborWorker(personId: string, event: Event) {
+  const open = (event.target as HTMLDetailsElement).open;
+  openedLaborWorkers.value[personId] = open;
+  if (open) { void loadLaborSources(personId); return; }
+  const key = pageKey("labor_sources", personId);
+  pageControllers.get(key)?.abort(); pageControllers.delete(key); pageLoading.value[key] = false;
+  for (const source of laborSources.value[personId]?.items ?? []) openedLaborPayments.value[source.source_id] = false;
+}
+function toggleLaborPayment(sourceId: string, event: Event) {
+  openedLaborPayments.value[sourceId] = (event.target as HTMLDetailsElement).open;
+}
+function laborPaginationScope(personId: string) { return `${paginationScope()}:${personId}`; }
+function pauseLaborSources(personId: string, scope: string) {
+  if (scope !== laborPaginationScope(personId)) return;
+  const key = pageKey("labor_sources", personId);
+  pageControllers.get(key)?.abort(); pageControllers.delete(key); pageLoading.value[key] = false;
 }
 
 function paginationScope() { return JSON.stringify([selectionKey(), response.value?.snapshot_version, requestGeneration]); }
@@ -362,6 +420,7 @@ watch(
       && !value[3] && response.value !== null && !loading.value;
     if (listOnly) {
       requestGeneration += 1; controller?.abort(); controller = null; clearPageRequests();
+      clearLaborDetails();
     } else invalidateRequests();
   },
   { flush: "sync" },
@@ -372,7 +431,7 @@ watch(
     if (previous && orgId === previous[0] && period === previous[1] && selectedFilter === previous[2] && employeeId === previous[3]) return;
     if (initialized && orgId && orgId === route.query.company_id) {
       if (previous && orgId === previous[0] && period === previous[1] && employeeId === previous[3]
-        && !employeeId && response.value && !loading.value) void loadEmployeeList();
+        && !employeeId && response.value && !loading.value) void Promise.all([loadPeopleList("employees"), loadPeopleList("labor_workers")]);
       else void loadPeriod(routePeriod());
     }
   },
@@ -429,7 +488,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <div class="section-heading">
             <div><h2 id="employee-list-title" tabindex="-1">员工明细</h2><p class="muted">{{ filterLabel }} · 已加载 {{ filteredEmployees.length }} 人</p></div>
             <div class="people-toolbar">
-              <DashboardSelect id="employee-filter-menu" label="筛选员工" :model-value="filter"
+              <DashboardSelect id="employee-filter-menu" label="筛选人员" :model-value="filter"
                 :groups="employeeFilterGroups" :scope="filterMenuScope" @change="selectEmployeeFilter" />
               <div class="display-switch" role="group" aria-label="员工与劳务展示方式">
                 <button type="button" :aria-pressed="displayMode === 'cards'" @click="displayMode = 'cards'">卡片</button>
@@ -480,60 +539,60 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
             </template>
           </div>
           </div>
-          <DashboardPagination automatic :active="!loading && activeSection === 'employee-list-title'" :scope="paginationScope()" @pause="pausePages('employees', $event)" :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
+          <DashboardPagination automatic item-label="人" :active="!loading && activeSection === 'employee-list-title'" :scope="paginationScope()" @pause="pausePages('employees', $event)" :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
         </section>
         <section class="panel">
           <div class="section-heading">
             <div><h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月已确认劳务 {{ employees.labor_worker_count }} 人 · 本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }}</p></div>
           </div>
-          <h3 class="labor-subheading">劳务人员</h3>
-          <p class="muted">按本月用工关系列示，暂无报酬记录的人员也在册。已加载 {{ laborWorkers.length }} 人</p>
-          <p v-if="!laborWorkers.length && !pageErrors[pageKey('labor_workers')]" class="muted">本月没有劳务人员。</p>
-          <div v-if="laborWorkers.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" aria-label="劳务人员名册">
-            <div class="employee-grid" :class="{ 'employee-list': displayMode === 'list' }">
-              <article v-for="worker in laborWorkers" :key="worker.person_id" class="employee-card workforce-worker dashboard-record-card" data-section-focus tabindex="-1">
-                <h3 class="employee-card-name"><span class="employee-status labor" role="img" aria-label="个人劳务"></span><span>{{ worker.name }}</span></h3>
-                <p class="muted">{{ monthlyEmploymentLabel(worker) }}</p>
-                <p v-for="(segment, index) in worker.relationship_segments" :key="index" class="muted">{{ relationshipSegmentLabel(segment) }}</p>
-                <p v-if="worker.in_period === null || hasUncertainPeriod(worker)" class="muted">本月部分用工期间尚未确认，由 AI 会计核对中。</p>
-                <p class="muted">{{ worker.has_labor_activity ? '本月有劳务报酬记录' : '本月暂无劳务报酬记录' }}</p>
-              </article>
-            </div>
-          </div>
-          <DashboardPagination automatic :active="!loading && activeSection === 'labor-title'" :scope="paginationScope()" @pause="pausePages('labor_workers', $event)" :page="data?.collections.labor_workers?.page" :loaded="laborWorkers.length" :loading="pageLoading[pageKey('labor_workers')]" :error="pageErrors[pageKey('labor_workers')]" @more="loadMore('labor_workers')" @retry="loadMore('labor_workers')" />
           <h3 class="labor-subheading">劳务报酬记录</h3>
-          <p class="muted">已加载 {{ personalLaborItems.length }} 笔</p>
-          <p v-if="!personalLaborItems.length && !pageErrors[pageKey('labor_sources')]" class="muted">本月暂无劳务报酬记录。</p>
-          <div v-if="personalLaborItems.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
+          <p class="muted">{{ laborFilterLabel }} · 已加载 {{ laborWorkers.length }} 人</p>
+          <p v-if="pageLoading[pageKey('labor_workers')] && !laborWorkers.length" class="muted" role="status">正在读取所选劳务人员…</p>
+          <p v-else-if="!laborWorkers.length && !pageErrors[pageKey('labor_workers')]" class="muted">当前范围没有劳务人员。</p>
+          <div v-if="laborWorkers.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
           <div class="employee-grid" :class="{ 'employee-list labor-list': displayMode === 'list' }">
             <div v-if="displayMode === 'list'" class="employee-list-header">
               <span>劳务对象</span><span v-for="column in laborListColumns" :id="`labor-column-${column.key}`" :key="column.key">{{ column.label }}</span><span aria-hidden="true"></span>
             </div>
-            <details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
+            <details v-for="worker in laborWorkers" :key="worker.person_id" :data-person-id="worker.person_id" :open="openedLaborWorkers[worker.person_id]" class="employee-card dashboard-record-card" data-section-focus tabindex="-1" @toggle="toggleLaborWorker(worker.person_id, $event)">
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="displayMode === 'list'" class="employee-list-summary">
-                  <div class="employee-list-identity"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}<span v-if="!labor.relationship_confirmed"> · 用工关系未确认</span></p></div></div>
-                  <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': column.key === 'gross' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(labor)) }}</strong>
+                  <div class="employee-list-identity"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><div class="employee-name"><h3>{{ worker.name }}</h3><p class="muted">{{ monthlyEmploymentLabel(worker) }} · {{ worker.source_count ? worker.source_count + ' 笔报酬' : '本月暂无劳务报酬记录' }}</p></div></div>
+                  <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': column.key === 'gross' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(worker)) }}</strong>
                   <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                 </div>
                 <template v-else>
-                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><span>{{ labor.name }}</span></h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
-                  <p v-if="!labor.relationship_confirmed" class="muted">本月用工关系尚未确认，报酬记录保留。</p>
+                  <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><span>{{ worker.name }}</span></h3><strong class="cost-amount">{{ formatFen(worker.gross_fen) }}</strong></div>
+                  <p class="muted">{{ monthlyEmploymentLabel(worker) }}</p>
+                  <div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(worker.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(worker.net_fen) }}</strong></div></div>
+                  <p class="muted">{{ worker.source_count ? worker.source_count + ' 笔报酬 · 展开查看报酬及付款' : '本月暂无劳务报酬记录' }}</p>
                 </template>
               </summary>
               <div class="employee-detail" :class="{ 'dashboard-business-expansion': displayMode === 'list' }">
-                <p v-if="displayMode === 'list' && !labor.relationship_confirmed" class="muted">本月用工关系尚未确认，报酬记录保留。</p>
-                <p v-if="labor.checking" class="muted">AI 会计核对中</p>
-                <section v-for="obligation in labor.obligations" :key="obligation.key" class="labor-payment-detail">
-                  <h3>{{ obligationLabel(obligation.name) }}<span v-if="!laborAmountAlreadyShown(labor, obligation)"> · {{ formatFen(obligation.amount_fen) }}</span></h3>
-                  <dl class="amount-grid"><div><dt>公司已付</dt><dd :class="cashFlowClass(obligation.paid_fen, 'outflow')">{{ formatFen(obligation.paid_fen) }}</dd></div><div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div><div><dt>月末未付</dt><dd class="payable-amount">{{ formatFen(obligation.remaining_fen) }}</dd></div></dl>
+                <p v-for="(segment, index) in worker.relationship_segments" :key="index" class="muted">{{ relationshipSegmentLabel(segment) }}</p>
+                <p v-if="worker.in_period === null || hasUncertainPeriod(worker)" class="muted">本月部分用工期间尚未确认，由 AI 会计核对中。</p>
+                <p v-if="worker.source_count" class="muted">计入本月费用 {{ formatFen(worker.personal_labor_fen) }} · 计入资产或项目 {{ formatFen(worker.capitalized_labor_fen) }}</p>
+                <p v-if="pageLoading[pageKey('labor_sources', worker.person_id)] && !laborSources[worker.person_id]" class="muted" role="status">正在读取劳务报酬记录…</p>
+                <section v-for="labor in laborSources[worker.person_id]?.items ?? []" :key="labor.source_id" class="labor-source-record" :data-source-id="labor.source_id">
+                  <div class="section-heading"><h3>{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div>
+                  <dl class="amount-grid"><div><dt>已扣个税</dt><dd>{{ formatFen(labor.booked_tax_fen) }}</dd></div><div><dt>应付净额</dt><dd class="payable-amount">{{ formatFen(labor.net_fen) }}</dd></div></dl>
+                  <p v-if="!labor.relationship_confirmed" class="muted">本月用工关系尚未确认，报酬记录保留。</p>
+                  <p v-if="labor.checking" class="muted">AI 会计核对中</p>
+                  <section v-for="obligation in labor.obligations" :key="obligation.key" class="labor-payment-detail">
+                    <h3>{{ obligationLabel(obligation.name) }}<span v-if="!laborAmountAlreadyShown(labor, obligation)"> · {{ formatFen(obligation.amount_fen) }}</span></h3>
+                    <dl class="amount-grid"><div><dt>公司已付</dt><dd :class="cashFlowClass(obligation.paid_fen, 'outflow')">{{ formatFen(obligation.paid_fen) }}</dd></div><div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div><div><dt>月末未付</dt><dd class="payable-amount">{{ formatFen(obligation.remaining_fen) }}</dd></div></dl>
+                  </section>
+                  <details class="labor-source-payments" :open="openedLaborPayments[labor.source_id]" @toggle="toggleLaborPayment(labor.source_id, $event)">
+                    <summary>查看收付款事项</summary>
+                    <BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" presentation="labor" :labor-context="labor" :expanded="Boolean(openedLaborWorkers[worker.person_id] && openedLaborPayments[labor.source_id])" hide-summary @changed="refreshChanged" />
+                  </details>
                 </section>
-                <BusinessStatusDetails :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version ?? undefined" settlement-view="historical" presentation="labor" :labor-context="labor" summary-label="查看收付款事项" @changed="refreshChanged" />
+                <DashboardPagination v-if="worker.source_count" automatic compact item-label="笔" :active="Boolean(openedLaborWorkers[worker.person_id]) && !loading" :scope="laborPaginationScope(worker.person_id)" @pause="pauseLaborSources(worker.person_id, $event)" :page="laborSources[worker.person_id]?.page" :loaded="laborSources[worker.person_id]?.items.length ?? 0" :loading="pageLoading[pageKey('labor_sources', worker.person_id)]" :error="pageErrors[pageKey('labor_sources', worker.person_id)]" @more="loadLaborSources(worker.person_id)" @retry="loadLaborSources(worker.person_id)" />
               </div>
             </details>
           </div>
           </div>
-          <DashboardPagination automatic :active="!loading && activeSection === 'labor-title'" :scope="paginationScope()" @pause="pausePages('labor_sources', $event)" :page="data?.collections.labor_sources?.page" :loaded="personalLaborItems.length" :loading="pageLoading[pageKey('labor_sources')]" :error="pageErrors[pageKey('labor_sources')]" @more="loadMore('labor_sources')" @retry="loadMore('labor_sources')" />
+          <DashboardPagination automatic item-label="人" :active="!loading && activeSection === 'labor-title'" :scope="paginationScope()" @pause="pausePages('labor_workers', $event)" :page="!laborWorkers.length && (pageLoading[pageKey('labor_workers')] || pageErrors[pageKey('labor_workers')]) ? undefined : data?.collections.labor_workers?.page" :loaded="laborWorkers.length" :loading="pageLoading[pageKey('labor_workers')]" :error="pageErrors[pageKey('labor_workers')]" @more="loadMore('labor_workers')" @retry="loadMore('labor_workers')" />
         </section>
       </div>
     </div>
@@ -634,6 +693,11 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .employee-list .employee-detail .amount-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px 16px; }
 .employee-list .employee-detail dd { font-size: 13px; font-weight: 500; line-height: 1.5; }
 .labor-payment-detail + .labor-payment-detail { margin-top: 18px; }
+.labor-source-record { min-width: 0; padding: 16px 0; }
+.labor-source-record + .labor-source-record { border-top: 1px solid var(--line); }
+.labor-source-record .section-heading h3 { margin: 0; font-size: 13px; }
+.labor-source-payments { margin-top: 12px; }
+.labor-source-payments > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .labor-subheading { margin: 24px 0 8px; font-size: 15px; }
 article.workforce-worker { cursor: default; }
 .workforce-worker h3 { margin: 0; font-size: 16px; }

@@ -21,7 +21,7 @@ const responses = {
 };
 const companyId = responses.context.current_company.company_id;
 
-async function withServer(run, { displayMode, assetWork, assetListInitialized } = {}) {
+async function withServer(run, { displayMode, assetWork, assetListInitialized, laborDetails } = {}) {
   globalThis.stage7RenderResponses = responses;
   if (assetWork) globalThis.stage7AssetRenderWork = assetWork;
   globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${companyId}` } };
@@ -38,6 +38,11 @@ async function withServer(run, { displayMode, assetWork, assetListInitialized } 
       const refName = key === "funds" ? "funds" : key === "reports" ? "report" : "response";
       const seeded = key === "funds" ? "globalThis.stage7RenderResponses.funds.data" : `globalThis.stage7RenderResponses.${key}`;
       code = code.replace(new RegExp(`const ${refName} = (?:ref|shallowRef)<[^;\\n]+>\\(null\\)`), `const ${refName} = ref(${seeded})`);
+      if (key === "employees" && laborDetails) {
+        code = code.replace(/const laborSources = ref<[^;\n]+>\(\{\}\)/, "const laborSources = ref(globalThis.stage7LaborDetails.sources)")
+          .replace(/const openedLaborWorkers = ref<[^;\n]+>\(\{\}\)/, "const openedLaborWorkers = ref(globalThis.stage7LaborDetails.workers)")
+          .replace(/const openedLaborPayments = ref<[^;\n]+>\(\{\}\)/, "const openedLaborPayments = ref(globalThis.stage7LaborDetails.payments)");
+      }
       if (["employees", "assets"].includes(key) && displayMode !== undefined) {
         code = code.replace(/const displayMode = ref<[^;\n]+>\("cards"\)/, `const displayMode = ref("${displayMode}")`);
         if (key === "assets" && displayMode === "list") code = code.replace("const listInitialized = ref(false)", "const listInitialized = ref(true)");
@@ -54,7 +59,25 @@ async function withServer(run, { displayMode, assetWork, assetListInitialized } 
     server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
   try { return await run(server); }
-  finally { await server.close(); delete globalThis.stage7RenderResponses; delete globalThis.stage7AssetRenderWork; }
+  finally { await server.close(); delete globalThis.stage7RenderResponses; delete globalThis.stage7AssetRenderWork; delete globalThis.stage7LaborDetails; }
+}
+
+function addLaborPeople(response) {
+  response.data.collections.labor_workers = structuredClone(samples.employees_labor_people.response.data.collections.labor_workers);
+  return response;
+}
+
+function seedLaborDetails(response) {
+  const rows = response.data.collections.labor_sources.items;
+  const people = [...new Set(rows.map(row => row.person_id))];
+  globalThis.stage7LaborDetails = {
+    sources: Object.fromEntries(people.map(personId => {
+      const items = rows.filter(row => row.person_id === personId);
+      return [personId, { items, page: { total_count: items.length, filtered_count: items.length, returned_count: items.length, has_more: false, next_cursor: null } }];
+    })),
+    workers: Object.fromEntries(people.map(personId => [personId, true])),
+    payments: Object.fromEntries(rows.map(row => [row.source_id, true])),
+  };
 }
 
 function routerFor(path) {
@@ -118,7 +141,8 @@ test("employee API defaults to employed and rejects a response from another filt
   const requests = [];
   globalThis.fetch = async path => {
     requests.push(new URL(path, window.location.origin));
-    return new Response(JSON.stringify(response));
+    return new Response(JSON.stringify({ schema_version: 6, company_id: response.read_context.company_id,
+      period: response.selected_period.key, model_version: response.snapshot_version, state: "ready", response }));
   };
   const { fetchEmployeesDashboard } = await server.ssrLoadModule("/src/api/employees.ts");
   const result = await fetchEmployeesDashboard(response.selected_period.key);
@@ -226,12 +250,13 @@ test("employee overview retains zero and contribution-only months and signed cor
 
 test("employee overview remains company-wide under filters and exact focus while employee and personal labor details stay available", async () => withServer(async server => {
   for (const query of [{ employee_filter: "employment_active" }, { employee_filter: "all", employee_id: "employee" }]) {
-    const response = structuredClone(samples.employees_focused.response);
+    const response = addLaborPeople(structuredClone(samples.employees_focused.response));
     Object.assign(response.data.employees, overviewSummary);
     response.data.outstanding_remuneration_fen = overviewSummary.outstanding_net_fen;
     response.data.employee_filter = query.employee_filter;
     response.data.employee_id = query.employee_id ?? null;
     response.data.collections.labor_sources = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources);
+    seedLaborDetails(response);
     const { html, overview } = await renderEmployeeOverview(server, response, query);
     assertEmployeeOverviewValues(overview, overviewValues);
     assert.match(overview, /全公司/);
@@ -252,7 +277,7 @@ test("employee overview remains company-wide under filters and exact focus while
     }
     if (query.employee_id) assert.match(html, /<details\b(?=[^>]*id="employee-card-target")(?=[^>]*open)[^>]*>/);
   }
-}));
+}, { laborDetails: true }));
 
 test("current generated responses render all five owner dashboard pages", async () => withServer(async server => {
   globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
@@ -611,8 +636,8 @@ test("employee cards and lists state selected-month and month-end relationships 
   }
 });
 
-test("personal labor sources render the projected person name", async () => withServer(async server => {
-  const response = samples.employees_labor_sources.response;
+test("personal labor people render one projected identity without pre-reading remuneration", async () => withServer(async server => {
+  const response = samples.employees_labor_people.response;
   globalThis.stage7RenderResponses = { ...responses, employees: response };
   globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
   const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
@@ -622,12 +647,15 @@ test("personal labor sources render the projected person name", async () => with
   const app = createSSRApp(component); app.use(router);
   const html = await renderToString(app);
   assert.match(html, /个人劳务/);
-  const sources = response.data.collections.labor_sources.items;
-  assert(sources.length);
-  for (const source of sources) {
-    assert.equal("party" in source, false);
-    assert(html.includes(source.name), source.person_id);
+  assert.equal("labor_sources" in response.data.collections, false);
+  const workers = response.data.collections.labor_workers.items;
+  assert(workers.length);
+  const laborSection = html.slice(html.indexOf('id="labor-title"'));
+  for (const worker of workers) {
+    assert.equal("party" in worker, false);
+    assert.equal(laborSection.split(worker.name).length - 1, 1, worker.person_id);
   }
+  assert.doesNotMatch(html, /劳务人员名册|labor-source-record|查看收付款事项/);
 }));
 
 test("employee and labor modules remain visible with no wages or labor fees", async () => {
@@ -649,37 +677,67 @@ test("employee and labor modules remain visible with no wages or labor fees", as
         ...Object.fromEntries(Object.keys(employeeTemplate).filter(key => key.endsWith("_fen")).map(key => [key, "0"])),
       };
       response.data.collections.employees = { items: [employee], page: page(1) };
-      response.data.collections.labor_sources = { items: [], page: page(0) };
+      delete response.data.collections.labor_sources;
+      const zeroAmounts = { gross_fen: "0", booked_tax_fen: "0", net_fen: "0", personal_labor_fen: "0", capitalized_labor_fen: "0", source_count: 0 };
       response.data.collections.labor_workers = { items: [
-        { person_id: "synthetic-labor-a", name: "合成劳务甲", employment_state: "regular",
+        { ...zeroAmounts, person_id: "synthetic-labor-a", name: "合成劳务甲", employment_state: "regular",
           period_states: ["labor", "regular"], possible_period_states: ["labor", "regular"], in_period: true,
           relationship_segments: [{ state: "labor", start: "2026-01-01", end: "2026-01-15" }], has_labor_activity: false },
-        { person_id: "synthetic-labor-b", name: "合成劳务乙", employment_state: "labor",
+        { ...zeroAmounts, person_id: "synthetic-labor-b", name: "合成劳务乙", employment_state: "labor",
           period_states: ["labor"], possible_period_states: ["labor"], in_period: true,
           relationship_segments: [{ state: "labor", start: "2026-01", end: null }], has_labor_activity: false },
       ], page: page(2) };
       const { html } = await renderEmployeeOverview(server, response);
-      for (const text of ["员工明细", "个人劳务", "劳务人员", "本月已确认劳务 2 人", "合成劳务甲", "合成劳务乙", "本月暂无工资记录", "本月暂无劳务报酬记录", "月末在职", "2026-01-15前", "2026-01（按月确认）起"]) {
+      for (const text of ["员工明细", "个人劳务", "劳务报酬记录", "本月已确认劳务 2 人", "合成劳务甲", "合成劳务乙", "本月暂无工资记录", "本月暂无劳务报酬记录", "月末在职", "2026-01-15前", "2026-01（按月确认）起"]) {
         assert(html.includes(text), `${displayMode}: ${text}`);
       }
-      assert.doesNotMatch(html, /2026-01-01（按月确认）|synthetic-labor/);
+      const laborSection = html.slice(html.indexOf('id="labor-title"'));
+      assert.match(laborSection, /完整总计 2 人 · 筛选总计 2 人 · 已加载 2 人/);
+      assert.equal((laborSection.match(/¥0\.00/g) ?? []).length, 8, "company summary and both zero-record cards retain their real amounts");
+      assert.doesNotMatch(laborSection, /劳务人员名册|展开查看报酬及付款|查看收付款事项/);
+      assert.doesNotMatch(html, /2026-01-01（按月确认）/);
     }, { displayMode });
   }
 });
 
-test("labor business with an unconfirmed relationship keeps its name and booked money", async () => withServer(async server => {
-  const response = structuredClone(samples.employees_labor_sources.response);
-  const labor = response.data.collections.labor_sources.items[0];
-  labor.relationship_confirmed = false;
-  response.data.collections.labor_workers = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+test("labor person with an unconfirmed relationship keeps its name and booked money", async () => withServer(async server => {
+  const response = structuredClone(samples.employees_labor_people.response);
+  const labor = response.data.collections.labor_workers.items.find(worker => worker.source_count > 0);
+  assert(labor);
+  labor.in_period = null;
+  labor.employment_state = "unknown";
+  labor.period_states = ["unknown"];
+  labor.possible_period_states = [];
   response.data.employees.labor_worker_count = 0;
   const { html } = await renderEmployeeOverview(server, response);
   const { formatFen } = await server.ssrLoadModule("/src/utils/money.ts");
   assert(html.includes(labor.name));
   assert(html.includes(formatFen(labor.gross_fen)));
-  assert.match(html, /本月用工关系尚未确认，报酬记录保留/);
+  assert.match(html, /月末用工状态未确认/);
   assert.match(html, /本月已确认劳务 0 人/);
 }));
+
+test("one labor person combines complete money while expanded records retain their own classifications", async () => {
+  for (const displayMode of ["cards", "list"]) await withServer(async server => {
+    const response = structuredClone(samples.employees_labor_people.response);
+    const worker = response.data.collections.labor_workers.items.find(item => item.source_count > 0);
+    const expense = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources.items[0]);
+    const capital = { ...structuredClone(expense), source_id: "synthetic-capital-labor", subject_id: "synthetic-capital-labor",
+      capitalized: true, project_id: "synthetic-project", gross_fen: "250000", net_fen: "250000", booked_tax_fen: "0", obligations: [] };
+    Object.assign(worker, { source_count: 2, gross_fen: "750000", net_fen: "750000", booked_tax_fen: "0",
+      personal_labor_fen: "500000", capitalized_labor_fen: "250000" });
+    response.data.collections.labor_workers = { items: [worker], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
+    response.data.collections.labor_sources = { items: [expense, capital], page: { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null } };
+    seedLaborDetails(response);
+    const { html } = await renderEmployeeOverview(server, response, { employee_filter: "all" });
+    assert.equal((html.match(/data-person-id=/g) ?? []).length, 1, "two sources share one person card");
+    assert.equal((html.match(/class="labor-source-record"/g) ?? []).length, 2, "both precise sources remain accessible");
+    assert.match(html, /¥7,500\.00/);
+    assert.match(html, /计入本月费用 ¥5,000\.00 · 计入资产或项目 ¥2,500\.00/);
+    assert.match(html, /2026-01 · 计入本月费用/);
+    assert.match(html, /2026-01 · 计入资产或项目/);
+  }, { displayMode, laborDetails: true });
+});
 
 test("month-precision relationship changes retain their uncertainty without inventing a date", async () => withServer(async server => {
   const response = structuredClone(samples.employees_focused.response);
@@ -698,8 +756,9 @@ test("month-precision relationship changes retain their uncertainty without inve
 }));
 
 test("employee and personal labor list rows align each complete column with its rendered amount", async () => withServer(async server => {
-  const response = structuredClone(samples.employees_focused.response);
+  const response = addLaborPeople(structuredClone(samples.employees_focused.response));
   response.data.collections.labor_sources = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources);
+  seedLaborDetails(response);
   const [employee] = response.data.collections.employees.items;
   Object.assign(employee, {
     name: "合成员工很长的姓名用于核查完整展示",
@@ -762,13 +821,12 @@ test("employee and personal labor list rows align each complete column with its 
   assert.match(laborRow, /employee-list-chevron/);
   assert.match(html, /薪酬补充/);
   assert.match(html, /公司已付/);
-}, { displayMode: "list" }));
+}, { displayMode: "list", laborDetails: true }));
 
-test("employee and personal labor share one display switch and employee filter with cards as default", async () => {
+test("employee and personal labor share one display switch and person filter with cards as default", async () => {
   for (const displayModes of [{}, { displayMode: "list" }, { displayMode: "cards" }]) {
     await withServer(async server => {
-      const response = structuredClone(samples.employees_focused.response);
-      response.data.collections.labor_sources = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources);
+      const response = addLaborPeople(structuredClone(samples.employees_focused.response));
       globalThis.stage7RenderResponses = { ...responses, employees: response };
       globalThis.fetch = async () => new Response(JSON.stringify(responses.context));
       const { useDashboardContext } = await server.ssrLoadModule("/src/composables/useDashboardContext.ts");
@@ -780,18 +838,18 @@ test("employee and personal labor share one display switch and employee filter w
       const listSummaries = [...html.matchAll(/<summary\b[^>]*>([\s\S]*?)<\/summary>/g)]
         .map(match => match[1]).filter(row => /class="[^"]*\bemployee-list-summary\b[^"]*"/.test(row));
       const [employee] = response.data.collections.employees.items;
-      const [labor] = response.data.collections.labor_sources.items;
+      const labor = response.data.collections.labor_workers.items.find(worker => worker.source_count > 0);
       assert.equal(listSummaries.some(row => row.includes(employee.name)), displayModes.displayMode === "list", "employee mode");
       assert.equal(listSummaries.some(row => row.includes(labor.name)), displayModes.displayMode === "list", "labor mode");
       assert.equal((html.match(/class="display-switch"/g) ?? []).length, 1, "one shared display switch");
-      assert.equal((html.match(/aria-label="筛选员工"/g) ?? []).length, 1, "one employee filter");
+      assert.equal((html.match(/aria-label="筛选人员"/g) ?? []).length, 1, "one shared person filter");
       const employeeSection = html.match(/<section\b[^>]*class="panel"[^>]*>([\s\S]*?)<\/section>/)?.[1];
       assert(employeeSection, "employee detail section");
       assert.match(employeeSection, /id="employee-list-title"/);
       assert.match(employeeSection, /class="people-toolbar"/);
-      assert.match(employeeSection, /aria-label="筛选员工"/);
+      assert.match(employeeSection, /aria-label="筛选人员"/);
       assert.match(employeeSection, /class="display-switch"/);
-      assert.doesNotMatch(html.slice(0, html.indexOf('class="employees-content"')), /class="people-toolbar"|class="display-switch"|aria-label="筛选员工"/);
+      assert.doesNotMatch(html.slice(0, html.indexOf('class="employees-content"')), /class="people-toolbar"|class="display-switch"|aria-label="筛选人员"/);
       for (const [label, selectedMode] of [["员工与劳务展示方式", displayModes.displayMode]]) {
         const group = html.match(new RegExp(`<div\\b(?=[^>]*role="group")(?=[^>]*aria-label="${label}")[^>]*>([\\s\\S]*?)</div>`));
         assert(group, label);
@@ -841,7 +899,8 @@ test("employee list details add payment and personal splits while cards retain t
 test("personal labor parent details pass displayed facts to avoid repeating exact amounts in nested progress", async () => {
   for (const displayMode of ["list", "cards"]) {
     await withServer(async server => {
-      const response = structuredClone(samples.employees_labor_sources.response);
+      const response = addLaborPeople(structuredClone(samples.employees_labor_sources.response));
+      seedLaborDetails(response);
       const [labor] = response.data.collections.labor_sources.items;
       const [obligation] = labor.obligations;
       const businessStatus = structuredClone(samples.business_status.response.data);
@@ -864,20 +923,20 @@ test("personal labor parent details pass displayed facts to avoid repeating exac
       const { default: component } = await server.ssrLoadModule("/src/views/EmployeesView.vue");
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app);
-      const detail = html.match(/<div\b[^>]*class="(?:[^"]*\s)?employee-detail(?:\s[^"]*)?"[^>]*>([\s\S]*?)<\/details>/)?.[1];
+      const detail = html.match(/<section\b[^>]*class="labor-source-record"[^>]*>([\s\S]*?)<\/details>/)?.[1];
       assert(detail, `${displayMode} labor detail`);
       assert.match(detail, /公司已付[\s\S]*¥0\.00/);
       assert.match(detail, /代付、抵销等[\s\S]*¥0\.00/);
       assert.match(detail, /月末未付[\s\S]*¥5,000\.00/);
-      assert.equal((detail.match(/¥5,000\.00/g) ?? []).length, 1, "only the additional unpaid amount remains in expanded details");
+      assert.equal((detail.match(/¥5,000\.00/g) ?? []).length, 3, "the source shows gross, net and unpaid once each; nested progress does not repeat them");
       assert.doesNotMatch(detail, /劳务确认毛额/);
       assert.match(detail, /查看收付款事项/);
-    }, { displayMode });
+    }, { displayMode, laborDetails: true });
   }
 });
 
 test("employee list status dots follow salary business scope rather than the shared roster state", async () => withServer(async server => {
-  const response = structuredClone(samples.employees_focused.response);
+  const response = addLaborPeople(structuredClone(samples.employees_focused.response));
   const [template] = response.data.collections.employees.items;
   const scopes = [
     ["wage_income", "工资薪金", "绿色：本月按工资薪金核算，实发为零也可能属于此类。"],

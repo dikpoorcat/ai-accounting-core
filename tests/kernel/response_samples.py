@@ -576,6 +576,11 @@ def native_samples(root):
         Dashboard(labor.engine).employees("2026-01", section="labor_workers"),
     )
     add(
+        "employees_labor_people",
+        "dashboard_employees",
+        Dashboard(labor.engine).employees("2026-01", employee_filter="all"),
+    )
+    add(
         "employees_labor_sources",
         "dashboard_employees",
         Dashboard(labor.engine).employees(

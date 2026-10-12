@@ -33,7 +33,7 @@ from .response_contracts import (
 from .stored_json import loads_finite_unique, loads_unique
 from .types import ActualDate, EvidenceDigest, YearMonth, canonical, digest
 
-CONTENT_VERSION = 5
+CONTENT_VERSION = 6
 DASHBOARD_READ_MODEL_DDL = """
 CREATE TABLE dashboard_read_model_commit(
  id BLOB PRIMARY KEY CHECK(length(id)=32),
@@ -140,6 +140,7 @@ class ModelRoot(_StrictModel):
         "ai-accounting-kernel/2/dashboard-read-model/3",
         "ai-accounting-kernel/2/dashboard-read-model/4",
         "ai-accounting-kernel/2/dashboard-read-model/5",
+        "ai-accounting-kernel/2/dashboard-read-model/6",
     ]
     content_version: Positive
     scope: ModelScope

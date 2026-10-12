@@ -25,7 +25,7 @@ test("first voucher display permits only its bounded snapshot-associated collect
 
 test("display changes retain approved continuation reads without permitting fresh unrelated collections", () => {
   for (const [key, section] of [["brief", "activity"], ["funds", "accounts"],
-    ["employees", "labor_workers"], ["employees", "labor_sources"], ["assets", "projects"]]) {
+    ["employees", "labor_workers"], ["assets", "projects"]]) {
     const current = { key, action: key }, url = query(section);
     url.pathname = `/api/dashboard/${key}`;
     assert.throws(() => verifyLocalRead(url, current, selected, snapshot));
@@ -37,4 +37,28 @@ test("display changes retain approved continuation reads without permitting fres
   const report = query("statements"); report.pathname = "/api/dashboard/quarterly-report";
   report.searchParams.set("cursor", "cursor");
   assert.throws(() => verifyLocalRead(report, { key: "reports", action: "quarterly-report" }, selected, snapshot));
+});
+
+
+test("labor source continuation remains an explicit detail read bound to one formal person", () => {
+  const current = { key: "employees", action: "employees" }, url = query("labor_sources");
+  url.pathname = "/api/dashboard/employees";
+  url.searchParams.set("cursor", "person-bound-cursor");
+  assert.throws(() => verifyLocalRead(url, current, selected, snapshot), /unrelated collection/);
+  assert.throws(() => verifyLocalRead(url, current, selected, snapshot, "labor_sources"), /exact personnel identity/);
+  url.searchParams.set("employee_id", "formal-person");
+  verifyLocalRead(url, current, selected, snapshot, "labor_sources");
+  assert.throws(() => verifyLocalRead(url, current, selected, snapshot, "employees"), /unrelated collection/);
+  url.searchParams.delete("cursor");
+  verifyLocalRead(url, current, selected, snapshot, "labor_sources");
+  url.searchParams.set("employee_id", "");
+  assert.throws(() => verifyLocalRead(url, current, selected, snapshot, "labor_sources"), /exact personnel identity/);
+});
+
+test("personnel filter permits the labor first page beside employees without default-reading source detail", () => {
+  const current = { key: "employees", action: "employees" }, url = query("labor_workers");
+  url.pathname = "/api/dashboard/employees";
+  verifyLocalRead(url, current, selected, snapshot, "employees");
+  url.searchParams.set("section", "labor_sources"); url.searchParams.set("employee_id", "formal-person");
+  assert.throws(() => verifyLocalRead(url, current, selected, snapshot, "employees"), /unrelated collection/);
 });

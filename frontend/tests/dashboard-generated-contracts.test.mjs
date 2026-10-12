@@ -45,7 +45,7 @@ test("the explicit generated manifest covers every browser-visible response cont
     "dashboard_brief_group", "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_employees_delivery", "dashboard_funds", "dashboard_funds_delivery",
     "dashboard_period_preparation", "dashboard_quarterly_report", "dashboard_quarterly_report_delivery",
-    "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_replay",
+    "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_fact_registration", "prepare_replay",
     "read_work_draft", "replay_classification_prepare", "replay_status", "report_export_receipt", "report_export_status", "resume_replay", "save_work_draft", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
@@ -56,6 +56,7 @@ test("the explicit generated manifest covers every browser-visible response cont
     "inventory_batch",
     "list_work_drafts",
     "prepare_replay",
+    "prepare_fact_registration",
     "read_work_draft",
     "replay_classification_prepare",
     "replay_status",
@@ -101,7 +102,7 @@ test("all non-context dashboards carry required read context and current schema 
   const versions = {
     workflow: 2, period_readiness: 1,
     dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 9,
-    dashboard_employees: 12, dashboard_assets: 10, dashboard_business_status: 10,
+    dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 10,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {
@@ -128,6 +129,28 @@ test("generated money validation accepts canonical int64 strings and rejects num
     const field = findField(changed, (key, current) => key.endsWith("_fen") && typeof current === "string");
     assert(field); field.owner[field.key] = value;
     assert.equal(validators.validateDashboardFundsResponse(changed), false, String(value));
+  }
+});
+
+test("labor people require exact aggregate money and a nonnegative source count", () => {
+  const original = samples.employees_labor_people.response;
+  const workers = original.data.collections.labor_workers.items;
+  const zero = workers.find(worker => worker.source_count === 0);
+  const paid = workers.find(worker => worker.source_count > 0);
+  assert(zero && paid, "backend samples include a zero-record person and a person with remuneration");
+  assert.equal("labor_sources" in original.data.collections, false, "person cards do not pre-read source details");
+  for (const field of ["gross_fen", "booked_tax_fen", "net_fen", "personal_labor_fen", "capitalized_labor_fen"]) {
+    assert.equal(zero[field], "0", field);
+    for (const value of [null, 0, "01", "9223372036854775808"]) {
+      const malformed = structuredClone(original);
+      malformed.data.collections.labor_workers.items[0][field] = value;
+      assert.equal(validators.validateDashboardEmployeesResponse(malformed), false, `${field}: ${value}`);
+    }
+  }
+  for (const value of [-1, "0", true]) {
+    const malformed = structuredClone(original);
+    malformed.data.collections.labor_workers.items[0].source_count = value;
+    assert.equal(validators.validateDashboardEmployeesResponse(malformed), false, `source_count: ${value}`);
   }
 });
 
@@ -236,7 +259,8 @@ test("labor worker contracts validate a zero-fee roster independently of financi
     items: [{ person_id: "synthetic-labor", name: "合成劳务", employment_state: "labor",
       period_states: ["labor"], possible_period_states: ["labor"],
       relationship_segments: [{ state: "labor", start: "2026-01", end: null }],
-      in_period: true, has_labor_activity: false }],
+      in_period: true, has_labor_activity: false, source_count: 0,
+      gross_fen: "0", booked_tax_fen: "0", net_fen: "0", personal_labor_fen: "0", capitalized_labor_fen: "0" }],
     page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null },
   };
   assert(validate(response), JSON.stringify(validate.errors));

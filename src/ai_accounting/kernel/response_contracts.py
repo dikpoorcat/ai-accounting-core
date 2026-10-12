@@ -38,7 +38,7 @@ from .response_types import (
     Version5,
     Version9,
     Version10,
-    Version12,
+    Version13,
     Version19,
     WireFen,
 )
@@ -1952,6 +1952,12 @@ class LaborWorkerItem(ResponseObject):
     relationship_segments: list[WorkforceRelationshipSegment]
     in_period: bool | None
     has_labor_activity: bool
+    gross_fen: WireFen
+    booked_tax_fen: WireFen
+    net_fen: WireFen
+    personal_labor_fen: WireFen
+    capitalized_labor_fen: WireFen
+    source_count: Count
 
 
 class EmployeeCollections(ResponseObject):
@@ -1985,7 +1991,7 @@ class EmployeesData(ResponseObject):
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version12
+    schema_version: Version13
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics

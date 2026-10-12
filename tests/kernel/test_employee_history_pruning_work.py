@@ -70,7 +70,7 @@ def test_employee_month_pages_do_not_decode_unrelated_posted_history(opening_boo
             decoded.clear()
             loaded.clear()
             data = Dashboard(engine).employees("2026-02", **options, employee_filter="all")["data"]
-            assert set(data["collections"]) == {"employees", "labor_sources"}
+            assert set(data["collections"]) == {"employees", "labor_workers"}
             person = data["collections"]["employees"]["items"][0]
             assert person["direct_net_payments_fen"] == 50
             assert person["outstanding_net_fen"] == 1350
