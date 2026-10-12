@@ -19,10 +19,156 @@ from ai_accounting.kernel.dashboard_async import (
     delivery_state,
     run_pending,
 )
-from ai_accounting.kernel.stored_json import loads_unique
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.stored_json import loads_unique
 
 replay_book = _replay_book
+
+
+def _publish_snapshot_loans(replay_book):
+    engine = replay_book.app.engine(replay_book.company)
+    seed_entities(engine, [("snapshot-cash", "fund_account", "cash"),
+                           ("snapshot-owner", "person", None)])
+    subjects = [f"snapshot-loan-{index}" for index in range(3)]
+    engine.save_facts([
+        {"kind": "cash_funding", "subject_id": subject,
+         "data": {"period": "2026-01", "actual_date": f"2026-01-{index + 1:02d}",
+                  "owner_id": "snapshot-owner", "amount_fen": index + 1,
+                  "funding_kind": "loan", "cash_account_id": "snapshot-cash"},
+         "evidence": [replay_book.proof], "expected_revision": 0}
+        for index, subject in enumerate(subjects)
+    ], request_id="snapshot-loan-sources")
+    preview = engine.preview(subjects)
+    engine.confirm(subjects, preview_digest=preview["digest"], epochs=preview["epochs"],
+                   request_id="snapshot-loan-publication")
+    return engine
+
+
+def test_async_overview_version_survives_native_details_and_voucher_continuation(
+    replay_book, monkeypatch,
+):
+    from ai_accounting.kernel import dashboard_async
+
+    engine = _publish_snapshot_loans(replay_book)
+    publication = _produce(engine, "2026-01")
+    authentications = []
+    original = dashboard_async._anchored_model
+
+    def authenticate(*args, **kwargs):
+        authentications.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dashboard_async, "_anchored_model", authenticate)
+    dashboard = Dashboard(engine)
+    overview = dashboard.brief("2026-01")
+    version = overview["snapshot_version"]
+    assert version == publication["model_version"]
+    expected = {"expected_version": version, "limit": 1}
+
+    first = dashboard.brief("2026-01", section="vouchers", **expected)
+    collection = first["data"]["collections"]["vouchers"]
+    assert collection["page"]["has_more"]
+    following = dashboard.brief("2026-01", section="vouchers",
+                                cursor=collection["page"]["next_cursor"], **expected)
+    tail = dashboard.brief(
+        "2026-01", section="vouchers",
+        cursor=following["data"]["collections"]["vouchers"]["page"]["next_cursor"],
+        **expected,
+    )
+    all_vouchers = dashboard.brief(
+        "2026-01", section="vouchers", limit=500, expected_version=version,
+    )
+    pages = [response["data"]["collections"]["vouchers"]
+             for response in (first, following, tail)]
+    identifiers = [item["voucher_version_id"] for page in pages for item in page["items"]]
+    complete = all_vouchers["data"]["collections"]["vouchers"]
+    assert len(identifiers) == len(set(identifiers)) == complete["page"]["total_count"] == 3
+    assert identifiers == [item["voucher_version_id"] for item in complete["items"]]
+    for page in (pages[-1], complete):
+        assert page["page"]["has_more"] is False and page["page"]["next_cursor"] is None
+    responses = [first, following, tail, all_vouchers]
+    for section in ("activity", "open_items"):
+        response = dashboard.brief("2026-01", section=section, **expected)
+        responses.append(response)
+        groups = response["data"]["collections"][section]["items"]
+        assert groups
+        members = dashboard.brief_group(
+            "2026-01", section=section, group_key=groups[0]["group_key"], **expected,
+        )
+        responses.append(members)
+        member_page = members["data"]["collections"]["members"]["page"]
+        if member_page["has_more"]:
+            responses.append(dashboard.brief_group(
+                "2026-01", section=section, group_key=groups[0]["group_key"],
+                cursor=member_page["next_cursor"], **expected,
+            ))
+    responses.extend([
+        dashboard.brief("2026-01", voucher_number=1, **expected),
+        dashboard.funds("2026-01", section="movements", **expected),
+        dashboard.employees("2026-01", section="employees", **expected),
+        dashboard.assets("2026-01", section="assets", **expected),
+        dashboard.business_status("2026-01", "snapshot-loan-0",
+                                  section="settlement_events", **expected),
+    ])
+    for response in responses:
+        assert response["snapshot_version"] == version
+        assert response["read_context"] == overview["read_context"]
+    assert len(authentications) == len(responses) + 1  # one proof per owned request snapshot
+
+
+def test_async_details_reject_changed_sources_before_reproduction(replay_book):
+    engine = _publish_snapshot_loans(replay_book)
+    _produce(engine, "2026-01")
+    dashboard = Dashboard(engine)
+    overview = dashboard.brief("2026-01")
+    engine.save_fact(
+        "cash_funding", "snapshot-later-loan",
+        {"period": "2026-01", "actual_date": "2026-01-04", "owner_id": "snapshot-owner",
+         "amount_fen": 4, "funding_kind": "loan", "cash_account_id": "snapshot-cash"},
+        evidence=(replay_book.proof,), expected_revision=0, request_id="snapshot-later-source",
+    )
+    with pytest.raises(KernelError) as error:
+        dashboard.brief("2026-01", section="vouchers",
+                        expected_version=overview["snapshot_version"])
+    assert error.value.code == "dashboard_snapshot_changed"
+
+
+def test_async_details_report_damaged_model_before_snapshot_mismatch(replay_book):
+    engine = replay_book.app.engine(replay_book.company)
+    _produce(engine, "2026-01")
+    dashboard = Dashboard(engine)
+    overview = dashboard.brief("2026-01")
+    with sqlite3.connect(_store_path(engine)) as connection:
+        connection.execute("UPDATE dashboard_read_model_block SET payload='{}'")
+    with pytest.raises(KernelError) as error:
+        dashboard.brief("2026-01", section="vouchers",
+                        expected_version=overview["snapshot_version"])
+    assert error.value.code == "content_integrity_failed"
+
+
+def test_native_details_keep_overview_version_without_async_publication(replay_book):
+    engine = _publish_snapshot_loans(replay_book)
+    dashboard = Dashboard(engine)
+    overview = dashboard.brief("2026-01")
+    version = overview["snapshot_version"]
+    first = dashboard.brief("2026-01", section="vouchers", limit=1, expected_version=version)
+    following = dashboard.brief(
+        "2026-01", section="vouchers", limit=1, expected_version=version,
+        cursor=first["data"]["collections"]["vouchers"]["page"]["next_cursor"],
+    )
+    tail = dashboard.brief(
+        "2026-01", section="vouchers", limit=1, expected_version=version,
+        cursor=following["data"]["collections"]["vouchers"]["page"]["next_cursor"],
+    )
+    assert first["snapshot_version"] == following["snapshot_version"] == (
+        tail["snapshot_version"]
+    ) == version
+    pages = [response["data"]["collections"]["vouchers"]
+             for response in (first, following, tail)]
+    identifiers = [item["voucher_version_id"] for page in pages for item in page["items"]]
+    assert len(identifiers) == len(set(identifiers)) == pages[0]["page"]["total_count"] == 3
+    assert pages[-1]["page"]["has_more"] is False
+    assert pages[-1]["page"]["next_cursor"] is None
 
 
 def test_business_commit_never_builds_dashboard_and_worker_publishes(replay_book):

@@ -2234,8 +2234,12 @@ class Dashboard:
             return {**self._response(snap, seal_collections(snap, "funds", data, filters)),
                     "schema_version": 9}
 
-    @staticmethod
-    def _check_page_version(snapshot, cursor, expected_version):
+    def _check_page_version(self, snapshot, cursor, expected_version):
+        from .dashboard_model_runtime import authenticated_model
+
+        # Published overviews use the authenticated publication ID. Resolve it
+        # before checking native continuations and details against that version.
+        authenticated_model(self, snapshot)
         if (
             cursor or expected_version is not None
         ) and expected_version != snapshot.snapshot_version:

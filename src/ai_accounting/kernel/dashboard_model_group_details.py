@@ -192,7 +192,12 @@ def materialize_group_blocks(dashboard, snap, *, block_size=20):
 def _model(dashboard, snap):
     from .dashboard_model_runtime import authenticated_model
 
-    return authenticated_model(dashboard, snap)
+    model = authenticated_model(dashboard, snap)
+    if model is not None and model.descriptor.content_version >= 5:
+        # These models authenticate overviews only; members and exact vouchers
+        # retain the publication version and use bounded native reads on demand.
+        return None
+    return model
 
 
 def _member_selection(model, section, group_key, *, after, limit):
