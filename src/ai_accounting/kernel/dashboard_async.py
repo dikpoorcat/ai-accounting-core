@@ -353,7 +353,9 @@ def reset_after_restore(connection, *, reason="restore"):
 
 
 def _anchored_model(engine, publication, derived, store_id):
-    from .dashboard_read_model import LoadedModel, _anchored_descriptor, _load_root, _receipt_row
+    from .dashboard_read_model import (
+        LoadedModel, _anchored_descriptor, _load_root, _receipt_row, supports_native_content,
+    )
 
     if publication["store_id"] != store_id:
         raise KernelError("content_integrity_failed", "看板发布属于另一内容库")
@@ -383,8 +385,9 @@ def _anchored_model(engine, publication, derived, store_id):
         raise KernelError("content_integrity_failed", "看板发布摘要与内容不符")
     model = LoadedModel(derived, descriptor, root)
     _read_dependencies(derived, publication)
+    native = supports_native_content(descriptor)
     for reference in root.blocks:
-        model.read_page_block(reference.key)
+        model.read_page_block(reference.key, native_contract=native)
     return model
 
 

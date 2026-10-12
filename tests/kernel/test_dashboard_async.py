@@ -217,6 +217,82 @@ def test_unrelated_evidence_does_not_rebuild_and_corruption_is_failed(replay_boo
     }
 
 
+def _publish_prior_employee_contract(engine, monkeypatch, *, obsolete_build=True):
+    """Produce authentic synthetic v5 bytes with the preceding employee contract."""
+    from ai_accounting.kernel import dashboard_read_model, engine as engine_module
+
+    checked_payload = dashboard_read_model._checked_payload
+
+    def prior_employee_contract(kind, payload):
+        if kind != "dashboard_employees":
+            return checked_payload(kind, payload)
+        # Other producer fields are unchanged in this empty personnel fixture.
+        validated = checked_payload(kind, {**payload, "schema_version": 13})
+        return {**validated, "schema_version": 12}
+
+    with monkeypatch.context() as producer:
+        producer.setattr(dashboard_read_model, "CONTENT_VERSION", 5)
+        producer.setattr(dashboard_read_model, "_checked_payload", prior_employee_contract)
+        if obsolete_build:
+            producer.setattr(engine_module, "PROGRAM_VERSION", "synthetic-prior-dashboard-build")
+        result = _produce(engine, "2026-01")
+    assert result["status"] == "ready"
+    return result
+
+
+def test_obsolete_employee_contract_is_authenticated_and_reproduced(replay_book, monkeypatch):
+    engine = replay_book.app.engine(replay_book.company)
+    previous = _publish_prior_employee_contract(engine, monkeypatch)
+    assert replay_book.call("dashboard_brief", period="2026-01")["state"] == "preparing"
+    with engine.store.connection(read_only=True) as connection:
+        request = connection.execute(
+            "SELECT status,error_code FROM dashboard_projection_request WHERE period='2026-01'"
+        ).fetchone()
+        assert tuple(request) == ("pending", None)
+    # The worker authenticates obsolete content before replacing its publication.
+    assert run_pending(engine, limit=1)[0]["status"] == "ready"
+    result = replay_book.call("dashboard_brief", period="2026-01")
+    assert result["state"] == "ready"
+    assert result["model_version"] != previous["model_version"]
+    employees = replay_book.call("dashboard_employees", period="2026-01")
+    assert employees["state"] == "ready"
+    assert employees["response"]["schema_version"] == 13
+
+
+@pytest.mark.parametrize("damaged_part", ["block_hash", "publication_anchor"])
+def test_obsolete_employee_contract_damage_still_fails(
+    replay_book, monkeypatch, damaged_part,
+):
+    from test_integrity_content import damage
+
+    engine = replay_book.app.engine(replay_book.company)
+    _publish_prior_employee_contract(engine, monkeypatch)
+    if damaged_part == "block_hash":
+        with sqlite3.connect(_store_path(engine)) as connection:
+            connection.execute("UPDATE dashboard_read_model_block SET payload='{}'")
+    else:
+        damage(
+            engine, "dashboard_projection_publication",
+            "UPDATE dashboard_projection_publication SET input_digest=zeroblob(32)",
+        )
+    assert replay_book.call("dashboard_brief", period="2026-01") == {
+        "schema_version": 6,
+        "company_id": replay_book.company,
+        "period": "2026-01",
+        "state": "failed",
+        "model_version": None,
+        "reason": "corrupt",
+    }
+
+
+def test_current_producer_cannot_claim_a_prior_content_contract(replay_book, monkeypatch):
+    engine = replay_book.app.engine(replay_book.company)
+    _publish_prior_employee_contract(engine, monkeypatch, obsolete_build=False)
+    assert delivery_state(engine, "2026-01") == {
+        "state": "failed", "model_version": None, "reason": "corrupt",
+    }
+
+
 def test_empty_selector_fingerprint_changes_on_first_matching_source():
     with sqlite3.connect(":memory:") as connection:
         connection.execute("CREATE TABLE source(period INTEGER, amount INTEGER)")
