@@ -20,6 +20,13 @@ SECTIONS = {"accounts", "movements", "statements", "investment_products", "inves
 
 _ordered_page_request = ContextVar("funds_ordered_page_request", default=None)
 _ORDERED_PAGE_FUNCTION = "dashboard_funds_ordered_page"
+# This one statement consumes a request-local business sorter. Its complete
+# source is separately traced as repeatable SQL during projection production.
+_ORDERED_PAGE_QUERY_PREFIX = "WITH /* dashboard-funds-request-order */ "
+
+
+def contextual_order_query(sql):
+    return sql.startswith(_ORDERED_PAGE_QUERY_PREFIX)
 
 
 class _OrderedFundsPage:
@@ -110,6 +117,24 @@ def _sql_summary_page(
     order_token = None
     order_errors = []
     if order_rows is not None:
+        from .dashboard_model_runtime import producing_model
+
+        if producing_model():
+            # Certify every source row, including rows outside the selected
+            # account and page. No request-local callback belongs in a durable
+            # selector; metadata read by the sorter is still traced separately.
+            order_sources = []
+            for row in connection.execute(
+                f"SELECT * FROM ({source}) ORDER BY page_key", parameters
+            ):
+                order_sources.append({
+                    "page_key": row["page_key"], "calculation_id": row["calculation_id"],
+                    "internal_transfer": row["internal_transfer"],
+                })
+            # SQLite callback traces leave nested SQL parameters unexpanded.
+            # Read the original sorter's metadata before entering the callback,
+            # while the producer can capture its ordinary complete selectors.
+            order_rows(order_sources)
         # Keep complete event payloads inside the one materialized SQL source.
         # The existing business sorter consumes only scalar identities; its
         # bounded result locates page rows without evaluating the source again.
@@ -140,7 +165,8 @@ def _sql_summary_page(
         order_values = [after or "", limit + 1]
         page_order = "page_rows.page_key"
     query = (
-        f"WITH source_rows AS MATERIALIZED ({source}), "
+        (_ORDERED_PAGE_QUERY_PREFIX if order_rows is not None else "WITH ")
+        + f"source_rows AS MATERIALIZED ({source}), "
         f"summary_rows AS MATERIALIZED ({summary_sql}), "
         f"filtered_rows AS MATERIALIZED (SELECT * FROM source_rows WHERE {where}), "
         + page_relation +

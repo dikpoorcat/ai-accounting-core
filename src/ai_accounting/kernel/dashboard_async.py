@@ -464,6 +464,7 @@ def delivery_state(engine, period):
 
 def _produce(engine, period, *, worker_id=None):
     from .dashboard import Dashboard, _Snapshot
+    from .dashboard_funds import contextual_order_query
     from .dashboard_model_materializer import build_model
     from .dashboard_model_runtime import _producing, model_scope, stable_payload
     from .dashboard_read_model import PageBlock, persist_model, prepare_model
@@ -486,6 +487,8 @@ def _produce(engine, period, *, worker_id=None):
         }
 
         def trace(sql):
+            if contextual_order_query(sql):
+                return
             if sql.lstrip().upper().startswith(("SELECT ", "WITH ")):
                 tables = set(_TABLES.findall(sql)) & authoritative
                 # Snapshot envelope versions do not describe displayed content.

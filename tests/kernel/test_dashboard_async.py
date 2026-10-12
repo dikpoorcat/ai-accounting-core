@@ -5,6 +5,8 @@ import sqlite3
 from contextlib import contextmanager
 
 import pytest
+from entity_fixture import seed_entities
+from material_fixture import supporting_text
 from test_replay_close_range import replay_book as _replay_book
 
 from ai_accounting.kernel.contracts import KernelError
@@ -13,9 +15,12 @@ from ai_accounting.kernel.dashboard_async import (
     _fingerprint,
     _produce,
     _store_path,
+    _unchanged,
     delivery_state,
     run_pending,
 )
+from ai_accounting.kernel.stored_json import loads_unique
+from ai_accounting.kernel.periods import Periods
 
 replay_book = _replay_book
 
@@ -75,6 +80,113 @@ def test_empty_selector_fingerprint_changes_on_first_matching_source():
         assert _fingerprint(connection, sql) == original
         connection.execute("INSERT INTO source VALUES(12,50)")
         assert _fingerprint(connection, sql) != original
+
+
+def test_ordered_funds_projection_revalidates_complete_sources_without_request_context(
+    replay_book,
+):
+    engine = replay_book.app.engine(replay_book.company)
+    proof = engine.register_evidence(
+        b"Synthetic confirmation of 22 January cash capital receipts and their closing",
+        "text/plain", "ordered funds confirmation", request_id="ordered-funds-proof",
+    )["digest"]
+    supporting_text(engine, proof)
+    seed_entities(
+        engine,
+        [
+            ("sort-cash-a", "fund_account", "cash"),
+            ("sort-cash-b", "fund_account", "cash"),
+            *((f"sort-owner-{index}", "person", None) for index in range(22)),
+        ],
+    )
+
+    def publish(indices, request):
+        facts = [
+            {
+                "kind": "cash_funding",
+                "subject_id": f"sort-funding-{index}",
+                "data": {
+                    "period": "2026-01",
+                    "actual_date": f"2026-01-{index + 1:02d}",
+                    "owner_id": f"sort-owner-{index}",
+                    "amount_fen": index + 1,
+                    "funding_kind": "capital",
+                    "cash_account_id": "sort-cash-a" if index < 21 else "sort-cash-b",
+                },
+                "evidence": [proof],
+                "expected_revision": 0,
+            }
+            for index in indices
+        ]
+        engine.save_facts(facts, request_id=request + "-sources")
+        subjects = [fact["subject_id"] for fact in facts]
+        preview = engine.preview(subjects)
+        engine.confirm(
+            subjects,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id=request + "-publication",
+        )
+
+    publish(range(22), "ordered-funds")
+    periods = Periods(engine)
+    periods.inventory(
+        "2026-01", engine.store.registry.models["cash_funding"].material_category,
+        evidence=[proof], expected=1, no_business=False,
+        confirmation_evidence=proof, request_id="ordered-funds-inventory",
+    )
+    try:
+        closing = periods.preview_close("2026-01", owner_confirmation=proof)
+    except KernelError as exc:
+        pytest.fail(str(exc.response()))
+    periods.close(
+        "2026-01", owner_confirmation=proof, preview_digest=closing["digest"],
+        epochs=closing["epochs"], request_id="ordered-funds-close",
+    )
+    outcome = _produce(engine, "2026-01")
+    assert outcome["status"] == "ready"
+    assert delivery_state(engine, "2026-01")["state"] == "ready"
+    response = Dashboard(engine).funds("2026-01", movement_account_selection="first")
+    collection = response["data"]["collections"]["movements"]
+    assert collection["page"]["total_count"] == 22
+    assert collection["page"]["filtered_count"] == 21
+    assert collection["page"]["has_more"] is True
+    assert len(collection["items"]) == 20
+
+    with sqlite3.connect(_store_path(engine).as_uri() + "?mode=ro", uri=True) as derived:
+        dependencies = loads_unique(
+            derived.execute("SELECT payload FROM projection_dependency").fetchone()[0]
+        )
+    assert all("dashboard_funds_ordered_page" not in item["sql"] for item in dependencies)
+    assert all(not item["sql"].startswith("-- ") and "?" not in item["sql"]
+               for item in dependencies)
+    assert any("entity_profile_revision" in item["tables"] and "sort-owner-21" in item["sql"]
+               for item in dependencies)
+    source_selectors = [
+        item for item in dependencies if item["sql"].startswith("SELECT * FROM (")
+    ]
+    assert source_selectors
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        publication = connection.execute(
+            "SELECT p.*,c.validated_sequence FROM dashboard_projection_current c "
+            "JOIN dashboard_projection_publication p ON p.id=c.publication_id "
+            "WHERE c.period='2026-01'"
+        ).fetchone()
+        assert _unchanged(engine, connection, publication)
+        sources = [connection.execute(item["sql"]).fetchall() for item in source_selectors]
+        complete = next(rows for rows in sources if len(rows) == 22
+                        and {row["balance_key"] for row in rows}
+                        == {"sort-cash-a", "sort-cash-b"})
+        sort_headers = [
+            connection.execute(item["sql"]).fetchall()
+            for item in dependencies
+            if item["sql"].startswith("SELECT c.id,c.subject_id,c.fact_id,c.kind,c.period ")
+        ]
+        assert any({row["id"] for row in headers}
+                   == {row["calculation_id"] for row in complete} for headers in sort_headers)
+        assert all(_fingerprint(connection, item["sql"]) == item["digest"]
+                   for item in source_selectors)
 
 
 def test_http_preparing_has_no_money_and_ready_uses_typed_content(replay_book):
